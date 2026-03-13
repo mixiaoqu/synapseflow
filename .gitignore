@@ -1,0 +1,121 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.venv
+venv/
+ENV/
+env/
+.uv/
+
+# 环境变量
+.env
+.env.local
+backend/.env
+frontend/.env.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ---------- Backend (Python) ----------
+backend/.venv/
+backend/venv/
+backend/__pycache__/
+backend/.pytest_cache/
+backend/uploads/
+backend/previews/
+backend/htmlcov/
+backend/coverage/
+
+# ---------- Frontend (Next.js) ----------
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.turbo/
+frontend/tsconfig.tsbuildinfo
+frontend/.pnpm-store/
+
+# 文件上传和预览（根目录）
+previews/
+uploads/
+
+# 数据库
+*.db
+*.sqlite
+
+# 日志
+*.log
+
+# 测试
+.coverage
+coverage/
+
+# Python 工具缓存
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 临时文件
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Cursor / 项目本地
+.cursor/
+plan/
+agent-transcripts/
+
+# Turbo / pnpm
+.turbo
+.pnpm-store
+
+# 数据库（补充）
+*.sqlite3
+
+# 密钥文件（谨慎：若需提交示例则用 .env.example）
+*.pem
+*.key
+!*.pub
