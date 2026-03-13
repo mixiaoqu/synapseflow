@@ -1,0 +1,6 @@
+# 向量嵌入配置
+
+embedding:
+  model: BAAI/bge-small-zh-v1.5
+  dim: 512
+  description: 中文向量嵌入模型，用于知识库检索

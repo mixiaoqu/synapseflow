@@ -1,0 +1,11 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "iterative_qa": "./app/agents/graphs/qa_graph.py:create_iterative_qa_graph",
+    "recursive_revision": "./app/agents/graphs/revision_graph.py:create_recursive_revision_graph",
+    "doc_to_prototype": "./app/agents/graphs/prototype_graph.py:create_doc_to_prototype_graph"
+  },
+  "env": ".env"
+}

@@ -1,0 +1,13 @@
+# 日志配置
+
+logging:
+  level: INFO
+  json: false
+  to_file: true
+  diagnose: false
+  
+  # 日志文件配置
+  file:
+    path: logs/synapseflow.log
+    rotation: 10 MB
+    retention: 7 days

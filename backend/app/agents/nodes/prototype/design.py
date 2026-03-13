@@ -1,0 +1,84 @@
+"""组件设计节点"""
+import json
+from typing import Dict, Any
+
+from app.agents.states.prototype_state import DocToPrototypeState
+from app.core.llm import get_llm_for_design
+
+from app.agents.nodes.prototype.utils import parse_json_safely
+
+
+async def design_components_node(state: DocToPrototypeState) -> Dict[str, Any]:
+    """
+    组件设计节点：设计HTML组件架构和设计系统
+    使用：design_decision - Deepseek设计决策（temperature=0.4）
+    """
+    llm = get_llm_for_design()
+    requirements = state["extracted_requirements"]
+
+    prompt = f"""
+基于需求设计HTML组件结构和设计系统：
+
+需求信息：
+{json.dumps(requirements, ensure_ascii=False)}
+
+请设计：
+{{
+    "components": [
+        {{
+            "tag": "header",
+            "classes": ["sticky", "top-0"],
+            "children": []
+        }}
+    ],
+    "design_system": {{
+        "colors": {{
+            "primary": "#3B82F6",
+            "secondary": "#8B5CF6",
+            "background": "#FFFFFF"
+        }},
+        "typography": {{
+            "font_family": "'Inter', sans-serif",
+            "font_size": {{"base": "1rem", "lg": "1.125rem"}}
+        }},
+        "spacing": {{"base": "0.25rem", "scale": [0, 4, 8, 16, 24, 32, 48, 64]}}
+    }}
+}}
+"""
+
+    response = await llm.ainvoke(prompt)
+    design = parse_json_safely(response.content)
+
+    if not design:
+        design = {"components": [], "design_system": {}}
+
+    components = design.get("components") or design.get("ui_components") or []
+    design_system = design.get("design_system") or {}
+
+    if not components:
+        functional_modules = requirements.get("functional_modules", [])
+        for m in functional_modules[:8]:
+            comp = {
+                "tag": "section",
+                "classes": [m.get("id", "section").replace(" ", "_")],
+                "children": [],
+                "name": m.get("name", "")
+            }
+            components.append(comp)
+
+    if not design_system:
+        design_system = {"colors": {"primary": "#3B82F6"}, "typography": {"font_family": "Inter, sans-serif"}}
+
+    print("\n" + "="*80)
+    print(f"[节点完成] 设计组件 (design_components)")
+    print("="*80)
+    print(f"[UI组件]: {len(components)} 个")
+    for i, comp in enumerate(components[:5], 1):
+        print(f"   {i}. <{comp.get('tag', 'div')}> - {', '.join(comp.get('classes', []))[:50]}")
+    if design_system.get("colors"):
+        print(f"\n[设计系统 - 颜色]:")
+        for k, v in list(design_system["colors"].items())[:5]:
+            print(f"   {k}: {v}")
+    print("="*80 + "\n")
+
+    return {"ui_components": components, "design_system": design_system}

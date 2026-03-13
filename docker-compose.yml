@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: synapseflow-postgres
+    environment:
+      POSTGRES_USER: synapseflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-synapseflow123}
+      POSTGRES_DB: synapseflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - synapseflow-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapseflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+    container_name: synapseflow-backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - KIMI_API_KEY=${KIMI_API_KEY}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - backend_previews:/app/previews
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - synapseflow-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/frontend/Dockerfile
+    container_name: synapseflow-frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - synapseflow-network
+    command: npm run dev
+
+volumes:
+  postgres_data:
+  backend_previews:
+
+networks:
+  synapseflow-network:
+    driver: bridge
