@@ -67,15 +67,3 @@ async def generate_html_node(state: DocToPrototypeState) -> Dict[str, Any]:
     print("="*80 + "\n")
 
     return {"generated_html": html_code}
-
-
-async def generate_css_node(state: DocToPrototypeState) -> Dict[str, Any]:
-    """CSS已内联到HTML，此节点直接跳过"""
-    print("[节点跳过] generate_css - CSS已内联到HTML中")
-    return {"generated_css": ""}
-
-
-async def generate_js_node(state: DocToPrototypeState) -> Dict[str, Any]:
-    """JS已内联到HTML，此节点直接跳过"""
-    print("[节点跳过] generate_js - JS已内联到HTML中")
-    return {"generated_js": ""}

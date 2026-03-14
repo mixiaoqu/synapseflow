@@ -88,12 +88,6 @@ function renderNodeOutput(node: AgentNode) {
     case 'generate_html':
       return <CodeOutput output={output} language="HTML" />;
     
-    case 'generate_css':
-      return <CodeOutput output={output} language="CSS" />;
-    
-    case 'generate_js':
-      return <CodeOutput output={output} language="JavaScript" />;
-    
     case 'validate_preview':
       return <ValidateOutput output={output} />;
     

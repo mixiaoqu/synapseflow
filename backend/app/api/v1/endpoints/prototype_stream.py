@@ -48,8 +48,6 @@ async def prototype_event_generator(
             "ui_components": [],
             "design_system": {},
             "generated_html": "",
-            "generated_css": "",
-            "generated_js": "",
             "validation_errors": [],
             "preview_url": "",
             "is_valid": False,
@@ -72,8 +70,6 @@ async def prototype_event_generator(
             "extract_requirements": "提取需求",
             "design_components": "设计组件",
             "generate_html": "生成HTML",
-            "generate_css": "生成CSS",
-            "generate_js": "生成JS",
             "validate_preview": "代码验证"
         }
         
@@ -82,8 +78,6 @@ async def prototype_event_generator(
             "extract_requirements": "Kimi-长文本理解",
             "design_components": "Deepseek-设计决策",
             "generate_html": "Deepseek-代码生成",
-            "generate_css": "Deepseek-代码生成",
-            "generate_js": "Deepseek-代码生成",
             "validate_preview": "Deepseek-代码验证"
         }
         
@@ -247,62 +241,6 @@ async def prototype_event_generator(
                         }
                     }
                 
-                elif node_id == "generate_css" and node_state.get("generated_css"):
-                    css_code = node_state["generated_css"]
-                    css_lines = len(css_code.split('\n'))
-                    
-                    # 推送CSS代码片段
-                    css_preview = '\n'.join(css_code.split('\n')[:50])
-                    
-                    yield {
-                        "event": "node_output",
-                        "data": {
-                            "node_id": node_id,
-                            "node_name": node_name,
-                            "output": {
-                                "css_preview": css_preview,
-                                "total_lines": css_lines
-                            }
-                        }
-                    }
-                    
-                    yield {
-                        "event": "log",
-                        "data": {
-                            "node": node_name,
-                            "type": "success",
-                            "content": f"🎨 生成了 {css_lines} 行CSS样式"
-                        }
-                    }
-                
-                elif node_id == "generate_js" and node_state.get("generated_js"):
-                    js_code = node_state["generated_js"]
-                    js_lines = len(js_code.split('\n'))
-                    
-                    # 推送JS代码片段
-                    js_preview = '\n'.join(js_code.split('\n')[:50])
-                    
-                    yield {
-                        "event": "node_output",
-                        "data": {
-                            "node_id": node_id,
-                            "node_name": node_name,
-                            "output": {
-                                "js_preview": js_preview,
-                                "total_lines": js_lines
-                            }
-                        }
-                    }
-                    
-                    yield {
-                        "event": "log",
-                        "data": {
-                            "node": node_name,
-                            "type": "success",
-                            "content": f"⚡ 生成了 {js_lines} 行JavaScript代码"
-                        }
-                    }
-                
                 elif node_id == "validate_preview" and node_state.get("preview_url"):
                     # 推送验证结果
                     yield {
@@ -371,8 +309,6 @@ async def prototype_event_generator(
             "data": {
                 "preview_url": full_preview_url,
                 "html": final_state.get("generated_html", ""),
-                "css": final_state.get("generated_css", ""),
-                "js": final_state.get("generated_js", ""),
                 "is_valid": final_state.get("is_valid", False),
                 "validation_errors": final_state.get("validation_errors", []),
                 "total_duration": round(sum(time.time() - t for t in node_start_times.values()), 2)

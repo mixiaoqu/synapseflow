@@ -65,8 +65,6 @@ export const usePrototypeStore = create<PrototypeState>((set) => ({
     { id: 'extract_requirements', name: '提取需求', model: 'Kimi-长文本理解', status: 'pending' },
     { id: 'design_components', name: '设计组件', model: 'Deepseek-设计决策', status: 'pending' },
     { id: 'generate_html', name: '生成HTML', model: 'Deepseek-代码生成', status: 'pending' },
-    { id: 'generate_css', name: '生成CSS', model: 'Deepseek-代码生成', status: 'pending' },
-    { id: 'generate_js', name: '生成JS', model: 'Deepseek-代码生成', status: 'pending' },
     { id: 'validate_preview', name: '代码验证', model: 'Deepseek-代码验证', status: 'pending' },
   ],
   logs: [],

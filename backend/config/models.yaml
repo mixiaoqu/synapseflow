@@ -146,8 +146,6 @@ scenario_model_mapping:
     extract: long_text_understanding # 理解任意格式需求
     design: design_decision # 设计组件架构
     generate_html: code_generation # 生成HTML代码
-    generate_css: code_generation # 生成CSS代码
-    generate_js: code_generation # 生成JS代码
     validate: code_validation # 验证代码语法
 
 # 任务类型说明

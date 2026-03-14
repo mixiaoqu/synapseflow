@@ -9,8 +9,6 @@ class DocToPrototypeState(TypedDict):
     ui_components: List[Dict[str, Any]]
     design_system: Dict[str, Any]
     generated_html: str
-    generated_css: str
-    generated_js: str
     validation_errors: List[str]
     preview_url: str
     is_valid: bool

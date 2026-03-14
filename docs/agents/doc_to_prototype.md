@@ -12,9 +12,7 @@ class DocToPrototypeState(TypedDict):
     extracted_requirements: dict    # 提取的结构化需求
     ui_components: List[dict]       # UI组件树
     design_system: dict             # 设计系统
-    generated_html: str             # HTML代码
-    generated_css: str              # CSS代码
-    generated_js: str               # JavaScript代码
+    generated_html: str             # HTML代码（含内联CSS和JS）
     validation_errors: List[str]    # 验证错误
     preview_url: str                # 预览链接
     is_valid: bool                  # 是否有效
@@ -35,22 +33,12 @@ class DocToPrototypeState(TypedDict):
 - **输出**：ui_components, design_system
 
 ### 3. generate_html_node（HTML生成）
-- **功能**：生成语义化HTML5代码
+- **功能**：生成完整的独立HTML页面（含内联CSS与JS）
 - **模型**：Deepseek
-- **使用**：Tailwind CSS类名
+- **使用**：Tailwind CSS类名或内联样式
 - **输出**：generated_html
 
-### 4. generate_css_node（CSS生成）
-- **功能**：生成自定义样式
-- **模型**：Deepseek
-- **输出**：generated_css（CSS变量、动画、响应式）
-
-### 5. generate_js_node（JS生成）
-- **功能**：生成交互逻辑
-- **模型**：Deepseek
-- **输出**：generated_js（事件处理、表单验证）
-
-### 6. validate_and_preview_node（验证预览）
+### 4. validate_and_preview_node（验证预览）
 - **功能**：验证代码并生成预览
 - **验证**：HTML标签闭合、语法检查
 - **输出**：preview_url, is_valid
