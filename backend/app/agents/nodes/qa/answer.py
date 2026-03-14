@@ -18,7 +18,7 @@ async def answer_node(state: IterativeQAState) -> Dict[str, Any]:
 知识库内容：
 {state['context']}
 
-用户问题：{state['query']}
+用户问题：{state.get('optimized_query') or state['query']}
 
 要求：
 1. 答案必须基于知识库内容

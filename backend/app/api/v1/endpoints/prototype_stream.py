@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from app.models.schemas.prototype import PrototypeRequest
 from app.agents.graphs import create_doc_to_prototype_graph
-from app.core.file_parser import extract_text_from_file
+from app.utils.file_parser import extract_text_from_file
 
 router = APIRouter()
 

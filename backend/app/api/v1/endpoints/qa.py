@@ -20,13 +20,16 @@ async def invoke_qa(request: QARequest):
         initial_state = {
             "messages": [],
             "query": request.query,
+            "optimized_query": "",
             "retrieved_docs": [],
             "context": "",
             "answer": "",
             "confidence_score": 0.0,
             "iteration": 0,
             "max_iterations": request.max_iterations,
-            "should_continue": True
+            "should_continue": True,
+            "iteration_history": [],
+            "last_evaluation_feedback": None,
         }
         
         result = await qa_agent.ainvoke(initial_state)
@@ -36,6 +39,7 @@ async def invoke_qa(request: QARequest):
             confidence_score=result["confidence_score"],
             iteration=result["iteration"],
             retrieved_docs=result.get("retrieved_docs", []),
+            iteration_history=result.get("iteration_history", []),
             session_id=request.session_id
         )
     
@@ -53,13 +57,16 @@ async def stream_qa(request: QARequest):
             initial_state = {
                 "messages": [],
                 "query": request.query,
+                "optimized_query": "",
                 "retrieved_docs": [],
                 "context": "",
                 "answer": "",
                 "confidence_score": 0.0,
                 "iteration": 0,
                 "max_iterations": request.max_iterations,
-                "should_continue": True
+                "should_continue": True,
+                "iteration_history": [],
+                "last_evaluation_feedback": None,
             }
             
             async for chunk in qa_agent.astream(initial_state):

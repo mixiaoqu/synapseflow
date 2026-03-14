@@ -13,7 +13,8 @@ async def retrieve_node(state: IterativeQAState) -> Dict[str, Any]:
     检索节点：从 pgvector 向量库检索相关文档块
     迭代时增加召回数 k（5 -> 8）
     """
-    query = state.get("query", "")
+    # 优先使用优化后的问题进行检索
+    query = state.get("optimized_query") or state.get("query", "")
     iteration = state.get("iteration", 0)
     k = 8 if iteration > 0 else 5  # 迭代时增加召回
 

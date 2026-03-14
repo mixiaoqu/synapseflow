@@ -14,14 +14,11 @@ from app.models.schemas.document import (
     DocumentListItem,
     DocumentListResponse,
 )
-from app.core.file_parser import extract_text_from_file
+from app.utils.file_parser import extract_text_from_file, SUPPORTED_EXTENSIONS, MAX_FILE_SIZE
 
 router = APIRouter()
 
 DEFAULT_USER_ID = 1
-
-SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 # 注意：DELETE /batch-delete 必须定义在 DELETE /{doc_id} 之前，否则 "batch-delete" 会被当作 doc_id
 
