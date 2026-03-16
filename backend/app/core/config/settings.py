@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     KIMI_API_KEY: str = ""
     SILICONFLOW_API_KEY: str = ""
     MODELSCOPE_API_KEY: str = ""
+    AIHUBMIX_API_KEY: str = ""
 
     # --- 向量数据库配置（本地 BGE 中文嵌入）---
     EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"

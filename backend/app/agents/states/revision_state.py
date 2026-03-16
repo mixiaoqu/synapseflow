@@ -1,17 +1,17 @@
-"""递归修订状态定义"""
-from typing import TypedDict, List, Dict, Any
+"""修订相关状态定义（用户建议驱动）"""
+from typing import TypedDict, List, Dict, Any, Optional
 
 
-class RecursiveRevisionState(TypedDict):
-    """递归修订状态"""
+class UserDrivenRevisionState(TypedDict):
+    """用户建议驱动修订状态"""
     original_doc: str
     current_doc: str
-    document_structure: Dict[str, Any]
-    missing_items: List[Dict[str, Any]]
-    revision_history: List[Dict[str, Any]]
-    current_revision: str
-    validation_result: Dict[str, Any]
-    iteration: int
-    max_iterations: int
-    is_complete: bool
-    confidence: float
+    user_suggestions: str
+    parsed_tasks: List[Dict[str, Any]]
+    doc_structure: List[Dict[str, Any]]
+    chunks_meta: List[Any]  # [(chunk_text, section_title, index), ...]
+    chunks_positions: List[Any]  # [(start, end), ...]
+    affected_chunk_indices: List[int]
+    section_hints: Dict[int, str]  # {chunk_idx: "本块相关任务: ..."}
+    revised_document: str
+    doc_id: Optional[int]

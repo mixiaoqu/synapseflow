@@ -52,7 +52,7 @@ class ConfigRegistry:
             "temperature": raw.get("temperature", 0.7),
             "request_timeout": raw.get("request_timeout", 120),
             "streaming": raw.get("streaming", True),
-            "max_tokens": raw.get("max_tokens", 2000),
+            "max_tokens": raw.get("max_tokens"),  # None 表示不限制，由 API 使用模型默认最大值
         }
 
     def get_embedding_config(self) -> Dict[str, Any]:

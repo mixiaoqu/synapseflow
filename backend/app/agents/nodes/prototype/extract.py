@@ -2,6 +2,8 @@
 import json
 from typing import Dict, Any
 
+from loguru import logger
+
 from app.agents.states.prototype_state import DocToPrototypeState
 from app.core.llm import get_llm_for_long_text
 
@@ -17,13 +19,8 @@ async def extract_requirements_node(state: DocToPrototypeState) -> Dict[str, Any
     需求提取节点：理解任意格式的需求文档
     使用：long_text_understanding - Kimi长文本理解（temperature=0.4）
     """
-    print("\n" + "="*80)
-    print("[节点开始] extract_requirements_node 开始执行")
-    print(f"[节点开始] 需求文档长度: {len(state['requirements_doc'])}")
-    print("="*80)
-
+    logger.info("节点开始: extract_requirements，需求长度={}", len(state["requirements_doc"]))
     llm = get_llm_for_long_text()
-    print(f"[节点] 获取LLM实例: {llm.__class__.__name__}")
 
     prompt = f"""你是一个资深的产品设计师和前端架构师，擅长从各种格式的需求文档中提取UI设计需求。
 
@@ -173,38 +170,20 @@ async def extract_requirements_node(state: DocToPrototypeState) -> Dict[str, Any
 """
 
     try:
-        print(f"[节点] 准备调用LLM，prompt长度: {len(prompt)}")
         response = await llm.ainvoke(prompt)
-        print(f"[节点] LLM调用完成，响应长度: {len(response.content)}")
         extracted = parse_json_safely(response.content)
-        print(f"[节点] JSON解析完成")
 
         if not extracted or "page_info" not in extracted:
-            print(f"[警告] LLM返回格式不正确，使用智能补全")
+            logger.warning("LLM 返回格式不完整，使用智能补全")
             extracted = auto_complete_requirements(state["requirements_doc"], extracted)
 
         extracted = normalize_requirements(extracted)
-
-        print("\n" + "="*80)
-        print(f"[节点完成] 提取需求 (extract_requirements)")
-        print("="*80)
-        page_info = extracted.get('page_info', {})
-        print(f"[页面信息]")
-        print(f"   标题: {page_info.get('title', 'N/A')}")
-        print(f"   类型: {page_info.get('type', 'N/A')}")
-        print(f"   描述: {page_info.get('description', 'N/A')}")
-        modules = extracted.get('functional_modules', [])
-        print(f"\n[功能模块]: {len(modules)} 个")
-        for i, module in enumerate(modules[:5], 1):
-            print(f"   {i}. {module.get('name', '')} - {module.get('description', '')}")
-        if len(modules) > 5:
-            print(f"   ... 还有 {len(modules) - 5} 个模块")
-        print("="*80 + "\n")
-
+        modules = extracted.get("functional_modules", [])
+        logger.info("节点完成: extract_requirements，提取 {} 个功能模块", len(modules))
         return {"extracted_requirements": extracted}
 
     except Exception as e:
-        print(f"[错误] 需求提取失败: {e}")
+        logger.error("需求提取失败: {}", e, exc_info=True)
         return {
             "extracted_requirements": auto_complete_requirements(
                 state["requirements_doc"],

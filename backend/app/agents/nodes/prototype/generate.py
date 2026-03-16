@@ -2,6 +2,8 @@
 import json
 from typing import Dict, Any
 
+from loguru import logger
+
 from app.agents.states.prototype_state import DocToPrototypeState
 from app.core.llm import get_llm_for_code_gen
 
@@ -57,13 +59,6 @@ async def generate_html_node(state: DocToPrototypeState) -> Dict[str, Any]:
     elif "```" in content:
         content = content.split("```")[1].split("```")[0].strip()
     html_code = content.strip()
-
-    print("\n" + "="*80)
-    print(f"[节点完成] 生成HTML (generate_html)")
-    print("="*80)
-    print(f"[HTML代码]: {len(html_code.split(chr(10)))} 行")
-    for i, line in enumerate(html_code.split('\n')[:10], 1):
-        print(f"{i:3d} | {line[:75]}")
-    print("="*80 + "\n")
-
+    lines = len(html_code.split("\n"))
+    logger.info("节点完成: generate_html，生成 {} 行 HTML 代码", lines)
     return {"generated_html": html_code}

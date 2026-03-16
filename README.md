@@ -140,9 +140,8 @@ SynapseFlow/
 - `POST /api/v1/qa/invoke` - 同步问答
 - `POST /api/v1/qa/stream` - 流式问答
 
-### 递归修订
-- `POST /api/v1/revision/invoke` - 同步修订
-- `POST /api/v1/revision/stream` - 流式修订
+### 文档修订
+- `POST /api/v1/revision/suggest` - 用户建议驱动修订（文档 + 建议 → 修订稿 + 遗漏提示）
 
 ### 文档转原型
 - `POST /api/v1/prototype/generate` - 生成原型

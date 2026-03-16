@@ -92,10 +92,10 @@ app/
 - 端点：`POST /api/v1/qa/invoke`
 - 流程：检索 → 生成答案 → 评估质量 → 循环优化
 
-### 2. 递归修订（Recursive Revision）
-- 文件：`app/agents/workflows/recursive_revision.py`
-- 端点：`POST /api/v1/revision/invoke`
-- 流程：分析结构 → 检测遗漏 → 生成修订 → 验证完整性
+### 2. 文档修订（Suggest Revision）
+- 文件：`app/agents/graphs/suggest_revision_graph.py`
+- 端点：`POST /api/v1/revision/suggest`
+- 流程：解析建议 → 执行修订 → 判断遗漏
 
 ### 3. 文档转原型（Doc-to-Prototype）
 - 文件：`app/agents/workflows/doc_to_prototype.py`

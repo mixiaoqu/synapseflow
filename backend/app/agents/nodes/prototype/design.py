@@ -2,6 +2,8 @@
 import json
 from typing import Dict, Any
 
+from loguru import logger
+
 from app.agents.states.prototype_state import DocToPrototypeState
 from app.core.llm import get_llm_for_design
 
@@ -69,16 +71,5 @@ async def design_components_node(state: DocToPrototypeState) -> Dict[str, Any]:
     if not design_system:
         design_system = {"colors": {"primary": "#3B82F6"}, "typography": {"font_family": "Inter, sans-serif"}}
 
-    print("\n" + "="*80)
-    print(f"[节点完成] 设计组件 (design_components)")
-    print("="*80)
-    print(f"[UI组件]: {len(components)} 个")
-    for i, comp in enumerate(components[:5], 1):
-        print(f"   {i}. <{comp.get('tag', 'div')}> - {', '.join(comp.get('classes', []))[:50]}")
-    if design_system.get("colors"):
-        print(f"\n[设计系统 - 颜色]:")
-        for k, v in list(design_system["colors"].items())[:5]:
-            print(f"   {k}: {v}")
-    print("="*80 + "\n")
-
+    logger.info("节点完成: design_components，设计了 {} 个 UI 组件", len(components))
     return {"ui_components": components, "design_system": design_system}

@@ -63,6 +63,7 @@ backend/uploads/
 backend/previews/
 backend/htmlcov/
 backend/coverage/
+backend/logs/
 
 # ---------- Frontend (Next.js) ----------
 frontend/node_modules/

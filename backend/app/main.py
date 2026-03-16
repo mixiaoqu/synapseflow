@@ -6,24 +6,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
+from app.core.logging_config import setup_logging
 from app.api.v1.router import api_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    # 启动时执行
-    print(f"[启动] {settings.PROJECT_NAME} v{settings.VERSION}")
-    
-    # 创建必要的目录
+    setup_logging()
+    from loguru import logger
+    logger.info("{} v{} 启动中", settings.PROJECT_NAME, settings.VERSION)
+
     os.makedirs(settings.PREVIEW_DIR, exist_ok=True)
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-    
-    print("[就绪] 应用启动完成")
+
+    logger.info("应用就绪，预览目录: {}", settings.PREVIEW_DIR)
     yield
-    
-    # 关闭时执行
-    print("[关闭] 应用已关闭")
+
+    logger.info("应用关闭")
 
 
 app = FastAPI(

@@ -8,7 +8,7 @@ import { usePathname } from 'next/navigation';
 
 const navItems = [
   { href: '/qa', icon: '💬', title: '迭代问答', desc: '知识库Q&A' },
-  { href: '/revision', icon: '📝', title: '递归修订', desc: '文档补全' },
+  { href: '/revision', icon: '📝', title: '文档修订', desc: '用户建议驱动' },
   { href: '/documents', icon: '📁', title: '文档库', desc: '上传与管理' },
   { href: '/prototype', icon: '🎨', title: '文档转原型', desc: '自动生成UI' },
 ];

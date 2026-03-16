@@ -10,6 +10,8 @@ from typing import AsyncGenerator, Dict, Any
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 
+from loguru import logger
+
 from app.models.schemas.prototype import PrototypeRequest
 from app.agents.graphs import create_doc_to_prototype_graph
 from app.utils.file_parser import extract_text_from_file
@@ -32,15 +34,10 @@ async def prototype_event_generator(
     - complete: 整个流程完成
     """
     
-    print("[Generator] prototype_event_generator 开始执行")
-    print(f"[Generator] 需求文档长度: {len(requirements)}")
-    
     try:
-        # 创建LangGraph实例
-        print("[Generator] 创建LangGraph实例")
+        logger.info("原型流式生成开始，需求长度={}", len(requirements))
         graph = create_doc_to_prototype_graph()
-        print("[Generator] LangGraph实例创建完成")
-        
+
         # 初始状态
         initial_state = {
             "requirements_doc": requirements,
@@ -55,7 +52,6 @@ async def prototype_event_generator(
         }
         
         # 发送开始事件
-        print("[Generator] 发送start事件")
         yield {
             "event": "start",
             "data": {
@@ -63,7 +59,6 @@ async def prototype_event_generator(
                 "timestamp": time.time()
             }
         }
-        print("[Generator] start事件已yield")
         
         # 节点名称映射（更友好的中文名）
         node_names = {
@@ -85,16 +80,10 @@ async def prototype_event_generator(
         node_start_times = {}
         
         # 流式执行LangGraph
-        print("[Generator] 开始流式执行LangGraph")
         async for chunk in graph.astream(initial_state):
-            # chunk格式: {节点名: 状态数据}
-            print(f"[Generator] 收到chunk: {list(chunk.keys())}")
-            
             for node_id, node_state in chunk.items():
                 node_name = node_names.get(node_id, node_id)
                 node_model = node_models.get(node_id, "Unknown")
-                
-                print(f"[DEBUG] 处理节点: {node_id}, 状态键: {list(node_state.keys())}")
                 
                 # 节点开始执行
                 if node_id not in node_start_times:
@@ -123,9 +112,6 @@ async def prototype_event_generator(
                 # 根据不同节点发送不同的有用信息
                 if node_id == "extract_requirements" and node_state.get("extracted_requirements"):
                     req_data = node_state["extracted_requirements"]
-                    
-                    # 推送详细的提取结果
-                    print(f"[SSE推送] node_output事件 - {node_id}")
                     output_data = {
                         "page_info": req_data.get("page_info", {}),
                         "functional_modules": req_data.get("functional_modules", []),
@@ -133,8 +119,6 @@ async def prototype_event_generator(
                         "data_model": req_data.get("data_model", []),
                         "visual_style": req_data.get("visual_style", {})
                     }
-                    print(f"[SSE推送] 输出数据键: {list(output_data.keys())}")
-                    
                     yield {
                         "event": "node_output",
                         "data": {
@@ -300,6 +284,8 @@ async def prototype_event_generator(
         
         # 获取最终结果
         final_state = node_state  # 最后一个chunk的state就是最终状态
+        duration = round(sum(time.time() - t for t in node_start_times.values()), 2)
+        logger.info("原型生成完成，总耗时={}s，预览={}", duration, final_state.get("preview_url", ""))
         
         # 发送完成事件（包含完整HTML以便前端可靠渲染预览）
         raw_preview_url = final_state.get("preview_url", "")
@@ -325,6 +311,7 @@ async def prototype_event_generator(
         }
     
     except Exception as e:
+        logger.exception("原型流式生成失败: {}", e)
         yield {
             "event": "error",
             "data": {
@@ -347,39 +334,17 @@ async def prototype_event_generator(
 async def generate_prototype_stream(request: PrototypeRequest):
     """
     流式生成原型（SSE）
-    
-    事件格式：
-    event: node_start
-    data: {"node_id": "extract", "node_name": "提取需求", "model": "Kimi"}
-    
-    event: log
-    data: {"node": "提取需求", "type": "info", "content": "开始执行..."}
-    
-    event: node_complete
-    data: {"node_id": "extract", "duration": 2.5}
-    
-    event: complete
-    data: {"html": "...", "css": "...", "preview_url": "..."}
+    事件格式：node_start, log, node_complete, complete
     """
-    print(f"[Endpoint] generate_prototype_stream 被调用，需求长度: {len(request.requirements)}")
-    
+    logger.info("POST /generate/stream 请求，需求长度={}", len(request.requirements))
     async def sse_generator():
         """SSE格式化生成器"""
-        print("[SSE Generator] sse_generator 开始执行")
         async for event_data in prototype_event_generator(request.requirements):
             event_type = event_data.get("event", "message")
             data = event_data.get("data", {})
-            print(f"[SSE Generator] 生成SSE事件: {event_type}")
-            
-            # 手动格式化SSE消息
             sse_message = f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-            print(f"[SSE Generator] SSE消息前50字符: {sse_message[:50]}")
             yield sse_message
-            
-            # 确保立即发送
             await asyncio.sleep(0)
-        
-        print("[SSE Generator] sse_generator 执行完毕")
 
     return StreamingResponse(
         sse_generator(),
@@ -399,6 +364,7 @@ async def generate_prototype_from_file(file: UploadFile = File(..., description=
     支持格式：.txt, .md, .pdf, .docx
     最大 10MB
     """
+    logger.info("POST /generate/stream/file 请求，文件名={}", file.filename)
     content = await file.read()
     text, err = extract_text_from_file(file.filename or "unknown", content)
     if err:

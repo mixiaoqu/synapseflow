@@ -46,3 +46,8 @@ class DocumentListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class DocumentContentUpdate(BaseModel):
+    """文档内容更新（用于替换/修订保存）"""
+    content: str = Field(..., description="更新后的文档内容")

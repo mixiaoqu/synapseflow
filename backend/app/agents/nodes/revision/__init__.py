@@ -1,14 +1,16 @@
-"""递归修订节点"""
-from app.agents.nodes.revision.analyze import analyze_structure_node
-from app.agents.nodes.revision.detect import detect_missing_node
-from app.agents.nodes.revision.revise import revise_node
-from app.agents.nodes.revision.validate import validate_node
-from app.agents.nodes.revision.routing import should_continue_revision
+"""用户建议驱动修订节点"""
+from app.agents.nodes.revision.parse_edit_request import parse_edit_request_node
+from app.agents.nodes.revision.extract_doc_structure import extract_doc_structure_node
+from app.agents.nodes.revision.chunk_document import chunk_document_node
+from app.agents.nodes.revision.retrieve_relevant_chunks import retrieve_relevant_chunks_node
+from app.agents.nodes.revision.locate_section import locate_section_node
+from app.agents.nodes.revision.revise_by_suggestions import revise_by_suggestions_node
 
 __all__ = [
-    "analyze_structure_node",
-    "detect_missing_node",
-    "revise_node",
-    "validate_node",
-    "should_continue_revision",
+    "parse_edit_request_node",
+    "extract_doc_structure_node",
+    "chunk_document_node",
+    "retrieve_relevant_chunks_node",
+    "locate_section_node",
+    "revise_by_suggestions_node",
 ]

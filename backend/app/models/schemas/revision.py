@@ -1,17 +1,15 @@
-"""文档修订相关Schema"""
+"""文档修订相关Schema（用户建议驱动）"""
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any
+from typing import List, Optional
 
 
-class RevisionRequest(BaseModel):
-    """文档修订请求"""
-    document: str = Field(..., description="原始文档内容")
-    max_iterations: int = Field(default=5, ge=1, le=10, description="最大迭代次数")
+class SuggestRevisionRequest(BaseModel):
+    """用户建议驱动修订请求"""
+    document: str = Field(..., description="待修订文档内容")
+    suggestions: str = Field(..., description="用户修订建议（自然语言）")
+    doc_id: Optional[int] = Field(default=None, description="若从文档库选择，则传文档ID")
 
 
-class RevisionResponse(BaseModel):
-    """文档修订响应"""
+class SuggestRevisionResponse(BaseModel):
+    """用户建议驱动修订响应"""
     revised_document: str = Field(..., description="修订后的文档")
-    revision_history: List[Dict[str, Any]] = Field(..., description="修订历史")
-    confidence: float = Field(..., description="完整性置信度")
-    iterations: int = Field(..., description="实际迭代次数")

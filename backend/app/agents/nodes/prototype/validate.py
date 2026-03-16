@@ -3,6 +3,8 @@ import os
 import hashlib
 from typing import Dict, Any
 
+from loguru import logger
+
 from app.agents.states.prototype_state import DocToPrototypeState
 from app.core.config import settings
 
@@ -40,19 +42,7 @@ async def validate_and_preview_node(state: DocToPrototypeState) -> Dict[str, Any
         f.write(full_html)
 
     preview_url = f"/preview/{file_hash}.html"
-
-    print("\n" + "="*80)
-    print(f"[节点完成] 验证预览 (validate_preview)")
-    print("="*80)
-    print(f"✅ 验证状态: {'通过' if len(validation_errors) == 0 else '有问题'}")
-    print(f"[预览文件]: {preview_path}")
-    print(f"[预览URL]: {preview_url}")
-    print(f"[HTML大小]: {len(full_html)} 字符")
-    if validation_errors:
-        print(f"⚠️  验证错误:")
-        for i, error in enumerate(validation_errors, 1):
-            print(f"   {i}. {error}")
-    print("="*80 + "\n")
+    logger.info("节点完成: validate_preview，预览={}，有效={}", preview_url, len(validation_errors) == 0)
 
     return {
         "generated_html": full_html,

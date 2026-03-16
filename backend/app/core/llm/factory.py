@@ -1,6 +1,8 @@
 """LLM工厂：统一管理不同的大模型，支持多provider动态切换"""
 from typing import Optional
 from langchain_openai import ChatOpenAI
+from loguru import logger
+
 from app.core.config import config_registry
 
 
@@ -35,19 +37,14 @@ class LLMFactory:
             "streaming": model_config["streaming"],
         }
         
-        # 如果有max_tokens，添加进去
-        if "max_tokens" in model_config:
+        # 仅当 max_tokens 有值时传入，None 表示不限制输出长度
+        if model_config.get("max_tokens") is not None:
             llm_kwargs["max_tokens"] = model_config["max_tokens"]
         
         # 应用覆盖参数
         llm_kwargs.update(override_kwargs)
-        
-        print(f"[LLMFactory] 创建ChatOpenAI实例:")
-        print(f"  - base_url: {llm_kwargs['base_url']}")
-        print(f"  - model: {llm_kwargs['model']}")
-        print(f"  - temperature: {llm_kwargs['temperature']}")
-        print(f"  - api_key: {'*' * 10 + llm_kwargs['api_key'][-8:] if llm_kwargs.get('api_key') else 'None'}")
-        
+
+        logger.debug("创建LLM实例: model_type={}, model={}", model_type, llm_kwargs.get("model"))
         return ChatOpenAI(**llm_kwargs)
 
 

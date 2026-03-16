@@ -3,6 +3,7 @@
 支持上传、列表、详情、删除、搜索、批量上传、批量删除
 """
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Query
+from loguru import logger
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +14,11 @@ from app.models.schemas.document import (
     DocumentResponse,
     DocumentListItem,
     DocumentListResponse,
+    DocumentContentUpdate,
+    DocumentCreate,
 )
+
+# 注意：/from-content 必须定义在 /{doc_id} 之前
 from app.utils.file_parser import extract_text_from_file, SUPPORTED_EXTENSIONS, MAX_FILE_SIZE
 
 router = APIRouter()
@@ -73,8 +78,9 @@ async def upload_document(
     await db.refresh(doc)
     try:
         await index_document(db, doc.id, doc.content)
-    except Exception:
-        pass  # 索引失败不阻塞上传，可通过重索引 API 修复
+    except Exception as e:
+        logger.warning("文档索引失败 doc_id={}: {}", doc.id, e)
+    logger.info("文档上传成功 id={} title={}", doc.id, doc.title)
     return doc
 
 
@@ -122,6 +128,37 @@ async def upload_documents_batch(
         except Exception:
             pass
     return created
+
+
+@router.post("/from-content", response_model=DocumentResponse)
+async def create_document_from_content(
+    body: DocumentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    从文本内容创建文档（用于粘贴文档后保存到知识库）
+    """
+    if not body.content.strip():
+        raise HTTPException(status_code=400, detail="文档内容不能为空")
+    title = (body.title or "").strip() or "未命名文档"
+    size = len(body.content.encode("utf-8"))
+    doc = Document(
+        user_id=DEFAULT_USER_ID,
+        title=title,
+        content=body.content,
+        document_type=body.document_type or "txt",
+        size=size,
+        version=1,
+    )
+    db.add(doc)
+    await db.commit()
+    await db.refresh(doc)
+    try:
+        await index_document(db, doc.id, doc.content)
+    except Exception as e:
+        logger.warning("文档索引失败 doc_id={}: {}", doc.id, e)
+    logger.info("从内容创建文档 id={} title={}", doc.id, doc.title)
+    return doc
 
 
 @router.get("", response_model=DocumentListResponse)
@@ -182,9 +219,6 @@ async def get_document(
     result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc:
-        # 调试：若经常 404，可取消下行注释查看库中实际 id
-        # all_ids = (await db.execute(select(Document.id))).scalars().all()
-        # print(f"[documents] 请求 id={doc_id}，库中存在的 id: {all_ids}")
         raise HTTPException(status_code=404, detail="文档不存在")
     size = getattr(doc, "size", 0) or len((doc.content or "").encode("utf-8"))
     return DocumentResponse(
@@ -204,8 +238,10 @@ async def reindex_all_documents(db: AsyncSession = Depends(get_db)):
     """全量重索引：对所有文档重新建立向量索引"""
     try:
         count = await reindex_all()
+        logger.info("全量重索引完成，共 {} 篇文档", count)
         return {"message": f"已重索引 {count} 篇文档", "indexed": count}
     except Exception as e:
+        logger.exception("全量重索引失败: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -226,6 +262,88 @@ async def index_single_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/{doc_id}/content", response_model=DocumentResponse)
+async def replace_document_content(
+    doc_id: int,
+    body: DocumentContentUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    替换文档内容：用新内容覆盖原文档（修订后保存用）
+    """
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.user_id == DEFAULT_USER_ID)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    doc.content = body.content
+    doc.size = len(body.content.encode("utf-8"))
+    await db.commit()
+    await db.refresh(doc)
+    try:
+        await index_document(db, doc.id, doc.content)
+    except Exception as e:
+        logger.warning("文档索引失败 doc_id={}: {}", doc.id, e)
+    logger.info("文档内容已替换 id={}", doc_id)
+    size = getattr(doc, "size", 0) or len((doc.content or "").encode("utf-8"))
+    return DocumentResponse(
+        id=doc.id,
+        title=doc.title,
+        content=doc.content or "",
+        document_type=doc.document_type,
+        size=size,
+        version=getattr(doc, "version", 1),
+        created_at=doc.created_at,
+        updated_at=doc.updated_at,
+    )
+
+
+@router.post("/{doc_id}/versions", response_model=DocumentResponse)
+async def create_document_version(
+    doc_id: int,
+    body: DocumentContentUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    作为新版本保存：保留原文档，创建新文档存储修订内容
+    """
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.user_id == DEFAULT_USER_ID)
+    )
+    orig = result.scalar_one_or_none()
+    if not orig:
+        raise HTTPException(status_code=404, detail="原文档不存在")
+    title = f"{orig.title} - 修订版"
+    size = len(body.content.encode("utf-8"))
+    new_doc = Document(
+        user_id=DEFAULT_USER_ID,
+        title=title,
+        content=body.content,
+        document_type=orig.document_type,
+        size=size,
+        version=1,
+    )
+    db.add(new_doc)
+    await db.commit()
+    await db.refresh(new_doc)
+    try:
+        await index_document(db, new_doc.id, new_doc.content)
+    except Exception as e:
+        logger.warning("文档索引失败 doc_id={}: {}", new_doc.id, e)
+    logger.info("新建修订版文档 id={} 源于 doc_id={}", new_doc.id, doc_id)
+    return DocumentResponse(
+        id=new_doc.id,
+        title=new_doc.title,
+        content=new_doc.content or "",
+        document_type=new_doc.document_type,
+        size=size,
+        version=1,
+        created_at=new_doc.created_at,
+        updated_at=new_doc.updated_at,
+    )
+
+
 @router.delete("/batch/delete")
 async def delete_documents_batch(
     ids: list[int] = Query(..., description="要删除的文档ID列表"),
@@ -244,6 +362,7 @@ async def delete_documents_batch(
     for d in docs:
         await db.delete(d)
     await db.commit()
+    logger.info("批量删除文档 ids={}, 实际删除 {} 篇", ids, len(docs))
     return {"message": f"已删除 {len(docs)} 篇文档", "deleted": len(docs)}
 
 
@@ -262,4 +381,5 @@ async def delete_document(
         raise HTTPException(status_code=404, detail=f"文档不存在(id={doc_id}, 当前库中共{cnt}篇)")
     await db.delete(doc)
     await db.commit()
+    logger.info("删除文档 id={} title={}", doc_id, doc.title)
     return {"message": "删除成功"}
