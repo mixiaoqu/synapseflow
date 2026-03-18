@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
 
+    # --- LangSmith 可观测性 ---
+    LANGSMITH_TRACING: bool = False
+    LANGSMITH_API_KEY: str = ""
+    LANGSMITH_PROJECT: Optional[str] = None
+    LANGSMITH_WORKSPACE_ID: Optional[str] = None
+
     # --- 日志配置（优先于 config/logging.yaml）---
     LOG_LEVEL: Optional[str] = None
     LOG_JSON: Optional[bool] = None

@@ -17,6 +17,15 @@ async def lifespan(app: FastAPI):
     from loguru import logger
     logger.info("{} v{} 启动中", settings.PROJECT_NAME, settings.VERSION)
 
+    if settings.LANGSMITH_TRACING and settings.LANGSMITH_API_KEY:
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = settings.LANGSMITH_API_KEY
+        if settings.LANGSMITH_PROJECT:
+            os.environ["LANGSMITH_PROJECT"] = settings.LANGSMITH_PROJECT
+        if settings.LANGSMITH_WORKSPACE_ID:
+            os.environ["LANGSMITH_WORKSPACE_ID"] = settings.LANGSMITH_WORKSPACE_ID
+        logger.info("LangSmith 追踪已启用")
+
     os.makedirs(settings.PREVIEW_DIR, exist_ok=True)
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 
