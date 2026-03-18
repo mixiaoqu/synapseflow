@@ -84,11 +84,6 @@ class ConfigRegistry:
         """获取 prompt 模板（config/prompt_templates.yaml）"""
         return load_prompt_templates_raw()
 
-    def get_scenario_mapping(self) -> Dict[str, Dict[str, str]]:
-        """获取场景与模型的映射关系（config/models.yaml）"""
-        data = load_models_raw()
-        return data.get("scenario_model_mapping", {})
-
     @property
     def llm_configured(self) -> bool:
         """是否已配置 LLM provider 的 api_key"""

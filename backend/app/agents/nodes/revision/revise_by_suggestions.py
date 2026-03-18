@@ -9,7 +9,7 @@ from app.agents.nodes.revision.chunk_utils import (
     split_document_into_chunks,
     CHUNK_CHAR_LIMIT,
 )
-from app.core.llm import get_llm_for_content_gen
+from app.core.llm import get_llm_for_generation
 
 
 # 小文档可直接整篇修订，超过此长度则分段
@@ -188,7 +188,7 @@ async def revise_by_suggestions_node(state: UserDrivenRevisionState) -> Dict[str
         for i, t in enumerate(tasks)
     )
 
-    llm = get_llm_for_content_gen(max_tokens=4096)
+    llm = get_llm_for_generation
 
     if len(current_doc) <= SMALL_DOC_CHAR_LIMIT:
         # 小文档：整篇一次性修订

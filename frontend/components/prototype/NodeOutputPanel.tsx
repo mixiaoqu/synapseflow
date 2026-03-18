@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { AgentNode } from '@/stores/prototypeStore';
 
 interface Props {
-  nodes: AgentNode[];
+  nodes: (AgentNode | { id: string; name: string; model: string; status: string; detailedOutput?: any })[];
 }
 
 export function NodeOutputPanel({ nodes }: Props) {
@@ -73,7 +73,7 @@ export function NodeOutputPanel({ nodes }: Props) {
   );
 }
 
-function renderNodeOutput(node: AgentNode) {
+function renderNodeOutput(node: AgentNode | { id: string; detailedOutput?: any }) {
   const output = node.detailedOutput;
 
   if (!output) return null;
@@ -91,9 +91,69 @@ function renderNodeOutput(node: AgentNode) {
     case 'validate_preview':
       return <ValidateOutput output={output} />;
     
+    case 'parse_suggestions':
+      return <ParseSuggestionsOutput output={output} />;
+    
+    case 'analyze_document':
+      return <AnalyzeDocumentOutput output={output} />;
+    
+    case 'locate_edits':
+      return <LocateEditsOutput output={output} />;
+    
+    case 'revise':
+      return <ReviseOutput output={output} />;
+    
     default:
       return <pre className="text-xs text-gray-600 overflow-x-auto">{JSON.stringify(output, null, 2)}</pre>;
   }
+}
+
+function ParseSuggestionsOutput({ output }: { output: any }) {
+  const tasks = output.parsed_tasks || [];
+  return (
+    <div className="space-y-2">
+      <h4 className="font-semibold text-sm text-gray-700">解析任务 ({tasks.length} 条)</h4>
+      {tasks.map((t: any, i: number) => (
+        <div key={i} className="p-2 bg-gray-50 rounded border-l-4 border-blue-500 text-sm">
+          <span className="font-medium text-blue-700">{t.action}</span> @ {t.target}: {t.content_requirement}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AnalyzeDocumentOutput({ output }: { output: any }) {
+  const chunks = output.chunks_meta || [];
+  const structure = output.doc_structure || [];
+  return (
+    <div className="space-y-2">
+      <div className="text-sm"><span className="text-gray-500">章节:</span> {structure.length} 个顶层</div>
+      <div className="text-sm"><span className="text-gray-500">分块:</span> {chunks.length} 块</div>
+    </div>
+  );
+}
+
+function LocateEditsOutput({ output }: { output: any }) {
+  const indices = output.affected_chunk_indices || [];
+  const hints = output.section_hints || {};
+  return (
+    <div className="space-y-2">
+      <div className="text-sm"><span className="text-gray-500">受影响块:</span> {indices.join(', ')}</div>
+      {Object.keys(hints).length > 0 && (
+        <div className="text-xs text-gray-600">{Object.keys(hints).length} 个块有修订提示</div>
+      )}
+    </div>
+  );
+}
+
+function ReviseOutput({ output }: { output: any }) {
+  const doc = output.revised_document || '';
+  return (
+    <div className="space-y-2">
+      <div className="text-sm text-green-700 font-medium">✓ 修订完成</div>
+      {doc && <pre className="text-xs text-gray-600 max-h-48 overflow-auto bg-gray-50 p-2 rounded">{doc.slice(0, 500)}{doc.length > 500 ? '...' : ''}</pre>}
+    </div>
+  );
 }
 
 function ExtractRequirementsOutput({ output }: { output: any }) {

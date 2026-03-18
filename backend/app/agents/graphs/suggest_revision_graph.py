@@ -2,35 +2,29 @@
 from langgraph.graph import StateGraph, END
 
 from app.agents.states.revision_state import UserDrivenRevisionState
-from app.agents.nodes.revision.parse_edit_request import parse_edit_request_node
-from app.agents.nodes.revision.extract_doc_structure import extract_doc_structure_node
-from app.agents.nodes.revision.chunk_document import chunk_document_node
-from app.agents.nodes.revision.retrieve_relevant_chunks import retrieve_relevant_chunks_node
-from app.agents.nodes.revision.locate_section import locate_section_node
-from app.agents.nodes.revision.revise_by_suggestions import revise_by_suggestions_node
+from app.agents.nodes.revision.parse_suggestions import parse_suggestions_node
+from app.agents.nodes.revision.analyze_document import analyze_document_node
+from app.agents.nodes.revision.locate_edits import locate_edits_node
+from app.agents.nodes.revision.revise import revise_node
 
 
 def create_suggest_revision_graph():
     """
-    创建用户建议驱动修订图
-    流程：parse_edit_request -> extract_doc_structure -> chunk_document
-         -> retrieve_relevant_chunks -> locate_section -> revise_by_suggestions -> END
+    创建用户建议驱动修订图。
+    流程：parse_suggestions -> analyze_document -> locate_edits -> revise -> END
+    一次性执行，无中断。
     """
     workflow = StateGraph(UserDrivenRevisionState)
 
-    workflow.add_node("parse_edit_request", parse_edit_request_node)
-    workflow.add_node("extract_doc_structure", extract_doc_structure_node)
-    workflow.add_node("chunk_document", chunk_document_node)
-    workflow.add_node("retrieve_relevant_chunks", retrieve_relevant_chunks_node)
-    workflow.add_node("locate_section", locate_section_node)
-    workflow.add_node("revise_by_suggestions", revise_by_suggestions_node)
+    workflow.add_node("parse_suggestions", parse_suggestions_node)
+    workflow.add_node("analyze_document", analyze_document_node)
+    workflow.add_node("locate_edits", locate_edits_node)
+    workflow.add_node("revise", revise_node)
 
-    workflow.set_entry_point("parse_edit_request")
-    workflow.add_edge("parse_edit_request", "extract_doc_structure")
-    workflow.add_edge("extract_doc_structure", "chunk_document")
-    workflow.add_edge("chunk_document", "retrieve_relevant_chunks")
-    workflow.add_edge("retrieve_relevant_chunks", "locate_section")
-    workflow.add_edge("locate_section", "revise_by_suggestions")
-    workflow.add_edge("revise_by_suggestions", END)
+    workflow.set_entry_point("parse_suggestions")
+    workflow.add_edge("parse_suggestions", "analyze_document")
+    workflow.add_edge("analyze_document", "locate_edits")
+    workflow.add_edge("locate_edits", "revise")
+    workflow.add_edge("revise", END)
 
     return workflow.compile()

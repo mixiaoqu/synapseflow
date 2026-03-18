@@ -5,7 +5,7 @@ from typing import Dict, Any
 from loguru import logger
 
 from app.agents.states.prototype_state import DocToPrototypeState
-from app.core.llm import get_llm_for_long_text
+from app.core.llm import get_llm_for_analysis
 
 from app.agents.nodes.prototype.utils import (
     parse_json_safely,
@@ -17,10 +17,10 @@ from app.agents.nodes.prototype.utils import (
 async def extract_requirements_node(state: DocToPrototypeState) -> Dict[str, Any]:
     """
     需求提取节点：理解任意格式的需求文档
-    使用：long_text_understanding - Kimi长文本理解（temperature=0.4）
+    使用：analysis - 分析理解模型
     """
     logger.info("节点开始: extract_requirements，需求长度={}", len(state["requirements_doc"]))
-    llm = get_llm_for_long_text()
+    llm = get_llm_for_analysis()
 
     prompt = f"""你是一个资深的产品设计师和前端架构师，擅长从各种格式的需求文档中提取UI设计需求。
 

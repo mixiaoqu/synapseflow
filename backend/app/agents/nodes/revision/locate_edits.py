@@ -1,4 +1,4 @@
-"""根据 parsed_tasks 的 target 检索受影响的 chunk 索引"""
+"""定位受影响的 chunk 并生成修订提示"""
 import re
 from typing import Dict, Any, List, Set
 
@@ -29,9 +29,7 @@ def _parse_chinese_number(s: str) -> int:
     return 0
 
 
-def _flatten_doc_structure(
-    tree: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+def _flatten_doc_structure(tree: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """将章节树扁平化为 (level, title, start, end) 列表"""
     result: List[Dict[str, Any]] = []
 
@@ -67,7 +65,7 @@ def _map_targets_to_chunks(
     doc_structure: List[Dict[str, Any]],
 ) -> Set[int]:
     """
-    将 target 映射到受影响的 chunk 索引。
+    将 parsed_tasks 的 target 映射到受影响的 chunk 索引。
     优先使用 doc_structure 的区间重叠做精确定位。
     """
     n = len(chunks_meta)
@@ -81,11 +79,16 @@ def _map_targets_to_chunks(
 
     full_doc_keywords = ("全文", "整体", "全部", "整篇", "全文档", "整个文档")
     start_keywords = ("开头", "开头部分", "首段", "第一段", "引言", "前言", "开篇")
-    end_keywords = ("结尾", "末尾", "最后", "最后一段", "总结", "结语")
+    # 包含「末尾/结尾」类表述，用于「在末尾添加」等场景，只修订最后一块
+    end_keywords = (
+        "结尾", "末尾", "最后", "最后一段", "总结", "结语",
+        "文档末尾", "文档结尾", "在末尾", "于末尾",
+    )
 
     for t in tasks:
         target = (t.get("target") or "").strip()
         if not target:
+            logger.info("  task target 为空 -> 全部块受影响")
             affected.update(range(n))
             continue
 
@@ -166,22 +169,43 @@ def _map_targets_to_chunks(
     return affected if affected else set(range(n))
 
 
-async def retrieve_relevant_chunks_node(state: UserDrivenRevisionState) -> Dict[str, Any]:
-    """
-    根据 parsed_tasks 的 target 检索受影响的 chunk 索引。
-    优先使用 doc_structure + chunks_positions 做区间重叠精确定位。
+def _build_section_hints(
+    tasks: List[Dict[str, Any]],
+    affected_indices: List[int],
+    chunks_meta: List[ChunkWithMeta],
+) -> Dict[int, str]:
+    """为每个受影响的 chunk 生成修订提示"""
+    hints: Dict[int, str] = {}
+    for idx in affected_indices:
+        chunk_tasks = []
+        for t in tasks:
+            target = (t.get("target") or "").strip()
+            action = t.get("action", "modify")
+            req = t.get("content_requirement", "")
+            if target and req:
+                chunk_tasks.append(f"目标「{target}」: {action} - {req}")
+        if chunk_tasks:
+            hints[idx] = "本块相关任务: " + "; ".join(chunk_tasks)
+    return hints
 
-    输入：parsed_tasks, chunks_meta, chunks_positions, doc_structure
-    输出：affected_chunk_indices
+
+async def locate_edits_node(state: UserDrivenRevisionState) -> Dict[str, Any]:
     """
+    根据 parsed_tasks 定位受影响的 chunk，并生成每块的修订提示。
+
+    输入：parsed_tasks, doc_structure, chunks_meta, chunks_positions
+    输出：affected_chunk_indices, section_hints
+    """
+    logger.info("[修订 3/4] locate_edits 开始 - 定位受影响块并生成修订提示")
+
     tasks = state.get("parsed_tasks", [])
     chunks_meta = state.get("chunks_meta", [])
     chunks_positions = state.get("chunks_positions", [])
     doc_structure = state.get("doc_structure", [])
 
     if not tasks:
-        logger.info("无 parsed_tasks，受影响块为空")
-        return {"affected_chunk_indices": []}
+        logger.info("[修订 3/4] locate_edits 完成 - 无任务，受影响块为空")
+        return {"affected_chunk_indices": [], "section_hints": {}}
 
     affected = _map_targets_to_chunks(
         tasks,
@@ -190,12 +214,13 @@ async def retrieve_relevant_chunks_node(state: UserDrivenRevisionState) -> Dict[
         doc_structure,
     )
     affected_list = sorted(affected)
+    section_hints = _build_section_hints(tasks, affected_list, chunks_meta)
 
     logger.info(
-        "检索相关块 (retrieve_relevant_chunks): 共 {} 块, 受影响 {} 块 -> {}",
+        "[修订 3/4] locate_edits 完成 - 共 {} 块, 需修订 {} 块: {}",
         len(chunks_meta),
         len(affected_list),
-        affected_list,
+        affected_list[:20] if len(affected_list) > 20 else affected_list,
     )
 
-    return {"affected_chunk_indices": affected_list}
+    return {"affected_chunk_indices": affected_list, "section_hints": section_hints}

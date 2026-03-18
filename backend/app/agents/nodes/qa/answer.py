@@ -2,15 +2,14 @@
 from typing import Dict, Any
 
 from app.agents.states import IterativeQAState
-from app.core.llm import get_llm_for_content_gen
+from app.core.llm import get_llm_for_generation
 
 
 async def answer_node(state: IterativeQAState) -> Dict[str, Any]:
     """
     生成答案节点：生成详细、准确的答案
-    使用：content_generation - Kimi内容生成（temperature=0.7）
     """
-    llm = get_llm_for_content_gen()
+    llm = get_llm_for_generation()
     
     prompt = f"""
 基于以下知识库内容回答用户问题。

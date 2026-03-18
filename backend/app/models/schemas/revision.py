@@ -1,6 +1,6 @@
 """文档修订相关Schema（用户建议驱动）"""
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Optional
 
 
 class SuggestRevisionRequest(BaseModel):

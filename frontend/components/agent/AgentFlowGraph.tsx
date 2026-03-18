@@ -113,7 +113,21 @@ function getOutputSummary(data: any): string {
   } else if (data.id === 'validate_preview') {
     return output.is_valid ? '✓ 验证通过' : '⚠ 有问题';
   }
-  
+  if (data.id === 'parse_suggestions') {
+    const n = output.parsed_tasks?.length ?? 0;
+    return `${n} 条任务`;
+  }
+  if (data.id === 'analyze_document') {
+    const chunks = output.chunks_meta?.length ?? 0;
+    return `${chunks} 个块`;
+  }
+  if (data.id === 'locate_edits') {
+    const affected = output.affected_chunk_indices?.length ?? 0;
+    return `${affected} 块待修改`;
+  }
+  if (data.id === 'revise') {
+    return output.revised_document ? '✓ 修订完成' : '处理中';
+  }
   return '已完成';
 }
 

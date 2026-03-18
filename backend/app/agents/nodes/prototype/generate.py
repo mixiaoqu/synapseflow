@@ -5,7 +5,7 @@ from typing import Dict, Any
 from loguru import logger
 
 from app.agents.states.prototype_state import DocToPrototypeState
-from app.core.llm import get_llm_for_code_gen
+from app.core.llm import get_llm_for_generation
 
 
 def _truncate_for_prompt(obj: Any, max_chars: int = 6000) -> str:
@@ -17,9 +17,9 @@ def _truncate_for_prompt(obj: Any, max_chars: int = 6000) -> str:
 async def generate_html_node(state: DocToPrototypeState) -> Dict[str, Any]:
     """
     HTML生成节点：生成完整的独立HTML页面（内联CSS+JS）
-    使用：code_generation 
+    使用：generation - 生成内容模型
     """
-    llm = get_llm_for_code_gen()
+    llm = get_llm_for_generation()
 
     req = state["extracted_requirements"]
     page_info = req.get("page_info", {})

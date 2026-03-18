@@ -28,10 +28,6 @@ const DiffEditor = dynamic(
   }
 );
 
-const API_BASE =
-  (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) ||
-  'http://localhost:8000';
-
 export default function RevisionPage() {
   const [originalDoc, setOriginalDoc] = useState('');
   const [currentDoc, setCurrentDoc] = useState('');

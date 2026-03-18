@@ -1,5 +1,5 @@
 # LLM模型配置文件
-# 根据SynapseFlow项目特点优化配置
+# 模型按能力分为5类：planner | analysis | generation | tool | rerank（embedding 见 config/embedding.yaml）
 
 # API密钥环境变量映射
 api_keys:
@@ -8,6 +8,8 @@ api_keys:
   siliconflow: SILICONFLOW_API_KEY
   modelscope: MODELSCOPE_API_KEY
   aihubmix: AIHUBMIX_API_KEY
+  openrouter: OPENROUTER_API_KEY
+  dashscope: DASHSCOPE_API_KEY
 
 # Provider配置
 providers:
@@ -26,162 +28,72 @@ providers:
   aihubmix:
     api_base: https://aihubmix.com/v1
     description: AIHubMix 多模型代理，kimi-for-coding-free 等
+  openrouter:
+    api_base: https://openrouter.ai/api/v1
+    description: OpenRouter 多模型代理，stepfun/step-3.5-flash:free 等
+  dashscope:
+    api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
+    description: 阿里云通义千问 DashScope 兼容模式，qwen3-max 等
 
-# 模型配置（按任务类型细分）- 全部使用 DeepSeek deepseek-chat
+# 模型配置（5类）
 models:
-  # 1. 长文本理解：处理长文档、理解复杂需求（改用 aihubmix 省算力）
-  long_text_understanding:
-    provider: aihubmix
-    model: kimi-for-coding-free
-    name: 长文本理解模型
+  # 1. planner - 规划任务：设计组件架构、选择方案、拆解步骤
+  planner:
+    provider: dashscope
+    model: qwen3-max
+    name: 规划任务模型
     temperature: 0.4
+    request_timeout: 90
+    streaming: true
+    tasks:
+      - 设计HTML组件架构
+      - 选择设计系统配色
+      - 拆解任务步骤
+
+  # 2. analysis - 分析理解：长文本理解、结构化提取、质量评估、内容检测
+  analysis:
+    provider: dashscope
+    model: qwen3-max
+    name: 分析理解模型
+    temperature: 0.3
     request_timeout: 180
     streaming: true
     tasks:
-      - 场景1：理解用户复杂问题
-      - 场景2：分析长文档结构
-      - 场景3：提取任意格式的需求文档
+      - 理解用户复杂问题
+      - 提取文档结构和需求
+      - 评估答案质量
+      - 检测逻辑遗漏
 
-  # 2. 内容生成：生成文章、答案、修订内容（改用 aihubmix 省算力）
-  content_generation:
-    provider: aihubmix
-    model: kimi-for-coding-free
-    name: 内容生成模型
-    temperature: 0.7
+  # 3. generation - 生成内容：文本、代码、修订内容
+  generation:
+    provider: dashscope
+    model: qwen3-max
+    name: 生成内容模型
+    temperature: 0.5
     request_timeout: 180
     streaming: true
     tasks:
-      - 场景1：生成详细答案
-      - 场景2：生成文档补充内容
+      - 生成详细答案
+      - 生成文档补充内容
+      - 生成HTML/CSS/JS代码
 
-  # 3. 代码生成：生成HTML/CSS/JavaScript代码（改用 aihubmix 省算力）
-  code_generation:
-    provider: aihubmix
-    model: kimi-for-coding-free
-    name: 代码生成模型
+  # 4. tool - 调用工具：函数调用、API调用、工具选择
+  tool:
+    provider: dashscope
+    model: qwen3-max
+    name: 工具调用模型
     temperature: 0.2
-    request_timeout: 180
-    streaming: true
-    tasks:
-      - 场景3：生成HTML结构
-      - 场景3：生成CSS样式
-      - 场景3：生成JavaScript交互
-
-  # 4. 快速评估：质量评估、打分、判断
-  quick_evaluation:
-    provider: deepseek
-    model: deepseek-chat
-    name: 快速评估模型
-    temperature: 0.3
     request_timeout: 60
     streaming: false
     tasks:
-      - 场景1：评估答案质量（0-1打分）
-      - 场景2：验证文档完整性
+      - 函数/工具选择
+      - API调用决策
 
-  # 5. 结构化提取：从文本中提取结构化信息
-  structured_extraction:
-    provider: aihubmix
-    model: kimi-for-coding-free
-    name: 结构化提取模型
-    temperature: 0.3
-    request_timeout: 120
-    streaming: true
+  # 5. rerank - 排序：检索结果重排序
+  rerank:
+    provider: siliconflow
+    model: BAAI/bge-reranker-base
+    name: 重排序模型
+    request_timeout: 30
     tasks:
-      - 场景2：提取文档大纲和框架
-      - 场景3：提取UI组件和数据模型
-
-  # 6. 设计决策：设计组件架构、选择方案
-  design_decision:
-    provider: deepseek
-    model: deepseek-chat
-    name: 设计决策模型
-    temperature: 0.4
-    request_timeout: 90
-    streaming: true
-    tasks:
-      - 场景3：设计HTML组件架构
-      - 场景3：选择设计系统配色
-
-  # 7. 遗漏检测：发现文档中缺失的内容
-  content_detection:
-    provider: deepseek
-    model: deepseek-chat
-    name: 内容检测模型
-    temperature: 0.3
-    request_timeout: 90
-    streaming: true
-    tasks:
-      - 场景2：检测文档逻辑遗漏
-
-  # 8. 代码验证：验证生成的代码质量
-  code_validation:
-    provider: deepseek
-    model: deepseek-chat
-    name: 代码验证模型
-    temperature: 0.1
-    request_timeout: 60
-    streaming: false
-    tasks:
-      - 场景3：验证HTML/CSS/JS语法
-
-# 场景与模型映射（精确匹配）
-scenario_model_mapping:
-  iterative_qa:
-    retrieve: long_text_understanding # 理解用户问题上下文
-    answer: content_generation # 生成详细答案
-    evaluate: quick_evaluation # 快速评估质量
-
-  recursive_revision:
-    analyze: structured_extraction # 提取文档结构
-    detect: content_detection # 检测逻辑遗漏
-    revise: content_generation # 生成补充内容
-    validate: quick_evaluation # 验证完整性
-
-  doc_to_prototype:
-    extract: long_text_understanding # 理解任意格式需求
-    design: design_decision # 设计组件架构
-    generate_html: code_generation # 生成HTML代码
-    validate: code_validation # 验证代码语法
-
-# 任务类型说明
-task_type_guide:
-  long_text_understanding:
-    description: 处理超长文档（>10K字符）、理解复杂语义
-    best_for: 需求文档、用户问题、文档分析
-    model: Kimi 128K
-
-  content_generation:
-    description: 生成文章、答案、创意内容
-    best_for: 回答问题、文档补充、内容创作
-    model: Kimi
-
-  code_generation:
-    description: 生成代码（HTML/CSS/JS/Python等）
-    best_for: 前端代码、后端逻辑、脚本生成
-    model: Kimi-K2.5（ModelScope）
-
-  quick_evaluation:
-    description: 快速评分、判断、决策
-    best_for: 质量打分、完整性检查、简单判断
-    model: Kimi-K2.5（ModelScope）
-
-  structured_extraction:
-    description: 从非结构化文本提取结构化数据
-    best_for: 提取JSON、解析大纲、识别字段
-    model: Kimi（理解能力强）
-
-  design_decision:
-    description: 设计方案选择、架构决策
-    best_for: 组件选择、配色方案、布局设计
-    model: Kimi-K2.5（ModelScope）
-
-  content_detection:
-    description: 检测文本中的遗漏、错误、问题
-    best_for: 发现缺失内容、找出逻辑漏洞
-    model: Kimi-K2.5（ModelScope）
-
-  code_validation:
-    description: 验证代码语法、检查错误
-    best_for: 语法检查、规范验证
-    model: Kimi-K2.5（ModelScope）
+      - 检索结果精排

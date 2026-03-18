@@ -3,7 +3,7 @@ import json
 from typing import Dict, Any
 
 from app.agents.states import IterativeQAState
-from app.core.llm import get_llm_for_evaluation
+from app.core.llm import get_llm_for_analysis
 
 
 # 知识库约束：单次问题长度建议
@@ -28,7 +28,7 @@ async def query_optimizer_node(state: IterativeQAState) -> Dict[str, Any]:
         if len(query.encode("utf-8")) <= MAX_QUESTION_BYTES:
             return {"optimized_query": query.strip()}
         # 超长：用 LLM 提取一个最核心的子问题
-        llm = get_llm_for_evaluation()
+        llm = get_llm_for_analysis()
         prompt = f"""
 用户的问题过长（超过{MAX_QUESTION_BYTES}字节），需要精简为适合知识库检索的核心问题。
 
@@ -50,7 +50,7 @@ async def query_optimizer_node(state: IterativeQAState) -> Dict[str, Any]:
     if not last_feedback:
         return {"optimized_query": query}
 
-    llm = get_llm_for_evaluation()
+    llm = get_llm_for_analysis()
     feedback_str = json.dumps(last_feedback, ensure_ascii=False)
     prompt = f"""
 上一轮问答未达标，请根据评估反馈优化问题后重新提问。

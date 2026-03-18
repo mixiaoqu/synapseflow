@@ -3,7 +3,7 @@ import json
 from typing import Dict, Any
 
 from app.agents.states import IterativeQAState
-from app.core.llm import get_llm_for_evaluation
+from app.core.llm import get_llm_for_analysis
 
 
 async def evaluate_node(state: IterativeQAState) -> Dict[str, Any]:
@@ -11,7 +11,7 @@ async def evaluate_node(state: IterativeQAState) -> Dict[str, Any]:
     评估节点：快速评估答案质量并打分，并记录迭代历史
     使用：quick_evaluation - Deepseek快速评估（temperature=0.3）
     """
-    llm = get_llm_for_evaluation()
+    llm = get_llm_for_analysis()
 
     # 用于本轮展示的问题（优先用优化后的问题）
     current_query = state.get("optimized_query") or state.get("query", "")
