@@ -9,6 +9,7 @@ class DocumentCreate(BaseModel):
     title: str = Field(..., description="文档标题")
     content: str = Field(..., description="文档内容")
     document_type: Optional[str] = Field(None, description="文档类型 txt/md/pdf/docx")
+    collection_id: Optional[int] = Field(None, description="所属集合 ID")
 
 
 class DocumentResponse(BaseModel):
@@ -33,6 +34,9 @@ class DocumentListItem(BaseModel):
     document_type: Optional[str] = None
     size: int = 0
     version: int = 1
+    indexed: bool = False
+    collection_id: Optional[int] = None
+    collection_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -51,3 +55,20 @@ class DocumentListResponse(BaseModel):
 class DocumentContentUpdate(BaseModel):
     """文档内容更新（用于替换/修订保存）"""
     content: str = Field(..., description="更新后的文档内容")
+
+
+class DocumentVersionItem(BaseModel):
+    """版本历史项"""
+    id: int
+    title: str
+    version: int
+    is_latest: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DocumentVersionsResponse(BaseModel):
+    """版本历史响应"""
+    items: list[DocumentVersionItem]

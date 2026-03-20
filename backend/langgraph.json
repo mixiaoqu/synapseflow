@@ -7,5 +7,5 @@
     "suggest_revision": "./app/agents/graphs/suggest_revision_graph.py:create_suggest_revision_graph",
     "doc_to_prototype": "./app/agents/graphs/prototype_graph.py:create_doc_to_prototype_graph"
   },
-  "env": ".env"
+  "env": "langgraph.env"
 }

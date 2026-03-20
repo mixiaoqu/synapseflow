@@ -43,8 +43,20 @@ class Settings(BaseSettings):
     AIHUBMIX_API_KEY: str = ""
 
     # --- 向量数据库配置（本地 BGE 中文嵌入）---
-    EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
-    VECTOR_DIMENSION: int = 512
+    EMBEDDING_MODEL: str = "BAAI/bge-m3"
+    VECTOR_DIMENSION: int = 1024
+
+    # --- 阿里云百炼（DashScope）---
+    DASHSCOPE_API_KEY: str = ""
+
+    # --- Rerank 远程 API：bailian=阿里云百炼，vllm=自建 vLLM（与无距离阈值的向量召回配合）---
+    RERANK_ENABLED: bool = True
+    RERANK_PROVIDER: str = "bailian"  # bailian | vllm
+    RERANK_API_URL: str = "http://localhost:8012"  # vllm 时使用
+    RERANK_API_KEY: str = ""  # vllm 时可选
+    RERANK_MODEL: str = "qwen3-rerank"  # bailian 固定；vllm 可配置
+    # 进入上下文的片段条数见 config/embedding.yaml retrieval.final_top_k
+    RERANK_INSTRUCT: str = "Given a web search query, retrieve relevant passages that answer the query."
 
     # --- 文件存储配置 ---
     PREVIEW_DIR: str = "./previews"

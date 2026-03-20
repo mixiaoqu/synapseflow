@@ -1,6 +1,31 @@
-# 向量嵌入配置
+# 向量嵌入与知识库检索相关配置（索引分块、召回、评估截断等）
 
 embedding:
-  model: BAAI/bge-small-zh-v1.5
-  dim: 512
-  description: 中文向量嵌入模型，用于知识库检索
+  model: BAAI/bge-m3
+  dim: 1024
+  description: 多语言向量嵌入模型，支持长文本，检索效果更好
+
+# 文档入库时的文本分块（修改后需对已有文档重新索引）
+chunk:
+  size: 700
+  overlap: 100
+
+# 向量检索与进入生成/Rerank 的条数（余弦距离越小越相似）
+# QA 检索不按距离阈值过滤；精排由 .env RERANK_ENABLED + retrieval.final_top_k 控制
+# distance_* / fallback_top_n：保留兼容，检索节点未使用
+retrieval:
+  k_first: 16
+  k_iteration: 20
+  distance_threshold: 0.5
+  distance_threshold_iteration: 0.6
+  fallback_top_n: 3
+  final_top_k: 6
+
+# 迭代 QA 评估节点
+evaluate:
+  context_max_chars: 3000
+  pass_threshold: 0.75
+  weights:
+    relevance: 0.25
+    groundedness: 0.45
+    completeness: 0.30

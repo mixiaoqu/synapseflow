@@ -1,30 +1,34 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from "react";
 import {
   uploadDocument,
   uploadDocumentsBatch,
   listDocuments,
   getDocument,
+  getDocumentVersions,
   deleteDocument,
   deleteDocumentsBatch,
   indexDocument,
   reindexAll,
   type DocumentListItem,
   type DocumentDetail,
-} from '@/lib/api/documents';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Toaster, toast } from 'sonner';
+  type DocumentVersionItem,
+} from "@/lib/api/documents";
+import { listCollections, createCollection, type CollectionWithCount } from "@/lib/api/collections";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Toaster, toast } from "sonner";
 
-const ACCEPT_FILES = '.txt,.md,.pdf,.docx';
-const SUPPORTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
+const ACCEPT_FILES = ".txt,.md,.pdf,.docx";
+const SUPPORTED_EXTENSIONS = [".txt", ".md", ".pdf", ".docx"];
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+const PAGE_SIZE = 20;
 
 function formatDate(s: string) {
-  return new Date(s).toLocaleString('zh-CN');
+  return new Date(s).toLocaleString("zh-CN");
 }
 
 function formatSize(bytes: number): string {
@@ -37,32 +41,68 @@ export default function DocumentsPage() {
   const [items, setItems] = useState<DocumentListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [keyword, setKeyword] = useState('');
-  const [searchInput, setSearchInput] = useState('');
+  const [keyword, setKeyword] = useState("");
+  const [searchInput, setSearchInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [viewingDoc, setViewingDoc] = useState<DocumentDetail | null>(null);
+  const [documentVersions, setDocumentVersions] = useState<
+    DocumentVersionItem[]
+  >([]);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [reindexing, setReindexing] = useState(false);
+  const [collections, setCollections] = useState<CollectionWithCount[]>([]);
+  const [collectionFilter, setCollectionFilter] = useState<number | null | "uncategorized">(null);
+  const [uploadCollectionId, setUploadCollectionId] = useState<number | null>(null);
+  const [newCollectionName, setNewCollectionName] = useState("");
+
+  const loadCollections = useCallback(async () => {
+    try {
+      const list = await listCollections();
+      setCollections(list);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const handleCreateCollection = async () => {
+    const name = newCollectionName.trim();
+    if (!name) return;
+    try {
+      await createCollection(name);
+      setNewCollectionName("");
+      loadCollections();
+      toast.success("集合已创建");
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      toast.error(err.message || "创建失败");
+    }
+  };
 
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
+      const cid = collectionFilter === "uncategorized" ? 0 : collectionFilter ?? undefined;
       const data = await listDocuments({
         page,
-        page_size: 20,
+        page_size: PAGE_SIZE,
         keyword: keyword || undefined,
+        collection_id: cid,
       });
       setItems(data.items);
       setTotal(data.total);
     } catch (e) {
-      toast.error('加载文档列表失败');
+      toast.error("加载文档列表失败");
     } finally {
       setLoading(false);
     }
-  }, [page, keyword]);
+  }, [page, keyword, collectionFilter]);
+
+  useEffect(() => {
+    loadCollections();
+  }, [loadCollections]);
 
   useEffect(() => {
     loadList();
@@ -74,24 +114,25 @@ export default function DocumentsPage() {
   };
 
   const handleFile = async (file: File) => {
-    const ext = '.' + (file.name.split('.').pop()?.toLowerCase() || '');
+    const ext = "." + (file.name.split(".").pop()?.toLowerCase() || "");
     if (!SUPPORTED_EXTENSIONS.includes(ext)) {
       toast.error(`不支持格式 ${ext}，请上传 txt/md/pdf/docx`);
       return;
     }
     if (file.size > MAX_SIZE) {
-      toast.error('文件超过 10MB 限制');
+      toast.error("文件超过 10MB 限制");
       return;
     }
     setUploading(true);
     try {
-      await uploadDocument(file);
-      toast.success('上传成功');
+      const cid = uploadCollectionId && uploadCollectionId > 0 ? uploadCollectionId : undefined;
+      await uploadDocument(file, cid);
+      toast.success("上传成功");
       setUploadModalOpen(false);
       loadList();
     } catch (e: unknown) {
       const err = e as { message?: string };
-      toast.error(err.message || '上传失败');
+      toast.error(err.message || "上传失败");
     } finally {
       setUploading(false);
     }
@@ -102,24 +143,25 @@ export default function DocumentsPage() {
     const validFiles: File[] = [];
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      const ext = '.' + (f.name.split('.').pop()?.toLowerCase() || '');
+      const ext = "." + (f.name.split(".").pop()?.toLowerCase() || "");
       if (SUPPORTED_EXTENSIONS.includes(ext) && f.size <= MAX_SIZE) {
         validFiles.push(f);
       }
     }
     if (validFiles.length === 0) {
-      toast.error('没有符合条件的文件');
+      toast.error("没有符合条件的文件");
       return;
     }
     setUploading(true);
     try {
-      const created = await uploadDocumentsBatch(validFiles);
+      const cid = uploadCollectionId && uploadCollectionId > 0 ? uploadCollectionId : undefined;
+      const created = await uploadDocumentsBatch(validFiles, cid);
       toast.success(`成功上传 ${created.length} 个文档`);
       setUploadModalOpen(false);
       loadList();
     } catch (e: unknown) {
       const err = e as { message?: string };
-      toast.error(err.message || '批量上传失败');
+      toast.error(err.message || "批量上传失败");
     } finally {
       setUploading(false);
     }
@@ -145,17 +187,31 @@ export default function DocumentsPage() {
         handleFile(fileList[0]);
       }
     }
-    e.target.value = '';
+    e.target.value = "";
   };
 
   const handleView = async (id: number) => {
     try {
-      const doc = await getDocument(id);
+      const [doc, versionsRes] = await Promise.all([
+        getDocument(id),
+        getDocumentVersions(id).catch(() => ({ items: [] })),
+      ]);
+      setViewingDoc(doc);
+      setDocumentVersions(versionsRes.items);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "加载文档失败";
+      toast.error(msg);
+      if (msg.includes("不存在")) loadList(); // 404 时刷新列表
+    }
+  };
+
+  const handleSwitchVersion = async (versionId: number) => {
+    if (versionId === viewingDoc?.id) return;
+    try {
+      const doc = await getDocument(versionId);
       setViewingDoc(doc);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '加载文档失败';
-      toast.error(msg);
-      if (msg.includes('不存在')) loadList(); // 404 时刷新列表
+      toast.error("加载版本失败");
     }
   };
 
@@ -163,7 +219,7 @@ export default function DocumentsPage() {
     if (!confirm(`确定删除「${title}」？`)) return;
     try {
       await deleteDocument(id);
-      toast.success('删除成功');
+      toast.success("删除成功");
       if (viewingDoc?.id === id) setViewingDoc(null);
       setSelectedIds((prev) => {
         const next = new Set(prev);
@@ -173,7 +229,7 @@ export default function DocumentsPage() {
       loadList();
     } catch (e: unknown) {
       const err = e as { message?: string };
-      toast.error(err.message || '删除失败');
+      toast.error(err.message || "删除失败");
     }
   };
 
@@ -198,11 +254,11 @@ export default function DocumentsPage() {
     setReindexing(true);
     try {
       const res = await reindexAll();
-      toast.success(res.message || '向量索引重建完成');
+      toast.success(res.message || "向量索引重建完成");
       loadList();
     } catch (e: unknown) {
       const err = e as { message?: string };
-      toast.error(err.message || '重建索引失败');
+      toast.error(err.message || "重建索引失败");
     } finally {
       setReindexing(false);
     }
@@ -211,28 +267,29 @@ export default function DocumentsPage() {
   const handleIndexOne = async (id: number) => {
     try {
       const res = await indexDocument(id);
-      toast.success(res.message || '已建立向量索引');
+      toast.success(res.message || "已建立向量索引");
+      loadList();
     } catch (e: unknown) {
       const err = e as { message?: string };
-      toast.error(err.message || '建立索引失败');
+      toast.error(err.message || "建立索引失败");
     }
   };
 
   const handleBatchDelete = async () => {
     if (selectedIds.size === 0) {
-      toast.error('请先选择要删除的文档');
+      toast.error("请先选择要删除的文档");
       return;
     }
     if (!confirm(`确定删除选中的 ${selectedIds.size} 篇文档？`)) return;
     try {
       const result = await deleteDocumentsBatch([...selectedIds]);
-      toast.success(result.message || '批量删除成功');
+      toast.success(result.message || "批量删除成功");
       if (viewingDoc && selectedIds.has(viewingDoc.id)) setViewingDoc(null);
       setSelectedIds(new Set());
       loadList();
     } catch (e: unknown) {
       const err = e as { message?: string };
-      toast.error(err.message || '批量删除失败');
+      toast.error(err.message || "批量删除失败");
     }
   };
 
@@ -254,55 +311,89 @@ export default function DocumentsPage() {
             onClick={handleReindexAll}
             disabled={reindexing || total === 0}
           >
-            {reindexing ? '重建中...' : '🔄 全量重建索引'}
+            {reindexing ? "重建中..." : "🔄 全量重建索引"}
           </Button>
-          <Button onClick={() => setUploadModalOpen(true)}>
-            📤 批量上传
-          </Button>
+          <Button onClick={() => setUploadModalOpen(true)}>📤 批量上传</Button>
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col gap-4 p-4 min-h-0">
-        {/* 文档列表为主视图 */}
-        <div className="flex-1 flex flex-col gap-4 min-h-0">
-          {/* 搜索 */}
-          <Card>
-            <CardContent className="pt-4">
-              <div className="flex gap-2">
-                <Input
-                  placeholder="搜索文档标题或内容..."
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  className="flex-1"
-                />
-                <Button onClick={handleSearch} variant="secondary">
-                  搜索
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* 文档列表 */}
+      <div className="flex-1 flex flex-col gap-6 p-6 min-h-0">
+        <div className="flex-1 flex flex-col gap-6 min-h-0">
+          {/* 搜索与文档列表 */}
           <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-base">文档列表</CardTitle>
-                  <p className="text-xs text-gray-500 mt-1">共 {total} 篇</p>
-                </div>
-                {selectedIds.size > 0 && (
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={handleBatchDelete}
+            <CardHeader className="space-y-4 pb-2">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <CardTitle className="text-lg">文档列表</CardTitle>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-2">
+                  <select
+                    value={collectionFilter === null ? "all" : collectionFilter === "uncategorized" ? "0" : String(collectionFilter)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCollectionFilter(v === "all" ? null : v === "0" ? "uncategorized" : Number(v));
+                      setPage(1);
+                    }}
+                    className="h-9 border rounded px-2 text-sm min-w-[100px]"
                   >
-                    🗑️ 批量删除 ({selectedIds.size})
+                    <option value="all">全部集合</option>
+                    <option value="0">未分类</option>
+                    {collections.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.document_count})
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      placeholder="新建集合名"
+                      value={newCollectionName}
+                      onChange={(e) => setNewCollectionName(e.target.value)}
+                      className="h-9 w-28 text-sm"
+                      onKeyDown={(e) => e.key === "Enter" && handleCreateCollection()}
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCreateCollection}
+                      disabled={!newCollectionName.trim()}
+                      className="h-9 shrink-0"
+                    >
+                      新建
+                    </Button>
+                  </div>
+                  </div>
+                  <div className="flex flex-1 sm:flex-initial min-w-[200px] sm:min-w-[280px]">
+                    <Input
+                      placeholder="按标题搜索..."
+                      value={searchInput}
+                      onChange={(e) => setSearchInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                      className="h-9"
+                    />
+                  </div>
+                  <Button
+                    onClick={handleSearch}
+                    variant="secondary"
+                    size="sm"
+                    className="shrink-0"
+                  >
+                    搜索
                   </Button>
-                )}
+                  {selectedIds.size > 0 && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={handleBatchDelete}
+                      className="shrink-0"
+                    >
+                      批量删除 ({selectedIds.size})
+                    </Button>
+                  )}
+                </div>
               </div>
+              <p className="text-sm text-gray-500">共 {total} 篇文档</p>
             </CardHeader>
-            <CardContent className="flex-1 overflow-auto p-0 pl-4 pr-6 pb-4">
+            <CardContent className="flex-1 overflow-auto px-6 pb-6 pt-0">
               {loading ? (
                 <p className="text-sm text-gray-500 py-4">加载中...</p>
               ) : items.length === 0 ? (
@@ -315,16 +406,25 @@ export default function DocumentsPage() {
                         <th className="w-10 py-3 pl-4 pr-2 text-left">
                           <input
                             type="checkbox"
-                            checked={items.length > 0 && selectedIds.size === items.length}
+                            checked={
+                              items.length > 0 &&
+                              selectedIds.size === items.length
+                            }
                             onChange={toggleSelectAll}
                             className="rounded"
                           />
                         </th>
-                        <th className="py-3 pl-3 pr-4 text-left min-w-[180px]">标题</th>
+                        <th className="py-3 pl-3 pr-4 text-left min-w-[180px]">
+                          标题
+                        </th>
                         <th className="py-3 px-4 w-24 text-right">大小</th>
                         <th className="py-3 px-3 w-16 text-center">版本</th>
+                        <th className="py-3 px-3 w-16 text-center">索引</th>
+                        <th className="py-3 px-3 w-24 text-left">集合</th>
                         <th className="py-3 px-4 w-40 text-left">生成时间</th>
-                        <th className="py-3 pl-4 pr-6 min-w-[280px] text-right">操作</th>
+                        <th className="py-3 pl-4 pr-6 min-w-[280px] text-right">
+                          操作
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -344,7 +444,10 @@ export default function DocumentsPage() {
                           <td className="py-2.5 pl-3 pr-4 min-w-0">
                             <p className="font-medium truncate">{d.title}</p>
                             {d.document_type && (
-                              <Badge variant="secondary" className="text-xs mt-0.5">
+                              <Badge
+                                variant="secondary"
+                                className="text-xs mt-0.5"
+                              >
                                 {d.document_type}
                               </Badge>
                             )}
@@ -354,6 +457,26 @@ export default function DocumentsPage() {
                           </td>
                           <td className="py-2.5 px-3 text-center text-gray-500">
                             v{d.version ?? 1}
+                          </td>
+                          <td className="py-2.5 px-4 text-center">
+                            {d.indexed ? (
+                              <Badge
+                                variant="secondary"
+                                className="bg-emerald-50 text-emerald-700 border-0 font-normal hover:bg-emerald-50"
+                              >
+                                已索引
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                className="border-amber-200 bg-amber-50 text-amber-700 font-normal hover:bg-amber-50 hover:border-amber-200"
+                              >
+                                未索引
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-gray-500 text-xs">
+                            {d.collection_name ?? "未分类"}
                           </td>
                           <td className="py-2.5 px-4 text-gray-400 tabular-nums whitespace-nowrap">
                             {formatDate(d.created_at)}
@@ -389,6 +512,36 @@ export default function DocumentsPage() {
                   </table>
                 </div>
               )}
+              {total > PAGE_SIZE && !loading && (
+                <div className="flex items-center justify-between border-t pt-4 mt-4">
+                  <span className="text-sm text-gray-500">
+                    共 {total} 篇，第 {page} /{" "}
+                    {Math.max(1, Math.ceil(total / PAGE_SIZE))} 页
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    >
+                      上一页
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page >= Math.ceil(total / PAGE_SIZE)}
+                      onClick={() =>
+                        setPage((p) =>
+                          Math.min(Math.ceil(total / PAGE_SIZE), p + 1),
+                        )
+                      }
+                    >
+                      下一页
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -414,7 +567,24 @@ export default function DocumentsPage() {
                 关闭
               </Button>
             </div>
-            <p className="text-xs text-gray-500 mb-3">txt / md / pdf / docx，最大 10MB，支持多选</p>
+            <div className="mb-3 flex items-center gap-2">
+              <label className="text-sm text-gray-600">上传到集合：</label>
+              <select
+                value={uploadCollectionId ?? ""}
+                onChange={(e) => setUploadCollectionId(e.target.value ? Number(e.target.value) : null)}
+                className="h-9 border rounded px-2 text-sm flex-1"
+              >
+                <option value="">未分类</option>
+                {collections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">
+              txt / md / pdf / docx，最大 10MB，支持多选
+            </p>
             <div
               onDragOver={(e) => {
                 e.preventDefault();
@@ -424,10 +594,10 @@ export default function DocumentsPage() {
               onDrop={onDrop}
               className={`
                 border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
-                ${dragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}
-                ${uploading ? 'opacity-60 pointer-events-none' : ''}
+                ${dragOver ? "border-blue-500 bg-blue-50" : "border-gray-300 hover:border-gray-400"}
+                ${uploading ? "opacity-60 pointer-events-none" : ""}
               `}
-              onClick={() => document.getElementById('doc-file-input')?.click()}
+              onClick={() => document.getElementById("doc-file-input")?.click()}
             >
               <input
                 id="doc-file-input"
@@ -442,7 +612,9 @@ export default function DocumentsPage() {
               ) : (
                 <>
                   <div className="text-3xl mb-2">📄</div>
-                  <p className="text-sm text-gray-600">拖拽多个文件到此处，或点击选择（支持多选）</p>
+                  <p className="text-sm text-gray-600">
+                    拖拽多个文件到此处，或点击选择（支持多选）
+                  </p>
                 </>
               )}
             </div>
@@ -454,24 +626,56 @@ export default function DocumentsPage() {
       {viewingDoc && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setViewingDoc(null)}
+          onClick={() => {
+            setViewingDoc(null);
+            setDocumentVersions(null);
+          }}
         >
           <div
             className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[85vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-4 py-3 border-b flex items-center justify-between shrink-0">
+            <div className="px-6 py-4 border-b flex items-center justify-between shrink-0">
               <div>
                 <h3 className="font-semibold">{viewingDoc.title}</h3>
                 <p className="text-xs text-gray-500 mt-1">
-                  {viewingDoc.document_type} · {formatSize(viewingDoc.size ?? 0)} · v{viewingDoc.version ?? 1} · {formatDate(viewingDoc.created_at)}
+                  {viewingDoc.document_type} ·{" "}
+                  {formatSize(viewingDoc.size ?? 0)} · v
+                  {viewingDoc.version ?? 1} ·{" "}
+                  {formatDate(viewingDoc.created_at)}
                 </p>
+                {documentVersions && documentVersions.length > 1 && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-xs text-gray-500">版本：</span>
+                    <select
+                      value={viewingDoc.id}
+                      onChange={(e) =>
+                        handleSwitchVersion(Number(e.target.value))
+                      }
+                      className="h-7 text-xs border rounded px-2 py-1 bg-white min-w-[120px]"
+                    >
+                      {documentVersions.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          v{v.version}
+                          {v.is_latest ? " (最新)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
-              <Button variant="ghost" size="sm" onClick={() => setViewingDoc(null)}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setViewingDoc(null);
+                  setDocumentVersions(null);
+                }}
+              >
                 关闭
               </Button>
             </div>
-            <div className="flex-1 overflow-auto p-4 min-h-0">
+            <div className="flex-1 overflow-auto p-6 min-h-0">
               <pre className="text-sm whitespace-pre-wrap font-mono bg-gray-50 p-4 rounded-lg">
                 {viewingDoc.content}
               </pre>

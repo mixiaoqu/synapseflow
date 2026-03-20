@@ -1,10 +1,22 @@
 """数据库 ORM 模型"""
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, String, Text, DateTime, JSON, ForeignKey
 from pgvector.sqlalchemy import Vector
 
 from app.db.session import Base
 from app.core.config import settings
+
+
+class Collection(Base):
+    """集合表 ORM 模型，用于分组管理文档"""
+
+    __tablename__ = "collections"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, default=1)
+    name = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class Document(Base):
@@ -19,6 +31,11 @@ class Document(Base):
     document_type = Column(String(50), nullable=True)
     size = Column(Integer, nullable=False, default=0)  # 字节大小
     version = Column(Integer, nullable=False, default=1)
+    parent_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    root_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    is_latest = Column(Boolean, nullable=False, default=True)
+    collection_id = Column(Integer, ForeignKey("collections.id", ondelete="SET NULL"), nullable=True, index=True)
+    indexed_at = Column(DateTime, nullable=True)  # 向量索引成功时间
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

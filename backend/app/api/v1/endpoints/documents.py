@@ -2,30 +2,27 @@
 文档管理 API
 支持上传、列表、详情、删除、搜索、批量上传、批量删除
 """
-from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Query
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 from loguru import logger
-from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.db.models import Document
+from app.repositories.document_repository import DocumentRepository
 from app.services.document_indexer import index_document, reindex_all
+from app.services.vector_store import delete_by_document_id
 from app.models.schemas.document import (
     DocumentResponse,
     DocumentListItem,
     DocumentListResponse,
     DocumentContentUpdate,
     DocumentCreate,
+    DocumentVersionItem,
+    DocumentVersionsResponse,
 )
-
-# 注意：/from-content 必须定义在 /{doc_id} 之前
 from app.utils.file_parser import extract_text_from_file, SUPPORTED_EXTENSIONS, MAX_FILE_SIZE
 
 router = APIRouter()
-
-DEFAULT_USER_ID = 1
-
-# 注意：DELETE /batch-delete 必须定义在 DELETE /{doc_id} 之前，否则 "batch-delete" 会被当作 doc_id
 
 
 def _get_title_and_type(filename: str) -> tuple[str, str]:
@@ -50,176 +47,7 @@ def _parse_single_file(file: UploadFile, content: bytes):
     return title, doc_type or None, text
 
 
-@router.post("", response_model=DocumentResponse)
-async def upload_document(
-    file: UploadFile = File(..., description="文档文件"),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    上传文档入库
-    支持格式：.txt, .md, .pdf, .docx，最大 10MB
-    """
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="文件超过 10MB 限制")
-    title, doc_type, text = _parse_single_file(file, content)
-
-    size = len(text.encode("utf-8"))
-    doc = Document(
-        user_id=DEFAULT_USER_ID,
-        title=title,
-        content=text,
-        document_type=doc_type,
-        size=size,
-        version=1,
-    )
-    db.add(doc)
-    await db.commit()
-    await db.refresh(doc)
-    try:
-        await index_document(db, doc.id, doc.content)
-    except Exception as e:
-        logger.warning("文档索引失败 doc_id={}: {}", doc.id, e)
-    logger.info("文档上传成功 id={} title={}", doc.id, doc.title)
-    return doc
-
-
-@router.post("/batch", response_model=list[DocumentResponse])
-async def upload_documents_batch(
-    files: list[UploadFile] = File(..., description="多个文档文件"),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    批量上传文档
-    支持格式：.txt, .md, .pdf, .docx，每个最大 10MB
-    """
-    if len(files) > 20:
-        raise HTTPException(status_code=400, detail="单次最多上传 20 个文件")
-    created = []
-    for f in files:
-        try:
-            content = await f.read()
-            if len(content) > MAX_FILE_SIZE:
-                continue  # 跳过超限文件
-            ext = "." + (f.filename or "").rsplit(".", 1)[-1].lower()
-            if ext not in SUPPORTED_EXTENSIONS:
-                continue
-            title, doc_type, text = _parse_single_file(f, content)
-            size = len(text.encode("utf-8"))
-            doc = Document(
-                user_id=DEFAULT_USER_ID,
-                title=title,
-                content=text,
-                document_type=doc_type,
-                size=size,
-                version=1,
-            )
-            db.add(doc)
-            created.append(doc)
-        except HTTPException:
-            raise
-        except Exception:
-            pass  # 跳过失败文件
-    await db.commit()
-    for d in created:
-        await db.refresh(d)
-        try:
-            await index_document(db, d.id, d.content)
-        except Exception:
-            pass
-    return created
-
-
-@router.post("/from-content", response_model=DocumentResponse)
-async def create_document_from_content(
-    body: DocumentCreate,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    从文本内容创建文档（用于粘贴文档后保存到知识库）
-    """
-    if not body.content.strip():
-        raise HTTPException(status_code=400, detail="文档内容不能为空")
-    title = (body.title or "").strip() or "未命名文档"
-    size = len(body.content.encode("utf-8"))
-    doc = Document(
-        user_id=DEFAULT_USER_ID,
-        title=title,
-        content=body.content,
-        document_type=body.document_type or "txt",
-        size=size,
-        version=1,
-    )
-    db.add(doc)
-    await db.commit()
-    await db.refresh(doc)
-    try:
-        await index_document(db, doc.id, doc.content)
-    except Exception as e:
-        logger.warning("文档索引失败 doc_id={}: {}", doc.id, e)
-    logger.info("从内容创建文档 id={} title={}", doc.id, doc.title)
-    return doc
-
-
-@router.get("", response_model=DocumentListResponse)
-async def list_documents(
-    page: int = 1,
-    page_size: int = 20,
-    keyword: str | None = None,
-    db: AsyncSession = Depends(get_db),
-):
-    """分页获取文档列表，支持关键词搜索"""
-    if page < 1:
-        page = 1
-    if page_size < 1 or page_size > 100:
-        page_size = 20
-
-    base_filter = Document.user_id == DEFAULT_USER_ID
-    if keyword and keyword.strip():
-        kw = f"%{keyword.strip()}%"
-        base_filter = base_filter & (
-            Document.title.ilike(kw) | Document.content.ilike(kw)
-        )
-
-    count_query = select(func.count()).select_from(Document).where(base_filter)
-    total = (await db.execute(count_query)).scalar() or 0
-
-    offset = (page - 1) * page_size
-    query = (
-        select(Document)
-        .where(base_filter)
-        .order_by(Document.created_at.desc())
-        .offset(offset)
-        .limit(page_size)
-    )
-    result = await db.execute(query)
-    docs = result.scalars().all()
-
-    items = [
-        DocumentListItem(
-            id=d.id,
-            title=d.title,
-            document_type=d.document_type,
-            size=getattr(d, "size", 0) or len((d.content or "").encode("utf-8")),
-            version=getattr(d, "version", 1),
-            created_at=d.created_at,
-            updated_at=d.updated_at,
-        )
-        for d in docs
-    ]
-    return DocumentListResponse(items=items, total=total, page=page, page_size=page_size)
-
-
-@router.get("/detail/{doc_id}", response_model=DocumentResponse)
-async def get_document(
-    doc_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """获取单个文档详情（含 content）"""
-    result = await db.execute(select(Document).where(Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="文档不存在")
+def _to_response(doc: Document) -> DocumentResponse:
     size = getattr(doc, "size", 0) or len((doc.content or "").encode("utf-8"))
     return DocumentResponse(
         id=doc.id,
@@ -233,9 +61,188 @@ async def get_document(
     )
 
 
+@router.post("", response_model=DocumentResponse)
+async def upload_document(
+    file: UploadFile = File(..., description="文档文件"),
+    collection_id: int | None = Form(None, description="所属集合 ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    """上传文档入库，支持格式：.txt, .md, .pdf, .docx，最大 10MB"""
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="文件超过 10MB 限制")
+    title, doc_type, text = _parse_single_file(file, content)
+
+    repo = DocumentRepository(db)
+    doc = await repo.create(
+        title=title,
+        content=text,
+        document_type=doc_type,
+        size=len(text.encode("utf-8")),
+        collection_id=collection_id,
+    )
+    try:
+        await index_document(db, doc.id, doc.content)
+    except Exception as e:
+        logger.warning("文档索引失败 doc_id={}: {}", doc.id, e)
+    logger.info("文档上传成功 id={} title={}", doc.id, doc.title)
+    return _to_response(doc)
+
+
+@router.post("/batch", response_model=list[DocumentResponse])
+async def upload_documents_batch(
+    files: list[UploadFile] = File(..., description="多个文档文件"),
+    collection_id: int | None = Form(None, description="所属集合 ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    """批量上传文档"""
+    if len(files) > 20:
+        raise HTTPException(status_code=400, detail="单次最多上传 20 个文件")
+
+    repo = DocumentRepository(db)
+    created = []
+    for f in files:
+        try:
+            content = await f.read()
+            if len(content) > MAX_FILE_SIZE:
+                continue
+            ext = "." + (f.filename or "").rsplit(".", 1)[-1].lower()
+            if ext not in SUPPORTED_EXTENSIONS:
+                continue
+            title, doc_type, text = _parse_single_file(f, content)
+            doc = Document(
+                user_id=repo.user_id,
+                title=title,
+                content=text,
+                document_type=doc_type,
+                size=len(text.encode("utf-8")),
+                version=1,
+                parent_id=None,
+                is_latest=True,
+                collection_id=collection_id,
+            )
+            await repo.add_for_batch(doc)
+            created.append(doc)
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+    await repo.commit_and_refresh_root_ids(created)
+    for d in created:
+        try:
+            await index_document(db, d.id, d.content)
+        except Exception:
+            pass
+    return [_to_response(d) for d in created]
+
+
+@router.post("/from-content", response_model=DocumentResponse)
+async def create_document_from_content(
+    body: DocumentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """从文本内容创建文档（用于粘贴文档后保存到知识库）"""
+    if not body.content.strip():
+        raise HTTPException(status_code=400, detail="文档内容不能为空")
+    title = (body.title or "").strip() or "未命名文档"
+    size = len(body.content.encode("utf-8"))
+
+    repo = DocumentRepository(db)
+    doc = await repo.create(
+        title=title,
+        content=body.content,
+        document_type=body.document_type or "txt",
+        size=size,
+        collection_id=body.collection_id,
+    )
+    try:
+        await index_document(db, doc.id, doc.content)
+    except Exception as e:
+        logger.warning("文档索引失败 doc_id={}: {}", doc.id, e)
+    logger.info("从内容创建文档 id={} title={}", doc.id, doc.title)
+    return _to_response(doc)
+
+
+@router.get("", response_model=DocumentListResponse)
+async def list_documents(
+    page: int = 1,
+    page_size: int = 20,
+    keyword: str | None = None,
+    collection_id: int | None = Query(None, description="按集合筛选"),
+    db: AsyncSession = Depends(get_db),
+):
+    """分页获取文档列表"""
+    if page < 1:
+        page = 1
+    if page_size < 1 or page_size > 100:
+        page_size = 20
+
+    repo = DocumentRepository(db)
+    rows, total = await repo.list_paginated(
+        page=page,
+        page_size=page_size,
+        keyword=keyword,
+        collection_id=collection_id,
+    )
+    items = [
+        DocumentListItem(
+            id=d.id,
+            title=d.title,
+            document_type=d.document_type,
+            size=getattr(d, "size", 0) or len((d.content or "").encode("utf-8")),
+            version=getattr(d, "version", 1),
+            created_at=d.created_at,
+            updated_at=d.updated_at,
+            indexed=getattr(d, "indexed_at", None) is not None,
+            collection_id=getattr(d, "collection_id", None),
+            collection_name=col_name,
+        )
+        for d, col_name in rows
+    ]
+    return DocumentListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get("/{doc_id}/versions", response_model=DocumentVersionsResponse)
+async def get_document_versions(
+    doc_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """获取文档版本历史"""
+    repo = DocumentRepository(db)
+    doc = await repo.get_by_id(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    vers_docs = await repo.get_versions_by_doc_id(doc_id)
+    items = [
+        DocumentVersionItem(
+            id=d.id,
+            title=d.title,
+            version=getattr(d, "version", 1),
+            is_latest=getattr(d, "is_latest", True),
+            created_at=d.created_at,
+        )
+        for d in vers_docs
+    ]
+    return DocumentVersionsResponse(items=items)
+
+
+@router.get("/detail/{doc_id}", response_model=DocumentResponse)
+async def get_document(
+    doc_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """获取单个文档详情"""
+    repo = DocumentRepository(db)
+    doc = await repo.get_by_id(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return _to_response(doc)
+
+
 @router.post("/reindex-all")
 async def reindex_all_documents(db: AsyncSession = Depends(get_db)):
-    """全量重索引：对所有文档重新建立向量索引"""
+    """全量重索引"""
     try:
         count = await reindex_all()
         logger.info("全量重索引完成，共 {} 篇文档", count)
@@ -251,8 +258,8 @@ async def index_single_document(
     db: AsyncSession = Depends(get_db),
 ):
     """对单篇文档建立或重建向量索引"""
-    result = await db.execute(select(Document).where(Document.id == doc_id))
-    doc = result.scalar_one_or_none()
+    repo = DocumentRepository(db)
+    doc = await repo.get_by_id(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
     try:
@@ -268,35 +275,17 @@ async def replace_document_content(
     body: DocumentContentUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    替换文档内容：用新内容覆盖原文档（修订后保存用）
-    """
-    result = await db.execute(
-        select(Document).where(Document.id == doc_id, Document.user_id == DEFAULT_USER_ID)
-    )
-    doc = result.scalar_one_or_none()
+    """替换文档内容"""
+    repo = DocumentRepository(db)
+    doc = await repo.update_content(doc_id, body.content)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
-    doc.content = body.content
-    doc.size = len(body.content.encode("utf-8"))
-    await db.commit()
-    await db.refresh(doc)
     try:
         await index_document(db, doc.id, doc.content)
     except Exception as e:
         logger.warning("文档索引失败 doc_id={}: {}", doc.id, e)
     logger.info("文档内容已替换 id={}", doc_id)
-    size = getattr(doc, "size", 0) or len((doc.content or "").encode("utf-8"))
-    return DocumentResponse(
-        id=doc.id,
-        title=doc.title,
-        content=doc.content or "",
-        document_type=doc.document_type,
-        size=size,
-        version=getattr(doc, "version", 1),
-        created_at=doc.created_at,
-        updated_at=doc.updated_at,
-    )
+    return _to_response(doc)
 
 
 @router.post("/{doc_id}/versions", response_model=DocumentResponse)
@@ -305,40 +294,30 @@ async def create_document_version(
     body: DocumentContentUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    作为新版本保存：保留原文档，创建新文档存储修订内容
-    """
-    result = await db.execute(
-        select(Document).where(Document.id == doc_id, Document.user_id == DEFAULT_USER_ID)
-    )
-    orig = result.scalar_one_or_none()
+    """作为新版本保存"""
+    repo = DocumentRepository(db)
+    orig = await repo.get_by_id_for_user(doc_id)
     if not orig:
         raise HTTPException(status_code=404, detail="原文档不存在")
-    title = f"{orig.title} - 修订版"
-    size = len(body.content.encode("utf-8"))
-    new_doc = Document(
-        user_id=DEFAULT_USER_ID,
-        title=title,
-        content=body.content,
-        document_type=orig.document_type,
-        size=size,
-        version=1,
-    )
-    db.add(new_doc)
-    await db.commit()
-    await db.refresh(new_doc)
+
+    new_doc = await repo.create_version(doc_id, body.content)
+    if not new_doc:
+        raise HTTPException(status_code=404, detail="原文档不存在")
+
+    await delete_by_document_id(db, orig.id)
     try:
         await index_document(db, new_doc.id, new_doc.content)
     except Exception as e:
         logger.warning("文档索引失败 doc_id={}: {}", new_doc.id, e)
     logger.info("新建修订版文档 id={} 源于 doc_id={}", new_doc.id, doc_id)
+    size = getattr(new_doc, "size", 0) or len((new_doc.content or "").encode("utf-8"))
     return DocumentResponse(
         id=new_doc.id,
         title=new_doc.title,
         content=new_doc.content or "",
         document_type=new_doc.document_type,
         size=size,
-        version=1,
+        version=new_doc.version or 1,
         created_at=new_doc.created_at,
         updated_at=new_doc.updated_at,
     )
@@ -352,18 +331,13 @@ async def delete_documents_batch(
     """批量删除文档"""
     if not ids:
         return {"message": "未选择文档", "deleted": 0}
-    result = await db.execute(
-        select(Document).where(
-            Document.id.in_(ids),
-            Document.user_id == DEFAULT_USER_ID,
-        )
-    )
-    docs = result.scalars().all()
-    for d in docs:
-        await db.delete(d)
-    await db.commit()
-    logger.info("批量删除文档 ids={}, 实际删除 {} 篇", ids, len(docs))
-    return {"message": f"已删除 {len(docs)} 篇文档", "deleted": len(docs)}
+    repo = DocumentRepository(db)
+    docs = await repo.get_by_ids(ids)
+    root_ids = {getattr(d, "root_id", None) or d.id for d in docs}
+    chain_docs = await repo.get_chain_by_root_ids(root_ids)
+    deleted = await repo.delete_chain(chain_docs)
+    logger.info("批量删除文档 ids={}, 实际删除 {} 篇", ids, deleted)
+    return {"message": f"已删除 {deleted} 篇文档", "deleted": deleted}
 
 
 @router.delete("/{doc_id}")
@@ -372,14 +346,13 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
 ):
     """删除文档"""
-    result = await db.execute(
-        select(Document).where(Document.id == doc_id, Document.user_id == DEFAULT_USER_ID)
-    )
-    doc = result.scalar_one_or_none()
+    repo = DocumentRepository(db)
+    doc = await repo.get_by_id_for_user(doc_id)
     if not doc:
-        cnt = (await db.execute(select(func.count()).select_from(Document))).scalar() or 0
+        cnt = await repo.count_total()
         raise HTTPException(status_code=404, detail=f"文档不存在(id={doc_id}, 当前库中共{cnt}篇)")
-    await db.delete(doc)
-    await db.commit()
-    logger.info("删除文档 id={} title={}", doc_id, doc.title)
+    root_id = getattr(doc, "root_id", None) or doc.id
+    chain_docs = await repo.get_chain_by_root_ids({root_id})
+    await repo.delete_chain(chain_docs)
+    logger.info("删除文档 id={} 及同链 {} 个版本", doc_id, len(chain_docs))
     return {"message": "删除成功"}

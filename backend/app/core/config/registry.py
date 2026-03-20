@@ -2,6 +2,7 @@
 配置注册表：持有并解析配置
 使用 Loader 加载原始数据，按业务逻辑解析后通过专用方法暴露
 """
+import functools
 import os
 from typing import Dict, Any
 
@@ -62,6 +63,49 @@ class ConfigRegistry:
         return {
             "model": emb.get("model", "BAAI/bge-small-zh-v1.5"),
             "dim": int(emb.get("dim", 512)),
+        }
+
+    @functools.lru_cache(maxsize=1)
+    def get_rag_config(self) -> Dict[str, Any]:
+        """
+        获取 RAG 相关配置：分块、检索条数、评估截断与加权权重。
+        全部来自 config/embedding.yaml，带默认值（进程内缓存，改文件需重启）。
+        """
+        data = load_embedding_raw()
+        chunk = data.get("chunk", {}) or {}
+        retrieval = data.get("retrieval", {}) or {}
+        ev = data.get("evaluate", {}) or {}
+        w = ev.get("weights", {}) or {}
+        wr = float(w.get("relevance", 0.25))
+        wg = float(w.get("groundedness", 0.45))
+        wc = float(w.get("completeness", 0.30))
+        s = wr + wg + wc
+        if s > 0 and abs(s - 1.0) > 1e-6:
+            wr, wg, wc = wr / s, wg / s, wc / s
+        return {
+            "chunk": {
+                "size": int(chunk.get("size", 700)),
+                "overlap": int(chunk.get("overlap", 100)),
+            },
+            "retrieval": {
+                "k_first": int(retrieval.get("k_first", 16)),
+                "k_iteration": int(retrieval.get("k_iteration", 20)),
+                "distance_threshold": float(retrieval.get("distance_threshold", 0.5)),
+                "distance_threshold_iteration": float(
+                    retrieval.get("distance_threshold_iteration", 0.6)
+                ),
+                "fallback_top_n": int(retrieval.get("fallback_top_n", 3)),
+                "final_top_k": int(retrieval.get("final_top_k", 6)),
+            },
+            "evaluate": {
+                "context_max_chars": int(ev.get("context_max_chars", 3000)),
+                "pass_threshold": float(ev.get("pass_threshold", 0.75)),
+                "weights": {
+                    "relevance": wr,
+                    "groundedness": wg,
+                    "completeness": wc,
+                },
+            },
         }
 
     def get_logging_config(self) -> Dict[str, Any]:

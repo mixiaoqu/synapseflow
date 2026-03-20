@@ -34,6 +34,7 @@ env/
 .env
 .env.local
 backend/.env
+backend/langgraph.env
 frontend/.env.local
 
 # IDEs
@@ -57,6 +58,7 @@ yarn-error.log*
 # ---------- Backend (Python) ----------
 backend/.venv/
 backend/venv/
+backend/.langgraph_api/
 backend/__pycache__/
 backend/.pytest_cache/
 backend/uploads/
@@ -120,3 +122,4 @@ agent-transcripts/
 *.pem
 *.key
 !*.pub
+backend/langgraph.env.example

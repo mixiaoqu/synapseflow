@@ -3,28 +3,40 @@
 将文档内容分块、向量化后写入 embeddings 表
 """
 import asyncio
+from datetime import datetime
 from typing import List
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loguru import logger
+
+from app.core.config.registry import config_registry
+from app.core.constants import DEFAULT_USER_ID
 from app.db.models import Document
 from app.db.session import AsyncSessionLocal
 from app.services.embedding import embed_documents
 from app.services.vector_store import add_document_chunks, delete_by_document_id
 
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 50
-
 
 def _chunk_text(content: str) -> List[str]:
-    """将文本分块"""
+    """将文本分块（参数见 config/embedding.yaml chunk）"""
+    ck = config_registry.get_rag_config()["chunk"]
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
+        chunk_size=ck["size"],
+        chunk_overlap=ck["overlap"],
         length_function=len,
-        separators=["\n\n", "\n", "。", "！", "？", ".", "!", "?", " ", ""],
+        separators=[
+    "\n\n",
+    "\n### ",   # 标题
+    "\n## ",
+    "\n# ",
+    "\n",
+    "。", "！", "？",
+    ".", "!", "?",
+    " "
+],
     )
     return splitter.split_text(content)
 
@@ -34,6 +46,7 @@ async def index_document(db: AsyncSession, doc_id: int, content: str) -> int:
     对单篇文档建立向量索引
     先删除旧索引，再分块、嵌入、写入
     返回写入的 chunk 数量
+    修改 CHUNK_SIZE/OVERLAP 后需对已入库文档重新索引方可生效。
     """
     if not content or not content.strip():
         return 0
@@ -45,20 +58,28 @@ async def index_document(db: AsyncSession, doc_id: int, content: str) -> int:
     # 同步 embedding 在线程池中执行，避免阻塞
     vectors = await asyncio.to_thread(embed_documents, chunks)
 
-    await delete_by_document_id(db, doc_id)
-    return await add_document_chunks(db, doc_id, chunks, vectors)
+    await delete_by_document_id(db, doc_id, commit=False)
+    count = await add_document_chunks(db, doc_id, chunks, vectors, commit=False)
+    if count > 0:
+        await db.execute(update(Document).where(Document.id == doc_id).values(indexed_at=datetime.utcnow()))
+    await db.commit()
+    return count
 
 
 async def reindex_all() -> int:
-    """对所有 documents 重新建立索引，返回处理的文档数"""
+    """仅对 is_latest=True 的文档重新建立索引，返回成功索引的文档数"""
     total_docs = 0
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Document))
+        result = await session.execute(
+            select(Document).where(
+                Document.is_latest.is_(True)
+            )
+        )
         docs = result.scalars().all()
         for doc in docs:
             try:
                 await index_document(session, doc.id, doc.content or "")
                 total_docs += 1
-            except Exception:
-                pass  # 跳过失败文档
+            except Exception as e:
+                logger.warning("文档索引失败 doc_id={} title={}: {}", doc.id, doc.title, e)
     return total_docs

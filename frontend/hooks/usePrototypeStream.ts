@@ -5,6 +5,7 @@
 import { useEffect, useRef } from 'react';
 import { usePrototypeStore } from '@/stores/prototypeStore';
 import { toast } from 'sonner';
+import { API_V1 } from '@/lib/api/config';
 
 export function usePrototypeStream() {
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -35,8 +36,8 @@ export function usePrototypeStream() {
 
     try {
       const url = file
-        ? 'http://localhost:8000/api/v1/prototype/generate/stream/file'
-        : 'http://localhost:8000/api/v1/prototype/generate/stream';
+        ? `${API_V1}/prototype/generate/stream/file`
+        : `${API_V1}/prototype/generate/stream`;
       
       const init: RequestInit = {
         method: 'POST',

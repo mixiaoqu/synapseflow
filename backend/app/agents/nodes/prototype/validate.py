@@ -1,4 +1,5 @@
 """验证和预览节点"""
+import asyncio
 import os
 import hashlib
 from typing import Dict, Any
@@ -7,6 +8,12 @@ from loguru import logger
 
 from app.agents.states.prototype_state import DocToPrototypeState
 from app.core.config import settings
+
+
+def _write_preview_file(path: str, content: str) -> None:
+    """同步写入预览文件，供 asyncio.to_thread 调用"""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
 
 
 async def validate_and_preview_node(state: DocToPrototypeState) -> Dict[str, Any]:
@@ -35,11 +42,10 @@ async def validate_and_preview_node(state: DocToPrototypeState) -> Dict[str, Any
 
     file_hash = hashlib.md5(full_html.encode()).hexdigest()[:12]
     preview_dir = settings.PREVIEW_DIR
-    os.makedirs(preview_dir, exist_ok=True)
-
     preview_path = os.path.join(preview_dir, f"{file_hash}.html")
-    with open(preview_path, 'w', encoding='utf-8') as f:
-        f.write(full_html)
+
+    await asyncio.to_thread(os.makedirs, preview_dir, exist_ok=True)
+    await asyncio.to_thread(_write_preview_file, preview_path, full_html)
 
     preview_url = f"/preview/{file_hash}.html"
     logger.info("节点完成: validate_preview，预览={}，有效={}", preview_url, len(validation_errors) == 0)

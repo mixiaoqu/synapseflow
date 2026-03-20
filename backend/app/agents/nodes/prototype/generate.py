@@ -29,9 +29,9 @@ async def generate_html_node(state: DocToPrototypeState) -> Dict[str, Any]:
 
     prompt = f"""你是一个专业的前端工程师，请生成一个完整的、可独立运行的HTML页面。
 
-组件结构：{_truncate_for_prompt(state["ui_components"], 2000)}
+组件结构：{_truncate_for_prompt(state["ui_components"])}
 需求概要：{_truncate_for_prompt(req_summary)}
-设计系统：{_truncate_for_prompt(state.get("design_system", {}), 1000)}
+设计系统：{_truncate_for_prompt(state.get("design_system", {}))}
 
 要求：
 1. 生成完整的 <!DOCTYPE html> 页面，包含 <head> 和 <body>
@@ -39,7 +39,7 @@ async def generate_html_node(state: DocToPrototypeState) -> Dict[str, Any]:
 3. JavaScript 写在 <script> 标签内（不要外链，可使用 CDN 如 Tailwind/Alpine.js）
 4. 响应式设计，支持移动端
 5. 页面美观现代，符合设计系统配色
-6. 直接输出 HTML 代码，不要任何解释。控制在 800 行以内以保持简洁。
+6. 直接输出 HTML 代码，不要任何解释。
 
 生成完整HTML页面：
 """

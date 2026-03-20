@@ -5,7 +5,6 @@ from fastapi.responses import StreamingResponse
 
 from app.models.schemas.qa import QARequest, QAResponse
 from app.agents.graphs import create_iterative_qa_graph
-
 router = APIRouter()
 
 qa_agent = create_iterative_qa_graph()
@@ -30,17 +29,20 @@ async def invoke_qa(request: QARequest):
             "should_continue": True,
             "iteration_history": [],
             "last_evaluation_feedback": None,
+            "document_issues": [],
+            "collection_id": request.collection_id,
         }
-        
+
         result = await qa_agent.ainvoke(initial_state)
-        
+
         return QAResponse(
             answer=result["answer"],
             confidence_score=result["confidence_score"],
             iteration=result["iteration"],
             retrieved_docs=result.get("retrieved_docs", []),
             iteration_history=result.get("iteration_history", []),
-            session_id=request.session_id
+            document_issues=result.get("document_issues", []),
+            session_id=request.session_id,
         )
     
     except Exception as e:
@@ -67,6 +69,8 @@ async def stream_qa(request: QARequest):
                 "should_continue": True,
                 "iteration_history": [],
                 "last_evaluation_feedback": None,
+                "document_issues": [],
+                "collection_id": request.collection_id,
             }
             
             async for chunk in qa_agent.astream(initial_state):
