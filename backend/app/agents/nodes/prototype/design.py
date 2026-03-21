@@ -2,8 +2,6 @@
 import json
 from typing import Dict, Any
 
-from loguru import logger
-
 from app.agents.states.prototype_state import DocToPrototypeState
 from app.core.llm import get_llm_for_planner
 
@@ -104,5 +102,4 @@ async def design_components_node(state: DocToPrototypeState) -> Dict[str, Any]:
     if not design_system:
         design_system = {"colors": {"primary": "#3B82F6"}, "typography": {"font_family": "Inter, sans-serif"}}
 
-    logger.info("节点完成: design_components，设计了 {} 个 UI 组件", len(components))
     return {"ui_components": components, "design_system": design_system}

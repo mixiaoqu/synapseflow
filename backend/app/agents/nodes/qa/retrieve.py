@@ -29,6 +29,8 @@ async def retrieve_node(state: IterativeQAState) -> Dict[str, Any]:
     collection_id = state.get("collection_id")
     k = rag["k_iteration"] if iteration > 0 else rag["k_first"]
     final_top_k = rag["final_top_k"]
+    llm_ref_k_raw = rag.get("llm_reference_top_k")
+    llm_ref_k = int(llm_ref_k_raw) if llm_ref_k_raw is not None else None
 
     query_embedding = await asyncio.to_thread(embed_query, query)
 
@@ -52,24 +54,21 @@ async def retrieve_node(state: IterativeQAState) -> Dict[str, Any]:
     async with AsyncSessionLocal() as db:
         results = await search(db, query_embedding, k=k, document_ids=document_ids)
 
-    logger.info(
-        "[QA检索] 向量召回 k={} 返回{}条（不设距离阈值）distance={}",
-        k,
-        len(results),
-        [round(r.get("distance", 0), 4) for r in results] if results else "[]",
-    )
-
-    # Rerank：启用且候选数大于 top_k 时调用远程 API 精排
-    if settings.RERANK_ENABLED and len(results) > final_top_k:
-        logger.debug("[QA检索] 调用 Rerank 候选{}条 > top_k={}", len(results), final_top_k)
+    recall_n = len(results)
+    rerank_applied = False
+    if settings.RERANK_ENABLED and len(results) > 0:
+        logger.debug("[QA检索] Rerank 候选=%s条 final_top_k=%s", len(results), final_top_k)
         results = await rerank(query, results, top_k=final_top_k)
-    elif settings.RERANK_ENABLED and len(results) <= final_top_k:
-        logger.debug("[QA检索] 跳过 Rerank 候选{}条 <= top_k={} 直接取前{}", len(results), final_top_k, len(results))
+        rerank_applied = True
     else:
-        logger.debug("[QA检索] Rerank 未启用 取前{}条", final_top_k)
+        logger.debug("[QA检索] 未精排或无召回，截断为前%s条", final_top_k)
         results = results[:final_top_k]
 
-    # 批量查询文档标题，用于前端展示文档名
+    after_rank_len = len(results)
+    if llm_ref_k is not None:
+        n = max(1, llm_ref_k)
+        results = results[:n]
+
     title_map: Dict[int, str] = {}
     if results:
         unique_ids = list({r["document_id"] for r in results})
@@ -79,6 +78,22 @@ async def retrieve_node(state: IterativeQAState) -> Dict[str, Any]:
             )
             for row in r.all():
                 title_map[row.id] = row.title or "未知文档"
+
+    distances = [r.get("distance") for r in results if r.get("distance") is not None]
+    rerank_scores = [r.get("rerank_score") for r in results if r.get("rerank_score") is not None]
+    logger.info(
+        "[QA检索] round={} k={} 召回={}条 精排={} 精排后={}条 入上下文={}条 final_top_k={} llm_ref_k={} distance={} rerank_score={}",
+        iteration + 1,
+        k,
+        recall_n,
+        rerank_applied,
+        after_rank_len,
+        len(results),
+        final_top_k,
+        llm_ref_k if llm_ref_k is not None else "-",
+        [round(d, 4) for d in distances] if distances else "[]",
+        [round(s, 4) for s in rerank_scores] if rerank_scores else "-",
+    )
 
     retrieved_docs = []
     for r in results:
@@ -91,23 +106,11 @@ async def retrieve_node(state: IterativeQAState) -> Dict[str, Any]:
         if r.get("rerank_score") is not None:
             meta["rerank_score"] = r["rerank_score"]
         retrieved_docs.append({"content": r["chunk_text"], "metadata": meta})
-    # 带文档标记的 context，便于评估时定位「哪个文档」需修改
     parts = []
     for doc in retrieved_docs:
         title = doc.get("metadata", {}).get("document_title", "未知文档")
         parts.append(f"【文档：{title}】\n{doc['content']}")
     context = "\n\n".join(parts) if parts else ""
-
-    distances = [r.get("distance") for r in results if r.get("distance") is not None]
-    rerank_scores = [r.get("rerank_score") for r in results if r.get("rerank_score") is not None]
-    logger.info(
-        "[QA检索] round={} query={!r} 最终返回{}条 distance={} rerank_score={}",
-        iteration + 1,
-        query[:80] + "..." if len(query) > 80 else query,
-        len(retrieved_docs),
-        [round(d, 4) for d in distances] if distances else "[]",
-        [round(s, 4) for s in rerank_scores] if rerank_scores else "-",
-    )
 
     return {
         "retrieved_docs": retrieved_docs,

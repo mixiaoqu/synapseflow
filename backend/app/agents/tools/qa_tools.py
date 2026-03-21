@@ -55,7 +55,7 @@ async def search_knowledge_base(
     ]
 
     final_top_k = config_registry.get_rag_config()["retrieval"]["final_top_k"]
-    if settings.RERANK_ENABLED and len(chunks) > final_top_k:
+    if settings.RERANK_ENABLED and len(chunks) > 0:
         chunks = await rerank_service(query, chunks, top_k=final_top_k)
     else:
         chunks = chunks[:final_top_k]

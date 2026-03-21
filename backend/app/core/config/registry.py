@@ -96,6 +96,11 @@ class ConfigRegistry:
                 ),
                 "fallback_top_n": int(retrieval.get("fallback_top_n", 3)),
                 "final_top_k": int(retrieval.get("final_top_k", 6)),
+                "llm_reference_top_k": (
+                    int(retrieval["llm_reference_top_k"])
+                    if retrieval.get("llm_reference_top_k") is not None
+                    else None
+                ),
             },
             "evaluate": {
                 "context_max_chars": int(ev.get("context_max_chars", 3000)),

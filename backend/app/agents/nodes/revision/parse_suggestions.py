@@ -1,24 +1,11 @@
 """解析用户建议节点：将自然语言转为结构化任务"""
-import json
 from typing import Dict, Any, List
 
 from loguru import logger
 
 from app.agents.states.revision_state import UserDrivenRevisionState
+from app.utils import extract_json_from_llm_response
 from app.core.llm import get_llm_for_analysis
-
-
-def _extract_json(content: str) -> Dict[str, Any]:
-    """从 LLM 回复中提取 JSON"""
-    content = (content or "").strip()
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0]
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0]
-    try:
-        return json.loads(content.strip())
-    except Exception:
-        return {}
 
 
 async def parse_suggestions_node(state: UserDrivenRevisionState) -> Dict[str, Any]:
@@ -35,8 +22,6 @@ async def parse_suggestions_node(state: UserDrivenRevisionState) -> Dict[str, An
         ...
     ]
     """
-    logger.info("[修订 1/4] parse_suggestions 开始 - 解析用户建议为结构化任务")
-
     llm = get_llm_for_analysis()
     doc_preview = (state.get("current_doc", "") or "")[:1500]
     edit_request = (state.get("user_suggestions", "") or "").strip()
@@ -73,22 +58,11 @@ async def parse_suggestions_node(state: UserDrivenRevisionState) -> Dict[str, An
 """
 
     response = await llm.ainvoke(prompt)
-    data = _extract_json(response.content or "")
+    data = extract_json_from_llm_response(response.content or "")
     tasks: List[Dict[str, Any]] = data.get("tasks", [])
     if not isinstance(tasks, list):
         tasks = []
 
-    if tasks:
-        logger.info("[修订 1/4] parse_suggestions 完成 - 解析到 {} 条任务", len(tasks))
-        for i, t in enumerate(tasks, 1):
-            logger.info(
-                "  [{}] {} | {} | {}",
-                i,
-                t.get("action", "?"),
-                t.get("target", ""),
-                (t.get("content_requirement", "") or "")[:60],
-            )
-    else:
-        logger.info("[修订 1/4] parse_suggestions 完成 - 无结构化任务")
+    logger.info("[修订 1/4] parse_suggestions 完成，共 {} 条任务", len(tasks))
 
     return {"parsed_tasks": tasks}

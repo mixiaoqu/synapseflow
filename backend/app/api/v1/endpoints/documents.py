@@ -56,6 +56,7 @@ def _to_response(doc: Document) -> DocumentResponse:
         document_type=doc.document_type,
         size=size,
         version=getattr(doc, "version", 1),
+        collection_id=getattr(doc, "collection_id", None),
         created_at=doc.created_at,
         updated_at=doc.updated_at,
     )
@@ -310,17 +311,7 @@ async def create_document_version(
     except Exception as e:
         logger.warning("文档索引失败 doc_id={}: {}", new_doc.id, e)
     logger.info("新建修订版文档 id={} 源于 doc_id={}", new_doc.id, doc_id)
-    size = getattr(new_doc, "size", 0) or len((new_doc.content or "").encode("utf-8"))
-    return DocumentResponse(
-        id=new_doc.id,
-        title=new_doc.title,
-        content=new_doc.content or "",
-        document_type=new_doc.document_type,
-        size=size,
-        version=new_doc.version or 1,
-        created_at=new_doc.created_at,
-        updated_at=new_doc.updated_at,
-    )
+    return _to_response(new_doc)
 
 
 @router.delete("/batch/delete")

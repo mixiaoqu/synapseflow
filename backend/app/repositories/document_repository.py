@@ -168,6 +168,7 @@ class DocumentRepository:
             parent_id=orig.id,
             root_id=root_id,
             is_latest=True,
+            collection_id=getattr(orig, "collection_id", None),
         )
         orig.is_latest = False
         self.db.add(new_doc)

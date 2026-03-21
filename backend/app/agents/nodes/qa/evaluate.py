@@ -1,9 +1,9 @@
 """评估答案质量节点"""
-import json
 import re
 from typing import Any, Dict
 
 from app.agents.states import IterativeQAState
+from app.utils import extract_json_from_llm_response
 from app.core.config.registry import config_registry
 from app.core.llm import get_llm_for_analysis
 
@@ -216,30 +216,11 @@ document_issues 仅在不通过且存在文档问题时填写，可为空数组 
     response = await llm.ainvoke(eval_prompt)
     raw = response.content or ""
 
-    def _parse_eval_json(content: str) -> Dict[str, Any]:
-        try:
-            return json.loads(content)
-        except Exception:
-            pass
-        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", content)
-        if m:
-            try:
-                return json.loads(m.group(1).strip())
-            except Exception:
-                pass
-        m = re.search(r"\{[\s\S]*\}", content)
-        if m:
-            try:
-                return json.loads(m.group(0))
-            except Exception:
-                pass
-        return {}
-
     retrieved_docs = state.get("retrieved_docs") or []
     dims: Dict[str, float] | None = None
 
     try:
-        result = _parse_eval_json(raw)
+        result = extract_json_from_llm_response(raw)
         score, dims = _compute_weighted_score(result, weights)
         score = _apply_dimension_floor_penalty(score, dims)
         score = _apply_accuracy_constraints(

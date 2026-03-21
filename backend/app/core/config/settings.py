@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     RERANK_API_URL: str = "http://localhost:8012"  # vllm 时使用
     RERANK_API_KEY: str = ""  # vllm 时可选
     RERANK_MODEL: str = "qwen3-rerank"  # bailian 固定；vllm 可配置
-    # 进入上下文的片段条数见 config/embedding.yaml retrieval.final_top_k
+    # 检索条数见 config/embedding.yaml retrieval.final_top_k；交给生成模型的条数可设 llm_reference_top_k
     RERANK_INSTRUCT: str = "Given a web search query, retrieve relevant passages that answer the query."
 
     # --- 文件存储配置 ---

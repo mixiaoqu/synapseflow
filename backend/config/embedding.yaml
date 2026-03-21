@@ -11,15 +11,18 @@ chunk:
   overlap: 100
 
 # 向量检索与进入生成/Rerank 的条数（余弦距离越小越相似）
-# QA 检索不按距离阈值过滤；精排由 .env RERANK_ENABLED + retrieval.final_top_k 控制
+# QA 检索不按距离阈值过滤；RERANK_ENABLED=true 时对每条召回结果调用精排（条数仍截断为 final_top_k）
 # distance_* / fallback_top_n：保留兼容，检索节点未使用
 retrieval:
-  k_first: 16
-  k_iteration: 20
-  distance_threshold: 0.5
-  distance_threshold_iteration: 0.6
-  fallback_top_n: 3
-  final_top_k: 6
+  k_first: 16 # 首轮向量召回条数
+  k_iteration: 20 # 迭代向量召回条数
+  distance_threshold: 0.5 # 距离阈值
+  distance_threshold_iteration: 0.6 # 迭代距离阈值
+  fallback_top_n: 3 # 回退条数
+  # 向量召回 + Rerank 后最多保留的切片条数
+  final_top_k: 6 # 最终保留条数
+  # 拼进「知识库内容」、交给答案生成大模型的条数（取精排后的前 N 条）；不填则与 final_top_k 一致
+  # llm_reference_top_k: 4 交给大模型生成答案的参考资料条数
 
 # 迭代 QA 评估节点
 evaluate:

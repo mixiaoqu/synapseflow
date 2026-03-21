@@ -8,6 +8,7 @@ from app.core.llm import get_llm_for_generation
 async def answer_node(state: IterativeQAState) -> Dict[str, Any]:
     """
     生成答案节点：生成详细、准确的答案
+    知识库正文来自 state['context']，条数由检索节点的 final_top_k / llm_reference_top_k 决定。
     迭代时（iteration > 0）利用上一轮评估反馈，有针对性地改进
     """
     llm = get_llm_for_generation()

@@ -1,4 +1,5 @@
 """基于用户建议执行修订的节点"""
+import asyncio
 import re
 from typing import Dict, Any, List, Set, Tuple
 
@@ -14,6 +15,7 @@ from app.core.llm import get_llm_for_generation
 
 # 小文档可直接整篇修订，超过此长度则分段
 SMALL_DOC_CHAR_LIMIT = 2500
+MAX_CONCURRENT_LLM_CALLS = 5  # 最大并发 LLM 请求数
 
 # 块元数据：(text, section_title, index)
 ChunkWithMeta = Tuple[str, str, int]
@@ -143,9 +145,11 @@ async def _revise_single_chunk(
     total_chunks: int,
     task_desc: str,
     llm,
+    semaphore: asyncio.Semaphore = None,
 ) -> str:
-    """修订单个文档块，仅输出该块内容"""
-    prompt = f"""你是文档修订助手。下面是文档的第 {chunk_idx + 1}/{total_chunks} 段。
+    """修订单个文档块，仅输出该块内容（支持并发控制）"""
+    async def _do_revise():
+        prompt = f"""你是文档修订助手。下面是文档的第 {chunk_idx + 1}/{total_chunks} 段。
 
 # 本段原文
 {chunk}
@@ -159,17 +163,23 @@ async def _revise_single_chunk(
 3. **只输出本段修订结果**，不要输出解释、序号或其他段落
 4. **必须完整输出本段全部内容**，不可截断或遗漏，输出长度应与原文相当（除非任务要求删除）
 """
-    response = await llm.ainvoke(prompt)
-    revised = (response.content or "").strip()
-    if not revised:
-        return chunk
-    # 截断检测：输出异常短且非删除任务时，可能被 API 截断，回退到原文
-    tasks_str = task_desc.lower()
-    if len(chunk) > 300 and len(revised) < len(chunk) * 0.35:
-        if "delete" not in tasks_str and "删除" not in tasks_str and "简化" not in tasks_str:
-            logger.warning("块 {} 输出过短(原文{}字->{}字)，疑似截断，保留原文", chunk_idx + 1, len(chunk), len(revised))
+        response = await llm.ainvoke(prompt)
+        revised = (response.content or "").strip()
+        if not revised:
             return chunk
-    return revised
+        # 截断检测：输出异常短且非删除任务时，可能被 API 截断，回退到原文
+        tasks_str = task_desc.lower()
+        if len(chunk) > 300 and len(revised) < len(chunk) * 0.35:
+            if "delete" not in tasks_str and "删除" not in tasks_str and "简化" not in tasks_str:
+                logger.warning("块 {} 输出过短(原文{}字->{}字)，疑似截断，保留原文", chunk_idx + 1, len(chunk), len(revised))
+                return chunk
+        return revised
+    
+    if semaphore:
+        async with semaphore:
+            return await _do_revise()
+    else:
+        return await _do_revise()
 
 
 async def revise_by_suggestions_node(state: UserDrivenRevisionState) -> Dict[str, Any]:
@@ -188,7 +198,7 @@ async def revise_by_suggestions_node(state: UserDrivenRevisionState) -> Dict[str
         for i, t in enumerate(tasks)
     )
 
-    llm = get_llm_for_generation
+    llm = get_llm_for_generation()
 
     if len(current_doc) <= SMALL_DOC_CHAR_LIMIT:
         # 小文档：整篇一次性修订
@@ -225,16 +235,33 @@ async def revise_by_suggestions_node(state: UserDrivenRevisionState) -> Dict[str
             len(current_doc),
         )
 
-        revised_chunks: List[str] = []
+        # 并发修订优化：使用 asyncio.gather + Semaphore
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_LLM_CALLS)
+        
+        # 准备并发任务
+        tasks_to_run = []
+        chunk_index_map = []
+        
         for i, (chunk_text, _, _) in enumerate(chunks_meta):
             if i in affected_indices:
                 chunk_task_desc = task_desc
                 if i in section_hints:
                     chunk_task_desc = task_desc + "\n\n" + section_hints[i]
-                rev = await _revise_single_chunk(
-                    chunk_text, i, len(chunks_meta), chunk_task_desc, llm
+                
+                task = _revise_single_chunk(
+                    chunk_text, i, len(chunks_meta), chunk_task_desc, llm, semaphore
                 )
-                revised_chunks.append(rev)
+                tasks_to_run.append(task)
+                chunk_index_map.append(i)
+        
+        revised_results = await asyncio.gather(*tasks_to_run)
+        
+        # 按原始顺序组装结果
+        result_dict = dict(zip(chunk_index_map, revised_results))
+        revised_chunks: List[str] = []
+        for i, (chunk_text, _, _) in enumerate(chunks_meta):
+            if i in result_dict:
+                revised_chunks.append(result_dict[i])
             else:
                 revised_chunks.append(chunk_text)
 

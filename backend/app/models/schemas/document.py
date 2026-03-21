@@ -20,6 +20,7 @@ class DocumentResponse(BaseModel):
     document_type: Optional[str] = None
     size: int = 0
     version: int = 1
+    collection_id: Optional[int] = Field(None, description="所属集合 ID")
     created_at: datetime
     updated_at: datetime
 

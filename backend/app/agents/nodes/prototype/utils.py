@@ -1,21 +1,12 @@
 """文档转原型节点使用的工具函数"""
-import json
 from typing import Dict, Any
+
+from app.utils import extract_json_from_llm_response
 
 
 def parse_json_safely(content: str) -> Dict[str, Any]:
-    """安全解析JSON"""
-    content = content.strip()
-    if content.startswith("```json"):
-        content = content[7:]
-    elif content.startswith("```"):
-        content = content[3:]
-    if content.endswith("```"):
-        content = content[:-3]
-    try:
-        return json.loads(content.strip())
-    except Exception:
-        return {}
+    """安全解析JSON（已迁移到统一工具）"""
+    return extract_json_from_llm_response(content)
 
 
 def auto_complete_requirements(doc: str, partial: Dict[str, Any]) -> Dict[str, Any]:

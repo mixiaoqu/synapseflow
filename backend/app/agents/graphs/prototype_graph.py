@@ -13,14 +13,12 @@ from app.agents.nodes.prototype import (
 def create_doc_to_prototype_graph():
     """创建文档转原型图"""
     workflow = StateGraph(DocToPrototypeState)
-
     workflow.add_node("extract_requirements", extract_requirements_node)
     workflow.add_node("design_components", design_components_node)
     workflow.add_node("generate_html", generate_html_node)
     workflow.add_node("validate_preview", validate_and_preview_node)
-
+    
     workflow.set_entry_point("extract_requirements")
-
     workflow.add_edge("extract_requirements", "design_components")
     workflow.add_edge("design_components", "generate_html")
     workflow.add_edge("generate_html", "validate_preview")

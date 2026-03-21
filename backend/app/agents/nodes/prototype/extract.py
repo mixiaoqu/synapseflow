@@ -19,7 +19,6 @@ async def extract_requirements_node(state: DocToPrototypeState) -> Dict[str, Any
     需求提取节点：理解任意格式的需求文档
     使用：analysis - 分析理解模型
     """
-    logger.info("节点开始: extract_requirements，需求长度={}", len(state["requirements_doc"]))
     llm = get_llm_for_analysis()
 
     prompt = f"""你是一个资深的产品设计师和前端架构师，擅长从各种格式的需求文档中提取UI设计需求。
@@ -179,7 +178,6 @@ async def extract_requirements_node(state: DocToPrototypeState) -> Dict[str, Any
 
         extracted = normalize_requirements(extracted)
         modules = extracted.get("functional_modules", [])
-        logger.info("节点完成: extract_requirements，提取 {} 个功能模块", len(modules))
         return {"extracted_requirements": extracted}
 
     except Exception as e:

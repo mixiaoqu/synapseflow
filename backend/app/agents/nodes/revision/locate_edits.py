@@ -88,7 +88,7 @@ def _map_targets_to_chunks(
     for t in tasks:
         target = (t.get("target") or "").strip()
         if not target:
-            logger.info("  task target 为空 -> 全部块受影响")
+            logger.debug("  task target 为空 -> 全部块受影响")
             affected.update(range(n))
             continue
 
@@ -196,8 +196,6 @@ async def locate_edits_node(state: UserDrivenRevisionState) -> Dict[str, Any]:
     输入：parsed_tasks, doc_structure, chunks_meta, chunks_positions
     输出：affected_chunk_indices, section_hints
     """
-    logger.info("[修订 3/4] locate_edits 开始 - 定位受影响块并生成修订提示")
-
     tasks = state.get("parsed_tasks", [])
     chunks_meta = state.get("chunks_meta", [])
     chunks_positions = state.get("chunks_positions", [])

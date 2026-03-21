@@ -67,8 +67,6 @@ async def analyze_document_node(state: UserDrivenRevisionState) -> Dict[str, Any
     输入：current_doc
     输出：doc_structure, chunks_meta, chunks_positions
     """
-    logger.info("[修订 2/4] analyze_document 开始 - 解析文档结构并分块")
-
     doc = (state.get("current_doc") or "").strip()
 
     if not doc:

@@ -15,8 +15,11 @@ async def suggest_revision(request: SuggestRevisionRequest):
     用户建议驱动修订：一次性执行完整流程，返回修订后文档。
     前端展示 Diff 对比，用户确认后选择是否保存到知识库。
     """
-    logger.info("[修订] ========== 开始执行文档修订流程 ==========")
-    logger.info("[修订] 文档长度: {} 字, 建议长度: {} 字", len(request.document), len(request.suggestions))
+    logger.info(
+        "[修订] suggest 文档={} 字 建议={} 字",
+        len(request.document),
+        len(request.suggestions),
+    )
     try:
         initial_state = {
             "original_doc": request.document,

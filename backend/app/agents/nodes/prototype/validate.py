@@ -4,8 +4,6 @@ import os
 import hashlib
 from typing import Dict, Any
 
-from loguru import logger
-
 from app.agents.states.prototype_state import DocToPrototypeState
 from app.core.config import settings
 
@@ -48,7 +46,6 @@ async def validate_and_preview_node(state: DocToPrototypeState) -> Dict[str, Any
     await asyncio.to_thread(_write_preview_file, preview_path, full_html)
 
     preview_url = f"/preview/{file_hash}.html"
-    logger.info("节点完成: validate_preview，预览={}，有效={}", preview_url, len(validation_errors) == 0)
 
     return {
         "generated_html": full_html,

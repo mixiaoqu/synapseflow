@@ -88,13 +88,6 @@ async def rerank(query: str, chunks: List[dict], top_k: int | None = None) -> Li
 
     top_k = top_k or config_registry.get_rag_config()["retrieval"]["final_top_k"]
     documents = [c["chunk_text"] for c in chunks]
-    logger.info(
-        "[Rerank] 开始 provider={} query={!r} 输入{}条 top_k={}",
-        settings.RERANK_PROVIDER,
-        query[:60] + "..." if len(query) > 60 else query,
-        len(chunks),
-        top_k,
-    )
 
     try:
         url, headers = _get_url_and_headers()

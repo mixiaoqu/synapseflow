@@ -4,7 +4,6 @@ pgvector 向量存储服务
 """
 from typing import List
 
-from loguru import logger
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -85,9 +84,4 @@ async def search(
             "distance": d,
         })
 
-    if out:
-        distances = [r["distance"] for r in out]
-        logger.info("检索返回 {} 条, distance(cosine): {}", len(out), distances)
-    else:
-        logger.info("检索返回 0 条")
     return out

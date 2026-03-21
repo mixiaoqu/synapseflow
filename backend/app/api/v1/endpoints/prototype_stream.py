@@ -35,7 +35,6 @@ async def prototype_event_generator(
     """
     
     try:
-        logger.info("原型流式生成开始，需求长度={}", len(requirements))
         graph = create_doc_to_prototype_graph()
 
         # 初始状态
@@ -336,7 +335,6 @@ async def generate_prototype_stream(request: PrototypeRequest):
     流式生成原型（SSE）
     事件格式：node_start, log, node_complete, complete
     """
-    logger.info("POST /generate/stream 请求，需求长度={}", len(request.requirements))
     async def sse_generator():
         """SSE格式化生成器"""
         async for event_data in prototype_event_generator(request.requirements):
@@ -364,7 +362,6 @@ async def generate_prototype_from_file(file: UploadFile = File(..., description=
     支持格式：.txt, .md, .pdf, .docx
     最大 10MB
     """
-    logger.info("POST /generate/stream/file 请求，文件名={}", file.filename)
     content = await file.read()
     text, err = extract_text_from_file(file.filename or "unknown", content)
     if err:
