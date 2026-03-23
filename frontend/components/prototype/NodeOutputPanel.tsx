@@ -5,10 +5,20 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { AgentNode } from '@/stores/prototypeStore';
+
+export interface AgentNode {
+  id: string;
+  name: string;
+  model: string;
+  status: 'pending' | 'running' | 'completed' | 'error' | string;
+  duration?: number;
+  output?: unknown;
+  startTime?: number;
+  detailedOutput?: unknown;
+}
 
 interface Props {
-  nodes: (AgentNode | { id: string; name: string; model: string; status: string; detailedOutput?: any })[];
+  nodes: (AgentNode | { id: string; name: string; model: string; status: string; detailedOutput?: unknown })[];
 }
 
 export function NodeOutputPanel({ nodes }: Props) {

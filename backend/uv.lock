@@ -1388,6 +1388,23 @@ otel = [
 ]
 
 [[package]]
+name = "langsmith-fetch"
+version = "0.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "langsmith" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "rich" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/38/eb/d21403968c0fac374391b97951dc9025806a38d83e3a723429dae2c1a122/langsmith_fetch-0.3.1.tar.gz", hash = "sha256:8c8ad53a17ee1654efdd20b00ca7cf47288373468c66ae4d87f72ab09ca48055", size = 5400935, upload-time = "2025-12-12T19:50:13.125Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/f4/7d8727673ade5ad31f70e1ff14ebdd2d2e11d10afe4085de9b9296c4ddb2/langsmith_fetch-0.3.1-py3-none-any.whl", hash = "sha256:ad98a94521a3723ab861eb374675cf73b1f400ee736190b9dc3e90afeb17b69f", size = 22970, upload-time = "2025-12-12T19:50:07.205Z" },
+]
+
+[[package]]
 name = "librt"
 version = "0.8.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3116,6 +3133,7 @@ dependencies = [
     { name = "langgraph" },
     { name = "langgraph-cli", extra = ["inmem"] },
     { name = "langsmith" },
+    { name = "langsmith-fetch" },
     { name = "loguru" },
     { name = "passlib", extra = ["bcrypt"] },
     { name = "pgvector" },
@@ -3159,6 +3177,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=1.0.0" },
     { name = "langgraph-cli", extras = ["inmem"], specifier = ">=0.1.0" },
     { name = "langsmith", specifier = ">=0.1.0" },
+    { name = "langsmith-fetch", specifier = ">=0.3.1" },
     { name = "loguru", specifier = ">=0.7.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7.4" },
