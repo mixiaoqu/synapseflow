@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # --- 阿里云百炼（DashScope）---
     DASHSCOPE_API_KEY: str = ""
 
+    # --- 墨鱼（OpenAI 兼容，config/models.yaml provider moyu）---
+    MOYU_API_KEY: str = ""
+
     # --- Rerank 远程 API：bailian=阿里云百炼，vllm=自建 vLLM（与无距离阈值的向量召回配合）---
     RERANK_ENABLED: bool = True
     RERANK_PROVIDER: str = "bailian"  # bailian | vllm

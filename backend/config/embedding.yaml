@@ -5,7 +5,8 @@ embedding:
   dim: 1024
   description: 多语言向量嵌入模型，支持长文本，检索效果更好
 
-# 文档入库时的文本分块（修改后需对已有文档重新索引）
+# 文档入库：按 Markdown 标题（#～######）与空行段落切分，再合并到不超过 size；
+# 仍超长时按 overlap 做字符级二次切分。修改后需对已有文档重新索引。
 chunk:
   size: 700
   overlap: 100
@@ -14,15 +15,15 @@ chunk:
 # QA 检索不按距离阈值过滤；RERANK_ENABLED=true 时对每条召回结果调用精排（条数仍截断为 final_top_k）
 # distance_* / fallback_top_n：保留兼容，检索节点未使用
 retrieval:
-  k_first: 16 # 首轮向量召回条数
-  k_iteration: 20 # 迭代向量召回条数
+  k_first: 32 # 首轮向量召回条数（增大后再经 Rerank 截断）
+  k_iteration: 32 # 迭代向量召回条数
   distance_threshold: 0.5 # 距离阈值
   distance_threshold_iteration: 0.6 # 迭代距离阈值
   fallback_top_n: 3 # 回退条数
-  # 向量召回 + Rerank 后最多保留的切片条数
-  final_top_k: 6 # 最终保留条数
-  # 拼进「知识库内容」、交给答案生成大模型的条数（取精排后的前 N 条）；不填则与 final_top_k 一致
-  # llm_reference_top_k: 4 交给大模型生成答案的参考资料条数
+  # 向量召回 + Rerank 后最多保留的切片条数（须 >= llm_reference_top_k）
+  final_top_k: 10
+  # 拼进「知识库内容」、交给答案生成大模型的条数（精排后的前 N 条）
+  llm_reference_top_k: 10
 
 # 迭代 QA 评估节点
 evaluate:

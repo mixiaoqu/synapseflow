@@ -9,9 +9,9 @@ ChunkWithMeta = Tuple[str, str, int]
 
 
 def extract_section_title(text: str) -> str:
-    """从块首行提取标题（## 或 ### 开头的 markdown 标题）"""
+    """从块首行提取标题（#～###### 开头的 Markdown 标题）"""
     first_line = text.strip().split("\n")[0] if text else ""
-    m = re.match(r'^#{1,3}\s+(.+)$', first_line.strip())
+    m = re.match(r'^#{1,6}\s+(.+)$', first_line.strip())
     return m.group(1).strip() if m else ""
 
 
@@ -20,7 +20,7 @@ def split_document_into_chunks(
     max_chars: int = CHUNK_CHAR_LIMIT,
 ) -> List[ChunkWithMeta]:
     """
-    将文档按自然段落分块，优先在 ##/### 标题处断开。
+    将文档按自然段落分块，优先在 #～###### 标题处断开。
     单块不超过 max_chars 字符。
     返回 [(chunk_text, section_title, index), ...]
     """
@@ -30,7 +30,7 @@ def split_document_into_chunks(
         return [(doc, extract_section_title(doc), 0)]
 
     chunks_raw: List[str] = []
-    parts = re.split(r'(?=^#{1,3}\s+)', doc, flags=re.MULTILINE)
+    parts = re.split(r'(?=^#{1,6}\s+)', doc, flags=re.MULTILINE)
     if len(parts) == 1 and parts[0] == doc:
         parts = re.split(r'(\n\n+)', doc)
         parts = [p for p in parts if p.strip()]

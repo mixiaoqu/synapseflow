@@ -7,7 +7,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const navItems = [
-  { href: '/qa', icon: '💬', title: '迭代问答', desc: '知识库Q&A' },
+  { href: '/kb-qa', icon: '📚', title: '知识库问答', desc: '单轮流式' },
+  { href: '/qa', icon: '💬', title: '迭代问答', desc: '多轮评估' },
   { href: '/revision', icon: '📝', title: '文档修订', desc: '用户建议驱动' },
   { href: '/documents', icon: '📁', title: '文档库', desc: '上传与管理' },
   { href: '/prototype', icon: '🎨', title: '文档转原型', desc: '自动生成UI' },
@@ -67,7 +68,7 @@ export default function DashboardLayout({
       </aside>
 
       {/* 主内容区 */}
-      <main className="flex-1 min-h-0 overflow-auto">
+      <main className="flex min-h-0 flex-1 flex-col overflow-auto">
         {children}
       </main>
     </div>

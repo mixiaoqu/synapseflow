@@ -6,7 +6,6 @@ import asyncio
 from datetime import datetime
 from typing import List
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,28 +16,18 @@ from app.core.constants import DEFAULT_USER_ID
 from app.db.models import Document
 from app.db.session import AsyncSessionLocal
 from app.services.embedding import embed_documents
+from app.services.semantic_chunk import split_for_vector_index
 from app.services.vector_store import add_document_chunks, delete_by_document_id
 
 
 def _chunk_text(content: str) -> List[str]:
-    """将文本分块（参数见 config/embedding.yaml chunk）"""
+    """按标题/段落语义分块；参数见 config/embedding.yaml chunk（size=单块上限，overlap=超长细分时重叠）。"""
     ck = config_registry.get_rag_config()["chunk"]
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=ck["size"],
-        chunk_overlap=ck["overlap"],
-        length_function=len,
-        separators=[
-    "\n\n",
-    "\n### ",   # 标题
-    "\n## ",
-    "\n# ",
-    "\n",
-    "。", "！", "？",
-    ".", "!", "?",
-    " "
-],
+    return split_for_vector_index(
+        content,
+        max_chars=ck["size"],
+        overlap=ck["overlap"],
     )
-    return splitter.split_text(content)
 
 
 async def index_document(db: AsyncSession, doc_id: int, content: str) -> int:
@@ -46,7 +35,7 @@ async def index_document(db: AsyncSession, doc_id: int, content: str) -> int:
     对单篇文档建立向量索引
     先删除旧索引，再分块、嵌入、写入
     返回写入的 chunk 数量
-    修改 CHUNK_SIZE/OVERLAP 后需对已入库文档重新索引方可生效。
+    修改 chunk.size/overlap 或分块策略后需对已入库文档重新索引方可生效。
     """
     if not content or not content.strip():
         return 0

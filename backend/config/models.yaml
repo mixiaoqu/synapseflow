@@ -10,6 +10,7 @@ api_keys:
   aihubmix: AIHUBMIX_API_KEY
   openrouter: OPENROUTER_API_KEY
   dashscope: DASHSCOPE_API_KEY
+  moyu: MOYU_API_KEY
 
 # Provider配置
 providers:
@@ -34,6 +35,9 @@ providers:
   dashscope:
     api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
     description: 阿里云通义千问 DashScope,qwen3.5-plus 等
+  moyu:
+    api_base: https://www.moyu.info/v1
+    description: 魔芋（moyu.info）OpenAI 兼容代理，GPT-5.1 等
 
 # 模型配置（5类）
 models:
@@ -66,9 +70,9 @@ models:
 
   # 3. generation - 生成内容：文本、代码、修订内容
   generation:
-    provider: dashscope
-    model: kimi-k2.5
-    name: 生成内容模型
+    provider: moyu
+    model: deepseek-v3
+    name: 魔芋 GPT-5.1 生成
     temperature: 0.5
     request_timeout: 180
     streaming: true
