@@ -89,18 +89,91 @@ function renderNodeOutput(node: AgentNode | { id: string; detailedOutput?: any }
   if (!output) return null;
 
   switch (node.id) {
-    case 'extract_requirements':
-      return <ExtractRequirementsOutput output={output} />;
-    
-    case 'design_components':
-      return <DesignComponentsOutput output={output} />;
-    
-    case 'generate_html':
+    case 'prepare_requirement_chunks': {
+      const ch = (output as { requirements_chunks?: unknown[] }).requirements_chunks;
+      const n = Array.isArray(ch) ? ch.length : 0;
+      return (
+        <div className="text-sm text-gray-700 space-y-1">
+          <p>已切分 <span className="font-semibold text-blue-700">{n}</span> 个章节块</p>
+        </div>
+      );
+    }
+
+    case 'product_design': {
+      const sm = (output as { site_map?: { title?: string; route?: string }[] }).site_map;
+      const mode = (output as { generation_mode?: string }).generation_mode;
+      const list = Array.isArray(sm) ? sm : [];
+      return (
+        <div className="text-sm text-gray-700 space-y-2">
+          <p>
+            <span className="font-semibold text-blue-700">{list.length}</span> 页
+            {mode ? (
+              <span className="text-gray-500 ml-2">({mode})</span>
+            ) : null}
+          </p>
+          <ul className="list-disc pl-4 text-xs text-gray-600 space-y-0.5">
+            {list.slice(0, 12).map((p, i) => (
+              <li key={i}>
+                {p.title || p.route || '—'}
+                {p.route ? <span className="text-gray-400 ml-1">{p.route}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    }
+
+    case 'chunk_understanding': {
+      const cs = (output as { chunk_summaries?: unknown[] }).chunk_summaries;
+      const n = Array.isArray(cs) ? cs.length : 0;
+      return (
+        <div className="text-sm text-gray-700">
+          <p>
+            分块语义摘要 <span className="font-semibold text-blue-700">{n}</span> 条
+          </p>
+        </div>
+      );
+    }
+
+    case 'structure_extraction': {
+      const sp = (output as { structured_spec?: { features?: unknown[] } }).structured_spec;
+      const nf = sp?.features?.length ?? 0;
+      return (
+        <div className="text-sm text-gray-700">
+          <p>
+            结构化功能点 <span className="font-semibold text-blue-700">{nf}</span> 个
+          </p>
+        </div>
+      );
+    }
+
+    case 'normalize_spec': {
+      const ns = (output as { normalized_spec?: { features?: unknown[] } }).normalized_spec;
+      const nf = ns?.features?.length ?? 0;
+      return (
+        <div className="text-sm text-gray-700">
+          <p>
+            归一化功能 <span className="font-semibold text-blue-700">{nf}</span> 个
+          </p>
+        </div>
+      );
+    }
+
+    case 'interaction_design': {
+      const ix = (output as { interactions?: unknown[] }).interactions;
+      const n = Array.isArray(ix) ? ix.length : 0;
+      return (
+        <div className="text-sm text-gray-700">
+          <p>
+            交互条目 <span className="font-semibold text-blue-700">{n}</span> 条
+          </p>
+        </div>
+      );
+    }
+
+    case 'generate_prototype_from_spec':
       return <CodeOutput output={output} language="HTML" />;
-    
-    case 'validate_preview':
-      return <ValidateOutput output={output} />;
-    
+
     case 'parse_suggestions':
       return <ParseSuggestionsOutput output={output} />;
     
@@ -166,159 +239,6 @@ function ReviseOutput({ output }: { output: any }) {
   );
 }
 
-function ExtractRequirementsOutput({ output }: { output: any }) {
-  return (
-    <div className="space-y-4">
-      {/* 页面信息 */}
-      {output.page_info && (
-        <div className="bg-white rounded-lg p-4 border">
-          <h4 className="font-semibold text-sm text-gray-700 mb-2">📄 页面信息</h4>
-          <div className="space-y-1 text-sm">
-            <div><span className="text-gray-500">标题:</span> {output.page_info.title}</div>
-            <div><span className="text-gray-500">类型:</span> <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">{output.page_info.type}</span></div>
-            <div><span className="text-gray-500">描述:</span> {output.page_info.description}</div>
-          </div>
-        </div>
-      )}
-
-      {/* 功能模块 */}
-      {output.functional_modules && output.functional_modules.length > 0 && (
-        <div className="bg-white rounded-lg p-4 border">
-          <h4 className="font-semibold text-sm text-gray-700 mb-2">🧩 功能模块 ({output.functional_modules.length})</h4>
-          <div className="space-y-2">
-            {output.functional_modules.map((module: any, idx: number) => (
-              <div key={idx} className="p-3 bg-gray-50 rounded border-l-4 border-blue-500">
-                <div className="font-medium text-sm text-gray-900">{module.name}</div>
-                <div className="text-xs text-gray-500 mt-1">{module.description}</div>
-                {module.components && module.components.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {module.components.map((comp: string, i: number) => (
-                      <span key={i} className="px-2 py-1 bg-white rounded text-xs border">
-                        {comp}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 交互行为 */}
-      {output.interactions && output.interactions.length > 0 && (
-        <div className="bg-white rounded-lg p-4 border">
-          <h4 className="font-semibold text-sm text-gray-700 mb-2">⚡ 交互行为 ({output.interactions.length})</h4>
-          <div className="space-y-2">
-            {output.interactions.map((inter: any, idx: number) => (
-              <div key={idx} className="text-sm p-2 bg-purple-50 rounded">
-                <span className="text-purple-700 font-medium">{inter.trigger}</span>
-                <span className="text-gray-500 mx-2">→</span>
-                <span className="text-gray-900">{inter.action}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 数据模型 */}
-      {output.data_model && output.data_model.length > 0 && (
-        <div className="bg-white rounded-lg p-4 border">
-          <h4 className="font-semibold text-sm text-gray-700 mb-2">💾 数据模型 ({output.data_model.length})</h4>
-          <div className="space-y-3">
-            {output.data_model.map((model: any, idx: number) => (
-              <div key={idx} className="border rounded-lg overflow-hidden">
-                <div className="bg-gray-100 px-3 py-2 font-medium text-sm">
-                  {model.entity}
-                </div>
-                <div className="p-3 space-y-1">
-                  {model.fields && model.fields.map((field: any, i: number) => (
-                    <div key={i} className="flex items-center gap-2 text-xs">
-                      <span className="font-mono text-blue-600">{field.name}</span>
-                      <span className="text-gray-400">:</span>
-                      <span className="text-gray-600">{field.type}</span>
-                      {field.required && <span className="text-red-500">*</span>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 视觉风格 */}
-      {output.visual_style && (
-        <div className="bg-white rounded-lg p-4 border">
-          <h4 className="font-semibold text-sm text-gray-700 mb-2">🎨 视觉风格</h4>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div><span className="text-gray-500">主题:</span> {output.visual_style.theme}</div>
-            <div><span className="text-gray-500">配色:</span> {output.visual_style.color_scheme}</div>
-            <div><span className="text-gray-500">主色:</span> 
-              <span className="ml-2 inline-block w-4 h-4 rounded border" 
-                    style={{ backgroundColor: output.visual_style.primary_color }}></span>
-              <span className="ml-1 font-mono text-xs">{output.visual_style.primary_color}</span>
-            </div>
-            <div><span className="text-gray-500">布局:</span> {output.visual_style.layout}</div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DesignComponentsOutput({ output }: { output: any }) {
-  return (
-    <div className="space-y-4">
-      {/* 组件列表 */}
-      {output.components && output.components.length > 0 && (
-        <div className="bg-white rounded-lg p-4 border">
-          <h4 className="font-semibold text-sm text-gray-700 mb-2">
-            🎨 UI组件 ({output.components.length})
-          </h4>
-          <pre className="text-xs text-gray-600 overflow-x-auto bg-gray-50 p-3 rounded">
-            {JSON.stringify(output.components, null, 2)}
-          </pre>
-        </div>
-      )}
-
-      {/* 设计系统 */}
-      {output.design_system && (
-        <div className="bg-white rounded-lg p-4 border">
-          <h4 className="font-semibold text-sm text-gray-700 mb-2">🎨 设计系统</h4>
-          <div className="space-y-3">
-            {output.design_system.colors && (
-              <div>
-                <div className="text-xs font-medium text-gray-500 mb-1">颜色</div>
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(output.design_system.colors).map(([key, value]: [string, any]) => (
-                    <div key={key} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded border">
-                      <div className="w-6 h-6 rounded border" style={{ backgroundColor: value }}></div>
-                      <div>
-                        <div className="text-xs font-medium">{key}</div>
-                        <div className="text-xs text-gray-500 font-mono">{value}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            
-            {output.design_system.typography && (
-              <div>
-                <div className="text-xs font-medium text-gray-500 mb-1">字体</div>
-                <pre className="text-xs text-gray-600 bg-gray-50 p-2 rounded">
-                  {JSON.stringify(output.design_system.typography, null, 2)}
-                </pre>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function CodeOutput({ output, language }: { output: any; language: string }) {
   const preview = output[`${language.toLowerCase()}_preview`];
   const totalLines = output.total_lines;
@@ -348,51 +268,3 @@ function CodeOutput({ output, language }: { output: any; language: string }) {
   );
 }
 
-function ValidateOutput({ output }: { output: any }) {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        {output.is_valid ? (
-          <>
-            <span className="text-2xl">✅</span>
-            <span className="text-sm font-medium text-green-700">验证通过</span>
-          </>
-        ) : (
-          <>
-            <span className="text-2xl">⚠️</span>
-            <span className="text-sm font-medium text-orange-700">发现问题</span>
-          </>
-        )}
-      </div>
-
-      {output.preview_url && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-          <div className="text-xs text-gray-500 mb-1">预览地址</div>
-          <a
-            href={output.preview_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-blue-600 hover:underline font-mono"
-          >
-            {output.preview_url}
-          </a>
-        </div>
-      )}
-
-      {output.validation_errors && output.validation_errors.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-          <div className="text-sm font-medium text-red-700 mb-2">
-            验证错误 ({output.validation_errors.length})
-          </div>
-          <ul className="space-y-1">
-            {output.validation_errors.map((error: string, idx: number) => (
-              <li key={idx} className="text-xs text-red-600">
-                • {error}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}

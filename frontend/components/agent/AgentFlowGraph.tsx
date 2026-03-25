@@ -100,18 +100,34 @@ function getOutputSummary(data: any): string {
   
   const output = data.detailedOutput;
   
-  // 根据节点ID返回摘要
-  if (data.id === 'extract_requirements') {
-    const modules = output.functional_modules?.length || 0;
-    return `${modules}个模块`;
-  } else if (data.id === 'design_components') {
-    const comps = output.components?.length || 0;
-    return `${comps}个组件`;
-  } else if (data.id.includes('generate_')) {
+  // 根据节点ID返回摘要（与 create_doc_to_prototype_graph 节点 id 对齐）
+  if (data.id === 'prepare_requirement_chunks') {
+    const n = output.requirements_chunks?.length ?? 0;
+    return `${n} 个块`;
+  }
+  if (data.id === 'product_design') {
+    const n = output.site_map?.length ?? 0;
+    return `${n} 页`;
+  }
+  if (data.id === 'chunk_understanding') {
+    const n = output.chunk_summaries?.length ?? 0;
+    return `${n} 条摘要`;
+  }
+  if (data.id === 'structure_extraction') {
+    const n = output.structured_spec?.features?.length ?? 0;
+    return `${n} 个功能`;
+  }
+  if (data.id === 'normalize_spec') {
+    const n = output.normalized_spec?.features?.length ?? 0;
+    return `归一 ${n} 项`;
+  }
+  if (data.id === 'interaction_design') {
+    const n = output.interactions?.length ?? 0;
+    return `${n} 条交互`;
+  }
+  if (data.id === 'generate_prototype_from_spec') {
     const lines = output.total_lines || 0;
     return `${lines}行`;
-  } else if (data.id === 'validate_preview') {
-    return output.is_valid ? '✓ 验证通过' : '⚠ 有问题';
   }
   if (data.id === 'parse_suggestions') {
     const n = output.parsed_tasks?.length ?? 0;

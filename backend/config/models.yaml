@@ -33,14 +33,14 @@ providers:
     description: OpenRouter 多模型代理，stepfun/step-3.5-flash:free 等
   dashscope:
     api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
-    description: 阿里云通义千问 DashScope 兼容模式，qwen3-max 等
+    description: 阿里云通义千问 DashScope,qwen3.5-plus 等
 
 # 模型配置（5类）
 models:
   # 1. planner - 规划任务：设计组件架构、选择方案、拆解步骤
   planner:
     provider: dashscope
-    model: deepseek-v3.2
+    model: qwen3.5-plus
     name: 规划任务模型
     temperature: 0.4
     request_timeout: 90
@@ -53,7 +53,7 @@ models:
   # 2. analysis - 分析理解：长文本理解、结构化提取、质量评估、内容检测
   analysis:
     provider: dashscope
-    model: deepseek-v3.2
+    model: qwen3.5-plus
     name: 分析理解模型
     temperature: 0.3
     request_timeout: 180
@@ -67,7 +67,7 @@ models:
   # 3. generation - 生成内容：文本、代码、修订内容
   generation:
     provider: dashscope
-    model: deepseek-v3.2
+    model: kimi-k2.5
     name: 生成内容模型
     temperature: 0.5
     request_timeout: 180
@@ -80,7 +80,7 @@ models:
   # 4. tool - 调用工具：函数调用、API调用、工具选择
   tool:
     provider: dashscope
-    model: deepseek-v3.2
+    model: qwen3.5-plus
     name: 工具调用模型
     temperature: 0.2
     request_timeout: 60

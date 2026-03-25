@@ -1,6 +1,8 @@
 """
 原型生成流式 API（SSE）
-仅推送文本日志与完成结果，供前端展示进度与预览（无节点/流程图专用事件）
+
+传输层：每条帧固定为 event: message，业务语义在 JSON 信封的 type 字段。
+信封：{ type, node_id, node_name, timestamp, data }
 """
 import json
 import time
@@ -9,189 +11,273 @@ from typing import AsyncGenerator, Dict, Any
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
-
 from loguru import logger
 
-from app.agents.graphs import create_doc_to_prototype_graph
-from app.utils.file_parser import extract_text_from_file
+from app.agents.graphs import (
+    create_doc_to_prototype_graph,
+    get_doc_to_prototype_pipeline_node_ids,
+)
+from app.agents.states.prototype import DocToPrototypeState, prototype_state
+from app.utils.document_parse import parse_uploaded_document
 
 router = APIRouter()
 
+SSE_EVENT_NAME = "message"
+
+
+def _stream_envelope(
+    typ: str,
+    data: Dict[str, Any],
+    *,
+    node_id: str = "",
+    node_name: str = "",
+) -> Dict[str, Any]:
+    return {
+        "type": typ,
+        "node_id": node_id,
+        "node_name": node_name,
+        "timestamp": time.time(),
+        "data": data,
+    }
+
+
+def _progress_after_node(
+    pipeline_ids: tuple[str, ...],
+    node_id: str,
+) -> Dict[str, Any]:
+    """进度 = 已完成节点数 / 总节点数（当前 node 刚完成，计为已计入）。"""
+    total = len(pipeline_ids)
+    try:
+        completed = pipeline_ids.index(node_id) + 1
+    except ValueError:
+        completed = 0
+    percent = min(100, int(round(100 * completed / total))) if total else 0
+    return {
+        "step": completed,
+        "total_steps": total,
+        "percent": percent,
+    }
+
 
 async def prototype_event_generator(
-    requirements: str,
+    initial_state: DocToPrototypeState,
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
-    生成 SSE 事件流
+    生成流式 JSON 信封序列（由 sse_generator 再封装为 SSE）。
 
-    事件类型：
-    - start: 流程开始
-    - log: 日志消息
-    - complete: 整个流程完成
-    - error: 错误消息
+    信封 type：start | progress | log | complete | error
+    log 的级别在 data.level：info | success | error
     """
     stream_start = time.time()
     node_names = {
-        "extract_requirements": "提取需求",
-        "design_components": "设计组件",
-        "generate_html": "生成HTML",
-        "validate_preview": "代码验证",
+        "prepare_requirement_chunks": "需求分块",
+        "chunk_understanding": "分块业务理解",
+        "structure_extraction": "结构抽取",
+        "normalize_spec": "规格归一",
+        "product_design": "产品设计",
+        "interaction_design": "交互设计",
+        "generate_prototype_from_spec": "原型生成",
     }
     node_models = {
-        "extract_requirements": "Kimi-长文本理解",
-        "design_components": "Deepseek-设计决策",
-        "generate_html": "Deepseek-代码生成",
-        "validate_preview": "Deepseek-代码验证",
+        "prepare_requirement_chunks": "本地切分",
+        "chunk_understanding": "Qwen3.5-Plus-分析",
+        "structure_extraction": "Qwen3.5-Plus-分析",
+        "normalize_spec": "Qwen3.5-Plus-分析",
+        "product_design": "Qwen3.5-Plus-规划",
+        "interaction_design": "Qwen3.5-Plus-规划",
+        "generate_prototype_from_spec": "Qwen3.5-Plus-生成",
     }
-    node_start_times: Dict[str, float] = {}
     last_node_state: Dict[str, Any] = {}
 
     try:
         graph = create_doc_to_prototype_graph()
+        pipeline_ids = get_doc_to_prototype_pipeline_node_ids(graph)
+        total_steps = len(pipeline_ids)
 
-        initial_state = {
-            "requirements_doc": requirements,
-            "extracted_requirements": {},
-            "ui_components": [],
-            "design_system": {},
-            "generated_html": "",
-            "validation_errors": [],
-            "preview_url": "",
-            "is_valid": False,
-            "metadata": {},
-        }
+        def _pipeline_order_key(nid: str) -> int:
+            try:
+                return pipeline_ids.index(nid)
+            except ValueError:
+                return 999
 
-        yield {
-            "event": "start",
-            "data": {
-                "message": "开始生成原型",
-                "timestamp": time.time(),
+        yield _stream_envelope(
+            "start",
+            {"message": "开始生成原型"},
+            node_id="system",
+            node_name="System",
+        )
+        yield _stream_envelope(
+            "progress",
+            {"step": 0, "total_steps": total_steps, "percent": 0},
+        )
+
+        # astream 每条 chunk 在节点已跑完后才到达：开始时间取「上一节点结束」或流程起点
+        first_id = pipeline_ids[0]
+        yield _stream_envelope(
+            "log",
+            {
+                "level": "info",
+                "content": "开始执行 (模型: %s)" % node_models.get(first_id, "Unknown"),
             },
-        }
+            node_id=first_id,
+            node_name=node_names.get(first_id, first_id),
+        )
+        step_wall_start = time.time()
 
         async for chunk in graph.astream(initial_state):
-            for node_id, node_state in chunk.items():
+            ordered_ids = sorted(chunk.keys(), key=_pipeline_order_key)
+            for node_id in ordered_ids:
+                node_state = chunk[node_id]
                 node_name = node_names.get(node_id, node_id)
-                node_model = node_models.get(node_id, "Unknown")
                 last_node_state = node_state
 
-                if node_id not in node_start_times:
-                    node_start_times[node_id] = time.time()
-                    yield {
-                        "event": "log",
-                        "data": {
-                            "node": node_name,
-                            "type": "info",
-                            "content": "开始执行 (模型: %s)" % node_model,
-                        },
-                    }
+                if node_id == "prepare_requirement_chunks" and node_state.get(
+                    "requirements_chunks"
+                ):
+                    rc = node_state["requirements_chunks"]
+                    yield _stream_envelope(
+                        "log",
+                        {"level": "success", "content": "已切分 %s 个章节块" % len(rc)},
+                        node_id=node_id,
+                        node_name=node_name,
+                    )
 
-                if node_id == "extract_requirements" and node_state.get(
+                if node_id == "chunk_understanding" and node_state.get("chunk_summaries"):
+                    cs = node_state["chunk_summaries"]
+                    yield _stream_envelope(
+                        "log",
+                        {
+                            "level": "success",
+                            "content": "📚 分块语义: %s 条摘要" % len(cs),
+                        },
+                        node_id=node_id,
+                        node_name=node_name,
+                    )
+
+                if node_id == "structure_extraction" and node_state.get("structured_spec"):
+                    sp = node_state["structured_spec"] or {}
+                    yield _stream_envelope(
+                        "log",
+                        {
+                            "level": "success",
+                            "content": "🏗 结构: %s 个功能, %s 条流程"
+                            % (
+                                len(sp.get("features") or []),
+                                len(sp.get("business_flows") or []),
+                            ),
+                        },
+                        node_id=node_id,
+                        node_name=node_name,
+                    )
+
+                if node_id == "normalize_spec" and node_state.get("normalized_spec"):
+                    ns = node_state["normalized_spec"] or {}
+                    yield _stream_envelope(
+                        "log",
+                        {
+                            "level": "success",
+                            "content": "✨ 归一后 %s 个功能, %s 个别名组"
+                            % (
+                                len(ns.get("features") or []),
+                                len(ns.get("aliases") or []),
+                            ),
+                        },
+                        node_id=node_id,
+                        node_name=node_name,
+                    )
+
+                if node_id == "product_design" and node_state.get("site_map"):
+                    sm = node_state["site_map"]
+                    mode = node_state.get("generation_mode", "single")
+                    titles = ", ".join(
+                        [p.get("title", "") for p in sm[:5] if p.get("title")]
+                    )
+                    yield _stream_envelope(
+                        "log",
+                        {
+                            "level": "success",
+                            "content": "🗺 站点地图: %s 页 (%s) — %s"
+                            % (len(sm), mode, titles),
+                        },
+                        node_id=node_id,
+                        node_name=node_name,
+                    )
+
+                if node_id == "interaction_design" and node_state.get(
                     "extracted_requirements"
                 ):
                     req_data = node_state["extracted_requirements"]
-                    page_info = req_data.get("page_info", {})
-                    modules = req_data.get("functional_modules", [])
                     interactions = req_data.get("interactions", [])
-                    yield {
-                        "event": "log",
-                        "data": {
-                            "node": node_name,
-                            "type": "success",
-                            "content": "📄 页面类型: %s - %s"
-                            % (
-                                page_info.get("type", "unknown"),
-                                page_info.get("title", ""),
-                            ),
-                        },
-                    }
-                    yield {
-                        "event": "log",
-                        "data": {
-                            "node": node_name,
-                            "type": "success",
-                            "content": "🧩 功能模块: %s 个 - %s"
-                            % (
-                                len(modules),
-                                ", ".join([m.get("name", "") for m in modules[:3]]),
-                            ),
-                        },
-                    }
-                    yield {
-                        "event": "log",
-                        "data": {
-                            "node": node_name,
-                            "type": "success",
+                    yield _stream_envelope(
+                        "log",
+                        {
+                            "level": "success",
                             "content": "⚡ 交互行为: %s 个" % len(interactions),
                         },
-                    }
+                        node_id=node_id,
+                        node_name=node_name,
+                    )
 
-                elif node_id == "design_components" and node_state.get("ui_components"):
-                    components = node_state["ui_components"]
-                    design_system = node_state.get("design_system", {})
-                    yield {
-                        "event": "log",
-                        "data": {
-                            "node": node_name,
-                            "type": "success",
-                            "content": "🎨 设计了 %s 个UI组件" % len(components),
-                        },
-                    }
-                    colors = design_system.get("colors", {})
-                    if colors:
-                        yield {
-                            "event": "log",
-                            "data": {
-                                "node": node_name,
-                                "type": "info",
-                                "content": "🎨 主色: %s"
-                                % colors.get("primary", "N/A"),
-                            },
-                        }
-
-                elif node_id == "generate_html" and node_state.get("generated_html"):
+                if node_id == "generate_prototype_from_spec" and node_state.get(
+                    "generated_html"
+                ):
                     html_code = node_state["generated_html"]
                     html_lines = len(html_code.split("\n"))
-                    yield {
-                        "event": "log",
-                        "data": {
-                            "node": node_name,
-                            "type": "success",
-                            "content": "📝 生成了 %s 行HTML代码" % html_lines,
+                    yield _stream_envelope(
+                        "log",
+                        {
+                            "level": "success",
+                            "content": "📝 单次生成 %s 行 HTML" % html_lines,
                         },
-                    }
-
-                elif node_id == "validate_preview" and node_state.get("preview_url"):
-                    if node_state.get("is_valid"):
-                        yield {
-                            "event": "log",
-                            "data": {
-                                "node": node_name,
-                                "type": "success",
-                                "content": "✅ 验证通过，预览地址: %s"
-                                % node_state.get("preview_url"),
+                        node_id=node_id,
+                        node_name=node_name,
+                    )
+                    if node_state.get("preview_url"):
+                        yield _stream_envelope(
+                            "log",
+                            {
+                                "level": "success",
+                                "content": "✅ 预览: %s" % node_state.get("preview_url"),
                             },
-                        }
-                    else:
-                        errors = node_state.get("validation_errors", [])
-                        yield {
-                            "event": "log",
-                            "data": {
-                                "node": node_name,
-                                "type": "warning",
-                                "content": "⚠️ 发现 %s 个验证问题" % len(errors),
-                            },
-                        }
+                            node_id=node_id,
+                            node_name=node_name,
+                        )
 
-                duration = time.time() - node_start_times[node_id]
-                yield {
-                    "event": "log",
-                    "data": {
-                        "node": node_name,
-                        "type": "success",
-                        "content": "执行完成 (耗时: %.2fs)" % duration,
-                    },
-                }
+                duration = time.time() - step_wall_start
+                yield _stream_envelope(
+                    "log",
+                    {"level": "success", "content": "执行完成 (耗时: %.2fs)" % duration},
+                    node_id=node_id,
+                    node_name=node_name,
+                )
+                if node_id in pipeline_ids:
+                    yield _stream_envelope(
+                        "progress",
+                        _progress_after_node(pipeline_ids, node_id),
+                        node_id=node_id,
+                        node_name=node_name,
+                    )
+
+                try:
+                    idx = pipeline_ids.index(node_id)
+                    next_id = (
+                        pipeline_ids[idx + 1] if idx + 1 < len(pipeline_ids) else None
+                    )
+                except ValueError:
+                    next_id = None
+
+                if next_id:
+                    yield _stream_envelope(
+                        "log",
+                        {
+                            "level": "info",
+                            "content": "开始执行 (模型: %s)"
+                            % node_models.get(next_id, "Unknown"),
+                        },
+                        node_id=next_id,
+                        node_name=node_names.get(next_id, next_id),
+                    )
+                step_wall_start = time.time()
 
         total_duration = round(time.time() - stream_start, 2)
         raw_preview_url = last_node_state.get("preview_url", "")
@@ -199,14 +285,14 @@ async def prototype_event_generator(
             "http://localhost:8000%s" % raw_preview_url if raw_preview_url else ""
         )
         logger.info(
-            "[原型流式] 生成完成，总耗时 %.1fs，预览 %s",
+            "[原型流式] 流程完成，总耗时 %.1fs，预览 %s",
             total_duration,
             raw_preview_url or "(无)",
         )
 
-        yield {
-            "event": "complete",
-            "data": {
+        yield _stream_envelope(
+            "complete",
+            {
                 "preview_url": full_preview_url,
                 "html": last_node_state.get("generated_html", ""),
                 "css": "",
@@ -214,35 +300,34 @@ async def prototype_event_generator(
                 "is_valid": last_node_state.get("is_valid", False),
                 "validation_errors": last_node_state.get("validation_errors", []),
                 "total_duration": total_duration,
+                "total_steps": total_steps,
+                "product_spec": last_node_state.get("product_spec") or {},
+                "normalized_spec": last_node_state.get("normalized_spec") or {},
+                "interaction_spec": last_node_state.get("interaction_spec") or {},
             },
-        }
+        )
 
-        yield {
-            "event": "log",
-            "data": {
-                "node": "System",
-                "type": "success",
-                "content": "🎉 原型生成完成！",
-            },
-        }
+        yield _stream_envelope(
+            "log",
+            {"level": "success", "content": "🎉 原型流程完成"},
+            node_id="system",
+            node_name="System",
+        )
 
     except Exception as e:
         logger.exception("[原型流式] 生成失败: %s", e)
-        yield {
-            "event": "error",
-            "data": {
-                "message": str(e),
-                "timestamp": time.time(),
-            },
-        }
-        yield {
-            "event": "log",
-            "data": {
-                "node": "System",
-                "type": "error",
-                "content": "生成失败: %s" % str(e),
-            },
-        }
+        yield _stream_envelope(
+            "error",
+            {"message": str(e)},
+            node_id="system",
+            node_name="System",
+        )
+        yield _stream_envelope(
+            "log",
+            {"level": "error", "content": "生成失败: %s" % str(e)},
+            node_id="system",
+            node_name="System",
+        )
 
 
 @router.post("/generate/stream/file")
@@ -254,19 +339,18 @@ async def generate_prototype_from_file(
     支持格式：.txt, .md, .pdf, .docx，最大 10MB
     """
     content = await file.read()
-    text, err = extract_text_from_file(file.filename or "unknown", content)
+    text, err = parse_uploaded_document(file.filename or "unknown", content)
     if err:
         raise HTTPException(status_code=400, detail=err)
-    if not text.strip():
+    initial_state = prototype_state(text)
+    if not initial_state["requirements_doc"]:
         raise HTTPException(status_code=400, detail="文件内容为空")
 
     async def sse_generator():
-        async for event_data in prototype_event_generator(text):
-            event_type = event_data.get("event", "message")
-            data = event_data.get("data", {})
+        async for envelope in prototype_event_generator(initial_state):
             sse_message = (
                 "event: %s\ndata: %s\n\n"
-                % (event_type, json.dumps(data, ensure_ascii=False))
+                % (SSE_EVENT_NAME, json.dumps(envelope, ensure_ascii=False))
             )
             yield sse_message
             await asyncio.sleep(0)

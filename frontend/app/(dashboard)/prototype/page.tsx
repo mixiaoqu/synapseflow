@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { usePrototypeStore } from '@/stores/prototypeStore';
 import { usePrototypeStream } from '@/hooks/usePrototypeStream';
 import { PrototypePreview } from '@/components/prototype/PrototypePreview';
+import { PrototypeGenerationProgress } from '@/components/prototype/PrototypeGenerationProgress';
 import { RequirementInput } from '@/components/prototype/RequirementInput';
 import { Toaster, toast } from 'sonner';
 import { listDocuments, getDocument } from '@/lib/api/documents';
@@ -18,8 +19,7 @@ function slugFilename(title: string) {
 }
 
 export default function PrototypePage() {
-  const { isGenerating, progressIndeterminate, generatedCode, previewUrl } =
-    usePrototypeStore();
+  const { isGenerating, generatedCode, previewUrl } = usePrototypeStore();
 
   const [docFile, setDocFile] = useState<File | null>(null);
   const [showDocPicker, setShowDocPicker] = useState(false);
@@ -79,21 +79,12 @@ export default function PrototypePage() {
           </div>
 
           {isGenerating && (
-            <div className="flex items-center gap-4 min-w-[200px] flex-1 max-w-md">
-              <div className="flex-1">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium text-gray-700">生成中…</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                  {progressIndeterminate ? (
-                    <div className="h-full w-full max-w-[45%] bg-blue-600 rounded-full animate-pulse" />
-                  ) : null}
-                </div>
-              </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="text-sm font-medium text-gray-700">生成中…</span>
               <button
                 type="button"
                 onClick={handleStop}
-                className="shrink-0 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm"
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm"
               >
                 停止
               </button>
@@ -111,6 +102,8 @@ export default function PrototypePage() {
             onOpenDocumentLibrary={() => setShowDocPicker(true)}
             isLoading={isGenerating}
           />
+
+          <PrototypeGenerationProgress />
 
           <div className="bg-white rounded-lg border p-4 flex flex-col gap-2 shrink-0">
             <h3 className="font-semibold text-gray-900 text-sm">迭代修改建议</h3>
