@@ -1,22 +1,25 @@
-# Python Backend Dockerfile
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1
+# BuildKit 缓存：export DOCKER_BUILDKIT=1 或 Docker 24+ 默认开启
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-# 安装uv
-RUN pip install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# 复制依赖文件
-COPY pyproject.toml ./
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
 
-# 安装依赖
-RUN uv pip install --system -r pyproject.toml
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev
 
-# 复制应用代码
 COPY . .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
-# 暴露端口
+ENV PATH="/app/.venv/bin:$PATH"
+
 EXPOSE 8000
 
-# 启动命令（由docker-compose覆盖）
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

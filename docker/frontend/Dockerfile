@@ -1,19 +1,16 @@
-# Frontend Dockerfile
+# syntax=docker/dockerfile:1
 FROM node:20-alpine
 
 WORKDIR /app
 
-# 复制package文件
-COPY package*.json ./
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# 安装依赖
-RUN npm install
+COPY package.json pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
-# 复制应用代码
 COPY . .
 
-# 暴露端口
 EXPOSE 3000
 
-# 启动命令（由docker-compose覆盖）
-CMD ["npm", "run", "dev"]
+CMD ["pnpm", "run", "dev"]

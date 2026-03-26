@@ -25,6 +25,8 @@ def _documents_has_column(conn, col_name: str) -> bool:
 
 
 def upgrade() -> None:
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+
     conn = op.get_bind()
     inspector = inspect(conn)
 
