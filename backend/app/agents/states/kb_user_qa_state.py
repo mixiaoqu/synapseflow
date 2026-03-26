@@ -12,3 +12,4 @@ class KbUserQAState(TypedDict, total=False):
     retrieved_docs: List[Dict[str, Any]]
     context: str
     answer: str
+    kb_retrieval_status: Optional[str]

@@ -2,6 +2,7 @@
 from typing import Dict, Any
 
 from app.agents.states import IterativeQAState
+from app.agents.nodes.kb_user_qa.generate_answer import should_skip_kb_llm
 from app.core.llm import get_llm_for_generation
 
 
@@ -11,6 +12,13 @@ async def answer_node(state: IterativeQAState) -> Dict[str, Any]:
     知识库正文来自 state['context']，条数由检索节点的 final_top_k / llm_reference_top_k 决定。
     迭代时（iteration > 0）利用上一轮评估反馈，有针对性地改进
     """
+    fixed = should_skip_kb_llm(state)
+    if fixed:
+        return {
+            "answer": fixed,
+            "messages": [{"role": "assistant", "content": fixed}],
+        }
+
     llm = get_llm_for_generation()
     query = state.get("optimized_query") or state.get("query", "")
     iteration = state.get("iteration", 0)

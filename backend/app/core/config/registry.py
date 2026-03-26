@@ -105,6 +105,7 @@ class ConfigRegistry:
                 "lexical_k": int(retrieval.get("lexical_k", 32)),
                 "rrf_k": int(retrieval.get("rrf_k", 60)),
                 "hybrid_pool_limit": int(retrieval.get("hybrid_pool_limit", 64)),
+                "kb_context_max_chars": int(retrieval.get("kb_context_max_chars", 12000)),
             },
             "evaluate": {
                 "context_max_chars": int(ev.get("context_max_chars", 3000)),

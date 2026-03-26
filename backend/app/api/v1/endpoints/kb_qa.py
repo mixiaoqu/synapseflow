@@ -8,9 +8,10 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from app.agents.graphs.kb_simple_qa_graph import create_kb_simple_qa_graph
-from app.agents.nodes.kb_user_qa import (
-    user_kb_retrieve_node,
+from app.agents.nodes.kb_user_qa import user_kb_retrieve_node
+from app.agents.nodes.kb_user_qa.generate_answer import (
     build_user_kb_answer_prompt,
+    should_skip_kb_llm,
 )
 from app.models.schemas.kb_qa import KbSimpleQARequest, KbSimpleQAResponse
 from app.core.llm import get_llm_for_generation
@@ -78,6 +79,12 @@ async def _stream_events(req: KbSimpleQARequest) -> AsyncGenerator[str, None]:
             {"retrieved_docs": state.get("retrieved_docs", [])},
         )
         await asyncio.sleep(0)
+
+        skip_reply = should_skip_kb_llm(state)
+        if skip_reply:
+            yield _envelope("token", {"text": skip_reply})
+            yield _envelope("done", {"answer": skip_reply})
+            return
 
         prompt = build_user_kb_answer_prompt(
             state.get("query", ""),

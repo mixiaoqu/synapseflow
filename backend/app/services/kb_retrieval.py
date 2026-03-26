@@ -18,6 +18,51 @@ from app.services.vector_store import search, search_hybrid_rrf
 DEFAULT_USER_ID = 1
 
 
+def _format_kb_chunk(doc: Dict[str, Any], content: str) -> str:
+    title = doc.get("metadata", {}).get("document_title", "未知文档")
+    return "【文档：%s】\n%s" % (title, content)
+
+
+def _apply_kb_context_budget(
+    retrieved_docs: List[Dict[str, Any]],
+    max_chars: int,
+) -> tuple[List[Dict[str, Any]], str]:
+    """按字符上限顺序保留摘录；必要时最后一条截断。max_chars<=0 表示不限制。"""
+    if not retrieved_docs:
+        return [], ""
+    if max_chars <= 0:
+        parts = [_format_kb_chunk(d, d.get("content") or "") for d in retrieved_docs]
+        return retrieved_docs, "\n\n".join(parts)
+
+    kept: List[Dict[str, Any]] = []
+    parts: List[str] = []
+    used = 0
+    for doc in retrieved_docs:
+        content = doc.get("content") or ""
+        block = _format_kb_chunk(doc, content)
+        gap = 2 if parts else 0
+        if used + gap + len(block) <= max_chars:
+            parts.append(block)
+            kept.append(doc)
+            used += gap + len(block)
+            continue
+        room = max_chars - used - gap
+        title = doc.get("metadata", {}).get("document_title", "未知文档")
+        head = "【文档：%s】\n" % title
+        if room <= len(head) + 16:
+            break
+        cr = room - len(head)
+        snippet = content[:cr]
+        if len(content) > cr:
+            snippet += "…"
+        new_doc = dict(doc)
+        new_doc["content"] = snippet
+        parts.append(_format_kb_chunk(new_doc, snippet))
+        kept.append(new_doc)
+        break
+    return kept, "\n\n".join(parts)
+
+
 async def run_kb_retrieval(
     *,
     query: str,
@@ -27,7 +72,7 @@ async def run_kb_retrieval(
 ) -> Dict[str, Any]:
     """
     从 pgvector 检索文档块，拼上下文。
-    返回 {"retrieved_docs": [...], "context": str}
+    返回 retrieved_docs、context、kb_retrieval_status（empty_collection | no_hits | ok）。
     """
     rag = config_registry.get_rag_config()["retrieval"]
     k = rag["k_iteration"] if iteration > 0 else rag["k_first"]
@@ -52,6 +97,7 @@ async def run_kb_retrieval(
                 return {
                     "retrieved_docs": [],
                     "context": "（该集合暂无已索引文档，请先上传并建立索引）",
+                    "kb_retrieval_status": "empty_collection",
                 }
 
     async with AsyncSessionLocal() as db:
@@ -161,13 +207,33 @@ async def run_kb_retrieval(
         if r.get("rerank_score") is not None:
             meta["rerank_score"] = r["rerank_score"]
         retrieved_docs.append({"content": r["chunk_text"], "metadata": meta})
-    parts = []
-    for doc in retrieved_docs:
-        title = doc.get("metadata", {}).get("document_title", "未知文档")
-        parts.append("【文档：%s】\n%s" % (title, doc["content"]))
-    context = "\n\n".join(parts) if parts else ""
+
+    if not retrieved_docs:
+        return {
+            "retrieved_docs": [],
+            "context": "（未检索到相关文档，请确保文档库中有内容并已建立索引）",
+            "kb_retrieval_status": "no_hits",
+        }
+
+    budget = int(rag.get("kb_context_max_chars", 12000))
+    kept, context = _apply_kb_context_budget(retrieved_docs, budget)
+    if budget > 0:
+        trimmed = len(kept) < len(retrieved_docs) or any(
+            i < len(kept)
+            and (kept[i].get("content") or "") != (retrieved_docs[i].get("content") or "")
+            for i in range(len(kept))
+        )
+        if trimmed:
+            logger.info(
+                "{} 摘录限长 {} 字，送入模型 {} 条（原 {} 条）",
+                log_prefix,
+                budget,
+                len(kept),
+                len(retrieved_docs),
+            )
 
     return {
-        "retrieved_docs": retrieved_docs,
-        "context": context or "（未检索到相关文档，请确保文档库中有内容并已建立索引）",
+        "retrieved_docs": kept,
+        "context": context,
+        "kb_retrieval_status": "ok",
     }

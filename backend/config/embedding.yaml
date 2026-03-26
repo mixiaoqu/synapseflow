@@ -30,6 +30,8 @@ retrieval:
   final_top_k: 10
   # 拼进「知识库内容」、交给答案生成大模型的条数（精排后的前 N 条）
   llm_reference_top_k: 10
+  # 用户知识库/迭代 QA：拼入提示的摘录总字符上限（按条顺序截断，超出部分不送入大模型）；0 表示不限制
+  kb_context_max_chars: 12000
 
 # 迭代 QA 评估节点
 evaluate:
