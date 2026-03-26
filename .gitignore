@@ -10,7 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# 仅忽略仓库根目录下的 lib/（勿用 lib/，否则会误忽略 frontend/lib/）
+/lib/
 lib64/
 parts/
 sdist/
