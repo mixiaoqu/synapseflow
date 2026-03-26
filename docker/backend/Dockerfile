@@ -1,8 +1,14 @@
 # syntax=docker/dockerfile:1
 # BuildKit 缓存：export DOCKER_BUILDKIT=1 或 Docker 24+ 默认开启
+#
+# 国内构建慢时可在项目根 .env 设 UV_INDEX_URL 后 compose build，或：
+# docker build --build-arg UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple ...
 FROM python:3.11-slim-bookworm
 
 WORKDIR /app
+
+ARG UV_INDEX_URL=https://pypi.org/simple
+ENV UV_INDEX_URL=${UV_INDEX_URL}
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 

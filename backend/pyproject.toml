@@ -29,6 +29,7 @@ dependencies = [
     "pypdf>=5.0.0",
     "python-docx>=1.0.0",
     "sentence-transformers>=2.3.0",
+    "torch>=2.2.0",
     "transformers>=4.36.0",
     "loguru>=0.7.0",
     "langsmith>=0.1.0",
@@ -44,6 +45,17 @@ dev = [
     "black>=24.0.0",
     "ruff>=0.3.0",
     "mypy>=1.8.0",
+]
+
+# CPU 版 PyTorch，避免解析出 nvidia-cu12 等大体积 CUDA 依赖（Docker/无 GPU 服务器）
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu" },
 ]
 
 [build-system]
