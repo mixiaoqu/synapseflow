@@ -70,5 +70,5 @@ async def reindex_all() -> int:
                 await index_document(session, doc.id, doc.content or "")
                 total_docs += 1
             except Exception as e:
-                logger.warning("文档索引失败 doc_id={} title={}: {}", doc.id, doc.title, e)
+                logger.warning("索引失败 doc={} 《{}》: {}", doc.id, doc.title, e)
     return total_docs

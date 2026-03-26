@@ -1,6 +1,7 @@
 """数据库 ORM 模型"""
 from datetime import datetime
 from sqlalchemy import Boolean, Column, Integer, String, Text, DateTime, JSON, ForeignKey
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from pgvector.sqlalchemy import Vector
 
 from app.db.session import Base
@@ -49,5 +50,6 @@ class Embedding(Base):
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
     chunk_text = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)
+    chunk_tsv = Column(TSVECTOR, nullable=True)
     embedding = Column(Vector(settings.VECTOR_DIMENSION), nullable=False)
     metadata_ = Column("metadata", JSON, nullable=True)

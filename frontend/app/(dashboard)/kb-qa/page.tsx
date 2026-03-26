@@ -9,7 +9,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Skeleton } from '@/components/ui/skeleton';
 import { listCollections, type CollectionWithCount } from '@/lib/api/collections';
 import { API_V1 } from '@/lib/api/config';
 import { Toaster, toast } from 'sonner';
@@ -191,9 +190,9 @@ function AnswerMarkdown({ text }: { text: string }) {
 function StreamingSkeleton() {
   return (
     <div className="space-y-2.5 py-1" aria-hidden>
-      <Skeleton className="h-4 w-full max-w-[95%] bg-slate-200/80" />
-      <Skeleton className="h-4 w-full max-w-[88%] bg-slate-200/80" />
-      <Skeleton className="h-4 w-full max-w-[72%] bg-slate-200/70" />
+      <div className="h-4 w-full max-w-[95%] rounded-md bg-slate-200/80" />
+      <div className="h-4 w-full max-w-[88%] rounded-md bg-slate-200/80" />
+      <div className="h-4 w-full max-w-[72%] rounded-md bg-slate-200/70" />
     </div>
   );
 }
@@ -333,11 +332,14 @@ export default function KbQAPage() {
   }, [loadCollections]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: 'smooth',
+    const el = scrollRef.current;
+    if (!el) return;
+    // 流式输出时避免 smooth + layout 动画叠加导致气泡区域抖动，用 auto 跟底
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: loading ? 'auto' : 'smooth',
     });
-  }, [turns]);
+  }, [turns, loading]);
 
   const toggleChunk = (key: string) => {
     setExpandedChunks((prev) => {
@@ -530,10 +532,9 @@ export default function KbQAPage() {
               {turns.map((turn) => (
                 <motion.div
                   key={turn.id}
-                  layout
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.25, ease: 'easeOut' }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
                   className="space-y-4"
                 >
                   <div className="flex justify-end">

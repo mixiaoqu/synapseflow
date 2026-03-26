@@ -101,6 +101,10 @@ class ConfigRegistry:
                     if retrieval.get("llm_reference_top_k") is not None
                     else None
                 ),
+                "hybrid_enabled": bool(retrieval.get("hybrid_enabled", False)),
+                "lexical_k": int(retrieval.get("lexical_k", 32)),
+                "rrf_k": int(retrieval.get("rrf_k", 60)),
+                "hybrid_pool_limit": int(retrieval.get("hybrid_pool_limit", 64)),
             },
             "evaluate": {
                 "context_max_chars": int(ev.get("context_max_chars", 3000)),

@@ -30,6 +30,21 @@ def _get_url_and_headers():
     return url, headers
 
 
+def _coerce_rerank_index(idx_raw, n_chunks: int) -> int | None:
+    """将 API 返回的 index 转为 0-based；兼容部分服务使用 1-based。"""
+    if idx_raw is None:
+        return None
+    try:
+        idx = int(idx_raw)
+    except (TypeError, ValueError):
+        return None
+    if 0 <= idx < n_chunks:
+        return idx
+    if 1 <= idx <= n_chunks:
+        return idx - 1
+    return None
+
+
 def _build_payload(query: str, documents: list[str], top_n: int):
     """构建请求体"""
     payload = {
@@ -52,26 +67,46 @@ def _parse_response(data: dict, chunks: list[dict], top_k: int) -> list[dict]:
         if not raw:
             raw = data.get("results") or data.get("data") or []
         if raw:
-            logger.debug("[Rerank] 响应结构 output.results 首项 keys={}", list(raw[0].keys()) if raw else [])
+            logger.debug("精排 响应首条字段 {}", list(raw[0].keys()) if raw else [])
     else:
         raw = data.get("results") or data.get("data") or []
 
     if not raw:
-        logger.warning("[Rerank] 响应无 results，data keys={}", list(data.keys()))
+        logger.warning("精排 无 results，顶层 keys={}", list(data.keys()))
         return chunks[:top_k]
 
-    out = []
-    for r in raw[:top_k]:
-        idx = r.get("index", r.get("idx", len(out)))
+    out: list[dict] = []
+    seen: set[int] = set()
+    for r in raw:
+        if len(out) >= top_k:
+            break
+        idx_raw = r.get("index", r.get("idx"))
+        idx = _coerce_rerank_index(idx_raw, len(chunks))
+        if idx is None:
+            if idx_raw is not None:
+                logger.warning("精排 无效下标 index={}（共 {} 条）", idx_raw, len(chunks))
+            continue
+        if idx in seen:
+            continue
+        seen.add(idx)
         score = r.get("relevance_score", r.get("score", r.get("relevance", 0.0)))
-        if 0 <= idx < len(chunks):
-            chunk = dict(chunks[idx])
-            chunk["rerank_score"] = float(score)
-            out.append(chunk)
-        else:
-            logger.warning("[Rerank] 无效 index={} 超出 chunks 长度 {}", idx, len(chunks))
+        chunk = dict(chunks[idx])
+        chunk["rerank_score"] = float(score)
+        out.append(chunk)
+
+    if not out and chunks:
+        logger.warning(
+            "精排 解析为空 raw={} 条，回退向量序 top={}",
+            len(raw),
+            top_k,
+        )
+        return chunks[:top_k]
     if out:
-        logger.debug("[Rerank] 解析首项 index={} score={} raw_keys={}", raw[0].get("index"), raw[0].get("relevance_score", raw[0].get("score")), list(raw[0].keys()))
+        logger.debug(
+            "精排 首条 index={} score={}",
+            raw[0].get("index"),
+            raw[0].get("relevance_score", raw[0].get("score")),
+        )
     return out
 
 
@@ -83,7 +118,7 @@ async def rerank(query: str, chunks: List[dict], top_k: int | None = None) -> Li
     返回: 按 rerank 分数排序后的子集，每项增加 "rerank_score"
     """
     if not chunks:
-        logger.debug("[Rerank] 输入为空，跳过")
+        logger.debug("精排 跳过（无输入）")
         return []
 
     top_k = top_k or config_registry.get_rag_config()["retrieval"]["final_top_k"]
@@ -91,9 +126,9 @@ async def rerank(query: str, chunks: List[dict], top_k: int | None = None) -> Li
 
     try:
         url, headers = _get_url_and_headers()
-        logger.debug("[Rerank] 请求 URL={}", url.split("?")[0])
+        logger.debug("精排 请求 {}", url.split("?")[0])
     except ValueError as e:
-        logger.error("[Rerank] 配置错误: {}", e)
+        logger.error("精排 配置错误: {}", e)
         return chunks[:top_k]
 
     payload = _build_payload(query, documents, top_k)
@@ -104,23 +139,36 @@ async def rerank(query: str, chunks: List[dict], top_k: int | None = None) -> Li
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPStatusError as e:
-        logger.error("[Rerank] API 请求失败 status={} body={}", e.response.status_code, e.response.text[:200])
+        body = e.response.text
+        if len(body) > 120:
+            body = body[:120] + "…"
+        logger.error("精排 HTTP {} {}", e.response.status_code, body)
         return chunks[:top_k]
     except Exception as e:
-        logger.exception("[Rerank] API 调用异常: {}", e)
+        logger.exception("精排 请求异常: {}", e)
         return chunks[:top_k]
 
     # 检查百炼的错误响应
     if "code" in data and data.get("code"):
-        logger.error("[Rerank] API 返回错误 code={} message={}", data.get("code"), data.get("message", ""))
+        logger.error("精排 API 错误 code={} {}", data.get("code"), data.get("message", ""))
         return chunks[:top_k]
 
     out = _parse_response(data, chunks, top_k)
     scores = [round(r.get("rerank_score", 0), 4) for r in out]
-    logger.info("[Rerank] 完成 返回{}条 rerank_score={}", len(out), scores)
+    if scores:
+        logger.info(
+            "精排 完成 {} 条 | 分 {:.3f}~{:.3f}",
+            len(out),
+            min(scores),
+            max(scores),
+        )
+    else:
+        logger.info("精排 完成 {} 条", len(out))
     if out and all(s == 0 for s in scores):
-        # 全 0 时打印原始响应结构便于排查
         raw = (data.get("output") or {}).get("results") or data.get("results") or data.get("data") or []
         sample = raw[0] if raw else {}
-        logger.warning("[Rerank] 所有 score 为 0，请检查 API 响应 首项示例={}", {k: v for k, v in sample.items() if k != "document"})
+        logger.warning(
+            "精排 全为 0 分，样例字段 {}",
+            {k: v for k, v in sample.items() if k != "document"},
+        )
     return out

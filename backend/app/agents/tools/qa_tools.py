@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.db.models import Document
 from app.db.session import AsyncSessionLocal
 from app.services.embedding import embed_query
-from app.services.vector_store import search
+from app.services.vector_store import search, search_hybrid_rrf
 from app.services.reranker import rerank as rerank_service
 from app.core.config import settings
 from app.core.config.registry import config_registry
@@ -28,6 +28,7 @@ async def search_knowledge_base(
 ) -> str:
     """根据问题从知识库检索相关文档片段。query: 用户问题；k: 返回条数；collection_id: 限定集合（可选）。"""
     query_embedding = await asyncio.to_thread(embed_query, query)
+    rag = config_registry.get_rag_config()["retrieval"]
 
     document_ids = None
     if collection_id is not None:
@@ -44,7 +45,23 @@ async def search_knowledge_base(
                 return "（该集合暂无已索引文档，请先上传并建立索引）"
 
     async with AsyncSessionLocal() as db:
-        results = await search(db, query_embedding, k=k, document_ids=document_ids)
+        if rag.get("hybrid_enabled"):
+            pool_limit = min(
+                int(rag.get("hybrid_pool_limit", 64)),
+                k + int(rag.get("lexical_k", 32)),
+            )
+            results = await search_hybrid_rrf(
+                db,
+                query_text=query,
+                query_embedding=query_embedding,
+                k_dense=k,
+                k_lexical=int(rag.get("lexical_k", 32)),
+                document_ids=document_ids,
+                rrf_k=int(rag.get("rrf_k", 60)),
+                pool_limit=max(pool_limit, 1),
+            )
+        else:
+            results = await search(db, query_embedding, k=k, document_ids=document_ids)
 
     if not results:
         return "（未检索到相关文档，请确保文档库中有内容并已建立索引）"
@@ -54,7 +71,7 @@ async def search_knowledge_base(
         for r in results
     ]
 
-    final_top_k = config_registry.get_rag_config()["retrieval"]["final_top_k"]
+    final_top_k = rag["final_top_k"]
     if settings.RERANK_ENABLED and len(chunks) > 0:
         chunks = await rerank_service(query, chunks, top_k=final_top_k)
     else:

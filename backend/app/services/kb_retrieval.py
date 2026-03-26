@@ -13,7 +13,7 @@ from app.db.models import Document
 from app.db.session import AsyncSessionLocal
 from app.services.embedding import embed_query
 from app.services.reranker import rerank
-from app.services.vector_store import search
+from app.services.vector_store import search, search_hybrid_rrf
 
 DEFAULT_USER_ID = 1
 
@@ -55,13 +55,42 @@ async def run_kb_retrieval(
                 }
 
     async with AsyncSessionLocal() as db:
-        results = await search(db, query_embedding, k=k, document_ids=document_ids)
+        if rag.get("hybrid_enabled"):
+            pool_limit = min(
+                int(rag.get("hybrid_pool_limit", 64)),
+                k + int(rag.get("lexical_k", 32)),
+            )
+            results = await search_hybrid_rrf(
+                db,
+                query_text=query,
+                query_embedding=query_embedding,
+                k_dense=k,
+                k_lexical=int(rag.get("lexical_k", 32)),
+                document_ids=document_ids,
+                rrf_k=int(rag.get("rrf_k", 60)),
+                pool_limit=max(pool_limit, 1),
+            )
+        else:
+            results = await search(db, query_embedding, k=k, document_ids=document_ids)
 
     recall_n = len(results)
+    coll_hint = collection_id if collection_id is not None else "全库"
+    doc_hint = (
+        len(document_ids)
+        if document_ids is not None
+        else "全库"
+    )
+    if recall_n == 0:
+        logger.warning(
+            "{} 无命中 | 集合={} | 候选文档={}（查索引、is_latest）",
+            log_prefix,
+            coll_hint,
+            doc_hint,
+        )
     rerank_applied = False
     if settings.RERANK_ENABLED and len(results) > 0:
         logger.debug(
-            "%s Rerank 候选=%s条 final_top_k=%s",
+            "{} 精排候选 {} 条（截断目标 {}）",
             log_prefix,
             len(results),
             final_top_k,
@@ -69,7 +98,7 @@ async def run_kb_retrieval(
         results = await rerank(query, results, top_k=final_top_k)
         rerank_applied = True
     else:
-        logger.debug("%s 未精排或无召回，截断为前%s条", log_prefix, final_top_k)
+        logger.debug("{} 未开精排或无结果，截断 {} 条", log_prefix, final_top_k)
         results = results[:final_top_k]
 
     after_rank_len = len(results)
@@ -89,19 +118,36 @@ async def run_kb_retrieval(
 
     distances = [r.get("distance") for r in results if r.get("distance") is not None]
     rerank_scores = [r.get("rerank_score") for r in results if r.get("rerank_score") is not None]
+    mode = "向量+词法" if rag.get("hybrid_enabled") else "向量"
+    if distances:
+        dmin, dmax = min(distances), max(distances)
+        dist_s = "{:.3f}~{:.3f}".format(dmin, dmax)
+    else:
+        dist_s = "-"
+    if rerank_scores:
+        smin, smax = min(rerank_scores), max(rerank_scores)
+        rr_s = "{:.3f}~{:.3f}".format(smin, smax)
+    else:
+        rr_s = "-"
     logger.info(
-        "%s round=%s k=%s 召回=%s条 精排=%s 精排后=%s条 入上下文=%s条 final_top_k=%s llm_ref_k=%s distance=%s rerank_score=%s",
+        "{} 第{}轮 {} | 召回 {} → 精排后 {} → 入模型 {} | 距 {} | 精排分 {}",
         log_prefix,
         iteration + 1,
-        k,
+        mode,
         recall_n,
-        rerank_applied,
         after_rank_len,
         len(results),
+        dist_s,
+        rr_s,
+    )
+    logger.debug(
+        "{} 明细 k={} final_top_k={} llm_ref_k={} 距={} 分={}",
+        log_prefix,
+        k,
         final_top_k,
         llm_ref_k if llm_ref_k is not None else "-",
-        [round(d, 4) for d in distances] if distances else "[]",
-        [round(s, 4) for s in rerank_scores] if rerank_scores else "-",
+        [round(d, 4) for d in distances] if distances else [],
+        [round(s, 4) for s in rerank_scores] if rerank_scores else [],
     )
 
     retrieved_docs = []
