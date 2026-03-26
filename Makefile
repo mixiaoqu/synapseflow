@@ -1,4 +1,4 @@
-.PHONY: help install dev-backend dev-frontend dev test clean docker-up docker-down
+.PHONY: help install dev-backend dev-frontend dev test clean docker-up docker-down docker-build-lowmem
 
 help:
 	@echo "SynapseFlow - 可用命令："
@@ -9,6 +9,7 @@ help:
 	@echo "  make test         - 运行测试"
 	@echo "  make docker-up    - 启动Docker服务"
 	@echo "  make docker-down  - 停止Docker服务"
+	@echo "  make docker-build-lowmem - 分步构建镜像（2核2G 等小内存机器，避免并行 OOM）"
 	@echo "  make clean        - 清理临时文件"
 
 install:
@@ -32,6 +33,10 @@ docker-up:
 
 docker-down:
 	docker-compose down
+
+docker-build-lowmem:
+	docker compose build backend
+	docker compose build frontend
 
 clean:
 	@echo "清理临时文件..."
