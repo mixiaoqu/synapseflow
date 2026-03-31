@@ -15,13 +15,14 @@ BAILIAN_RERANK_URL = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
 
 def _get_url_and_headers():
     """根据 provider 返回请求 URL 和 headers"""
-    if settings.RERANK_PROVIDER == "bailian":
+    rerank_cfg = config_registry.get_rerank_config()
+    if rerank_cfg.provider == "bailian":
         api_key = settings.DASHSCOPE_API_KEY
         if not api_key:
             raise ValueError("RERANK_PROVIDER=bailian 时需配置 DASHSCOPE_API_KEY")
         return BAILIAN_RERANK_URL, {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     # vllm
-    url = settings.RERANK_API_URL.rstrip("/")
+    url = rerank_cfg.api_url.rstrip("/")
     if "/rerank" not in url:
         url = f"{url}/v1/rerank"
     headers = {"Content-Type": "application/json"}
@@ -47,20 +48,21 @@ def _coerce_rerank_index(idx_raw, n_chunks: int) -> int | None:
 
 def _build_payload(query: str, documents: list[str], top_n: int):
     """构建请求体"""
+    rerank_cfg = config_registry.get_rerank_config()
     payload = {
-        "model": settings.RERANK_MODEL,
+        "model": rerank_cfg.model,
         "query": query,
         "documents": documents,
         "top_n": min(top_n, len(documents)),
     }
-    if settings.RERANK_PROVIDER == "bailian" and settings.RERANK_INSTRUCT:
-        payload["instruct"] = settings.RERANK_INSTRUCT
+    if rerank_cfg.provider == "bailian" and rerank_cfg.instruct:
+        payload["instruct"] = rerank_cfg.instruct
     return payload
 
 
 def _parse_response(data: dict, chunks: list[dict], top_k: int) -> list[dict]:
     """解析 API 响应，bailian 为 output.results，vllm 为 results 或 data"""
-    if settings.RERANK_PROVIDER == "bailian":
+    if config_registry.get_rerank_config().provider == "bailian":
         output = data.get("output") or {}
         raw = output.get("results") or []
         # 兼容 compatible-api 可能返回的 data.results 或顶层 results
@@ -121,7 +123,7 @@ async def rerank(query: str, chunks: List[dict], top_k: int | None = None) -> Li
         logger.debug("精排 跳过（无输入）")
         return []
 
-    top_k = top_k or config_registry.get_rag_config()["retrieval"]["final_top_k"]
+    top_k = top_k or config_registry.get_rag_config().retrieval.final_top_k
     documents = [c["chunk_text"] for c in chunks]
 
     try:

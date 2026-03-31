@@ -3,7 +3,7 @@
     "."
   ],
   "graphs": {
-    "iterative_qa": "./app/agents/graphs/qa_graph.py:create_iterative_qa_graph",
+    "kb_curation": "./app/agents/graphs/kb_curation_graph.py:create_kb_curation_graph",
     "suggest_revision": "./app/agents/graphs/suggest_revision_graph.py:create_suggest_revision_graph",
     "doc_to_prototype": "./app/agents/graphs/prototype_graph.py:create_doc_to_prototype_graph"
   },

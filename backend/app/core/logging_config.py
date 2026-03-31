@@ -7,18 +7,17 @@ from pathlib import Path
 
 from loguru import logger
 
-from app.core.config import settings
-from app.core.config.loader import load_logging_raw, PROJECT_ROOT
+from app.core.config import config_registry
+from app.core.config.loader import PROJECT_ROOT
 
 
 def setup_logging() -> None:
     """配置 Loguru，应用启动时调用"""
-    config = load_logging_raw()
-    log_cfg = config.get("logging", config) or {}
+    log_cfg = config_registry.get_logging_config()
 
-    level = settings.LOG_LEVEL or log_cfg.get("level", "INFO")
-    to_file = settings.LOG_TO_FILE if settings.LOG_TO_FILE is not None else log_cfg.get("to_file", True)
-    use_json = settings.LOG_JSON if settings.LOG_JSON is not None else log_cfg.get("json", False)
+    level = log_cfg.level
+    to_file = log_cfg.log_to_file
+    use_json = log_cfg.json
 
     # 移除默认 handler，使用自定义配置
     logger.remove()
@@ -36,15 +35,15 @@ def setup_logging() -> None:
 
     # 文件输出
     if to_file:
-        file_cfg = log_cfg.get("file", {})
-        log_path = file_cfg.get("path", "logs/synapseflow.log")
+        file_cfg = log_cfg.file
+        log_path = file_cfg.path
         if not Path(log_path).is_absolute():
             log_path = PROJECT_ROOT / log_path
         log_file = Path(log_path)
         log_file.parent.mkdir(parents=True, exist_ok=True)
 
-        rotation = file_cfg.get("rotation", "10 MB")
-        retention = file_cfg.get("retention", "7 days")
+        rotation = file_cfg.rotation
+        retention = file_cfg.retention
 
         logger.add(
             str(log_file),
@@ -55,5 +54,5 @@ def setup_logging() -> None:
             encoding="utf-8",
         )
 
-    diagnose = settings.LOG_DIAGNOSE if settings.LOG_DIAGNOSE is not None else log_cfg.get("diagnose", False)
+    diagnose = log_cfg.diagnose
     logger.configure(extra={"diagnose": diagnose})

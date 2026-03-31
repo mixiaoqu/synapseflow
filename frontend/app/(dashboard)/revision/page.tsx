@@ -13,7 +13,7 @@ import {
   type DocumentListItem,
   type DocumentDetail,
 } from '@/lib/api/documents';
-import { suggestRevision } from '@/lib/api/revision';
+import { revisionApi } from '@/lib/api/endpoints/revision';
 
 const DiffEditor = dynamic(
   () =>
@@ -105,7 +105,7 @@ export default function RevisionPage() {
     }
     setLoading(true);
     try {
-      const res = await suggestRevision({
+      const res = await revisionApi.invoke({
         document: currentDoc,
         suggestions,
         doc_id: docId ?? undefined,

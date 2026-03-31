@@ -219,7 +219,7 @@ A：可使用自动化脚本调用 `/api/v1/revision/suggest` 接口，传入文
 ### 6.2 API 参考
 
 - `POST /api/v1/prototype/generate`：原型生成。
-- `POST /api/v1/qa/query`：文档问答。
+- `POST /api/v1/kb-chat/invoke`：知识库问答。
 - `POST /api/v1/revision/suggest`：建议驱动修订。
 
 ### 6.3 版本历史

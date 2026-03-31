@@ -28,7 +28,7 @@ async def search_knowledge_base(
 ) -> str:
     """根据问题从知识库检索相关文档片段。query: 用户问题；k: 返回条数；collection_id: 限定集合（可选）。"""
     query_embedding = await asyncio.to_thread(embed_query, query)
-    rag = config_registry.get_rag_config()["retrieval"]
+    rag = config_registry.get_rag_config().retrieval
 
     document_ids = None
     if collection_id is not None:
@@ -45,19 +45,19 @@ async def search_knowledge_base(
                 return "（该集合暂无已索引文档，请先上传并建立索引）"
 
     async with AsyncSessionLocal() as db:
-        if rag.get("hybrid_enabled"):
+        if rag.hybrid_enabled:
             pool_limit = min(
-                int(rag.get("hybrid_pool_limit", 64)),
-                k + int(rag.get("lexical_k", 32)),
+                rag.hybrid_pool_limit,
+                k + rag.lexical_k,
             )
             results = await search_hybrid_rrf(
                 db,
                 query_text=query,
                 query_embedding=query_embedding,
                 k_dense=k,
-                k_lexical=int(rag.get("lexical_k", 32)),
+                k_lexical=rag.lexical_k,
                 document_ids=document_ids,
-                rrf_k=int(rag.get("rrf_k", 60)),
+                rrf_k=rag.rrf_k,
                 pool_limit=max(pool_limit, 1),
             )
         else:
@@ -71,7 +71,7 @@ async def search_knowledge_base(
         for r in results
     ]
 
-    final_top_k = rag["final_top_k"]
+    final_top_k = rag.final_top_k
     if settings.RERANK_ENABLED and len(chunks) > 0:
         chunks = await rerank_service(query, chunks, top_k=final_top_k)
     else:

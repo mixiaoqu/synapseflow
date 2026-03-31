@@ -1,16 +1,5 @@
 import { API_V1 } from "./config";
-
-async function parseError(res: Response): Promise<string> {
-  try {
-    const j = (await res.json()) as { detail?: string | unknown[] };
-    if (typeof j.detail === "string") return j.detail;
-    if (Array.isArray(j.detail))
-      return j.detail.map((x) => JSON.stringify(x)).join("; ");
-  } catch {
-    /* ignore */
-  }
-  return res.statusText;
-}
+import { parseApiError } from "./errors";
 
 export type DocumentListItem = {
   id: number;
@@ -63,15 +52,16 @@ export async function listDocuments(params: {
   if (params.collection_id !== undefined && params.collection_id !== null) {
     sp.set("collection_id", String(params.collection_id));
   }
+
   const q = sp.toString();
   const res = await fetch(`${API_V1}/documents${q ? `?${q}` : ""}`);
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   return res.json();
 }
 
 export async function getDocument(docId: number): Promise<DocumentDetail> {
   const res = await fetch(`${API_V1}/documents/detail/${docId}`);
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   return res.json();
 }
 
@@ -79,7 +69,7 @@ export async function getDocumentVersions(
   docId: number,
 ): Promise<DocumentVersionItem[]> {
   const res = await fetch(`${API_V1}/documents/${docId}/versions`);
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   const data = (await res.json()) as { items: DocumentVersionItem[] };
   return data.items;
 }
@@ -94,7 +84,7 @@ export async function uploadDocument(
     form.append("collection_id", String(collectionId));
   }
   const res = await fetch(`${API_V1}/documents`, { method: "POST", body: form });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   return res.json();
 }
 
@@ -111,7 +101,7 @@ export async function uploadDocumentsBatch(
     method: "POST",
     body: form,
   });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   return res.json();
 }
 
@@ -126,7 +116,7 @@ export async function createDocumentFromContent(body: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   return res.json();
 }
 
@@ -139,7 +129,7 @@ export async function replaceDocumentContent(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content }),
   });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   return res.json();
 }
 
@@ -152,7 +142,7 @@ export async function createDocumentVersion(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content }),
   });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   return res.json();
 }
 
@@ -162,19 +152,19 @@ export async function indexDocument(
   const res = await fetch(`${API_V1}/documents/${docId}/index`, {
     method: "POST",
   });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   return res.json();
 }
 
 export async function reindexAll(): Promise<{ message: string; indexed: number }> {
   const res = await fetch(`${API_V1}/documents/reindex-all`, { method: "POST" });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   return res.json();
 }
 
 export async function deleteDocument(docId: number): Promise<void> {
   const res = await fetch(`${API_V1}/documents/${docId}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
 }
 
 export async function deleteDocumentsBatch(
@@ -185,6 +175,6 @@ export async function deleteDocumentsBatch(
   const res = await fetch(`${API_V1}/documents/batch/delete?${sp.toString()}`, {
     method: "DELETE",
   });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   return res.json();
 }

@@ -1,4 +1,5 @@
 import { API_V1 } from "./config";
+import { parseApiError } from "./errors";
 
 export interface CollectionWithCount {
   id: number;
@@ -8,21 +9,9 @@ export interface CollectionWithCount {
   updated_at: string;
 }
 
-async function parseError(res: Response): Promise<string> {
-  try {
-    const j = (await res.json()) as { detail?: string | unknown[] };
-    if (typeof j.detail === "string") return j.detail;
-    if (Array.isArray(j.detail))
-      return j.detail.map((x) => JSON.stringify(x)).join("; ");
-  } catch {
-    /* ignore */
-  }
-  return res.statusText;
-}
-
 export async function listCollections(): Promise<CollectionWithCount[]> {
   const res = await fetch(`${API_V1}/collections`);
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
   return res.json();
 }
 
@@ -32,5 +21,5 @@ export async function createCollection(name: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
   });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) throw new Error(await parseApiError(res));
 }

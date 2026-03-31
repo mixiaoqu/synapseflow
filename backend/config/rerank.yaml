@@ -1,0 +1,4 @@
+rerank:
+  provider: bailian
+  model: qwen3-rerank
+  instruct: Given a web search query, retrieve relevant passages that answer the query.

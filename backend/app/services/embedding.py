@@ -10,7 +10,7 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 from sentence_transformers import SentenceTransformer
 
-from app.core.config import settings
+from app.core.config import config_registry
 
 _embedder: SentenceTransformer | None = None
 
@@ -19,8 +19,9 @@ def _get_embedder() -> SentenceTransformer:
     """懒加载嵌入模型"""
     global _embedder
     if _embedder is None:
+        embedding_cfg = config_registry.get_embedding_config()
         _embedder = SentenceTransformer(
-            settings.EMBEDDING_MODEL,
+            embedding_cfg.model,
             device="cpu",
         )
     return _embedder

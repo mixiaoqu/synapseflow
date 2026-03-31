@@ -194,10 +194,10 @@ export default function DocumentsPage() {
     try {
       const [doc, versionsRes] = await Promise.all([
         getDocument(id),
-        getDocumentVersions(id).catch(() => ({ items: [] })),
+        getDocumentVersions(id).catch(() => []),
       ]);
       setViewingDoc(doc);
-      setDocumentVersions(versionsRes.items);
+      setDocumentVersions(versionsRes);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "加载文档失败";
       toast.error(msg);
@@ -628,7 +628,7 @@ export default function DocumentsPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           onClick={() => {
             setViewingDoc(null);
-            setDocumentVersions(null);
+            setDocumentVersions([]);
           }}
         >
           <div
@@ -669,7 +669,7 @@ export default function DocumentsPage() {
                 size="sm"
                 onClick={() => {
                   setViewingDoc(null);
-                  setDocumentVersions(null);
+                  setDocumentVersions([]);
                 }}
               >
                 关闭

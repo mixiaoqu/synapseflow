@@ -1,6 +1,5 @@
 """LLM工厂：统一管理不同的大模型，支持多provider动态切换"""
-import os
-from typing import Optional
+
 from langchain_openai import ChatOpenAI
 from loguru import logger
 
@@ -31,17 +30,17 @@ class LLMFactory:
         
         # 构建LLM参数
         llm_kwargs = {
-            "base_url": model_config["api_base"],
-            "api_key": model_config["api_key"],
-            "model": model_config["model"],
-            "temperature": model_config["temperature"],
-            "timeout": model_config["request_timeout"],
-            "streaming": model_config["streaming"],
+            "base_url": model_config.api_base,
+            "api_key": model_config.api_key,
+            "model": model_config.model,
+            "temperature": model_config.temperature,
+            "timeout": model_config.request_timeout,
+            "streaming": model_config.streaming,
         }
         
         # 仅当 max_tokens 有值时传入，None 表示不限制输出长度
-        if model_config.get("max_tokens") is not None:
-            llm_kwargs["max_tokens"] = model_config["max_tokens"]
+        if model_config.max_tokens is not None:
+            llm_kwargs["max_tokens"] = model_config.max_tokens
         
         # 应用覆盖参数
         llm_kwargs.update(override_kwargs)
@@ -85,40 +84,12 @@ def get_fast_llm(**kwargs) -> ChatOpenAI:
     return get_llm_for_generation(**kwargs)
 
 
-def get_deepseek_llm(**kwargs) -> ChatOpenAI:
-    """
-    直接获取Deepseek模型（兼容旧代码）
-    """
-    return ChatOpenAI(
-        base_url="https://api.deepseek.com/v1",
-        api_key=os.getenv("DEEPSEEK_API_KEY", ""),
-        model="deepseek-chat",
-        temperature=kwargs.get("temperature", 0.3),
-        timeout=kwargs.get("timeout", 120),
-        **kwargs
-    )
-
-
-def get_kimi_llm(**kwargs) -> ChatOpenAI:
-    """
-    直接获取Kimi模型（兼容旧代码）
-    """
-    return ChatOpenAI(
-        base_url="https://api.moonshot.cn/v1",
-        api_key=os.getenv("KIMI_API_KEY", ""),
-        model="moonshot-v1-128k",
-        temperature=kwargs.get("temperature", 0.2),
-        timeout=kwargs.get("timeout", 180),
-        **kwargs
-    )
-
-
 def get_llm(model_type: str = "analysis", **kwargs) -> ChatOpenAI:
     """
     统一LLM获取接口
 
     Args:
-        model_type: planner | analysis | generation | tool | smart | fast | deepseek | kimi
+        model_type: planner | analysis | generation | tool | smart | fast
 
     Returns:
         ChatOpenAI实例
@@ -129,9 +100,5 @@ def get_llm(model_type: str = "analysis", **kwargs) -> ChatOpenAI:
         return get_llm_for_generation(**kwargs)
     elif model_type in ("planner", "analysis", "generation", "tool"):
         return llm_factory.get_llm(model_type, **kwargs)
-    elif model_type == "deepseek":
-        return get_deepseek_llm(**kwargs)
-    elif model_type == "kimi":
-        return get_kimi_llm(**kwargs)
     else:
         raise ValueError(f"不支持的模型类型: {model_type}")

@@ -1,7 +1,9 @@
 """
-配置加载器：纯 I/O 逻辑
-负责读取 YAML、${VAR} 环境变量替换，返回原始 dict
+Configuration loader: keeps raw file I/O separate from config parsing.
+Responsible for reading YAML files, expanding `${VAR}` placeholders,
+and returning plain dictionaries.
 """
+
 import os
 import re
 from pathlib import Path
@@ -17,7 +19,7 @@ load_dotenv(DOTENV_PATH)
 
 
 def load_yaml(path: Path, default: Any = None) -> Dict[str, Any]:
-    """加载 YAML 文件"""
+    """Load a YAML file."""
     if not path.exists():
         return default or {}
     with open(path, "r", encoding="utf-8") as f:
@@ -25,7 +27,7 @@ def load_yaml(path: Path, default: Any = None) -> Dict[str, Any]:
 
 
 def substitute_env(text: str) -> str:
-    """将 ${VAR} 替换为 os.environ 中的值"""
+    """Replace `${VAR}` placeholders with values from `os.environ`."""
     if not isinstance(text, str):
         return text
 
@@ -37,7 +39,7 @@ def substitute_env(text: str) -> str:
 
 
 def substitute_env_deep(obj: Any) -> Any:
-    """递归对字符串进行 env 替换"""
+    """Recursively apply environment substitution to strings."""
     if isinstance(obj, str):
         return substitute_env(obj)
     if isinstance(obj, dict):
@@ -48,27 +50,31 @@ def substitute_env_deep(obj: Any) -> Any:
 
 
 def load_models_raw() -> Dict[str, Any]:
-    """加载 models.yaml 原始内容"""
+    """Load raw contents of `models.yaml`."""
     return load_yaml(CONFIG_DIR / "models.yaml", {})
 
 
+def load_app_raw() -> Dict[str, Any]:
+    """Load raw contents of `app.yaml`."""
+    return load_yaml(CONFIG_DIR / "app.yaml", {})
+
+
 def load_embedding_raw() -> Dict[str, Any]:
-    """加载 embedding.yaml 原始内容"""
+    """Load raw contents of `embedding.yaml`."""
     return load_yaml(CONFIG_DIR / "embedding.yaml", {})
 
 
+def load_rerank_raw() -> Dict[str, Any]:
+    """Load raw contents of `rerank.yaml`."""
+    return load_yaml(CONFIG_DIR / "rerank.yaml", {})
+
+
 def load_logging_raw() -> Dict[str, Any]:
-    """加载 logging.yaml 原始内容"""
+    """Load raw contents of `logging.yaml`."""
     return load_yaml(CONFIG_DIR / "logging.yaml", {})
 
 
 def load_repositories_raw() -> Dict[str, Any]:
-    """加载 repositories.yaml，并执行 ${VAR} 替换"""
+    """Load `repositories.yaml` and expand `${VAR}` placeholders."""
     data = load_yaml(CONFIG_DIR / "repositories.yaml", {"repositories": [], "defaults": {}})
     return substitute_env_deep(data)
-
-
-def load_prompt_templates_raw() -> Dict[str, str]:
-    """加载 prompt_templates.yaml 原始内容"""
-    data = load_yaml(CONFIG_DIR / "prompt_templates.yaml", {})
-    return data.get("templates", {})

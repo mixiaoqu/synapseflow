@@ -5,9 +5,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.core.config import settings
+from app.core.config import config_registry, settings
 from app.core.logging_config import setup_logging
 from app.api.v1.router import api_router
+
+app_config = config_registry.get_app_config()
 
 
 @asynccontextmanager
@@ -15,7 +17,7 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     setup_logging()
     from loguru import logger
-    logger.info("{} v{} 启动中", settings.PROJECT_NAME, settings.VERSION)
+    logger.info("{} v{} 启动中", app_config.project_name, app_config.version)
 
     if settings.LANGSMITH_TRACING and settings.LANGSMITH_API_KEY:
         os.environ["LANGSMITH_TRACING"] = "true"
@@ -36,12 +38,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title=settings.PROJECT_NAME,
-    description="基于LangGraph的智能体协同系统",
-    version=settings.VERSION,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    docs_url=f"{settings.API_V1_STR}/docs",
-    redoc_url=f"{settings.API_V1_STR}/redoc",
+    title=app_config.project_name,
+    description=app_config.description,
+    version=app_config.version,
+    openapi_url=f"{app_config.api_v1_str}/openapi.json",
+    docs_url=f"{app_config.api_v1_str}/docs",
+    redoc_url=f"{app_config.api_v1_str}/redoc",
     lifespan=lifespan
 )
 
@@ -61,23 +63,23 @@ os.makedirs(settings.PREVIEW_DIR, exist_ok=True)
 app.mount("/preview", StaticFiles(directory=settings.PREVIEW_DIR), name="preview")
 
 # 注册API路由
-app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(api_router, prefix=app_config.api_v1_str)
 
 
 @app.get("/")
 async def root():
     """根路径"""
     return {
-        "message": f"Welcome to {settings.PROJECT_NAME}",
-        "version": settings.VERSION,
-        "docs": f"{settings.API_V1_STR}/docs"
+        "message": f"Welcome to {app_config.project_name}",
+        "version": app_config.version,
+        "docs": f"{app_config.api_v1_str}/docs"
     }
 
 
 @app.get("/health")
 async def health_check():
     """健康检查"""
-    return {"status": "healthy", "service": settings.PROJECT_NAME}
+    return {"status": "healthy", "service": app_config.project_name}
 
 
 if __name__ == "__main__":

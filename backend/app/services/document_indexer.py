@@ -22,11 +22,11 @@ from app.services.vector_store import add_document_chunks, delete_by_document_id
 
 def _chunk_text(content: str) -> List[str]:
     """按标题/段落语义分块；参数见 config/embedding.yaml chunk（size=单块上限，overlap=超长细分时重叠）。"""
-    ck = config_registry.get_rag_config()["chunk"]
+    ck = config_registry.get_rag_config().chunk
     return split_for_vector_index(
         content,
-        max_chars=ck["size"],
-        overlap=ck["overlap"],
+        max_chars=ck.size,
+        overlap=ck.overlap,
     )
 
 

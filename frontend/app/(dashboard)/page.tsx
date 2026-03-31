@@ -1,42 +1,59 @@
 import Link from "next/link";
 
+const cards = [
+  {
+    href: "/kb-chat",
+    icon: "📚",
+    title: "知识库问答",
+    desc: "面向普通用户的知识检索与流式问答。",
+  },
+  {
+    href: "/kb-curation",
+    icon: "🧭",
+    title: "知识库治理",
+    desc: "面向管理员的多轮评估、修订建议与治理闭环。",
+  },
+  {
+    href: "/revision",
+    icon: "📝",
+    title: "文档修订",
+    desc: "根据建议生成文档补充与修订内容。",
+  },
+  {
+    href: "/documents",
+    icon: "🗂️",
+    title: "文档库",
+    desc: "统一管理集合、文档与索引状态。",
+  },
+  {
+    href: "/prototype",
+    icon: "🧩",
+    title: "原型生成",
+    desc: "将需求描述自动转成界面原型。",
+  },
+];
+
 export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
       <div className="container mx-auto px-4 py-16">
-        <div className="text-center mb-16">
-          <h1 className="text-5xl font-bold text-gray-900 mb-4">
-            SynapseFlow
-          </h1>
-          <p className="text-xl text-gray-600 mb-8">
-            选择一个智能体场景开始
+        <div className="mb-16 text-center">
+          <h1 className="mb-4 text-5xl font-bold text-gray-900">SynapseFlow</h1>
+          <p className="mx-auto max-w-2xl text-xl text-gray-600">
+            选择一个工作场景，开始知识问答、知识治理或文档协作。
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-          <Link href="/qa">
-            <div className="bg-white rounded-lg shadow-lg p-8 hover:shadow-xl transition-shadow cursor-pointer">
-              <div className="text-4xl mb-4">💬</div>
-              <h2 className="text-2xl font-semibold mb-3">迭代问答</h2>
-              <p className="text-gray-600">多轮知识库问答</p>
-            </div>
-          </Link>
-
-          <Link href="/revision">
-            <div className="bg-white rounded-lg shadow-lg p-8 hover:shadow-xl transition-shadow cursor-pointer">
-              <div className="text-4xl mb-4">📝</div>
-              <h2 className="text-2xl font-semibold mb-3">递归修订</h2>
-              <p className="text-gray-600">文档智能补充</p>
-            </div>
-          </Link>
-
-          <Link href="/prototype">
-            <div className="bg-white rounded-lg shadow-lg p-8 hover:shadow-xl transition-shadow cursor-pointer">
-              <div className="text-4xl mb-4">🎨</div>
-              <h2 className="text-2xl font-semibold mb-3">文档转原型</h2>
-              <p className="text-gray-600">需求转HTML原型</p>
-            </div>
-          </Link>
+        <div className="mx-auto grid max-w-6xl gap-8 md:grid-cols-2 xl:grid-cols-3">
+          {cards.map((card) => (
+            <Link key={card.href} href={card.href}>
+              <div className="cursor-pointer rounded-lg bg-white p-8 shadow-lg transition-shadow hover:shadow-xl">
+                <div className="mb-4 text-4xl">{card.icon}</div>
+                <h2 className="mb-3 text-2xl font-semibold">{card.title}</h2>
+                <p className="text-gray-600">{card.desc}</p>
+              </div>
+            </Link>
+          ))}
         </div>
       </div>
     </div>

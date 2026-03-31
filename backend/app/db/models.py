@@ -5,7 +5,9 @@ from sqlalchemy.dialects.postgresql import TSVECTOR
 from pgvector.sqlalchemy import Vector
 
 from app.db.session import Base
-from app.core.config import settings
+from app.core.config import config_registry
+
+EMBEDDING_DIM = config_registry.get_embedding_config().dim
 
 
 class Collection(Base):
@@ -51,5 +53,5 @@ class Embedding(Base):
     chunk_text = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)
     chunk_tsv = Column(TSVECTOR, nullable=True)
-    embedding = Column(Vector(settings.VECTOR_DIMENSION), nullable=False)
+    embedding = Column(Vector(EMBEDDING_DIM), nullable=False)
     metadata_ = Column("metadata", JSON, nullable=True)

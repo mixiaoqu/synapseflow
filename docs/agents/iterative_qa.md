@@ -69,5 +69,5 @@ print(f"迭代次数: {result['iteration']}")
 
 ## API端点
 
-- `POST /api/v1/qa/invoke` - 同步调用
-- `POST /api/v1/qa/stream` - 流式调用（SSE）
+- `POST /api/v1/kb-curation/invoke` - 同步调用
+- `POST /api/v1/kb-curation/stream` - 流式调用（SSE）

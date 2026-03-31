@@ -1,8 +1,7 @@
-/**
- * API客户端封装
- */
+import { parseApiError } from "./errors";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export class ApiClient {
   private baseUrl: string;
@@ -11,7 +10,7 @@ export class ApiClient {
     this.baseUrl = baseUrl;
   }
 
-  async post<T>(endpoint: string, data: any): Promise<T> {
+  async post<T>(endpoint: string, data: unknown): Promise<T> {
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       method: "POST",
       headers: {
@@ -21,7 +20,7 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(`API错误: ${response.statusText}`);
+      throw new Error(await parseApiError(response));
     }
 
     return response.json();
@@ -31,13 +30,16 @@ export class ApiClient {
     const response = await fetch(`${this.baseUrl}${endpoint}`);
 
     if (!response.ok) {
-      throw new Error(`API错误: ${response.statusText}`);
+      throw new Error(await parseApiError(response));
     }
 
     return response.json();
   }
 
-  async postStream(endpoint: string, data: any): Promise<ReadableStream> {
+  async postStream(
+    endpoint: string,
+    data: unknown,
+  ): Promise<ReadableStream<Uint8Array>> {
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       method: "POST",
       headers: {
@@ -47,7 +49,7 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(`API错误: ${response.statusText}`);
+      throw new Error(await parseApiError(response));
     }
 
     if (!response.body) {

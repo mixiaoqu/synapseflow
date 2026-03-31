@@ -12,11 +12,8 @@ from .loader import DOTENV_PATH
 class Settings(BaseSettings):
     """环境变量配置（.env）"""
 
-    # --- 基础元数据 ---
-    PROJECT_NAME: str = "SynapseFlow"
-    VERSION: str = "0.1.0"
+    # --- 运行环境 ---
     ENV: str = "development"
-    API_V1_STR: str = "/api/v1"
     DEBUG: bool = True
 
     # --- 安全配置 ---
@@ -41,10 +38,7 @@ class Settings(BaseSettings):
     SILICONFLOW_API_KEY: str = ""
     MODELSCOPE_API_KEY: str = ""
     AIHUBMIX_API_KEY: str = ""
-
-    # --- 向量数据库配置（本地 BGE 中文嵌入）---
-    EMBEDDING_MODEL: str = "BAAI/bge-m3"
-    VECTOR_DIMENSION: int = 1024
+    OPENROUTER_API_KEY: str = ""
 
     # --- 阿里云百炼（DashScope）---
     DASHSCOPE_API_KEY: str = ""
@@ -52,16 +46,12 @@ class Settings(BaseSettings):
     # --- 墨鱼（OpenAI 兼容，config/models.yaml provider moyu）---
     MOYU_API_KEY: str = ""
 
-    # --- Rerank 远程 API：bailian=阿里云百炼，vllm=自建 vLLM（与无距离阈值的向量召回配合）---
+    # --- Rerank 运行时开关 / 接入配置 ---
     RERANK_ENABLED: bool = True
-    RERANK_PROVIDER: str = "bailian"  # bailian | vllm
     RERANK_API_URL: str = "http://localhost:8012"  # vllm 时使用
     RERANK_API_KEY: str = ""  # vllm 时可选
-    RERANK_MODEL: str = "qwen3-rerank"  # bailian 固定；vllm 可配置
-    # 检索条数见 config/embedding.yaml retrieval.final_top_k；交给生成模型的条数可设 llm_reference_top_k
-    RERANK_INSTRUCT: str = "Given a web search query, retrieve relevant passages that answer the query."
 
-    # --- 文件存储配置 ---
+    # --- 文件与服务运行参数 ---
     PREVIEW_DIR: str = "./previews"
     UPLOAD_DIR: str = "./uploads"
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB

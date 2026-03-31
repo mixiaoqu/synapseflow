@@ -89,7 +89,7 @@ app/
 
 ### 1. 迭代问答（Iterative Q&A）
 - 文件：`app/agents/workflows/iterative_qa.py`
-- 端点：`POST /api/v1/qa/invoke`
+- 端点：`POST /api/v1/kb-curation/invoke`
 - 流程：检索 → 生成答案 → 评估质量 → 循环优化
 
 ### 2. 文档修订（Suggest Revision）

@@ -1,12 +1,13 @@
-"""LangGraph状态定义"""
-from app.agents.states.qa_state import IterativeQAState
-from app.agents.states.kb_user_qa_state import KbUserQAState
-from app.agents.states.revision_state import UserDrivenRevisionState
+"""LangGraph state exports."""
+
+from app.agents.states.kb_chat_state import KbChatState
+from app.agents.states.kb_curation_state import KbCurationState
 from app.agents.states.prototype import DocToPrototypeState, prototype_state
+from app.agents.states.revision_state import UserDrivenRevisionState
 
 __all__ = [
-    "IterativeQAState",
-    "KbUserQAState",
+    "KbChatState",
+    "KbCurationState",
     "UserDrivenRevisionState",
     "DocToPrototypeState",
     "prototype_state",

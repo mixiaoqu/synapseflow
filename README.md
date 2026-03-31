@@ -137,8 +137,10 @@ SynapseFlow/
 ## 🎯 API端点
 
 ### 迭代问答
-- `POST /api/v1/qa/invoke` - 同步问答
-- `POST /api/v1/qa/stream` - 流式问答
+- `POST /api/v1/kb-curation/invoke` - 同步知识库治理问答
+- `POST /api/v1/kb-curation/stream` - 流式知识库治理问答
+- `POST /api/v1/kb-chat/invoke` - 同步知识库问答
+- `POST /api/v1/kb-chat/stream` - 流式知识库问答
 
 ### 文档修订
 - `POST /api/v1/revision/suggest` - 用户建议驱动修订（文档 + 建议 → 修订稿 + 遗漏提示）

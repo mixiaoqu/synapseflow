@@ -1,0 +1,5 @@
+app:
+  project_name: SynapseFlow
+  version: 0.1.0
+  description: 基于LangGraph的智能体协同系统
+  api_v1_str: /api/v1

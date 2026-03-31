@@ -74,11 +74,10 @@ async def run_kb_retrieval(
     从 pgvector 检索文档块，拼上下文。
     返回 retrieved_docs、context、kb_retrieval_status（empty_collection | no_hits | ok）。
     """
-    rag = config_registry.get_rag_config()["retrieval"]
-    k = rag["k_iteration"] if iteration > 0 else rag["k_first"]
-    final_top_k = rag["final_top_k"]
-    llm_ref_k_raw = rag.get("llm_reference_top_k")
-    llm_ref_k = int(llm_ref_k_raw) if llm_ref_k_raw is not None else None
+    rag = config_registry.get_rag_config().retrieval
+    k = rag.k_iteration if iteration > 0 else rag.k_first
+    final_top_k = rag.final_top_k
+    llm_ref_k = rag.llm_reference_top_k
 
     query_embedding = await asyncio.to_thread(embed_query, query)
 
@@ -101,19 +100,19 @@ async def run_kb_retrieval(
                 }
 
     async with AsyncSessionLocal() as db:
-        if rag.get("hybrid_enabled"):
+        if rag.hybrid_enabled:
             pool_limit = min(
-                int(rag.get("hybrid_pool_limit", 64)),
-                k + int(rag.get("lexical_k", 32)),
+                rag.hybrid_pool_limit,
+                k + rag.lexical_k,
             )
             results = await search_hybrid_rrf(
                 db,
                 query_text=query,
                 query_embedding=query_embedding,
                 k_dense=k,
-                k_lexical=int(rag.get("lexical_k", 32)),
+                k_lexical=rag.lexical_k,
                 document_ids=document_ids,
-                rrf_k=int(rag.get("rrf_k", 60)),
+                rrf_k=rag.rrf_k,
                 pool_limit=max(pool_limit, 1),
             )
         else:
@@ -164,7 +163,7 @@ async def run_kb_retrieval(
 
     distances = [r.get("distance") for r in results if r.get("distance") is not None]
     rerank_scores = [r.get("rerank_score") for r in results if r.get("rerank_score") is not None]
-    mode = "向量+词法" if rag.get("hybrid_enabled") else "向量"
+    mode = "向量+词法" if rag.hybrid_enabled else "向量"
     if distances:
         dmin, dmax = min(distances), max(distances)
         dist_s = "{:.3f}~{:.3f}".format(dmin, dmax)
@@ -215,7 +214,7 @@ async def run_kb_retrieval(
             "kb_retrieval_status": "no_hits",
         }
 
-    budget = int(rag.get("kb_context_max_chars", 12000))
+    budget = rag.kb_context_max_chars
     kept, context = _apply_kb_context_budget(retrieved_docs, budget)
     if budget > 0:
         trimmed = len(kept) < len(retrieved_docs) or any(
