@@ -1,23 +1,16 @@
-"""
-文档数据访问层
-将 SQL 查询封装为 Repository 方法，API 端点仅做编排
-"""
+"""Document repository helpers."""
+
 from __future__ import annotations
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Document, Collection
 from app.core.constants import DEFAULT_USER_ID
-
-
-def _get_root_ids(docs: list) -> set[int]:
-    """从文档列表提取去重后的 root_id"""
-    return {getattr(d, "root_id", None) or d.id for d in docs}
+from app.db.models import Collection, Document
 
 
 class DocumentRepository:
-    """文档 Repository"""
+    """Encapsulates document persistence operations."""
 
     def __init__(self, db: AsyncSession, user_id: int = DEFAULT_USER_ID):
         self.db = db
@@ -31,8 +24,9 @@ class DocumentRepository:
         document_type: str | None = None,
         size: int = 0,
         collection_id: int | None = None,
+        commit: bool = True,
     ) -> Document:
-        """创建文档"""
+        """Create a document row and set its root_id in the same transaction."""
         doc = Document(
             user_id=self.user_id,
             title=title,
@@ -45,26 +39,31 @@ class DocumentRepository:
             collection_id=collection_id,
         )
         self.db.add(doc)
-        await self.db.commit()
-        await self.db.refresh(doc)
+        await self.db.flush()
         doc.root_id = doc.id
-        await self.db.commit()
-        await self.db.refresh(doc)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(doc)
         return doc
 
     async def add_for_batch(self, doc: Document) -> None:
-        """批量创建时添加文档（不单独 commit）"""
+        """Queue a document row for batch creation."""
         self.db.add(doc)
 
+    async def prepare_batch_create(self, docs: list[Document]) -> None:
+        """Flush ids and assign root_ids without committing yet."""
+        if not docs:
+            return
+        await self.db.flush()
+        for doc in docs:
+            doc.root_id = doc.id
+
     async def commit_and_refresh_root_ids(self, docs: list[Document]) -> None:
-        """批量创建后设置 root_id"""
+        """Flush ids, set root_ids, and commit batch-created documents once."""
+        await self.prepare_batch_create(docs)
         await self.db.commit()
-        for d in docs:
-            await self.db.refresh(d)
-            d.root_id = d.id
-        await self.db.commit()
-        for d in docs:
-            await self.db.refresh(d)
+        for doc in docs:
+            await self.db.refresh(doc)
 
     async def list_paginated(
         self,
@@ -74,10 +73,7 @@ class DocumentRepository:
         keyword: str | None = None,
         collection_id: int | None = None,
     ) -> tuple[list[tuple[Document, str | None]], int]:
-        """
-        分页列表，返回 (rows, total)
-        rows: [(Document, collection_name), ...]
-        """
+        """Return paginated latest documents plus collection name."""
         base_filter = Document.user_id == self.user_id
         base_filter = base_filter & Document.is_latest.is_(True)
         if keyword and keyword.strip():
@@ -104,22 +100,22 @@ class DocumentRepository:
         return list(result.all()), total
 
     async def get_by_id(self, doc_id: int) -> Document | None:
-        """按 ID 获取（不做 user 校验）"""
-        r = await self.db.execute(select(Document).where(Document.id == doc_id))
-        return r.scalar_one_or_none()
+        """Fetch a document by id without user filtering."""
+        result = await self.db.execute(select(Document).where(Document.id == doc_id))
+        return result.scalar_one_or_none()
 
     async def get_by_id_for_user(self, doc_id: int) -> Document | None:
-        """按 ID 获取，校验 user_id"""
-        r = await self.db.execute(
+        """Fetch a document by id scoped to the current user."""
+        result = await self.db.execute(
             select(Document).where(
                 Document.id == doc_id,
                 Document.user_id == self.user_id,
             )
         )
-        return r.scalar_one_or_none()
+        return result.scalar_one_or_none()
 
     async def get_versions_by_doc_id(self, doc_id: int) -> list[Document]:
-        """获取文档版本链（需先确认 doc 存在）"""
+        """Return the version chain for a document."""
         doc = await self.get_by_id(doc_id)
         if not doc:
             return []
@@ -129,11 +125,11 @@ class DocumentRepository:
             .where(Document.root_id == root_id, Document.user_id == self.user_id)
             .order_by(Document.version.asc())
         )
-        r = await self.db.execute(stmt)
-        return list(r.scalars().all())
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
     async def update_content(self, doc_id: int, content: str) -> Document | None:
-        """替换文档内容"""
+        """Replace the content of an existing latest document."""
         doc = await self.get_by_id_for_user(doc_id)
         if not doc:
             return None
@@ -144,8 +140,14 @@ class DocumentRepository:
         await self.db.refresh(doc)
         return doc
 
-    async def create_version(self, doc_id: int, content: str) -> Document | None:
-        """创建新版本"""
+    async def create_version(
+        self,
+        doc_id: int,
+        content: str,
+        *,
+        commit: bool = True,
+    ) -> Document | None:
+        """Create a new latest version row for a document."""
         orig = await self.get_by_id_for_user(doc_id)
         if not orig:
             return None
@@ -156,15 +158,13 @@ class DocumentRepository:
         )
         max_res = await self.db.execute(max_stmt)
         max_version = max_res.scalar_one_or_none()
-        new_version = (max_version or 1) + 1
-        size = len(content.encode("utf-8"))
         new_doc = Document(
             user_id=self.user_id,
             title=orig.title,
             content=content,
             document_type=orig.document_type,
-            size=size,
-            version=new_version,
+            size=len(content.encode("utf-8")),
+            version=(max_version or 1) + 1,
             parent_id=orig.id,
             root_id=root_id,
             is_latest=True,
@@ -172,42 +172,45 @@ class DocumentRepository:
         )
         orig.is_latest = False
         self.db.add(new_doc)
-        await self.db.commit()
-        await self.db.refresh(new_doc)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(new_doc)
+        else:
+            await self.db.flush()
         return new_doc
 
     async def get_by_ids(self, ids: list[int]) -> list[Document]:
-        """按 ID 列表获取（仅当前 user）"""
+        """Fetch multiple documents scoped to the current user."""
         if not ids:
             return []
-        r = await self.db.execute(
+        result = await self.db.execute(
             select(Document).where(
                 Document.id.in_(ids),
                 Document.user_id == self.user_id,
             )
         )
-        return list(r.scalars().all())
+        return list(result.scalars().all())
 
     async def get_chain_by_root_ids(self, root_ids: set[int]) -> list[Document]:
-        """按 root_id 获取整条版本链"""
+        """Fetch all versions for each root id."""
         if not root_ids:
             return []
-        r = await self.db.execute(
+        result = await self.db.execute(
             select(Document).where(
                 Document.root_id.in_(root_ids),
                 Document.user_id == self.user_id,
             )
         )
-        return list(r.scalars().all())
+        return list(result.scalars().all())
 
     async def delete_chain(self, docs: list[Document]) -> int:
-        """删除整条版本链"""
-        for d in docs:
-            await self.db.delete(d)
+        """Delete a full version chain."""
+        for doc in docs:
+            await self.db.delete(doc)
         await self.db.commit()
         return len(docs)
 
     async def count_total(self) -> int:
-        """文档总数（用于 404 提示）"""
-        r = await self.db.execute(select(func.count()).select_from(Document))
-        return r.scalar() or 0
+        """Count all documents in the table."""
+        result = await self.db.execute(select(func.count()).select_from(Document))
+        return result.scalar() or 0

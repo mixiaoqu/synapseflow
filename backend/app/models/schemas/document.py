@@ -1,19 +1,23 @@
-"""文档相关 Schema"""
+"""文档相关 Schema。"""
+
 from datetime import datetime
 from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
 class DocumentCreate(BaseModel):
-    """文档入库用（内部使用）"""
+    """通过文本内容创建文档的请求体。"""
+
     title: str = Field(..., description="文档标题")
     content: str = Field(..., description="文档内容")
-    document_type: Optional[str] = Field(None, description="文档类型 txt/md/pdf/docx")
+    document_type: Optional[str] = Field(None, description="文档类型，如 txt/md/pdf/docx")
     collection_id: Optional[int] = Field(None, description="所属集合 ID")
 
 
 class DocumentResponse(BaseModel):
-    """文档详情响应（含 content）"""
+    """文档详情响应，包含完整内容。"""
+
     id: int
     title: str
     content: str
@@ -29,7 +33,8 @@ class DocumentResponse(BaseModel):
 
 
 class DocumentListItem(BaseModel):
-    """文档列表项（不包含 content）"""
+    """文档列表项，不包含完整内容。"""
+
     id: int
     title: str
     document_type: Optional[str] = None
@@ -46,7 +51,8 @@ class DocumentListItem(BaseModel):
 
 
 class DocumentListResponse(BaseModel):
-    """分页列表响应"""
+    """分页文档列表响应。"""
+
     items: list[DocumentListItem]
     total: int
     page: int
@@ -54,12 +60,14 @@ class DocumentListResponse(BaseModel):
 
 
 class DocumentContentUpdate(BaseModel):
-    """文档内容更新（用于替换/修订保存）"""
+    """文档内容更新请求。"""
+
     content: str = Field(..., description="更新后的文档内容")
 
 
 class DocumentVersionItem(BaseModel):
-    """版本历史项"""
+    """文档版本记录。"""
+
     id: int
     title: str
     version: int
@@ -71,5 +79,6 @@ class DocumentVersionItem(BaseModel):
 
 
 class DocumentVersionsResponse(BaseModel):
-    """版本历史响应"""
+    """文档版本列表响应。"""
+
     items: list[DocumentVersionItem]

@@ -1,4 +1,4 @@
-"""Knowledge-base chat endpoints for end users."""
+"""面向普通用户的知识库问答 API。"""
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -12,11 +12,11 @@ router = APIRouter()
 
 @router.post("/invoke", response_model=KbChatResponse)
 async def kb_chat_invoke(request: KbChatRequest):
-    """同步执行面向普通用户的知识库问答。"""
+    """同步执行知识库问答。"""
     try:
         return await kb_chat_service.invoke(request)
     except Exception as exc:
-        logger.exception("[用户知识库问答] invoke 失败: {}", exc)
+        logger.exception("[知识库问答] invoke 失败: {}", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 

@@ -1,18 +1,14 @@
-"""
-文档分块与向量索引服务
-将文档内容分块、向量化后写入 embeddings 表
-"""
+"""Document chunking and embedding index services."""
+
 import asyncio
 from datetime import datetime
-from typing import List
+from typing import Iterable, List, Sequence
 
+from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loguru import logger
-
 from app.core.config.registry import config_registry
-from app.core.constants import DEFAULT_USER_ID
 from app.db.models import Document
 from app.db.session import AsyncSessionLocal
 from app.services.embedding import embed_documents
@@ -21,54 +17,119 @@ from app.services.vector_store import add_document_chunks, delete_by_document_id
 
 
 def _chunk_text(content: str) -> List[str]:
-    """按标题/段落语义分块；参数见 config/embedding.yaml chunk（size=单块上限，overlap=超长细分时重叠）。"""
-    ck = config_registry.get_rag_config().chunk
+    """Split a document into semantic chunks for vector indexing."""
+    chunk_cfg = config_registry.get_rag_config().chunk
     return split_for_vector_index(
         content,
-        max_chars=ck.size,
-        overlap=ck.overlap,
+        max_chars=chunk_cfg.size,
+        overlap=chunk_cfg.overlap,
     )
 
 
-async def index_document(db: AsyncSession, doc_id: int, content: str) -> int:
-    """
-    对单篇文档建立向量索引
-    先删除旧索引，再分块、嵌入、写入
-    返回写入的 chunk 数量
-    修改 chunk.size/overlap 或分块策略后需对已入库文档重新索引方可生效。
-    """
-    if not content or not content.strip():
-        return 0
-
-    chunks = _chunk_text(content.strip())
-    if not chunks:
-        return 0
-
-    # 同步 embedding 在线程池中执行，避免阻塞
-    vectors = await asyncio.to_thread(embed_documents, chunks)
-
-    await delete_by_document_id(db, doc_id, commit=False)
-    count = await add_document_chunks(db, doc_id, chunks, vectors, commit=False)
-    if count > 0:
-        await db.execute(update(Document).where(Document.id == doc_id).values(indexed_at=datetime.utcnow()))
-    await db.commit()
-    return count
+def _prepare_chunk_batches(
+    documents: Sequence[tuple[int, str]],
+) -> list[tuple[int, list[str]]]:
+    prepared: list[tuple[int, list[str]]] = []
+    for doc_id, content in documents:
+        normalized = (content or "").strip()
+        chunks = _chunk_text(normalized) if normalized else []
+        prepared.append((doc_id, chunks))
+    return prepared
 
 
-async def reindex_all() -> int:
-    """仅对 is_latest=True 的文档重新建立索引，返回成功索引的文档数"""
-    total_docs = 0
+async def _write_index_rows(
+    db: AsyncSession,
+    prepared_docs: Sequence[tuple[int, list[str]]],
+    vectors_by_doc: Sequence[list[list[float]]],
+) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    now = datetime.utcnow()
+
+    for (doc_id, chunks), vectors in zip(prepared_docs, vectors_by_doc):
+        await delete_by_document_id(db, doc_id, commit=False)
+        if not chunks:
+            await db.execute(
+                update(Document).where(Document.id == doc_id).values(indexed_at=None)
+            )
+            counts[doc_id] = 0
+            continue
+
+        count = await add_document_chunks(
+            db,
+            doc_id,
+            chunks,
+            vectors,
+            commit=False,
+        )
+        await db.execute(update(Document).where(Document.id == doc_id).values(indexed_at=now))
+        counts[doc_id] = count
+
+    return counts
+
+
+async def index_document(
+    db: AsyncSession,
+    doc_id: int,
+    content: str,
+    *,
+    commit: bool = True,
+) -> int:
+    """Rebuild vector index rows for a single document."""
+    counts = await index_documents_batch(
+        db,
+        [(doc_id, content)],
+        commit=commit,
+    )
+    return counts.get(doc_id, 0)
+
+
+async def index_documents_batch(
+    db: AsyncSession,
+    documents: Sequence[tuple[int, str]],
+    *,
+    commit: bool = True,
+) -> dict[int, int]:
+    """Index multiple documents with one embedding batch and one DB transaction."""
+    if not documents:
+        return {}
+
+    prepared_docs = _prepare_chunk_batches(documents)
+    all_chunks = [chunk for _, chunks in prepared_docs for chunk in chunks]
+    all_vectors = await asyncio.to_thread(embed_documents, all_chunks) if all_chunks else []
+
+    vectors_by_doc: list[list[list[float]]] = []
+    offset = 0
+    for _, chunks in prepared_docs:
+        next_offset = offset + len(chunks)
+        vectors_by_doc.append(all_vectors[offset:next_offset])
+        offset = next_offset
+
+    counts = await _write_index_rows(db, prepared_docs, vectors_by_doc)
+    if commit:
+        await db.commit()
+    return counts
+
+
+def _chunked(items: Sequence[tuple[int, str]], size: int) -> Iterable[Sequence[tuple[int, str]]]:
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
+
+async def reindex_all(batch_size: int = 16) -> int:
+    """Reindex all latest documents in batches."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(Document).where(
-                Document.is_latest.is_(True)
-            )
+            select(Document.id, Document.content).where(Document.is_latest.is_(True))
         )
-        docs = result.scalars().all()
-        for doc in docs:
+        docs = [(row.id, row.content or "") for row in result.all()]
+
+    total_docs = 0
+    for batch in _chunked(docs, max(1, batch_size)):
+        async with AsyncSessionLocal() as session:
             try:
-                await index_document(session, doc.id, doc.content or "")
-                total_docs += 1
-            except Exception as e:
-                logger.warning("索引失败 doc={} 《{}》: {}", doc.id, doc.title, e)
+                counts = await index_documents_batch(session, batch, commit=True)
+                total_docs += len(counts)
+            except Exception as exc:
+                await session.rollback()
+                logger.warning("批量重建索引失败 batch_size={} error={}", len(batch), exc)
     return total_docs

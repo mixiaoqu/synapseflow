@@ -1,20 +1,25 @@
-"""集合相关 Schema"""
+"""集合相关 Schema。"""
+
 from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
 class CollectionCreate(BaseModel):
-    """创建集合"""
+    """创建集合请求。"""
+
     name: str = Field(..., min_length=1, max_length=100, description="集合名称")
 
 
 class CollectionUpdate(BaseModel):
-    """更新集合"""
+    """更新集合请求。"""
+
     name: str = Field(..., min_length=1, max_length=100, description="集合名称")
 
 
 class CollectionResponse(BaseModel):
-    """集合响应"""
+    """集合响应。"""
+
     id: int
     name: str
     created_at: datetime
@@ -25,5 +30,6 @@ class CollectionResponse(BaseModel):
 
 
 class CollectionWithCount(CollectionResponse):
-    """集合及文档数"""
+    """带文档数量的集合响应。"""
+
     document_count: int = 0

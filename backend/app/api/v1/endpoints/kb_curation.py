@@ -1,4 +1,4 @@
-"""Knowledge-base curation endpoints for admins."""
+"""面向管理员的知识库治理 API。"""
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -11,7 +11,7 @@ router = APIRouter()
 
 @router.post("/invoke", response_model=QAResponse)
 async def kb_curation_invoke(request: QARequest):
-    """同步执行面向管理员的知识库治理问答。"""
+    """同步执行知识库治理问答。"""
     try:
         return await kb_curation_service.invoke(request)
     except Exception as exc:

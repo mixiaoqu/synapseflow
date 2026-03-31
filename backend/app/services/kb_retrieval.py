@@ -1,6 +1,5 @@
-"""
-知识库向量检索（迭代 QA 与用户问答共用实现）。
-"""
+"""Shared retrieval pipeline for KB chat, curation, and tools."""
+
 import asyncio
 from typing import Any, Dict, List, Optional
 
@@ -9,13 +8,12 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.config.registry import config_registry
+from app.core.constants import DEFAULT_USER_ID
 from app.db.models import Document
 from app.db.session import AsyncSessionLocal
 from app.services.embedding import embed_query
 from app.services.reranker import rerank
 from app.services.vector_store import search, search_hybrid_rrf
-
-DEFAULT_USER_ID = 1
 
 
 def _format_kb_chunk(doc: Dict[str, Any], content: str) -> str:
@@ -27,11 +25,11 @@ def _apply_kb_context_budget(
     retrieved_docs: List[Dict[str, Any]],
     max_chars: int,
 ) -> tuple[List[Dict[str, Any]], str]:
-    """按字符上限顺序保留摘录；必要时最后一条截断。max_chars<=0 表示不限制。"""
+    """Trim retrieved docs to fit the prompt context budget."""
     if not retrieved_docs:
         return [], ""
     if max_chars <= 0:
-        parts = [_format_kb_chunk(d, d.get("content") or "") for d in retrieved_docs]
+        parts = [_format_kb_chunk(doc, doc.get("content") or "") for doc in retrieved_docs]
         return retrieved_docs, "\n\n".join(parts)
 
     kept: List[Dict[str, Any]] = []
@@ -46,21 +44,96 @@ def _apply_kb_context_budget(
             kept.append(doc)
             used += gap + len(block)
             continue
+
         room = max_chars - used - gap
         title = doc.get("metadata", {}).get("document_title", "未知文档")
         head = "【文档：%s】\n" % title
         if room <= len(head) + 16:
             break
-        cr = room - len(head)
-        snippet = content[:cr]
-        if len(content) > cr:
+        cutoff = room - len(head)
+        snippet = content[:cutoff]
+        if len(content) > cutoff:
             snippet += "…"
-        new_doc = dict(doc)
-        new_doc["content"] = snippet
-        parts.append(_format_kb_chunk(new_doc, snippet))
-        kept.append(new_doc)
+        truncated = dict(doc)
+        truncated["content"] = snippet
+        parts.append(_format_kb_chunk(truncated, snippet))
+        kept.append(truncated)
         break
+
     return kept, "\n\n".join(parts)
+
+
+async def _collection_has_documents(
+    *,
+    collection_id: int,
+    user_id: int,
+) -> bool:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Document.id)
+            .where(
+                Document.user_id == user_id,
+                Document.collection_id == collection_id,
+                Document.is_latest.is_(True),
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+
+async def _retrieve_ranked_rows(
+    *,
+    query: str,
+    collection_id: Optional[int],
+    user_id: int,
+    recall_k: int,
+    final_top_k: int,
+) -> tuple[List[dict], bool]:
+    rag = config_registry.get_rag_config().retrieval
+    query_embedding = await asyncio.to_thread(embed_query, query)
+
+    async with AsyncSessionLocal() as db:
+        if rag.hybrid_enabled:
+            pool_limit = min(rag.hybrid_pool_limit, recall_k + rag.lexical_k)
+            results = await search_hybrid_rrf(
+                db,
+                query_text=query,
+                query_embedding=query_embedding,
+                k_dense=recall_k,
+                k_lexical=rag.lexical_k,
+                user_id=user_id,
+                collection_id=collection_id,
+                rrf_k=rag.rrf_k,
+                pool_limit=max(pool_limit, 1),
+            )
+        else:
+            results = await search(
+                db,
+                query_embedding,
+                k=recall_k,
+                user_id=user_id,
+                collection_id=collection_id,
+            )
+
+    recall_n = len(results)
+    if settings.RERANK_ENABLED and results:
+        logger.debug(
+            "知识库检索 精排候选 {} 条（目标截断 {}）",
+            recall_n,
+            final_top_k,
+        )
+        results = await rerank(query, results, top_k=final_top_k)
+    else:
+        results = results[:final_top_k]
+
+    has_documents = True
+    if collection_id is not None and recall_n == 0:
+        has_documents = await _collection_has_documents(
+            collection_id=collection_id,
+            user_id=user_id,
+        )
+
+    return results, has_documents
 
 
 async def run_kb_retrieval(
@@ -69,167 +142,103 @@ async def run_kb_retrieval(
     collection_id: Optional[int],
     iteration: int = 0,
     log_prefix: str = "[知识库检索]",
+    user_id: int = DEFAULT_USER_ID,
+    result_limit: int | None = None,
+    context_budget: int | None = None,
 ) -> Dict[str, Any]:
     """
-    从 pgvector 检索文档块，拼上下文。
-    返回 retrieved_docs、context、kb_retrieval_status（empty_collection | no_hits | ok）。
+    Retrieve KB chunks, apply rerank/context budget, and return prompt-ready state.
+
+    Returns:
+        {"retrieved_docs", "context", "kb_retrieval_status"}
     """
     rag = config_registry.get_rag_config().retrieval
-    k = rag.k_iteration if iteration > 0 else rag.k_first
-    final_top_k = rag.final_top_k
-    llm_ref_k = rag.llm_reference_top_k
+    recall_k = rag.k_iteration if iteration > 0 else rag.k_first
+    final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
+    llm_ref_k = max(1, result_limit) if result_limit is not None else rag.llm_reference_top_k
 
-    query_embedding = await asyncio.to_thread(embed_query, query)
-
-    document_ids: Optional[List[int]] = None
-    if collection_id is not None:
-        async with AsyncSessionLocal() as db:
-            r = await db.execute(
-                select(Document.id).where(
-                    Document.user_id == DEFAULT_USER_ID,
-                    Document.collection_id == collection_id,
-                    Document.is_latest.is_(True),
-                )
-            )
-            document_ids = list(r.scalars().all()) or []
-            if not document_ids:
-                return {
-                    "retrieved_docs": [],
-                    "context": "（该集合暂无已索引文档，请先上传并建立索引）",
-                    "kb_retrieval_status": "empty_collection",
-                }
-
-    async with AsyncSessionLocal() as db:
-        if rag.hybrid_enabled:
-            pool_limit = min(
-                rag.hybrid_pool_limit,
-                k + rag.lexical_k,
-            )
-            results = await search_hybrid_rrf(
-                db,
-                query_text=query,
-                query_embedding=query_embedding,
-                k_dense=k,
-                k_lexical=rag.lexical_k,
-                document_ids=document_ids,
-                rrf_k=rag.rrf_k,
-                pool_limit=max(pool_limit, 1),
-            )
-        else:
-            results = await search(db, query_embedding, k=k, document_ids=document_ids)
+    results, has_documents = await _retrieve_ranked_rows(
+        query=query,
+        collection_id=collection_id,
+        user_id=user_id,
+        recall_k=recall_k,
+        final_top_k=final_top_k,
+    )
 
     recall_n = len(results)
-    coll_hint = collection_id if collection_id is not None else "全库"
-    doc_hint = (
-        len(document_ids)
-        if document_ids is not None
-        else "全库"
-    )
-    if recall_n == 0:
-        logger.warning(
-            "{} 无命中 | 集合={} | 候选文档={}（查索引、is_latest）",
-            log_prefix,
-            coll_hint,
-            doc_hint,
-        )
-    rerank_applied = False
-    if settings.RERANK_ENABLED and len(results) > 0:
-        logger.debug(
-            "{} 精排候选 {} 条（截断目标 {}）",
-            log_prefix,
-            len(results),
-            final_top_k,
-        )
-        results = await rerank(query, results, top_k=final_top_k)
-        rerank_applied = True
-    else:
-        logger.debug("{} 未开精排或无结果，截断 {} 条", log_prefix, final_top_k)
-        results = results[:final_top_k]
-
-    after_rank_len = len(results)
     if llm_ref_k is not None:
-        n = max(1, llm_ref_k)
-        results = results[:n]
+        results = results[: max(1, llm_ref_k)]
 
-    title_map: Dict[int, str] = {}
-    if results:
-        unique_ids = list({r["document_id"] for r in results})
-        async with AsyncSessionLocal() as db:
-            r = await db.execute(
-                select(Document.id, Document.title).where(Document.id.in_(unique_ids))
-            )
-            for row in r.all():
-                title_map[row.id] = row.title or "未知文档"
-
-    distances = [r.get("distance") for r in results if r.get("distance") is not None]
-    rerank_scores = [r.get("rerank_score") for r in results if r.get("rerank_score") is not None]
     mode = "向量+词法" if rag.hybrid_enabled else "向量"
-    if distances:
-        dmin, dmax = min(distances), max(distances)
-        dist_s = "{:.3f}~{:.3f}".format(dmin, dmax)
-    else:
-        dist_s = "-"
-    if rerank_scores:
-        smin, smax = min(rerank_scores), max(rerank_scores)
-        rr_s = "{:.3f}~{:.3f}".format(smin, smax)
-    else:
-        rr_s = "-"
+    distances = [row.get("distance") for row in results if row.get("distance") is not None]
+    rerank_scores = [
+        row.get("rerank_score") for row in results if row.get("rerank_score") is not None
+    ]
+    dist_s = (
+        "{:.3f}~{:.3f}".format(min(distances), max(distances))
+        if distances
+        else "-"
+    )
+    rerank_s = (
+        "{:.3f}~{:.3f}".format(min(rerank_scores), max(rerank_scores))
+        if rerank_scores
+        else "-"
+    )
     logger.info(
-        "{} 第{}轮 {} | 召回 {} → 精排后 {} → 入模型 {} | 距 {} | 精排分 {}",
+        "{} 第{}轮 {} | 入模 {} 条 | 距离 {} | 精排 {}",
         log_prefix,
         iteration + 1,
         mode,
-        recall_n,
-        after_rank_len,
         len(results),
         dist_s,
-        rr_s,
+        rerank_s,
     )
     logger.debug(
-        "{} 明细 k={} final_top_k={} llm_ref_k={} 距={} 分={}",
+        "{} 细节 recall_k={} final_top_k={} llm_ref_k={}",
         log_prefix,
-        k,
+        recall_k,
         final_top_k,
         llm_ref_k if llm_ref_k is not None else "-",
-        [round(d, 4) for d in distances] if distances else [],
-        [round(s, 4) for s in rerank_scores] if rerank_scores else [],
     )
 
-    retrieved_docs = []
-    for r in results:
-        meta = {
-            "document_id": r["document_id"],
-            "document_title": title_map.get(r["document_id"], "未知文档"),
-            "chunk_index": r["chunk_index"],
-            "score": r.get("distance"),
-        }
-        if r.get("rerank_score") is not None:
-            meta["rerank_score"] = r["rerank_score"]
-        retrieved_docs.append({"content": r["chunk_text"], "metadata": meta})
+    if not results:
+        if collection_id is not None and not has_documents:
+            logger.warning("{} 集合={} 下暂无已索引文档", log_prefix, collection_id)
+            return {
+                "retrieved_docs": [],
+                "context": "（该集合暂无已索引文档，请先上传并建立索引）",
+                "kb_retrieval_status": "empty_collection",
+            }
 
-    if not retrieved_docs:
+        logger.warning("{} 无命中 | 集合={}", log_prefix, collection_id or "全库")
         return {
             "retrieved_docs": [],
-            "context": "（未检索到相关文档，请确保文档库中有内容并已建立索引）",
+            "context": "（未检索到相关文档，请确认文档库中有内容并已建立索引）",
             "kb_retrieval_status": "no_hits",
         }
 
-    budget = rag.kb_context_max_chars
+    retrieved_docs = []
+    for row in results:
+        meta = {
+            "document_id": row["document_id"],
+            "document_title": row.get("document_title", "未知文档"),
+            "chunk_index": row["chunk_index"],
+            "score": row.get("distance"),
+        }
+        if row.get("rerank_score") is not None:
+            meta["rerank_score"] = row["rerank_score"]
+        retrieved_docs.append({"content": row["chunk_text"], "metadata": meta})
+
+    budget = rag.kb_context_max_chars if context_budget is None else context_budget
     kept, context = _apply_kb_context_budget(retrieved_docs, budget)
-    if budget > 0:
-        trimmed = len(kept) < len(retrieved_docs) or any(
-            i < len(kept)
-            and (kept[i].get("content") or "") != (retrieved_docs[i].get("content") or "")
-            for i in range(len(kept))
+    if budget > 0 and len(kept) < len(retrieved_docs):
+        logger.info(
+            "{} 摘录限长 {} 字，送入模型 {} 条（原 {} 条）",
+            log_prefix,
+            budget,
+            len(kept),
+            len(retrieved_docs),
         )
-        if trimmed:
-            logger.info(
-                "{} 摘录限长 {} 字，送入模型 {} 条（原 {} 条）",
-                log_prefix,
-                budget,
-                len(kept),
-                len(retrieved_docs),
-            )
 
     return {
         "retrieved_docs": kept,

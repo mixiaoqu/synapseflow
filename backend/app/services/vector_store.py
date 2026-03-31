@@ -1,14 +1,12 @@
-"""
-pgvector 向量存储服务
-支持插入文档分块与余弦相似度检索；可选全文词法通道（ts_rank_cd）与稠密向量 RRF 融合。
-"""
+"""pgvector-backed vector store utilities."""
+
 from typing import List, Tuple
 
 from loguru import logger
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Embedding
+from app.db.models import Document, Embedding
 
 
 async def add_document_chunks(
@@ -19,11 +17,7 @@ async def add_document_chunks(
     *,
     commit: bool = True,
 ) -> int:
-    """
-    将文档分块及对应向量写入 embeddings 表
-    返回插入的 chunk 数量
-    commit: 是否立即提交，False 时由调用方统一提交（用于与 indexed_at 等更新同事务）
-    """
+    """Insert chunk embeddings for a document."""
     if not chunks or len(chunks) != len(vectors):
         return 0
     rows = [
@@ -45,11 +39,11 @@ async def add_document_chunks(
 async def delete_document_embeddings(
     db: AsyncSession, document_id: int, *, commit: bool = True
 ) -> int:
-    """删除指定文档的所有嵌入（文档删除时调用，CASCADE 也会处理）"""
+    """Delete all embeddings for a document."""
     await db.execute(delete(Embedding).where(Embedding.document_id == document_id))
     if commit:
         await db.commit()
-    return 0  # rowcount 在 async 中不便获取，调用方主要关心删除成功
+    return 0
 
 
 delete_by_document_id = delete_document_embeddings
@@ -59,32 +53,46 @@ async def search(
     db: AsyncSession,
     query_embedding: List[float],
     k: int = 5,
-    document_ids: List[int] | None = None,
+    *,
+    user_id: int | None = None,
+    collection_id: int | None = None,
 ) -> List[dict]:
     """
-    基于 query 向量进行余弦相似度检索
-    document_ids: 可选，仅检索这些文档的 embeddings（用于按集合限定）
-    返回 [{"chunk_text": str, "document_id": int, "chunk_index": int, "distance": float}, ...]
-    distance 为余弦距离 [0, 2]，越小越相似
+    Vector search across embeddings joined with the latest document rows.
+
+    Returns:
+        [{"chunk_text", "document_id", "chunk_index", "distance", "document_title"}, ...]
     """
     dist_col = Embedding.embedding.cosine_distance(query_embedding).label("distance")
-    stmt = select(Embedding, dist_col)
-    if document_ids:
-        stmt = stmt.where(Embedding.document_id.in_(document_ids))
+    stmt = (
+        select(
+            Embedding.chunk_text,
+            Embedding.document_id,
+            Embedding.chunk_index,
+            dist_col,
+            Document.title.label("document_title"),
+        )
+        .join(Document, Document.id == Embedding.document_id)
+        .where(Document.is_latest.is_(True))
+    )
+    if user_id is not None:
+        stmt = stmt.where(Document.user_id == user_id)
+    if collection_id is not None:
+        stmt = stmt.where(Document.collection_id == collection_id)
     stmt = stmt.order_by(dist_col).limit(k)
+
     result = await db.execute(stmt)
-    rows = result.all()
-
-    out = []
-    for emb_row, dist_val in rows:
-        d = float(dist_val) if dist_val is not None else 0.0
-        out.append({
-            "chunk_text": emb_row.chunk_text,
-            "document_id": emb_row.document_id,
-            "chunk_index": emb_row.chunk_index,
-            "distance": d,
-        })
-
+    out: List[dict] = []
+    for chunk_text, document_id, chunk_index, dist_val, document_title in result.all():
+        out.append(
+            {
+                "chunk_text": chunk_text,
+                "document_id": int(document_id),
+                "chunk_index": int(chunk_index),
+                "distance": float(dist_val) if dist_val is not None else 0.0,
+                "document_title": document_title or "未知文档",
+            }
+        )
     return out
 
 
@@ -95,10 +103,7 @@ def reciprocal_rank_fusion(
     rrf_k: int,
     limit: int,
 ) -> List[dict]:
-    """
-    Reciprocal Rank Fusion：合并向量序与词法序。
-    每项须含 chunk_text、document_id、chunk_index；dense 可含 distance。
-    """
+    """Merge dense and lexical rankings with Reciprocal Rank Fusion."""
     if not dense and not lexical:
         return []
     if not lexical:
@@ -106,37 +111,39 @@ def reciprocal_rank_fusion(
     if not dense:
         return lexical[:limit]
 
-    def _key(r: dict) -> Tuple[int, int]:
-        return (int(r["document_id"]), int(r["chunk_index"]))
+    def _key(row: dict) -> Tuple[int, int]:
+        return (int(row["document_id"]), int(row["chunk_index"]))
 
     by_key: dict[Tuple[int, int], dict] = {}
     scores: dict[Tuple[int, int], float] = {}
 
-    for r in dense:
-        k0 = _key(r)
-        by_key.setdefault(k0, dict(r))
+    for row in dense:
+        by_key.setdefault(_key(row), dict(row))
 
-    for r in lexical:
-        k0 = _key(r)
-        if k0 not in by_key:
-            by_key[k0] = {
-                "chunk_text": r["chunk_text"],
-                "document_id": r["document_id"],
-                "chunk_index": r["chunk_index"],
+    for row in lexical:
+        key = _key(row)
+        if key not in by_key:
+            by_key[key] = {
+                "chunk_text": row["chunk_text"],
+                "document_id": row["document_id"],
+                "chunk_index": row["chunk_index"],
                 "distance": 2.0,
+                "document_title": row.get("document_title", "未知文档"),
             }
 
-    for rank, r in enumerate(dense):
-        scores[_key(r)] = scores.get(_key(r), 0.0) + 1.0 / (rrf_k + rank + 1)
+    for rank, row in enumerate(dense):
+        key = _key(row)
+        scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
 
-    for rank, r in enumerate(lexical):
-        scores[_key(r)] = scores.get(_key(r), 0.0) + 1.0 / (rrf_k + rank + 1)
+    for rank, row in enumerate(lexical):
+        key = _key(row)
+        scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
 
-    ordered = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+    ordered = sorted(scores.keys(), key=lambda item: scores[item], reverse=True)
     out: List[dict] = []
-    for k0 in ordered[:limit]:
-        row = dict(by_key[k0])
-        row["rrf_score"] = scores[k0]
+    for key in ordered[:limit]:
+        row = dict(by_key[key])
+        row["rrf_score"] = scores[key]
         out.append(row)
     return out
 
@@ -145,57 +152,57 @@ async def search_lexical(
     db: AsyncSession,
     query_text: str,
     k: int,
-    document_ids: List[int] | None = None,
+    *,
+    user_id: int | None = None,
+    collection_id: int | None = None,
 ) -> List[dict]:
-    """
-    PostgreSQL 全文检索（simple 配置 + ts_rank_cd）。
-    说明：这是 PG 内置词法相关度，不是 Okapi BM25；中文在 simple 下多为单字词位，仍可作稀疏召回。
-    """
-    q = (query_text or "").strip()[:2000]
-    if not q or k <= 0:
+    """PostgreSQL full-text retrieval joined with documents metadata."""
+    query = (query_text or "").strip()[:2000]
+    if not query or k <= 0:
         return []
 
+    sql_lines = [
+        "SELECT e.chunk_text, e.document_id, e.chunk_index, d.title AS document_title,",
+        "       ts_rank_cd(e.chunk_tsv, websearch_to_tsquery('simple', :q)) AS lr",
+        "FROM embeddings e",
+        "JOIN documents d ON d.id = e.document_id",
+        "WHERE e.chunk_tsv @@ websearch_to_tsquery('simple', :q)",
+        "  AND d.is_latest IS TRUE",
+    ]
+    params: dict[str, object] = {"q": query, "lim": k}
+
+    if user_id is not None:
+        sql_lines.append("  AND d.user_id = :user_id")
+        params["user_id"] = user_id
+    if collection_id is not None:
+        sql_lines.append("  AND d.collection_id = :collection_id")
+        params["collection_id"] = collection_id
+
+    sql_lines.extend(
+        [
+            "ORDER BY lr DESC NULLS LAST",
+            "LIMIT :lim",
+        ]
+    )
+
     try:
-        if document_ids:
-            sql = text(
-                """
-                SELECT chunk_text, document_id, chunk_index,
-                       ts_rank_cd(chunk_tsv, websearch_to_tsquery('simple', :q)) AS lr
-                FROM embeddings
-                WHERE chunk_tsv @@ websearch_to_tsquery('simple', :q)
-                  AND document_id = ANY(:doc_ids)
-                ORDER BY lr DESC NULLS LAST
-                LIMIT :lim
-                """
-            )
-            res = await db.execute(
-                sql, {"q": q, "lim": k, "doc_ids": list(document_ids)}
-            )
-        else:
-            sql = text(
-                """
-                SELECT chunk_text, document_id, chunk_index,
-                       ts_rank_cd(chunk_tsv, websearch_to_tsquery('simple', :q)) AS lr
-                FROM embeddings
-                WHERE chunk_tsv @@ websearch_to_tsquery('simple', :q)
-                ORDER BY lr DESC NULLS LAST
-                LIMIT :lim
-                """
-            )
-            res = await db.execute(sql, {"q": q, "lim": k})
-    except Exception as e:
-        logger.warning("词法检索失败，已跳过: {}", e)
+        result = await db.execute(text("\n".join(sql_lines)), params)
+    except Exception as exc:
+        logger.warning("词法检索失败，已跳过: {}", exc)
         return []
 
     out: List[dict] = []
-    for chunk_text, document_id, chunk_index, lr in res.all():
-        out.append({
-            "chunk_text": chunk_text,
-            "document_id": int(document_id),
-            "chunk_index": int(chunk_index),
-            "distance": 2.0,
-            "lexical_rank": float(lr) if lr is not None else 0.0,
-        })
+    for chunk_text, document_id, chunk_index, document_title, lexical_rank in result.all():
+        out.append(
+            {
+                "chunk_text": chunk_text,
+                "document_id": int(document_id),
+                "chunk_index": int(chunk_index),
+                "distance": 2.0,
+                "lexical_rank": float(lexical_rank) if lexical_rank is not None else 0.0,
+                "document_title": document_title or "未知文档",
+            }
+        )
     return out
 
 
@@ -206,13 +213,24 @@ async def search_hybrid_rrf(
     query_embedding: List[float],
     k_dense: int,
     k_lexical: int,
-    document_ids: List[int] | None,
+    user_id: int | None,
+    collection_id: int | None,
     rrf_k: int,
     pool_limit: int,
 ) -> List[dict]:
-    """稠密向量 + 词法全文 RRF 融合后再交给上层 Rerank。"""
-    dense = await search(db, query_embedding, k=k_dense, document_ids=document_ids)
-    lexical = await search_lexical(db, query_text, k=k_lexical, document_ids=document_ids)
-    return reciprocal_rank_fusion(
-        dense, lexical, rrf_k=rrf_k, limit=pool_limit
+    """Dense vector retrieval + lexical retrieval fused with RRF."""
+    dense = await search(
+        db,
+        query_embedding,
+        k=k_dense,
+        user_id=user_id,
+        collection_id=collection_id,
     )
+    lexical = await search_lexical(
+        db,
+        query_text,
+        k=k_lexical,
+        user_id=user_id,
+        collection_id=collection_id,
+    )
+    return reciprocal_rank_fusion(dense, lexical, rrf_k=rrf_k, limit=pool_limit)
