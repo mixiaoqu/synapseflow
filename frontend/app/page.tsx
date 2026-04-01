@@ -1,5 +1,16 @@
-import { redirect } from "next/navigation";
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+
+import { getAccessToken } from "@/lib/auth/session";
 
 export default function Home() {
-  redirect("/kb-chat");
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace(getAccessToken() ? "/kb-chat" : "/login");
+  }, [router]);
+
+  return null;
 }

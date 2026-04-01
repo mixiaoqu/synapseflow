@@ -1,5 +1,4 @@
-import { API_V1 } from "./config";
-import { parseApiError } from "./errors";
+import { apiClient } from "./client";
 
 export type DocumentListItem = {
   id: number;
@@ -8,8 +7,8 @@ export type DocumentListItem = {
   size: number;
   version: number;
   indexed: boolean;
-  collection_id: number | null;
-  collection_name: string | null;
+  knowledge_base_id: number | null;
+  knowledge_base_name: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -21,7 +20,7 @@ export type DocumentDetail = {
   document_type: string | null;
   size: number;
   version: number;
-  collection_id: number | null;
+  knowledge_base_id: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -38,7 +37,8 @@ export async function listDocuments(params: {
   page?: number;
   page_size?: number;
   keyword?: string | null;
-  collection_id?: number | null;
+  team_id?: number | null;
+  knowledge_base_id?: number | null;
 }): Promise<{
   items: DocumentListItem[];
   total: number;
@@ -49,122 +49,96 @@ export async function listDocuments(params: {
   if (params.page != null) sp.set("page", String(params.page));
   if (params.page_size != null) sp.set("page_size", String(params.page_size));
   if (params.keyword) sp.set("keyword", params.keyword);
-  if (params.collection_id !== undefined && params.collection_id !== null) {
-    sp.set("collection_id", String(params.collection_id));
+  if (params.team_id !== undefined && params.team_id !== null) {
+    sp.set("team_id", String(params.team_id));
+  }
+  if (params.knowledge_base_id !== undefined && params.knowledge_base_id !== null) {
+    sp.set("knowledge_base_id", String(params.knowledge_base_id));
   }
 
   const q = sp.toString();
-  const res = await fetch(`${API_V1}/documents${q ? `?${q}` : ""}`);
-  if (!res.ok) throw new Error(await parseApiError(res));
-  return res.json();
+  return apiClient.get(`/api/v1/documents${q ? `?${q}` : ""}`);
 }
 
 export async function getDocument(docId: number): Promise<DocumentDetail> {
-  const res = await fetch(`${API_V1}/documents/detail/${docId}`);
-  if (!res.ok) throw new Error(await parseApiError(res));
-  return res.json();
+  return apiClient.get(`/api/v1/documents/detail/${docId}`);
 }
 
-export async function getDocumentVersions(
-  docId: number,
-): Promise<DocumentVersionItem[]> {
-  const res = await fetch(`${API_V1}/documents/${docId}/versions`);
-  if (!res.ok) throw new Error(await parseApiError(res));
-  const data = (await res.json()) as { items: DocumentVersionItem[] };
+export async function getDocumentVersions(docId: number): Promise<DocumentVersionItem[]> {
+  const data = await apiClient.get<{ items: DocumentVersionItem[] }>(
+    `/api/v1/documents/${docId}/versions`,
+  );
   return data.items;
 }
 
 export async function uploadDocument(
   file: File,
-  collectionId?: number | null,
+  knowledgeBaseId?: number | null,
 ): Promise<DocumentDetail> {
   const form = new FormData();
   form.append("file", file);
-  if (collectionId != null && collectionId > 0) {
-    form.append("collection_id", String(collectionId));
+  if (knowledgeBaseId != null && knowledgeBaseId > 0) {
+    form.append("knowledge_base_id", String(knowledgeBaseId));
   }
-  const res = await fetch(`${API_V1}/documents`, { method: "POST", body: form });
-  if (!res.ok) throw new Error(await parseApiError(res));
-  return res.json();
+  return apiClient.postForm("/api/v1/documents", form);
 }
 
 export async function uploadDocumentsBatch(
   files: File[],
-  collectionId?: number | null,
+  knowledgeBaseId?: number | null,
 ): Promise<DocumentDetail[]> {
   const form = new FormData();
   for (const f of files) form.append("files", f);
-  if (collectionId != null && collectionId > 0) {
-    form.append("collection_id", String(collectionId));
+  if (knowledgeBaseId != null && knowledgeBaseId > 0) {
+    form.append("knowledge_base_id", String(knowledgeBaseId));
   }
-  const res = await fetch(`${API_V1}/documents/batch`, {
-    method: "POST",
-    body: form,
-  });
-  if (!res.ok) throw new Error(await parseApiError(res));
-  return res.json();
+  return apiClient.postForm("/api/v1/documents/batch", form);
 }
 
 export async function createDocumentFromContent(body: {
   title: string;
   content: string;
   document_type?: string;
-  collection_id?: number | null;
+  knowledge_base_id?: number | null;
 }): Promise<DocumentDetail> {
-  const res = await fetch(`${API_V1}/documents/from-content`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(await parseApiError(res));
-  return res.json();
+  return apiClient.post("/api/v1/documents/from-content", body);
 }
 
 export async function replaceDocumentContent(
   docId: number,
   content: string,
 ): Promise<DocumentDetail> {
-  const res = await fetch(`${API_V1}/documents/${docId}/content`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
-  });
-  if (!res.ok) throw new Error(await parseApiError(res));
-  return res.json();
+  return apiClient.put(`/api/v1/documents/${docId}/content`, { content });
 }
 
 export async function createDocumentVersion(
   docId: number,
   content: string,
 ): Promise<DocumentDetail> {
-  const res = await fetch(`${API_V1}/documents/${docId}/versions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
-  });
-  if (!res.ok) throw new Error(await parseApiError(res));
-  return res.json();
+  return apiClient.post(`/api/v1/documents/${docId}/versions`, { content });
 }
 
 export async function indexDocument(
   docId: number,
 ): Promise<{ message: string; chunks: number }> {
-  const res = await fetch(`${API_V1}/documents/${docId}/index`, {
-    method: "POST",
-  });
-  if (!res.ok) throw new Error(await parseApiError(res));
-  return res.json();
+  return apiClient.post(`/api/v1/documents/${docId}/index`, {});
 }
 
-export async function reindexAll(): Promise<{ message: string; indexed: number }> {
-  const res = await fetch(`${API_V1}/documents/reindex-all`, { method: "POST" });
-  if (!res.ok) throw new Error(await parseApiError(res));
-  return res.json();
+export async function reindexAll(params?: {
+  team_id?: number | null;
+  knowledge_base_id?: number | null;
+}): Promise<{ message: string; indexed: number }> {
+  const sp = new URLSearchParams();
+  if (params?.team_id != null) sp.set("team_id", String(params.team_id));
+  if (params?.knowledge_base_id != null) {
+    sp.set("knowledge_base_id", String(params.knowledge_base_id));
+  }
+  const q = sp.toString();
+  return apiClient.post(`/api/v1/documents/reindex-all${q ? `?${q}` : ""}`, {});
 }
 
 export async function deleteDocument(docId: number): Promise<void> {
-  const res = await fetch(`${API_V1}/documents/${docId}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(await parseApiError(res));
+  await apiClient.delete(`/api/v1/documents/${docId}`);
 }
 
 export async function deleteDocumentsBatch(
@@ -172,9 +146,5 @@ export async function deleteDocumentsBatch(
 ): Promise<{ message: string; deleted: number }> {
   const sp = new URLSearchParams();
   for (const id of ids) sp.append("ids", String(id));
-  const res = await fetch(`${API_V1}/documents/batch/delete?${sp.toString()}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) throw new Error(await parseApiError(res));
-  return res.json();
+  return apiClient.delete(`/api/v1/documents/batch/delete?${sp.toString()}`);
 }

@@ -2,7 +2,7 @@ import { apiClient } from "../client";
 
 export interface KbChatRequest {
   query: string;
-  collection_id?: number | null;
+  knowledge_base_id?: number | null;
 }
 
 export interface RetrievedDoc {

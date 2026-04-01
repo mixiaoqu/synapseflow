@@ -19,17 +19,9 @@ from app.models.schemas.document import (
     DocumentVersionsResponse,
 )
 from app.repositories.document_repository import DocumentRepository
-from app.services.document_indexer import (
-    index_document,
-    index_documents_batch,
-    reindex_all,
-)
+from app.services.document_indexer import index_document, index_documents_batch, reindex_all
 from app.services.vector_store import delete_by_document_id
-from app.utils.file_parser import (
-    MAX_FILE_SIZE,
-    SUPPORTED_EXTENSIONS,
-    extract_text_from_file,
-)
+from app.utils.file_parser import MAX_FILE_SIZE, SUPPORTED_EXTENSIONS, extract_text_from_file
 
 
 class DocumentService:
@@ -52,12 +44,9 @@ class DocumentService:
         if err:
             raise HTTPException(status_code=400, detail=err)
         if not text.strip():
-            raise HTTPException(
-                status_code=400,
-                detail=f"文件“{filename}”内容为空",
-            )
+            raise HTTPException(status_code=400, detail=f"File '{filename}' is empty")
         title, doc_type = self._get_title_and_type(filename)
-        return title or "未命名文档", doc_type or None, text
+        return title or "Untitled document", doc_type or None, text
 
     @staticmethod
     def _document_size(doc: Document) -> int:
@@ -71,7 +60,7 @@ class DocumentService:
             document_type=doc.document_type,
             size=self._document_size(doc),
             version=getattr(doc, "version", 1),
-            collection_id=getattr(doc, "collection_id", None),
+            knowledge_base_id=getattr(doc, "knowledge_base_id", None),
             created_at=doc.created_at,
             updated_at=doc.updated_at,
         )
@@ -80,21 +69,22 @@ class DocumentService:
         self,
         *,
         db: AsyncSession,
+        user_id: int,
         file: UploadFile,
-        collection_id: int | None,
+        knowledge_base_id: int | None,
     ) -> DocumentResponse:
         content = await file.read()
         if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail="文件超过 10MB 限制")
+            raise HTTPException(status_code=400, detail="File exceeds the 10MB limit")
 
         title, doc_type, text = self._parse_single_file(file, content)
-        repo = DocumentRepository(db)
+        repo = DocumentRepository(db, user_id=user_id)
         doc = await repo.create(
             title=title,
             content=text,
             document_type=doc_type,
             size=len(text.encode("utf-8")),
-            collection_id=collection_id,
+            knowledge_base_id=knowledge_base_id,
             commit=False,
         )
 
@@ -102,23 +92,24 @@ class DocumentService:
             await index_document(db, doc.id, doc.content, commit=True)
         except Exception as exc:
             await db.commit()
-            logger.warning("文档索引失败 doc_id={}: {}", doc.id, exc)
+            logger.warning("Document indexing failed doc_id={}: {}", doc.id, exc)
 
         await db.refresh(doc)
-        logger.info("文档上传成功 id={} title={}", doc.id, doc.title)
+        logger.info("Uploaded document id={} title={}", doc.id, doc.title)
         return self._to_response(doc)
 
     async def upload_documents_batch(
         self,
         *,
         db: AsyncSession,
+        user_id: int,
         files: Sequence[UploadFile],
-        collection_id: int | None,
+        knowledge_base_id: int | None,
     ) -> list[DocumentResponse]:
         if len(files) > 20:
-            raise HTTPException(status_code=400, detail="单次最多上传 20 个文件")
+            raise HTTPException(status_code=400, detail="At most 20 files can be uploaded at once")
 
-        repo = DocumentRepository(db)
+        repo = DocumentRepository(db, user_id=user_id)
         created: list[Document] = []
 
         for file in files:
@@ -139,7 +130,7 @@ class DocumentService:
                     version=1,
                     parent_id=None,
                     is_latest=True,
-                    collection_id=collection_id,
+                    knowledge_base_id=knowledge_base_id,
                 )
                 await repo.add_for_batch(doc)
                 created.append(doc)
@@ -157,7 +148,7 @@ class DocumentService:
             )
         except Exception as exc:
             await db.commit()
-            logger.warning("批量文档索引失败 count={}: {}", len(created), exc)
+            logger.warning("Batch document indexing failed count={}: {}", len(created), exc)
 
         for doc in created:
             await db.refresh(doc)
@@ -167,48 +158,52 @@ class DocumentService:
         self,
         *,
         db: AsyncSession,
+        user_id: int,
         body: DocumentCreate,
     ) -> DocumentResponse:
         if not body.content.strip():
-            raise HTTPException(status_code=400, detail="文档内容不能为空")
+            raise HTTPException(status_code=400, detail="Document content cannot be empty")
 
-        repo = DocumentRepository(db)
+        repo = DocumentRepository(db, user_id=user_id)
         doc = await repo.create(
-            title=(body.title or "").strip() or "未命名文档",
+            title=(body.title or "").strip() or "Untitled document",
             content=body.content,
             document_type=body.document_type or "txt",
             size=len(body.content.encode("utf-8")),
-            collection_id=body.collection_id,
+            knowledge_base_id=body.knowledge_base_id,
             commit=False,
         )
         try:
             await index_document(db, doc.id, doc.content, commit=True)
         except Exception as exc:
             await db.commit()
-            logger.warning("文档索引失败 doc_id={}: {}", doc.id, exc)
+            logger.warning("Document indexing failed doc_id={}: {}", doc.id, exc)
 
         await db.refresh(doc)
-        logger.info("从内容创建文档 id={} title={}", doc.id, doc.title)
+        logger.info("Created document from content id={} title={}", doc.id, doc.title)
         return self._to_response(doc)
 
     async def list_documents(
         self,
         *,
         db: AsyncSession,
+        user_id: int,
         page: int,
         page_size: int,
         keyword: str | None,
-        collection_id: int | None,
+        team_id: int | None,
+        knowledge_base_id: int | None,
     ) -> DocumentListResponse:
         page = max(page, 1)
         page_size = 20 if page_size < 1 or page_size > 100 else page_size
 
-        repo = DocumentRepository(db)
+        repo = DocumentRepository(db, user_id=user_id)
         rows, total = await repo.list_paginated(
             page=page,
             page_size=page_size,
             keyword=keyword,
-            collection_id=collection_id,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
         )
         items = [
             DocumentListItem(
@@ -220,28 +215,24 @@ class DocumentService:
                 created_at=doc.created_at,
                 updated_at=doc.updated_at,
                 indexed=getattr(doc, "indexed_at", None) is not None,
-                collection_id=getattr(doc, "collection_id", None),
-                collection_name=collection_name,
+                knowledge_base_id=getattr(doc, "knowledge_base_id", None),
+                knowledge_base_name=knowledge_base_name,
             )
-            for doc, collection_name in rows
+            for doc, knowledge_base_name in rows
         ]
-        return DocumentListResponse(
-            items=items,
-            total=total,
-            page=page,
-            page_size=page_size,
-        )
+        return DocumentListResponse(items=items, total=total, page=page, page_size=page_size)
 
     async def get_document_versions(
         self,
         *,
         db: AsyncSession,
+        user_id: int,
         doc_id: int,
     ) -> DocumentVersionsResponse:
-        repo = DocumentRepository(db)
-        doc = await repo.get_by_id(doc_id)
+        repo = DocumentRepository(db, user_id=user_id)
+        doc = await repo.get_by_id_for_user(doc_id)
         if not doc:
-            raise HTTPException(status_code=404, detail="文档不存在")
+            raise HTTPException(status_code=404, detail="Document not found")
 
         version_docs = await repo.get_versions_by_doc_id(doc_id)
         items = [
@@ -260,36 +251,48 @@ class DocumentService:
         self,
         *,
         db: AsyncSession,
+        user_id: int,
         doc_id: int,
     ) -> DocumentResponse:
-        repo = DocumentRepository(db)
-        doc = await repo.get_by_id(doc_id)
+        repo = DocumentRepository(db, user_id=user_id)
+        doc = await repo.get_by_id_for_user(doc_id)
         if not doc:
-            raise HTTPException(status_code=404, detail="文档不存在")
+            raise HTTPException(status_code=404, detail="Document not found")
         return self._to_response(doc)
 
-    async def reindex_all_documents(self) -> dict[str, int | str]:
+    async def reindex_all_documents(
+        self,
+        *,
+        user_id: int,
+        team_id: int | None = None,
+        knowledge_base_id: int | None = None,
+    ) -> dict[str, int | str]:
         try:
-            count = await reindex_all()
-            logger.info("全量重建索引完成，共 {} 篇文档", count)
-            return {"message": f"已重建索引 {count} 篇文档", "indexed": count}
+            count = await reindex_all(
+                user_id=user_id,
+                team_id=team_id,
+                knowledge_base_id=knowledge_base_id,
+            )
+            logger.info("Finished full reindex for {} documents", count)
+            return {"message": f"Reindexed {count} documents", "indexed": count}
         except Exception as exc:
-            logger.exception("全量重建索引失败: {}", exc)
+            logger.exception("Full reindex failed: {}", exc)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     async def index_single_document(
         self,
         *,
         db: AsyncSession,
+        user_id: int,
         doc_id: int,
     ) -> dict[str, int | str]:
-        repo = DocumentRepository(db)
-        doc = await repo.get_by_id(doc_id)
+        repo = DocumentRepository(db, user_id=user_id)
+        doc = await repo.get_by_id_for_user(doc_id)
         if not doc:
-            raise HTTPException(status_code=404, detail="文档不存在")
+            raise HTTPException(status_code=404, detail="Document not found")
         try:
             count = await index_document(db, doc.id, doc.content or "", commit=True)
-            return {"message": f"已索引 {count} 个分块", "chunks": count}
+            return {"message": f"Indexed {count} chunks", "chunks": count}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -297,84 +300,88 @@ class DocumentService:
         self,
         *,
         db: AsyncSession,
+        user_id: int,
         doc_id: int,
         body: DocumentContentUpdate,
     ) -> DocumentResponse:
-        repo = DocumentRepository(db)
+        repo = DocumentRepository(db, user_id=user_id)
         doc = await repo.update_content(doc_id, body.content)
         if not doc:
-            raise HTTPException(status_code=404, detail="文档不存在")
+            raise HTTPException(status_code=404, detail="Document not found")
         try:
             await index_document(db, doc.id, doc.content, commit=True)
         except Exception as exc:
-            logger.warning("文档索引失败 doc_id={}: {}", doc.id, exc)
-        logger.info("文档内容已替换 id={}", doc_id)
+            logger.warning("Document indexing failed doc_id={}: {}", doc.id, exc)
+        logger.info("Replaced document content id={}", doc_id)
         return self._to_response(doc)
 
     async def create_document_version(
         self,
         *,
         db: AsyncSession,
+        user_id: int,
         doc_id: int,
         body: DocumentContentUpdate,
     ) -> DocumentResponse:
-        repo = DocumentRepository(db)
+        repo = DocumentRepository(db, user_id=user_id)
         orig = await repo.get_by_id_for_user(doc_id)
         if not orig:
-            raise HTTPException(status_code=404, detail="原文档不存在")
+            raise HTTPException(status_code=404, detail="Source document not found")
 
         new_doc = await repo.create_version(doc_id, body.content, commit=False)
         if not new_doc:
-            raise HTTPException(status_code=404, detail="原文档不存在")
+            raise HTTPException(status_code=404, detail="Source document not found")
 
         try:
             await delete_by_document_id(db, orig.id, commit=False)
             await index_document(db, new_doc.id, new_doc.content, commit=True)
         except Exception as exc:
             await db.commit()
-            logger.warning("文档索引失败 doc_id={}: {}", new_doc.id, exc)
+            logger.warning("Document indexing failed doc_id={}: {}", new_doc.id, exc)
 
         await db.refresh(new_doc)
-        logger.info("新建修订版本文档 id={} 源于 doc_id={}", new_doc.id, doc_id)
+        logger.info("Created document version id={} from doc_id={}", new_doc.id, doc_id)
         return self._to_response(new_doc)
 
     async def delete_documents_batch(
         self,
         *,
         db: AsyncSession,
+        user_id: int,
         ids: list[int],
     ) -> dict[str, int | str]:
         if not ids:
-            return {"message": "未选择文档", "deleted": 0}
+            return {"message": "No documents selected", "deleted": 0}
 
-        repo = DocumentRepository(db)
+        repo = DocumentRepository(db, user_id=user_id)
         docs = await repo.get_by_ids(ids)
         root_ids = {getattr(doc, "root_id", None) or doc.id for doc in docs}
         chain_docs = await repo.get_chain_by_root_ids(root_ids)
         deleted = await repo.delete_chain(chain_docs)
-        logger.info("批量删除文档 ids={}，实际删除 {} 篇", ids, deleted)
-        return {"message": f"已删除 {deleted} 篇文档", "deleted": deleted}
+        logger.info("Batch deleted documents ids={} deleted={}", ids, deleted)
+        return {"message": f"Deleted {deleted} documents", "deleted": deleted}
 
     async def delete_document(
         self,
         *,
         db: AsyncSession,
+        user_id: int,
         doc_id: int,
     ) -> dict[str, str]:
-        repo = DocumentRepository(db)
+        repo = DocumentRepository(db, user_id=user_id)
         doc = await repo.get_by_id_for_user(doc_id)
         if not doc:
             count = await repo.count_total()
             raise HTTPException(
                 status_code=404,
-                detail=f"文档不存在 id={doc_id}, 当前库中共 {count} 篇",
+                detail=f"Document not found: id={doc_id}, current total={count}",
             )
 
         root_id = getattr(doc, "root_id", None) or doc.id
         chain_docs = await repo.get_chain_by_root_ids({root_id})
         await repo.delete_chain(chain_docs)
-        logger.info("删除文档 id={} 及同链 {} 个版本", doc_id, len(chain_docs))
-        return {"message": "删除成功"}
+        logger.info("Deleted document id={} chain_size={}", doc_id, len(chain_docs))
+        return {"message": "Deleted successfully"}
 
 
 document_service = DocumentService()

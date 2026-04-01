@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { listCollections, type CollectionWithCount } from "@/lib/api/collections";
+import {
+  listKnowledgeBases,
+  type KnowledgeBaseWithCount,
+} from "@/lib/api/knowledgeBases";
 import {
   kbChatApi,
   type KbChatRequest,
@@ -20,8 +23,8 @@ export interface KbChatTurn {
 
 export function useKbChat() {
   const [query, setQuery] = useState("");
-  const [collectionId, setCollectionId] = useState<number | null>(null);
-  const [collections, setCollections] = useState<CollectionWithCount[]>([]);
+  const [knowledgeBaseId, setKnowledgeBaseId] = useState<number | null>(null);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseWithCount[]>([]);
   const [loading, setLoading] = useState(false);
   const [turns, setTurns] = useState<KbChatTurn[]>([]);
   const [expandedChunks, setExpandedChunks] = useState<Set<string>>(new Set());
@@ -29,17 +32,17 @@ export function useKbChat() {
 
   const activeTurnIdRef = useRef<string | null>(null);
 
-  const loadCollections = useCallback(async () => {
+  const loadKnowledgeBases = useCallback(async () => {
     try {
-      setCollections(await listCollections());
+      setKnowledgeBases(await listKnowledgeBases());
     } catch {
       /* ignore */
     }
   }, []);
 
   useEffect(() => {
-    void loadCollections();
-  }, [loadCollections]);
+    void loadKnowledgeBases();
+  }, [loadKnowledgeBases]);
 
   const toggleChunk = useCallback((key: string) => {
     setExpandedChunks((prev) => {
@@ -57,12 +60,15 @@ export function useKbChat() {
 
   const sourceDocs = lastTurn?.retrievedDocs ?? [];
 
-  const collectionLabel = useMemo(() => {
-    if (collectionId && collectionId > 0) {
-      return collections.find((c) => c.id === collectionId)?.name ?? "指定集合";
+  const knowledgeBaseLabel = useMemo(() => {
+    if (knowledgeBaseId && knowledgeBaseId > 0) {
+      return (
+        knowledgeBases.find((kb) => kb.id === knowledgeBaseId)?.name ??
+        "Selected knowledge base"
+      );
     }
-    return "全部知识库";
-  }, [collectionId, collections]);
+    return "All knowledge bases";
+  }, [knowledgeBaseId, knowledgeBases]);
 
   const expandAllChunks = useCallback(() => {
     if (!lastTurn?.retrievedDocs.length) return;
@@ -80,8 +86,10 @@ export function useKbChat() {
   const submit = useCallback(
     async (request?: Partial<KbChatRequest> & { query?: string }) => {
       const nextQuery = request?.query?.trim() ?? query.trim();
-      const nextCollectionId =
-        request?.collection_id !== undefined ? request.collection_id : collectionId;
+      const nextKnowledgeBaseId =
+        request?.knowledge_base_id !== undefined
+          ? request.knowledge_base_id
+          : knowledgeBaseId;
 
       if (!nextQuery || loading) return false;
 
@@ -99,13 +107,13 @@ export function useKbChat() {
       try {
         const stream = await kbChatApi.stream({
           query: nextQuery,
-          collection_id:
-            nextCollectionId && nextCollectionId > 0 ? nextCollectionId : null,
+          knowledge_base_id:
+            nextKnowledgeBaseId && nextKnowledgeBaseId > 0 ? nextKnowledgeBaseId : null,
         });
 
         await consumeSseStream(stream, (event) => {
-          const tid = activeTurnIdRef.current;
-          if (!tid) return;
+          const turnIdForUpdate = activeTurnIdRef.current;
+          if (!turnIdForUpdate) return;
 
           switch (event.type) {
             case "retrieved": {
@@ -113,7 +121,7 @@ export function useKbChat() {
               if (Array.isArray(docs)) {
                 setTurns((prev) =>
                   prev.map((turn) =>
-                    turn.id === tid
+                    turn.id === turnIdForUpdate
                       ? { ...turn, retrievedDocs: docs as RetrievedDoc[] }
                       : turn,
                   ),
@@ -126,7 +134,7 @@ export function useKbChat() {
               if (typeof text === "string" && text) {
                 setTurns((prev) =>
                   prev.map((turn) =>
-                    turn.id === tid
+                    turn.id === turnIdForUpdate
                       ? { ...turn, answer: turn.answer + text }
                       : turn,
                   ),
@@ -135,10 +143,10 @@ export function useKbChat() {
               break;
             }
             case "error": {
-              const message = String(event.data.message ?? "流式问答失败");
+              const message = String(event.data.message ?? "Streaming request failed");
               setTurns((prev) =>
                 prev.map((turn) =>
-                  turn.id === tid ? { ...turn, error: message } : turn,
+                  turn.id === turnIdForUpdate ? { ...turn, error: message } : turn,
                 ),
               );
               toast.error(message);
@@ -151,12 +159,12 @@ export function useKbChat() {
 
         return true;
       } catch (error) {
-        const message = error instanceof Error ? error.message : "请求失败";
-        const tid = activeTurnIdRef.current;
-        if (tid) {
+        const message = error instanceof Error ? error.message : "Request failed";
+        const turnIdForUpdate = activeTurnIdRef.current;
+        if (turnIdForUpdate) {
           setTurns((prev) =>
             prev.map((turn) =>
-              turn.id === tid ? { ...turn, error: message } : turn,
+              turn.id === turnIdForUpdate ? { ...turn, error: message } : turn,
             ),
           );
         }
@@ -167,21 +175,21 @@ export function useKbChat() {
         activeTurnIdRef.current = null;
       }
     },
-    [collectionId, loading, query],
+    [knowledgeBaseId, loading, query],
   );
 
   return {
     query,
     setQuery,
-    collectionId,
-    setCollectionId,
-    collections,
+    knowledgeBaseId,
+    setKnowledgeBaseId,
+    knowledgeBases,
     loading,
     turns,
     expandedChunks,
     mobileTab,
     setMobileTab,
-    collectionLabel,
+    knowledgeBaseLabel,
     lastTurn,
     sourceDocs,
     toggleChunk,

@@ -9,8 +9,9 @@ class KbChatState(TypedDict, total=False):
     """End-user workflow state for single-round knowledge-base chat."""
 
     messages: Annotated[List, add_messages]
+    user_id: int
     query: str
-    collection_id: Optional[int]
+    knowledge_base_id: Optional[int]
     retrieved_docs: List[Dict[str, Any]]
     context: str
     answer: str

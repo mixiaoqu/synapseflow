@@ -16,9 +16,9 @@ export default function KbCurationPage() {
     setQuery,
     maxIterations,
     setMaxIterations,
-    collectionId,
-    setCollectionId,
-    collections,
+    knowledgeBaseId,
+    setKnowledgeBaseId,
+    knowledgeBases,
     loading,
     result,
     error,
@@ -72,15 +72,15 @@ export default function KbCurationPage() {
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-500">检索范围</label>
                     <select
-                      value={collectionId ?? ""}
+                      value={knowledgeBaseId ?? ""}
                       onChange={(e) =>
-                        setCollectionId(e.target.value ? Number(e.target.value) : null)
+                        setKnowledgeBaseId(e.target.value ? Number(e.target.value) : null)
                       }
                       className="min-w-[120px] rounded border px-2 py-1 text-sm"
                       disabled={loading}
                     >
                       <option value="">全部知识库</option>
-                      {collections.map((collection) => (
+                      {knowledgeBases.map((collection) => (
                         <option key={collection.id} value={collection.id}>
                           {collection.name} ({collection.document_count})
                         </option>

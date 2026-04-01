@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.registry import config_registry
-from app.db.models import Document
+from app.db.models import Document, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 from app.services.embedding import embed_documents
 from app.services.semantic_chunk import split_for_vector_index
@@ -115,12 +115,26 @@ def _chunked(items: Sequence[tuple[int, str]], size: int) -> Iterable[Sequence[t
         yield items[start : start + size]
 
 
-async def reindex_all(batch_size: int = 16) -> int:
+async def reindex_all(
+    *,
+    user_id: int,
+    team_id: int | None = None,
+    knowledge_base_id: int | None = None,
+    batch_size: int = 16,
+) -> int:
     """Reindex all latest documents in batches."""
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Document.id, Document.content).where(Document.is_latest.is_(True))
+        stmt = select(Document.id, Document.content).where(
+            Document.is_latest.is_(True),
+            Document.user_id == user_id,
         )
+        if knowledge_base_id is not None:
+            stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)
+        elif team_id is not None:
+            stmt = stmt.join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id).where(
+                KnowledgeBase.team_id == team_id,
+            )
+        result = await session.execute(stmt)
         docs = [(row.id, row.content or "") for row in result.all()]
 
     total_docs = 0

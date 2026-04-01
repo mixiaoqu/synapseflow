@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import DEFAULT_USER_ID
-from app.db.models import Collection, Document
+from app.db.models import Document, KnowledgeBase
 
 
 class DocumentRepository:
     """Encapsulates document persistence operations."""
 
-    def __init__(self, db: AsyncSession, user_id: int = DEFAULT_USER_ID):
+    def __init__(self, db: AsyncSession, user_id: int):
         self.db = db
         self.user_id = user_id
 
@@ -23,7 +22,7 @@ class DocumentRepository:
         content: str,
         document_type: str | None = None,
         size: int = 0,
-        collection_id: int | None = None,
+        knowledge_base_id: int | None = None,
         commit: bool = True,
     ) -> Document:
         """Create a document row and set its root_id in the same transaction."""
@@ -36,7 +35,7 @@ class DocumentRepository:
             version=1,
             parent_id=None,
             is_latest=True,
-            collection_id=collection_id,
+            knowledge_base_id=knowledge_base_id,
         )
         self.db.add(doc)
         await self.db.flush()
@@ -71,31 +70,51 @@ class DocumentRepository:
         page: int = 1,
         page_size: int = 20,
         keyword: str | None = None,
-        collection_id: int | None = None,
+        team_id: int | None = None,
+        knowledge_base_id: int | None = None,
     ) -> tuple[list[tuple[Document, str | None]], int]:
-        """Return paginated latest documents plus collection name."""
+        """Return paginated latest documents plus knowledge-base name."""
         base_filter = Document.user_id == self.user_id
         base_filter = base_filter & Document.is_latest.is_(True)
         if keyword and keyword.strip():
             base_filter = base_filter & Document.title.ilike(f"%{keyword.strip()}%")
-        if collection_id is not None:
-            if collection_id == 0:
-                base_filter = base_filter & Document.collection_id.is_(None)
+        if knowledge_base_id is not None:
+            if knowledge_base_id == 0:
+                base_filter = base_filter & Document.knowledge_base_id.is_(None)
             else:
-                base_filter = base_filter & (Document.collection_id == collection_id)
+                base_filter = base_filter & (Document.knowledge_base_id == knowledge_base_id)
 
-        count_query = select(func.count()).select_from(Document).where(base_filter)
+        count_query = (
+            select(func.count())
+            .select_from(Document)
+            .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .where(base_filter)
+        )
+        if team_id is not None:
+            count_query = count_query.where(
+                and_(
+                    Document.knowledge_base_id.is_not(None),
+                    KnowledgeBase.team_id == team_id,
+                )
+            )
         total = (await self.db.execute(count_query)).scalar() or 0
 
         offset = (page - 1) * page_size
         stmt = (
-            select(Document, Collection.name.label("collection_name"))
-            .outerjoin(Collection, Document.collection_id == Collection.id)
+            select(Document, KnowledgeBase.name.label("knowledge_base_name"))
+            .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
             .where(base_filter)
             .order_by(Document.created_at.desc())
             .offset(offset)
             .limit(page_size)
         )
+        if team_id is not None:
+            stmt = stmt.where(
+                and_(
+                    Document.knowledge_base_id.is_not(None),
+                    KnowledgeBase.team_id == team_id,
+                )
+            )
         result = await self.db.execute(stmt)
         return list(result.all()), total
 
@@ -168,7 +187,7 @@ class DocumentRepository:
             parent_id=orig.id,
             root_id=root_id,
             is_latest=True,
-            collection_id=getattr(orig, "collection_id", None),
+            knowledge_base_id=getattr(orig, "knowledge_base_id", None),
         )
         orig.is_latest = False
         self.db.add(new_doc)

@@ -66,7 +66,7 @@ function SourceChunkCard({
 }
 
 export interface SourcesPanelProps {
-  collectionLabel: string;
+  knowledgeBaseLabel: string;
   sourceDocs: RetrievedDoc[];
   lastTurn: KbChatTurn | null;
   loading: boolean;
@@ -78,7 +78,7 @@ export interface SourcesPanelProps {
 }
 
 export function SourcesPanel({
-  collectionLabel,
+  knowledgeBaseLabel,
   sourceDocs,
   lastTurn,
   loading,
@@ -133,7 +133,7 @@ export function SourcesPanel({
         <div className="mt-2.5 flex flex-wrap gap-2">
           <Badge variant="outline" className="border-slate-200 font-normal text-slate-600">
             <FolderOpen className="mr-1 h-3 w-3 opacity-70" />
-            {collectionLabel}
+            {knowledgeBaseLabel}
           </Badge>
           {sourceDocs.length > 0 && (
             <Badge className="border border-teal-200/60 bg-teal-600/10 font-normal text-teal-800 hover:bg-teal-600/15">

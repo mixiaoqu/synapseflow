@@ -9,9 +9,10 @@ class KbCurationState(TypedDict, total=False):
     """Admin workflow state for iterative knowledge-base curation."""
 
     messages: Annotated[List, add_messages]
+    user_id: int
     query: str
     optimized_query: str
-    collection_id: Optional[int]
+    knowledge_base_id: Optional[int]
     retrieved_docs: List[Dict[str, Any]]
     context: str
     answer: str

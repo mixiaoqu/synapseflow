@@ -1,16 +1,18 @@
-"""用户知识库：检索节点（共用向量检索，日志前缀区分场景）"""
-from typing import Dict, Any
+"""Retrieval node for end-user knowledge-base chat."""
+
+from typing import Any, Dict
 
 from app.agents.states import KbChatState
 from app.services.kb_retrieval import run_kb_retrieval
 
 
 async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
-    """按用户原问题检索，不使用管理员侧的 query 优化字段。"""
-    q = (state.get("query") or "").strip()
+    """Retrieve context for the current user query."""
+    query = (state.get("query") or "").strip()
     return await run_kb_retrieval(
-        query=q,
-        collection_id=state.get("collection_id"),
+        query=query,
+        knowledge_base_id=state.get("knowledge_base_id"),
         iteration=0,
-        log_prefix="[用户知识库检索]",
+        log_prefix="[User KB Retrieval]",
+        user_id=state.get("user_id"),
     )

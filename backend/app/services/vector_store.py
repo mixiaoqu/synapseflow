@@ -37,7 +37,10 @@ async def add_document_chunks(
 
 
 async def delete_document_embeddings(
-    db: AsyncSession, document_id: int, *, commit: bool = True
+    db: AsyncSession,
+    document_id: int,
+    *,
+    commit: bool = True,
 ) -> int:
     """Delete all embeddings for a document."""
     await db.execute(delete(Embedding).where(Embedding.document_id == document_id))
@@ -55,7 +58,7 @@ async def search(
     k: int = 5,
     *,
     user_id: int | None = None,
-    collection_id: int | None = None,
+    knowledge_base_id: int | None = None,
 ) -> List[dict]:
     """
     Vector search across embeddings joined with the latest document rows.
@@ -77,8 +80,8 @@ async def search(
     )
     if user_id is not None:
         stmt = stmt.where(Document.user_id == user_id)
-    if collection_id is not None:
-        stmt = stmt.where(Document.collection_id == collection_id)
+    if knowledge_base_id is not None:
+        stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)
     stmt = stmt.order_by(dist_col).limit(k)
 
     result = await db.execute(stmt)
@@ -90,7 +93,7 @@ async def search(
                 "document_id": int(document_id),
                 "chunk_index": int(chunk_index),
                 "distance": float(dist_val) if dist_val is not None else 0.0,
-                "document_title": document_title or "未知文档",
+                "document_title": document_title or "Unknown document",
             }
         )
     return out
@@ -128,7 +131,7 @@ def reciprocal_rank_fusion(
                 "document_id": row["document_id"],
                 "chunk_index": row["chunk_index"],
                 "distance": 2.0,
-                "document_title": row.get("document_title", "未知文档"),
+                "document_title": row.get("document_title", "Unknown document"),
             }
 
     for rank, row in enumerate(dense):
@@ -154,9 +157,9 @@ async def search_lexical(
     k: int,
     *,
     user_id: int | None = None,
-    collection_id: int | None = None,
+    knowledge_base_id: int | None = None,
 ) -> List[dict]:
-    """PostgreSQL full-text retrieval joined with documents metadata."""
+    """PostgreSQL full-text retrieval joined with document metadata."""
     query = (query_text or "").strip()[:2000]
     if not query or k <= 0:
         return []
@@ -174,9 +177,9 @@ async def search_lexical(
     if user_id is not None:
         sql_lines.append("  AND d.user_id = :user_id")
         params["user_id"] = user_id
-    if collection_id is not None:
-        sql_lines.append("  AND d.collection_id = :collection_id")
-        params["collection_id"] = collection_id
+    if knowledge_base_id is not None:
+        sql_lines.append("  AND d.knowledge_base_id = :knowledge_base_id")
+        params["knowledge_base_id"] = knowledge_base_id
 
     sql_lines.extend(
         [
@@ -188,7 +191,7 @@ async def search_lexical(
     try:
         result = await db.execute(text("\n".join(sql_lines)), params)
     except Exception as exc:
-        logger.warning("词法检索失败，已跳过: {}", exc)
+        logger.warning("Lexical retrieval failed, skipping: {}", exc)
         return []
 
     out: List[dict] = []
@@ -200,7 +203,7 @@ async def search_lexical(
                 "chunk_index": int(chunk_index),
                 "distance": 2.0,
                 "lexical_rank": float(lexical_rank) if lexical_rank is not None else 0.0,
-                "document_title": document_title or "未知文档",
+                "document_title": document_title or "Unknown document",
             }
         )
     return out
@@ -214,23 +217,23 @@ async def search_hybrid_rrf(
     k_dense: int,
     k_lexical: int,
     user_id: int | None,
-    collection_id: int | None,
+    knowledge_base_id: int | None,
     rrf_k: int,
     pool_limit: int,
 ) -> List[dict]:
-    """Dense vector retrieval + lexical retrieval fused with RRF."""
+    """Dense vector retrieval plus lexical retrieval fused with RRF."""
     dense = await search(
         db,
         query_embedding,
         k=k_dense,
         user_id=user_id,
-        collection_id=collection_id,
+        knowledge_base_id=knowledge_base_id,
     )
     lexical = await search_lexical(
         db,
         query_text,
         k=k_lexical,
         user_id=user_id,
-        collection_id=collection_id,
+        knowledge_base_id=knowledge_base_id,
     )
     return reciprocal_rank_fusion(dense, lexical, rrf_k=rrf_k, limit=pool_limit)

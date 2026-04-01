@@ -22,12 +22,13 @@ class KbChatService:
         self._llm_factory = llm_factory
 
     @staticmethod
-    def build_initial_state(request: KbChatRequest) -> Dict[str, Any]:
+    def build_initial_state(request: KbChatRequest, *, user_id: int) -> Dict[str, Any]:
         """Build pipeline input state from the request payload."""
         return {
             "messages": [],
+            "user_id": user_id,
             "query": request.query,
-            "collection_id": request.collection_id,
+            "knowledge_base_id": request.knowledge_base_id,
             "retrieved_docs": [],
             "context": "",
             "answer": "",
@@ -46,9 +47,9 @@ class KbChatService:
         state.update(retrieve_out)
         return state
 
-    async def invoke(self, request: KbChatRequest) -> KbChatResponse:
+    async def invoke(self, request: KbChatRequest, *, user_id: int) -> KbChatResponse:
         """Run the chat pipeline and map its result to the response schema."""
-        state = await self._retrieve(self.build_initial_state(request))
+        state = await self._retrieve(self.build_initial_state(request, user_id=user_id))
         state["answer"] = await generate_kb_chat_answer_text(
             state,
             llm_factory=self._llm_factory,
@@ -59,10 +60,10 @@ class KbChatService:
             session_id=request.session_id,
         )
 
-    async def stream(self, request: KbChatRequest) -> AsyncGenerator[str, None]:
+    async def stream(self, request: KbChatRequest, *, user_id: int) -> AsyncGenerator[str, None]:
         """Stream retrieved docs and answer tokens as SSE messages."""
         try:
-            state = await self._retrieve(self.build_initial_state(request))
+            state = await self._retrieve(self.build_initial_state(request, user_id=user_id))
             yield self._envelope(
                 "retrieved",
                 {"retrieved_docs": state.get("retrieved_docs", [])},

@@ -4,7 +4,7 @@ import type { RetrievedDoc } from "./kbChat";
 export interface KbCurationRequest {
   query: string;
   max_iterations?: number;
-  collection_id?: number | null;
+  knowledge_base_id?: number | null;
 }
 
 export interface IterationRecord {

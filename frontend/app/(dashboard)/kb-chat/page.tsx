@@ -44,15 +44,15 @@ export default function KbChatPage() {
   const {
     query,
     setQuery,
-    collectionId,
-    setCollectionId,
-    collections,
+    knowledgeBaseId,
+    setKnowledgeBaseId,
+    knowledgeBases,
     loading,
     turns,
     expandedChunks,
     mobileTab,
     setMobileTab,
-    collectionLabel,
+    knowledgeBaseLabel,
     lastTurn,
     sourceDocs,
     toggleChunk,
@@ -243,15 +243,15 @@ export default function KbChatPage() {
               </label>
               <select
                 id="kb-collection"
-                value={collectionId ?? ""}
+                value={knowledgeBaseId ?? ""}
                 onChange={(e) =>
-                  setCollectionId(e.target.value ? Number(e.target.value) : null)
+                  setKnowledgeBaseId(e.target.value ? Number(e.target.value) : null)
                 }
                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-600/30 sm:min-w-[180px] sm:w-auto"
                 disabled={loading}
               >
                 <option value="">全部知识库</option>
-                {collections.map((collection) => (
+                {knowledgeBases.map((collection) => (
                   <option key={collection.id} value={collection.id}>
                     {collection.name}（{collection.document_count} 篇）
                   </option>
@@ -278,7 +278,7 @@ export default function KbChatPage() {
             </Button>
           </div>
 
-          {collections.length === 0 && (
+          {knowledgeBases.length === 0 && (
             <p className="text-[11px] text-amber-700/90">
               当前还没有可用的文档集合，请先到“文档库”创建并上传文档。
             </p>
@@ -291,7 +291,7 @@ export default function KbChatPage() {
   const sourcesAside = (
     <aside className="flex h-full min-h-0 overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm ring-1 ring-slate-900/[0.04] lg:w-[min(100%,400px)] lg:shrink-0">
       <SourcesPanel
-        collectionLabel={collectionLabel}
+        knowledgeBaseLabel={knowledgeBaseLabel}
         sourceDocs={sourceDocs}
         lastTurn={lastTurn}
         loading={loading}

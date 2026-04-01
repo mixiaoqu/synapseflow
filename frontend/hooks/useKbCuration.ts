@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { listCollections, type CollectionWithCount } from "@/lib/api/collections";
+import {
+  listKnowledgeBases,
+  type KnowledgeBaseWithCount,
+} from "@/lib/api/knowledgeBases";
 import { reindexAll } from "@/lib/api/documents";
 import {
   kbCurationApi,
@@ -39,25 +42,25 @@ export function getRoundDocumentIssues(
 export function useKbCuration() {
   const [query, setQuery] = useState("");
   const [maxIterations, setMaxIterations] = useState(3);
-  const [collectionId, setCollectionId] = useState<number | null>(null);
-  const [collections, setCollections] = useState<CollectionWithCount[]>([]);
+  const [knowledgeBaseId, setKnowledgeBaseId] = useState<number | null>(null);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseWithCount[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<KbCurationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reindexing, setReindexing] = useState(false);
   const [expandedRounds, setExpandedRounds] = useState<Set<number>>(new Set());
 
-  const loadCollections = useCallback(async () => {
+  const loadKnowledgeBases = useCallback(async () => {
     try {
-      setCollections(await listCollections());
+      setKnowledgeBases(await listKnowledgeBases());
     } catch {
       /* ignore */
     }
   }, []);
 
   useEffect(() => {
-    void loadCollections();
-  }, [loadCollections]);
+    void loadKnowledgeBases();
+  }, [loadKnowledgeBases]);
 
   useEffect(() => {
     if (result?.iteration_history?.length) {
@@ -100,31 +103,31 @@ export function useKbCuration() {
       const response = await kbCurationApi.invoke({
         query: query.trim(),
         max_iterations: maxIterations,
-        collection_id: collectionId && collectionId > 0 ? collectionId : null,
+        knowledge_base_id: knowledgeBaseId && knowledgeBaseId > 0 ? knowledgeBaseId : null,
       });
 
       setResult(response);
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "请求失败，请重试";
+      const message = error instanceof Error ? error.message : "Request failed";
       setError(message);
       toast.error(message);
       return false;
     } finally {
       setLoading(false);
     }
-  }, [collectionId, loading, maxIterations, query]);
+  }, [knowledgeBaseId, loading, maxIterations, query]);
 
   const triggerReindex = useCallback(async () => {
     setReindexing(true);
     try {
       const res = await reindexAll();
-      toast.success(res.message || `已重建 ${res.indexed} 篇文档索引`);
+      toast.success(res.message || `Reindexed ${res.indexed} documents`);
       if (res.indexed > 0) {
-        toast.info("请重新提问以获取最新检索结果");
+        toast.info("Run the question again to get the latest retrieval result.");
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "重建索引失败");
+      toast.error(error instanceof Error ? error.message : "Reindex failed");
     } finally {
       setReindexing(false);
     }
@@ -135,9 +138,9 @@ export function useKbCuration() {
     setQuery,
     maxIterations,
     setMaxIterations,
-    collectionId,
-    setCollectionId,
-    collections,
+    knowledgeBaseId,
+    setKnowledgeBaseId,
+    knowledgeBases,
     loading,
     result,
     error,

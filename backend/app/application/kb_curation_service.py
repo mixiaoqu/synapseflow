@@ -14,10 +14,11 @@ class KbCurationService:
         self._graph = graph or create_kb_curation_graph()
 
     @staticmethod
-    def build_initial_state(request: QARequest) -> Dict[str, Any]:
+    def build_initial_state(request: QARequest, *, user_id: int) -> Dict[str, Any]:
         """Build graph input state from the request payload."""
         return {
             "messages": [],
+            "user_id": user_id,
             "query": request.query,
             "optimized_query": "",
             "retrieved_docs": [],
@@ -30,12 +31,12 @@ class KbCurationService:
             "iteration_history": [],
             "last_evaluation_feedback": None,
             "document_issues": [],
-            "collection_id": request.collection_id,
+            "knowledge_base_id": request.knowledge_base_id,
         }
 
-    async def invoke(self, request: QARequest) -> QAResponse:
+    async def invoke(self, request: QARequest, *, user_id: int) -> QAResponse:
         """Run the curation graph and map its result to the response schema."""
-        result = await self._graph.ainvoke(self.build_initial_state(request))
+        result = await self._graph.ainvoke(self.build_initial_state(request, user_id=user_id))
         return QAResponse(
             answer=result["answer"],
             confidence_score=result["confidence_score"],
@@ -46,10 +47,10 @@ class KbCurationService:
             session_id=request.session_id,
         )
 
-    async def stream(self, request: QARequest) -> AsyncGenerator[str, None]:
+    async def stream(self, request: QARequest, *, user_id: int) -> AsyncGenerator[str, None]:
         """Stream graph chunks as SSE messages."""
         try:
-            async for chunk in self._graph.astream(self.build_initial_state(request)):
+            async for chunk in self._graph.astream(self.build_initial_state(request, user_id=user_id)):
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as exc:

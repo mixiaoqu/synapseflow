@@ -11,7 +11,8 @@ async def retrieve_node(state: KbCurationState) -> Dict[str, Any]:
     query = state.get("optimized_query") or state.get("query", "")
     return await run_kb_retrieval(
         query=query,
-        collection_id=state.get("collection_id"),
+        knowledge_base_id=state.get("knowledge_base_id"),
         iteration=state.get("iteration", 0),
         log_prefix="[KB Curation Retrieval]",
+        user_id=state.get("user_id"),
     )

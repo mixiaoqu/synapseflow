@@ -1,27 +1,35 @@
-"""面向管理员的知识库治理 API。"""
+"""Knowledge-base curation API."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
+from app.api.dependencies.auth import get_current_user
 from app.application import kb_curation_service
+from app.db.models import User
 from app.models.schemas.qa import QARequest, QAResponse
 
 router = APIRouter()
 
 
 @router.post("/invoke", response_model=QAResponse)
-async def kb_curation_invoke(request: QARequest):
-    """同步执行知识库治理问答。"""
+async def kb_curation_invoke(
+    request: QARequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Synchronously run KB curation for the current user."""
     try:
-        return await kb_curation_service.invoke(request)
+        return await kb_curation_service.invoke(request, user_id=current_user.id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/stream")
-async def kb_curation_stream(request: QARequest):
-    """以 SSE 方式流式执行知识库治理问答。"""
+async def kb_curation_stream(
+    request: QARequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Stream KB curation output for the current user via SSE."""
     return StreamingResponse(
-        kb_curation_service.stream(request),
+        kb_curation_service.stream(request, user_id=current_user.id),
         media_type="text/event-stream",
     )

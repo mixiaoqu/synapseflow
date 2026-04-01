@@ -1,50 +1,118 @@
-"""数据库 ORM 模型"""
-from datetime import datetime
-from sqlalchemy import Boolean, Column, Integer, String, Text, DateTime, JSON, ForeignKey
-from sqlalchemy.dialects.postgresql import TSVECTOR
-from pgvector.sqlalchemy import Vector
+"""Database ORM models."""
 
-from app.db.session import Base
+from datetime import datetime
+
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import TSVECTOR
+
 from app.core.config import config_registry
+from app.db.session import Base
 
 EMBEDDING_DIM = config_registry.get_embedding_config().dim
 
 
-class Collection(Base):
-    """集合表 ORM 模型，用于分组管理文档"""
+class User(Base):
+    """Application user."""
 
-    __tablename__ = "collections"
+    __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, nullable=False, default=1)
+    username = Column(String(50), nullable=False, unique=True, index=True)
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    full_name = Column(String(100), nullable=True)
+    hashed_password = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Team(Base):
+    """Enterprise team."""
+
+    __tablename__ = "teams"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String(100), nullable=False)
+    code = Column(String(50), nullable=True, index=True)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TeamMember(Base):
+    """Membership between users and teams."""
+
+    __tablename__ = "team_members"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(30), nullable=False, default="member")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class KnowledgeBase(Base):
+    """Knowledge base under a team."""
+
+    __tablename__ = "knowledge_bases"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, default=1, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class KnowledgeBaseMember(Base):
+    """Optional per-knowledge-base membership overrides."""
+
+    __tablename__ = "knowledge_base_members"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(30), nullable=False, default="viewer")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class Document(Base):
-    """文档表 ORM 模型，对应 documents 表"""
+    """Document rows belonging to a knowledge base."""
 
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, nullable=False, default=1)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
     document_type = Column(String(50), nullable=True)
-    size = Column(Integer, nullable=False, default=0)  # 字节大小
+    size = Column(Integer, nullable=False, default=0)
     version = Column(Integer, nullable=False, default=1)
     parent_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
     root_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
     is_latest = Column(Boolean, nullable=False, default=True)
-    collection_id = Column(Integer, ForeignKey("collections.id", ondelete="SET NULL"), nullable=True, index=True)
-    indexed_at = Column(DateTime, nullable=True)  # 向量索引成功时间
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    indexed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class Embedding(Base):
-    """向量嵌入表 ORM 模型，对应 embeddings 表"""
+    """Chunk embeddings for vector retrieval."""
 
     __tablename__ = "embeddings"
 

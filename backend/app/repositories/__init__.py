@@ -1,5 +1,6 @@
-"""Repository 层：封装数据访问逻辑"""
-from .document_repository import DocumentRepository
-from .collection_repository import CollectionRepository
+"""Repository exports."""
 
-__all__ = ["DocumentRepository", "CollectionRepository"]
+from .document_repository import DocumentRepository
+from .knowledge_base_repository import KnowledgeBaseRepository
+
+__all__ = ["DocumentRepository", "KnowledgeBaseRepository"]
