@@ -25,6 +25,8 @@ class ModelConfig:
 class EmbeddingConfig:
     model: str
     dim: int
+    device: str
+    batch_size: int
 
 
 @dataclass(frozen=True)

@@ -94,6 +94,8 @@ class ConfigRegistry:
         return EmbeddingConfig(
             model=emb.get("model", "BAAI/bge-m3"),
             dim=int(emb.get("dim", 1024)),
+            device=str(emb.get("device", "cpu")),
+            batch_size=max(1, int(emb.get("batch_size", 32))),
         )
 
     @functools.lru_cache(maxsize=1)
