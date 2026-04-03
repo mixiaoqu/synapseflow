@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import get_current_user
-from app.application import document_service
+from app.application.document_service import document_service
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.document import (
@@ -164,6 +164,19 @@ async def create_document_version(
         user_id=current_user.id,
         doc_id=doc_id,
         body=body,
+    )
+
+
+@router.post("/{doc_id}/current", response_model=DocumentResponse)
+async def switch_current_document_version(
+    doc_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await document_service.switch_current_document_version(
+        db=db,
+        user_id=current_user.id,
+        doc_id=doc_id,
     )
 
 

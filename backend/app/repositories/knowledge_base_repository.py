@@ -1,9 +1,38 @@
 """Knowledge-base repository."""
 
-from sqlalchemy import func, select, update
+from dataclasses import dataclass
+from datetime import datetime
+
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, KnowledgeBase
+
+
+@dataclass(slots=True)
+class KnowledgeBaseRecentDocumentRecord:
+    """Recent document summary for knowledge-base cards."""
+
+    id: int
+    title: str
+    document_type: str | None
+    size: int
+    indexed: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class KnowledgeBaseSummaryRecord:
+    """Aggregated knowledge-base summary for the dashboard."""
+
+    knowledge_base: KnowledgeBase
+    document_count: int
+    indexed_document_count: int
+    unindexed_document_count: int
+    last_document_updated_at: datetime | None
+    last_uploaded_at: datetime | None
+    recent_documents: list[KnowledgeBaseRecentDocumentRecord]
 
 
 class KnowledgeBaseRepository:
@@ -17,14 +46,31 @@ class KnowledgeBaseRepository:
         self,
         *,
         team_id: int | None = None,
-    ) -> list[tuple[KnowledgeBase, int]]:
-        """List knowledge bases with latest-document counts."""
+    ) -> list[KnowledgeBaseSummaryRecord]:
+        """List knowledge bases with dashboard summary metrics."""
+        indexed_count = func.sum(case((Document.indexed_at.is_not(None), 1), else_=0))
+        unindexed_count = func.sum(
+            case(
+                (
+                    Document.id.is_not(None) & Document.indexed_at.is_(None),
+                    1,
+                ),
+                else_=0,
+            )
+        )
         stmt = (
-            select(KnowledgeBase, func.count(Document.id).label("doc_count"))
+            select(
+                KnowledgeBase,
+                func.count(Document.id).label("doc_count"),
+                indexed_count.label("indexed_doc_count"),
+                unindexed_count.label("unindexed_doc_count"),
+                func.max(Document.updated_at).label("last_document_updated_at"),
+                func.max(Document.created_at).label("last_uploaded_at"),
+            )
             .outerjoin(
                 Document,
                 (Document.knowledge_base_id == KnowledgeBase.id)
-                & (Document.is_latest.is_(True)),
+                & (Document.is_current.is_(True)),
             )
             .where(KnowledgeBase.user_id == self.user_id)
         )
@@ -32,7 +78,89 @@ class KnowledgeBaseRepository:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
         stmt = stmt.group_by(KnowledgeBase.id).order_by(KnowledgeBase.created_at.desc())
         result = await self.db.execute(stmt)
-        return [(knowledge_base, doc_count or 0) for knowledge_base, doc_count in result.all()]
+        rows = result.all()
+        knowledge_base_ids = [knowledge_base.id for knowledge_base, *_ in rows]
+        recent_docs_map = await self._list_recent_documents(knowledge_base_ids)
+        return [
+            KnowledgeBaseSummaryRecord(
+                knowledge_base=knowledge_base,
+                document_count=doc_count or 0,
+                indexed_document_count=indexed_doc_count or 0,
+                unindexed_document_count=unindexed_doc_count or 0,
+                last_document_updated_at=last_document_updated_at,
+                last_uploaded_at=last_uploaded_at,
+                recent_documents=recent_docs_map.get(knowledge_base.id, []),
+            )
+            for (
+                knowledge_base,
+                doc_count,
+                indexed_doc_count,
+                unindexed_doc_count,
+                last_document_updated_at,
+                last_uploaded_at,
+            ) in rows
+        ]
+
+    async def _list_recent_documents(
+        self,
+        knowledge_base_ids: list[int],
+    ) -> dict[int, list[KnowledgeBaseRecentDocumentRecord]]:
+        """Return the latest three current documents for each knowledge base."""
+        if not knowledge_base_ids:
+            return {}
+
+        ranked_documents = (
+            select(
+                Document.knowledge_base_id.label("knowledge_base_id"),
+                Document.id.label("id"),
+                Document.title.label("title"),
+                Document.document_type.label("document_type"),
+                Document.size.label("size"),
+                Document.created_at.label("created_at"),
+                Document.updated_at.label("updated_at"),
+                Document.indexed_at.is_not(None).label("indexed"),
+                func.row_number()
+                .over(
+                    partition_by=Document.knowledge_base_id,
+                    order_by=(Document.created_at.desc(), Document.id.desc()),
+                )
+                .label("row_num"),
+            )
+            .where(
+                Document.user_id == self.user_id,
+                Document.is_current.is_(True),
+                Document.knowledge_base_id.in_(knowledge_base_ids),
+            )
+            .subquery()
+        )
+
+        stmt = (
+            select(ranked_documents)
+            .where(ranked_documents.c.row_num <= 3)
+            .order_by(
+                ranked_documents.c.knowledge_base_id.asc(),
+                ranked_documents.c.created_at.desc(),
+                ranked_documents.c.id.desc(),
+            )
+        )
+        result = await self.db.execute(stmt)
+        recent_docs_map: dict[int, list[KnowledgeBaseRecentDocumentRecord]] = {}
+        for row in result:
+            knowledge_base_id = row.knowledge_base_id
+            if knowledge_base_id is None:
+                continue
+            recent_docs_map.setdefault(knowledge_base_id, []).append(
+                KnowledgeBaseRecentDocumentRecord(
+                    id=row.id,
+                    title=row.title,
+                    document_type=row.document_type,
+                    size=row.size or 0,
+                    indexed=bool(row.indexed),
+                    created_at=row.created_at,
+                    updated_at=row.updated_at,
+                )
+            )
+        return recent_docs_map
 
     async def create(
         self,

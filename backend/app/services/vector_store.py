@@ -61,7 +61,7 @@ async def search(
     knowledge_base_id: int | None = None,
 ) -> List[dict]:
     """
-    Vector search across embeddings joined with the latest document rows.
+    Vector search across embeddings joined with the current document rows.
 
     Returns:
         [{"chunk_text", "document_id", "chunk_index", "distance", "document_title"}, ...]
@@ -76,7 +76,7 @@ async def search(
             Document.title.label("document_title"),
         )
         .join(Document, Document.id == Embedding.document_id)
-        .where(Document.is_latest.is_(True))
+        .where(Document.is_current.is_(True))
     )
     if user_id is not None:
         stmt = stmt.where(Document.user_id == user_id)
@@ -170,7 +170,7 @@ async def search_lexical(
         "FROM embeddings e",
         "JOIN documents d ON d.id = e.document_id",
         "WHERE e.chunk_tsv @@ websearch_to_tsquery('simple', :q)",
-        "  AND d.is_latest IS TRUE",
+        "  AND d.is_current IS TRUE",
     ]
     params: dict[str, object] = {"q": query, "lim": k}
 

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 
-from app.application import revision_service
+from app.application.revision_service import revision_service
 from app.models.schemas.revision import SuggestRevisionRequest, SuggestRevisionResponse
 
 router = APIRouter()

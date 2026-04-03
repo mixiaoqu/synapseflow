@@ -1,31 +1,11 @@
-/**
- * 原型生成流式 Hook（上传文件 → /prototype/generate/stream/file）
- * SSE 固定 event: message，业务类型见 JSON 信封 type 字段。
- */
-import { useEffect, useRef, useCallback } from 'react';
-import { usePrototypeStore } from '@/stores/prototypeStore';
-import { toast } from 'sonner';
-import { API_V1 } from '@/lib/api/config';
+import { useCallback, useEffect, useRef } from "react";
+import { toast } from "sonner";
 
-/** 与后端 prototype_stream._stream_envelope 对齐 */
-interface StreamEnvelope {
-  type: string;
-  node_id: string;
-  node_name: string;
-  timestamp: number;
-  data: Record<string, unknown>;
-}
+import { API_V1 } from "@/lib/api/config";
+import { consumeSseStream, type SseEnvelope } from "@/lib/stream/sse";
+import { usePrototypeStore } from "@/stores/prototypeStore";
 
-function isStreamEnvelope(raw: unknown): raw is StreamEnvelope {
-  if (!raw || typeof raw !== 'object') return false;
-  const o = raw as Record<string, unknown>;
-  return (
-    typeof o.type === 'string' &&
-    o.data !== null &&
-    typeof o.data === 'object' &&
-    !Array.isArray(o.data)
-  );
-}
+type PrototypeStreamData = Record<string, unknown>;
 
 export function usePrototypeStream() {
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -39,72 +19,75 @@ export function usePrototypeStream() {
   } = usePrototypeStore();
 
   const handleStreamEnvelope = useCallback(
-    (env: StreamEnvelope) => {
-      const d = env.data;
+    (env: SseEnvelope<PrototypeStreamData>) => {
+      const data = env.data;
+
       switch (env.type) {
-        case 'start':
+        case "start":
           appendProgressLog({
-            node: env.node_name || 'System',
-            nodeId: env.node_id || 'system',
-            type: 'info',
-            content: String(d.message ?? '开始'),
+            node: env.node_name || "System",
+            nodeId: env.node_id || "system",
+            type: "info",
+            content: String(data.message ?? "Starting generation"),
           });
           break;
 
-        case 'progress': {
-          const step = Number(d.step);
-          const totalSteps = Number(d.total_steps) || 7;
-          const percent = Number(d.percent);
+        case "progress": {
+          const step = Number(data.step);
+          const totalSteps = Number(data.total_steps) || 7;
+          const percent = Number(data.percent);
+
           setPipelineProgress({
             percent: Number.isFinite(percent) ? percent : 0,
             step: Number.isFinite(step) ? step : 0,
             totalSteps,
-            currentNodeLabel: env.node_name || '',
+            currentNodeLabel: env.node_name || "",
           });
           break;
         }
 
-        case 'log':
+        case "log":
           appendProgressLog({
-            node: env.node_name || '',
-            nodeId: env.node_id || undefined,
-            type: String(d.level ?? 'info'),
-            content: String(d.content ?? ''),
+            node: env.node_name || "System",
+            nodeId: env.node_id || "system",
+            type: String(data.level ?? "info"),
+            content: String(data.content ?? ""),
           });
           break;
 
-        case 'complete': {
-          const totalSteps = Number(d.total_steps);
+        case "complete": {
+          const totalSteps = Number(data.total_steps);
           const total =
             Number.isFinite(totalSteps) && totalSteps > 0 ? totalSteps : 7;
+
           setPipelineProgress({
             percent: 100,
             step: total,
             totalSteps: total,
-            currentNodeLabel: '已完成',
+            currentNodeLabel: "Completed",
           });
           setGeneratedCode({
-            html: String(d.html ?? ''),
-            css: String(d.css ?? ''),
-            js: String(d.js ?? ''),
+            html: String(data.html ?? ""),
+            css: String(data.css ?? ""),
+            js: String(data.js ?? ""),
           });
-          setPreviewUrl(d.preview_url ? String(d.preview_url) : null);
+          setPreviewUrl(data.preview_url ? String(data.preview_url) : null);
           completeGeneration();
           toast.success(
-            `原型生成完成！耗时 ${d.total_duration != null ? String(d.total_duration) : '?'}s`,
+            `Prototype generated in ${data.total_duration != null ? String(data.total_duration) : "?"}s`,
           );
           break;
         }
 
-        case 'error': {
-          const msg = String(d.message ?? '未知错误');
+        case "error": {
+          const message = String(data.message ?? "Unknown error");
           appendProgressLog({
-            node: env.node_name || 'System',
-            nodeId: env.node_id || 'system',
-            type: 'error',
-            content: msg,
+            node: env.node_name || "System",
+            nodeId: env.node_id || "system",
+            type: "error",
+            content: message,
           });
-          toast.error(`生成失败: ${msg}`);
+          toast.error(`Generation failed: ${message}`);
           completeGeneration();
           break;
         }
@@ -115,92 +98,59 @@ export function usePrototypeStream() {
     },
     [
       appendProgressLog,
-      setPipelineProgress,
-      setGeneratedCode,
-      setPreviewUrl,
       completeGeneration,
+      setGeneratedCode,
+      setPipelineProgress,
+      setPreviewUrl,
     ],
   );
 
-  const startStreaming = async (file: File) => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-
-    abortControllerRef.current = new AbortController();
-
-    startGeneration();
-
-    try {
-      const url = `${API_V1}/prototype/generate/stream/file`;
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch(url, {
-        method: 'POST',
-        body: formData,
-        signal: abortControllerRef.current.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  const startStreaming = useCallback(
+    async (file: File) => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
+      abortControllerRef.current = new AbortController();
+      startGeneration();
 
-      if (!reader) {
-        throw new Error('无法获取响应流');
-      }
+      try {
+        const url = `${API_V1}/prototype/generate/stream/file`;
+        const formData = new FormData();
+        formData.append("file", file);
 
-      while (true) {
-        const { done, value } = await reader.read();
+        const response = await fetch(url, {
+          method: "POST",
+          body: formData,
+          signal: abortControllerRef.current.signal,
+        });
 
-        if (done) {
-          break;
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        if (!response.body) {
+          throw new Error("Unable to read response stream");
         }
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-
-          const eventMatch = line.match(/event:\s*(\w+)\ndata:\s*(.+)/s);
-          if (!eventMatch) continue;
-
-          let rawData = eventMatch[2].trim();
-          if (rawData.endsWith('\n')) {
-            rawData = rawData.replace(/\n+$/, '');
-          }
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(rawData);
-          } catch {
-            continue;
-          }
-          if (!isStreamEnvelope(parsed)) continue;
-          handleStreamEnvelope(parsed);
+        await consumeSseStream(response.body, handleStreamEnvelope);
+      } catch (error: unknown) {
+        const err = error as { name?: string; message?: string };
+        if (err.name !== "AbortError") {
+          toast.error(err.message || "Generation failed, please try again");
+          completeGeneration();
         }
       }
-    } catch (error: unknown) {
-      const err = error as { name?: string; message?: string };
-      if (err.name !== 'AbortError') {
-        toast.error('生成失败，请重试');
-        completeGeneration();
-      }
-    }
-  };
+    },
+    [completeGeneration, handleStreamEnvelope, startGeneration],
+  );
 
-  const stopStreaming = () => {
+  const stopStreaming = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       completeGeneration();
     }
-  };
+  }, [completeGeneration]);
 
   useEffect(() => {
     return () => {

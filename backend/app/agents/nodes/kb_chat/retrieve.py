@@ -2,17 +2,17 @@
 
 from typing import Any, Dict
 
+from app.agents.common.retrieval import pick_query_from_state, run_state_kb_retrieval
 from app.agents.states import KbChatState
-from app.services.kb_retrieval import run_kb_retrieval
 
 
 async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
     """Retrieve context for the current user query."""
-    query = (state.get("query") or "").strip()
-    return await run_kb_retrieval(
+
+    query = pick_query_from_state(state, "query")
+    return await run_state_kb_retrieval(
+        state,
         query=query,
-        knowledge_base_id=state.get("knowledge_base_id"),
         iteration=0,
         log_prefix="[User KB Retrieval]",
-        user_id=state.get("user_id"),
     )

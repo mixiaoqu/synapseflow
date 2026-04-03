@@ -69,6 +69,7 @@ class DocumentVersionItem(BaseModel):
     title: str
     version: int
     is_latest: bool
+    is_current: bool
     created_at: datetime
 
 class DocumentVersionsResponse(BaseModel):

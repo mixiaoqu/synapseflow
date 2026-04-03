@@ -130,6 +130,7 @@ class DocumentService:
                     version=1,
                     parent_id=None,
                     is_latest=True,
+                    is_current=True,
                     knowledge_base_id=knowledge_base_id,
                 )
                 await repo.add_for_batch(doc)
@@ -241,6 +242,7 @@ class DocumentService:
                 title=version_doc.title,
                 version=getattr(version_doc, "version", 1),
                 is_latest=getattr(version_doc, "is_latest", True),
+                is_current=getattr(version_doc, "is_current", True),
                 created_at=version_doc.created_at,
             )
             for version_doc in version_docs
@@ -305,6 +307,14 @@ class DocumentService:
         body: DocumentContentUpdate,
     ) -> DocumentResponse:
         repo = DocumentRepository(db, user_id=user_id)
+        existing = await repo.get_by_id_for_user(doc_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Document not found")
+        if not getattr(existing, "is_latest", True) or not getattr(existing, "is_current", True):
+            raise HTTPException(
+                status_code=400,
+                detail="Only the current latest version can be overwritten",
+            )
         doc = await repo.update_content(doc_id, body.content)
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
@@ -328,12 +338,16 @@ class DocumentService:
         if not orig:
             raise HTTPException(status_code=404, detail="Source document not found")
 
+        root_id = getattr(orig, "root_id", None) or orig.id
+        current_doc = await repo.get_current_by_root_id(root_id)
         new_doc = await repo.create_version(doc_id, body.content, commit=False)
         if not new_doc:
             raise HTTPException(status_code=404, detail="Source document not found")
 
         try:
-            await delete_by_document_id(db, orig.id, commit=False)
+            if current_doc:
+                current_doc.indexed_at = None
+                await delete_by_document_id(db, current_doc.id, commit=False)
             await index_document(db, new_doc.id, new_doc.content, commit=True)
         except Exception as exc:
             await db.commit()
@@ -342,6 +356,33 @@ class DocumentService:
         await db.refresh(new_doc)
         logger.info("Created document version id={} from doc_id={}", new_doc.id, doc_id)
         return self._to_response(new_doc)
+
+    async def switch_current_document_version(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc_id: int,
+    ) -> DocumentResponse:
+        repo = DocumentRepository(db, user_id=user_id)
+        target, previous_current = await repo.switch_current_version(doc_id, commit=False)
+        if not target:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        if previous_current and previous_current.id != target.id:
+            previous_current.indexed_at = None
+
+        try:
+            if previous_current and previous_current.id != target.id:
+                await delete_by_document_id(db, previous_current.id, commit=False)
+            await index_document(db, target.id, target.content or "", commit=True)
+        except Exception as exc:
+            await db.commit()
+            logger.warning("Switch current version indexing failed doc_id={}: {}", target.id, exc)
+
+        await db.refresh(target)
+        logger.info("Switched current document version id={}", target.id)
+        return self._to_response(target)
 
     async def delete_documents_batch(
         self,

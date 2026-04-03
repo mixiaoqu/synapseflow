@@ -70,7 +70,7 @@ async def _knowledge_base_has_documents(
     async with AsyncSessionLocal() as db:
         stmt = select(Document.id).where(
             Document.knowledge_base_id == knowledge_base_id,
-            Document.is_latest.is_(True),
+            Document.is_current.is_(True),
         )
         if user_id is not None:
             stmt = stmt.where(Document.user_id == user_id)

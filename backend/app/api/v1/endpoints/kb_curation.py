@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.api.dependencies.auth import get_current_user
-from app.application import kb_curation_service
+from app.application.kb_curation_service import kb_curation_service
 from app.db.models import User
 from app.models.schemas.qa import QARequest, QAResponse
 

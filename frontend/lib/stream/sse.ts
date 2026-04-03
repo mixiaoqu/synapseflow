@@ -1,23 +1,36 @@
 export interface SseEnvelope<TData = Record<string, unknown>> {
   type: string;
   data: TData;
+  node_id?: string;
+  node_name?: string;
+  timestamp?: number;
+  run_id?: string | null;
+}
+
+function extractDataLine(block: string): string | null {
+  const lines = block.split(/\r?\n/);
+  const dataLines = lines
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.replace(/^data:\s?/, ""));
+
+  if (dataLines.length === 0) {
+    return null;
+  }
+
+  return dataLines.join("\n").trim();
 }
 
 export function parseSseBlock(block: string): SseEnvelope | null {
-  const match = block.match(/event:\s*\w+\ndata:\s*(.+)/s);
-  if (!match) return null;
-
-  let raw = match[1].trim();
-  if (raw.endsWith("\n")) {
-    raw = raw.replace(/\n+$/, "");
-  }
+  const raw = extractDataLine(block);
+  if (!raw) return null;
 
   try {
     const parsed = JSON.parse(raw) as SseEnvelope;
     if (
       typeof parsed.type === "string" &&
-      parsed.data &&
-      typeof parsed.data === "object"
+      parsed.data !== null &&
+      typeof parsed.data === "object" &&
+      !Array.isArray(parsed.data)
     ) {
       return parsed;
     }
@@ -41,7 +54,7 @@ export async function consumeSseStream(
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split("\n\n");
+    const parts = buffer.split(/\r?\n\r?\n/);
     buffer = parts.pop() || "";
 
     for (const block of parts) {
@@ -49,5 +62,11 @@ export async function consumeSseStream(
       const event = parseSseBlock(block);
       if (event) onEvent(event);
     }
+  }
+
+  const trailing = buffer.trim();
+  if (trailing) {
+    const event = parseSseBlock(trailing);
+    if (event) onEvent(event);
   }
 }

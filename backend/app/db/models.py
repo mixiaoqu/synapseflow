@@ -100,6 +100,7 @@ class Document(Base):
     parent_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
     root_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
     is_latest = Column(Boolean, nullable=False, default=True)
+    is_current = Column(Boolean, nullable=False, default=True)
     knowledge_base_id = Column(
         Integer,
         ForeignKey("knowledge_bases.id", ondelete="SET NULL"),

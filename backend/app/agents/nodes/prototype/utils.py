@@ -1,16 +1,19 @@
-"""文档转原型节点使用的工具函数"""
-from typing import Dict, Any
+"""Utility helpers used by prototype workflow nodes."""
 
-from app.utils import extract_json_from_llm_response
+from typing import Any, Dict
+
+from app.agents.common.llm_json import parse_llm_json_object
 
 
 def parse_json_safely(content: str) -> Dict[str, Any]:
-    """安全解析JSON（已迁移到统一工具）"""
-    return extract_json_from_llm_response(content)
+    """Safely parse JSON returned by an LLM."""
+
+    return parse_llm_json_object(content)
 
 
 def auto_complete_requirements(doc: str, partial: Dict[str, Any]) -> Dict[str, Any]:
-    """智能补全需求（规则兜底），当LLM提取失败或不完整时使用"""
+    """Fallback requirements completion when extraction is incomplete."""
+
     doc_lower = doc.lower()
     page_type = "landing_page"
     if any(word in doc_lower for word in ["登录", "login", "注册", "signup"]):
@@ -28,41 +31,72 @@ def auto_complete_requirements(doc: str, partial: Dict[str, Any]) -> Dict[str, A
     elif any(word in doc_lower for word in ["红色", "red"]):
         color_scheme = "red"
 
-    color_map = {"blue": "#3B82F6", "purple": "#8B5CF6", "green": "#10B981", "red": "#EF4444"}
+    color_map = {
+        "blue": "#3B82F6",
+        "purple": "#8B5CF6",
+        "green": "#10B981",
+        "red": "#EF4444",
+    }
     result = {
-        "page_info": partial.get("page_info", {
-            "title": "自动生成页面", "type": page_type, "description": "根据需求文档自动生成"
-        }),
-        "functional_modules": partial.get("functional_modules", [{
-            "id": "main_content", "name": "主内容区", "description": "页面主要内容",
-            "position": "main", "components": ["Content"], "priority": "high"
-        }]),
+        "page_info": partial.get(
+            "page_info",
+            {
+                "title": "自动生成页面",
+                "type": page_type,
+                "description": "根据需求文档自动生成",
+            },
+        ),
+        "functional_modules": partial.get(
+            "functional_modules",
+            [
+                {
+                    "id": "main_content",
+                    "name": "主内容区",
+                    "description": "页面主要内容",
+                    "position": "main",
+                    "components": ["Content"],
+                    "priority": "high",
+                }
+            ],
+        ),
         "interactions": partial.get("interactions", []),
         "data_model": partial.get("data_model", []),
         "visual_style": {
-            "theme": "modern", "color_scheme": color_scheme,
-            "primary_color": color_map[color_scheme], "layout": "single_column",
-            "font_family": "Inter", "responsive": True, **partial.get("visual_style", {})
-        }
+            "theme": "modern",
+            "color_scheme": color_scheme,
+            "primary_color": color_map[color_scheme],
+            "layout": "single_column",
+            "font_family": "Inter",
+            "responsive": True,
+            **partial.get("visual_style", {}),
+        },
     }
     return result
 
 
 def normalize_requirements(data: Dict[str, Any]) -> Dict[str, Any]:
-    """规范化提取的需求数据，确保所有必需字段都存在且格式正确"""
+    """Normalize extracted requirements into a stable shape."""
+
     if "page_info" not in data:
-        data["page_info"] = {"title": "自动生成页面", "type": "landing_page", "description": ""}
+        data["page_info"] = {
+            "title": "自动生成页面",
+            "type": "landing_page",
+            "description": "",
+        }
     for field in ["functional_modules", "interactions", "data_model"]:
         if field not in data or not isinstance(data[field], list):
             data[field] = []
     if "visual_style" not in data:
         data["visual_style"] = {
-            "theme": "modern", "color_scheme": "blue", "primary_color": "#3B82F6",
-            "layout": "single_column", "responsive": True
+            "theme": "modern",
+            "color_scheme": "blue",
+            "primary_color": "#3B82F6",
+            "layout": "single_column",
+            "responsive": True,
         }
-    for i, module in enumerate(data.get("functional_modules", [])):
+    for index, module in enumerate(data.get("functional_modules", [])):
         if "id" not in module:
-            module["id"] = f"module_{i}"
+            module["id"] = f"module_{index}"
         if "components" not in module:
             module["components"] = []
     return data

@@ -1,5 +1,7 @@
 """Knowledge-base management endpoints."""
 
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +10,7 @@ from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.knowledge_base import (
     KnowledgeBaseCreate,
+    KnowledgeBaseRecentDocument,
     KnowledgeBaseResponse,
     KnowledgeBaseUpdate,
     KnowledgeBaseWithCount,
@@ -15,6 +18,25 @@ from app.models.schemas.knowledge_base import (
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
 router = APIRouter()
+
+
+def _resolve_knowledge_base_status(
+    *,
+    document_count: int,
+    indexed_document_count: int,
+    unindexed_document_count: int,
+    last_uploaded_at: datetime | None,
+) -> str:
+    """Infer a card-friendly status from observable indexing data."""
+    if document_count <= 0:
+        return "empty"
+    if unindexed_document_count <= 0:
+        return "available"
+    if indexed_document_count > 0:
+        return "indexing"
+    if last_uploaded_at and last_uploaded_at >= datetime.utcnow() - timedelta(minutes=5):
+        return "indexing"
+    return "error"
 
 
 @router.get("", response_model=list[KnowledgeBaseWithCount])
@@ -27,15 +49,37 @@ async def list_knowledge_bases(
     rows = await repo.list_with_count(team_id=team_id)
     return [
         KnowledgeBaseWithCount(
-            id=knowledge_base.id,
-            name=knowledge_base.name,
-            team_id=knowledge_base.team_id,
-            description=getattr(knowledge_base, "description", None),
-            created_at=knowledge_base.created_at,
-            updated_at=knowledge_base.updated_at,
-            document_count=doc_count,
+            id=row.knowledge_base.id,
+            name=row.knowledge_base.name,
+            team_id=row.knowledge_base.team_id,
+            description=getattr(row.knowledge_base, "description", None),
+            created_at=row.knowledge_base.created_at,
+            updated_at=row.knowledge_base.updated_at,
+            document_count=row.document_count,
+            indexed_document_count=row.indexed_document_count,
+            unindexed_document_count=row.unindexed_document_count,
+            last_document_updated_at=row.last_document_updated_at,
+            last_uploaded_at=row.last_uploaded_at,
+            status=_resolve_knowledge_base_status(
+                document_count=row.document_count,
+                indexed_document_count=row.indexed_document_count,
+                unindexed_document_count=row.unindexed_document_count,
+                last_uploaded_at=row.last_uploaded_at,
+            ),
+            recent_documents=[
+                KnowledgeBaseRecentDocument(
+                    id=doc.id,
+                    title=doc.title,
+                    document_type=doc.document_type,
+                    size=doc.size,
+                    indexed=doc.indexed,
+                    created_at=doc.created_at,
+                    updated_at=doc.updated_at,
+                )
+                for doc in row.recent_documents
+            ],
         )
-        for knowledge_base, doc_count in rows
+        for row in rows
     ]
 
 

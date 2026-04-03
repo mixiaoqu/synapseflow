@@ -129,6 +129,24 @@ export function useKbChat() {
               }
               break;
             }
+            case "complete": {
+              const answer = event.data.answer;
+              const docs = event.data.retrieved_docs;
+              setTurns((prev) =>
+                prev.map((turn) =>
+                  turn.id === turnIdForUpdate
+                    ? {
+                        ...turn,
+                        answer: typeof answer === "string" ? answer : turn.answer,
+                        retrievedDocs: Array.isArray(docs)
+                          ? (docs as RetrievedDoc[])
+                          : turn.retrievedDocs,
+                      }
+                    : turn,
+                ),
+              );
+              break;
+            }
             case "token": {
               const text = event.data.text;
               if (typeof text === "string" && text) {

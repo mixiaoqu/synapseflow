@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, File, UploadFile
 
-from app.application import prototype_stream_service
+from app.application.prototype_stream_service import prototype_stream_service
 
 router = APIRouter()
 

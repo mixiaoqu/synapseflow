@@ -122,10 +122,10 @@ async def reindex_all(
     knowledge_base_id: int | None = None,
     batch_size: int = 16,
 ) -> int:
-    """Reindex all latest documents in batches."""
+    """Reindex all current documents in batches."""
     async with AsyncSessionLocal() as session:
         stmt = select(Document.id, Document.content).where(
-            Document.is_latest.is_(True),
+            Document.is_current.is_(True),
             Document.user_id == user_id,
         )
         if knowledge_base_id is not None:

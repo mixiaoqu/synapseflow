@@ -1,6 +1,7 @@
 """Knowledge-base related schemas."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,7 +33,26 @@ class KnowledgeBaseResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
+class KnowledgeBaseRecentDocument(BaseModel):
+    """Recent document summary used in knowledge-base cards."""
+
+    id: int
+    title: str
+    document_type: str | None = None
+    size: int = 0
+    indexed: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
 class KnowledgeBaseWithCount(KnowledgeBaseResponse):
     """Knowledge base response with document count."""
 
     document_count: int = 0
+    indexed_document_count: int = 0
+    unindexed_document_count: int = 0
+    last_document_updated_at: datetime | None = None
+    last_uploaded_at: datetime | None = None
+    status: Literal["available", "indexing", "error", "empty"] = "empty"
+    recent_documents: list[KnowledgeBaseRecentDocument] = Field(default_factory=list)

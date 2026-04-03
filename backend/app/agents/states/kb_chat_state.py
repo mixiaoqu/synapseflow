@@ -1,15 +1,13 @@
 """State model for end-user knowledge-base chat."""
 
-from typing import Annotated, Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional
 
-from langgraph.graph.message import add_messages
+from app.agents.runtime.context import BaseAgentContext
 
 
-class KbChatState(TypedDict, total=False):
+class KbChatState(BaseAgentContext, total=False):
     """End-user workflow state for single-round knowledge-base chat."""
 
-    messages: Annotated[List, add_messages]
-    user_id: int
     query: str
     knowledge_base_id: Optional[int]
     retrieved_docs: List[Dict[str, Any]]

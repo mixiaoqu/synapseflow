@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from app.api.dependencies.auth import get_current_user
-from app.application import kb_chat_service
+from app.application.kb_chat_service import get_kb_chat_service
 from app.db.models import User
 from app.models.schemas.kb_chat import KbChatRequest, KbChatResponse
 
@@ -19,7 +19,7 @@ async def kb_chat_invoke(
 ):
     """Synchronously answer a KB chat request for the current user."""
     try:
-        return await kb_chat_service.invoke(request, user_id=current_user.id)
+        return await get_kb_chat_service().invoke(request, user_id=current_user.id)
     except Exception as exc:
         logger.exception("[KB chat] invoke failed: {}", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -32,7 +32,7 @@ async def kb_chat_stream(
 ):
     """Stream a KB chat response for the current user via SSE."""
     return StreamingResponse(
-        kb_chat_service.stream(request, user_id=current_user.id),
+        get_kb_chat_service().stream(request, user_id=current_user.id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -1,5 +1,6 @@
 ﻿"use client";
 
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -9,6 +10,7 @@ import {
   Eye,
   FileClock,
   Loader2,
+  MoreHorizontal,
   PencilLine,
   RefreshCcw,
   Save,
@@ -20,6 +22,7 @@ import {
 import { Toaster, toast } from "sonner";
 
 import { AnswerMarkdown } from "@/components/kb-chat/AnswerMarkdown";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -34,6 +37,7 @@ import {
   listDocuments,
   reindexAll,
   replaceDocumentContent,
+  switchCurrentDocumentVersion,
   uploadDocument,
   uploadDocumentsBatch,
   type DocumentDetail,
@@ -50,6 +54,18 @@ const PAGE_SIZE_OPTIONS = [20, 50, 100];
 
 type StatusValue = "all" | "indexed" | "pending";
 type DetailTabValue = "preview" | "edit" | "versions";
+type ConfirmDialogState = {
+  open: boolean;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  tone: "primary" | "danger";
+  onConfirm: null | (() => void | Promise<void>);
+};
+
+function getLastViewedDocStorageKey(knowledgeBaseId: number) {
+  return `documents:last-viewed:${knowledgeBaseId}`;
+}
 
 function formatDate(value: string) {
   return new Date(value).toLocaleDateString("zh-CN");
@@ -146,6 +162,15 @@ export default function KnowledgeBaseDetailPage() {
   const [deletingOne, setDeletingOne] = useState(false);
   const [savingReplace, setSavingReplace] = useState(false);
   const [savingNewVersion, setSavingNewVersion] = useState(false);
+  const [switchingCurrentVersion, setSwitchingCurrentVersion] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
+    open: false,
+    title: "",
+    description: "",
+    confirmLabel: "确认",
+    tone: "primary",
+    onConfirm: null,
+  });
   const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<StatusValue>("all");
@@ -156,7 +181,6 @@ export default function KnowledgeBaseDetailPage() {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
-  const [activePreviewHeadingId, setActivePreviewHeadingId] = useState<string | null>(null);
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
   const previewArticleRef = useRef<HTMLElement | null>(null);
 
@@ -177,34 +201,133 @@ export default function KnowledgeBaseDetailPage() {
     return hitStatus && hitType;
   });
   const selectedDocListItem = docs.find((item) => item.id === selectedDocId) ?? null;
+  const currentVersion =
+    versions.find((item) => item.is_current) ??
+    versions.find((item) => item.is_latest) ??
+    versions[versions.length - 1] ??
+    null;
   const latestVersion =
     versions.find((item) => item.is_latest) ?? versions[versions.length - 1] ?? null;
+  const isViewingCurrentVersion =
+    selectedVersionId == null || currentVersion == null || selectedVersionId === currentVersion.id;
+  const isViewingLatestVersion =
+    latestVersion != null && selectedVersionId === latestVersion.id;
+  const activeDoc = isViewingCurrentVersion ? selectedDoc : selectedVersionDoc;
+  const activeDocLoading = loadingDoc || (!isViewingCurrentVersion && loadingVersionDoc);
   const totalPages = Math.max(1, Math.ceil(docsTotal / docPageSize));
   const pageStart = docsTotal === 0 ? 0 : (docPage - 1) * docPageSize + 1;
   const pageEnd = docsTotal === 0 ? 0 : Math.min(docPage * docPageSize, docsTotal);
-  const isEditorDirty = selectedDoc != null && editorContent !== selectedDoc.content;
-  const selectedDocVersion = selectedDoc?.version ?? selectedDocListItem?.version ?? 1;
-  const selectedDocIndexed = selectedDocListItem?.indexed ?? false;
+  const isEditorDirty = activeDoc != null && editorContent !== activeDoc.content;
+  const selectedDocVersion = activeDoc?.version ?? selectedDocListItem?.version ?? 1;
+  const selectedDocIndexed = isViewingCurrentVersion ? (selectedDocListItem?.indexed ?? false) : false;
   const selectedDocType =
-    selectedDocListItem?.document_type || selectedDoc?.document_type || "未知类型";
+    activeDoc?.document_type || selectedDocListItem?.document_type || "未知类型";
+  const selectedDocSize = activeDoc?.size ?? selectedDocListItem?.size ?? 0;
+  const selectedDocUpdatedAt = activeDoc?.updated_at ?? selectedDocListItem?.updated_at ?? null;
+  const lastViewedDocStorageKey =
+    Number.isFinite(kbId) && kbId > 0 ? getLastViewedDocStorageKey(kbId) : null;
+  const viewingVersionLabel = isViewingCurrentVersion
+    ? `v${selectedDocVersion} · 当前版本`
+    : isViewingLatestVersion
+      ? `v${selectedDocVersion} · 最新版本`
+      : `v${selectedDocVersion} · 历史版本`;
+  const retrievalStatus = !isViewingCurrentVersion
+    ? {
+        label: "不参与检索",
+        className:
+          "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-50",
+      }
+    : selectedDocIndexed
+      ? {
+          label: "已索引",
+          className:
+            "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50",
+        }
+      : {
+          label: "未索引",
+          className:
+            "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-50",
+        };
+  const selectedDocSummary = [
+    selectedDocType,
+    formatBytes(selectedDocSize),
+    selectedDocUpdatedAt ? `更新于 ${formatDateTime(selectedDocUpdatedAt)}` : null,
+  ]
+    .filter((item): item is string => Boolean(item))
+    .join(" · ");
+  const primaryWarning = !isViewingCurrentVersion
+    ? {
+        tone: "blue" as const,
+        message: "当前正在查看非生效版本。只有切换为当前版本后，它才会参与知识库问答检索。",
+      }
+    : !selectedDocIndexed
+      ? {
+          tone: "amber" as const,
+          message: "当前文档还未建立索引，现有内容暂时不会参与知识库问答检索。",
+        }
+      : null;
   const previewSupportsMarkdown = looksLikeMarkdown(
-    selectedDoc?.document_type ?? selectedDocListItem?.document_type,
-    selectedDoc?.content ?? "",
+    activeDoc?.document_type ?? selectedDocListItem?.document_type,
+    activeDoc?.content ?? "",
   );
   const previewHeadings = previewSupportsMarkdown
-    ? extractMarkdownHeadings(selectedDoc?.content ?? "")
+    ? extractMarkdownHeadings(activeDoc?.content ?? "")
     : [];
+  const hasPreviewHeadings = previewHeadings.length > 0;
 
-  const resetEditorState = (content = selectedDoc?.content ?? "") => {
+  const resetEditorState = (content = activeDoc?.content ?? "") => {
     setEditorContent(content);
     setEditing(false);
   };
 
-  const confirmDiscardDraft = (message: string) => {
-    if (!isEditorDirty) return true;
-    const confirmed = window.confirm(message);
-    if (confirmed) resetEditorState();
-    return confirmed;
+  const closeConfirmDialog = () => {
+    setConfirmDialog((prev) => ({
+      ...prev,
+      open: false,
+      onConfirm: null,
+    }));
+  };
+
+  const openConfirmDialog = (options: Omit<ConfirmDialogState, "open">) => {
+    setConfirmDialog({
+      open: true,
+      ...options,
+    });
+  };
+
+  const runConfirmedAction = () => {
+    const action = confirmDialog.onConfirm;
+    closeConfirmDialog();
+    if (!action) return;
+    void Promise.resolve(action());
+  };
+
+  const requestDiscardDraft = ({
+    title,
+    description,
+    confirmLabel,
+    onConfirm,
+  }: {
+    title: string;
+    description: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  }) => {
+    if (!isEditorDirty) {
+      onConfirm();
+      return;
+    }
+
+    openConfirmDialog({
+      title,
+      description,
+      confirmLabel,
+      tone: "primary",
+      onConfirm: () => {
+        resetEditorState();
+        onConfirm();
+      },
+    });
   };
 
   useEffect(() => {
@@ -303,7 +426,13 @@ export default function KnowledgeBaseDetailPage() {
         setDocsTotal(result.total);
         setSelectedDocId((prev) => {
           if (prev && result.items.some((item) => item.id === prev)) return prev;
-          return null;
+          if (lastViewedDocStorageKey && typeof window !== "undefined") {
+            const storedId = Number(window.localStorage.getItem(lastViewedDocStorageKey));
+            if (storedId > 0 && result.items.some((item) => item.id === storedId)) {
+              return storedId;
+            }
+          }
+          return result.items[0]?.id ?? null;
         });
       } catch (error) {
         if (!cancelled) {
@@ -321,7 +450,7 @@ export default function KnowledgeBaseDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [docPage, docPageSize, kbId, keyword, reloadToken, teamId]);
+  }, [docPage, docPageSize, kbId, keyword, lastViewedDocStorageKey, reloadToken, teamId]);
 
   useEffect(() => {
     if (filteredDocs.length === 0) {
@@ -329,10 +458,22 @@ export default function KnowledgeBaseDetailPage() {
       return;
     }
 
+    if (!selectedDocId) {
+      setSelectedDocId(filteredDocs[0]?.id ?? null);
+      return;
+    }
+
     if (selectedDocId && !filteredDocs.some((item) => item.id === selectedDocId)) {
-      setSelectedDocId(null);
+      setSelectedDocId(filteredDocs[0]?.id ?? null);
     }
   }, [filteredDocs, selectedDocId]);
+
+  useEffect(() => {
+    if (!lastViewedDocStorageKey || typeof window === "undefined") return;
+    if (!selectedDocId) return;
+
+    window.localStorage.setItem(lastViewedDocStorageKey, String(selectedDocId));
+  }, [lastViewedDocStorageKey, selectedDocId]);
 
   useEffect(() => {
     if (!selectedDocId) {
@@ -389,7 +530,12 @@ export default function KnowledgeBaseDetailPage() {
         setVersions(items);
         setSelectedVersionId((prev) => {
           if (prev && items.some((item) => item.id === prev)) return prev;
-          return items.find((item) => item.is_latest)?.id ?? items[items.length - 1]?.id ?? null;
+          return (
+            items.find((item) => item.is_current)?.id ??
+            items.find((item) => item.is_latest)?.id ??
+            items[items.length - 1]?.id ??
+            null
+          );
         });
       } catch (error) {
         if (!cancelled) {
@@ -412,6 +558,13 @@ export default function KnowledgeBaseDetailPage() {
   useEffect(() => {
     if (!selectedVersionId) {
       setSelectedVersionDoc(null);
+      setLoadingVersionDoc(false);
+      return;
+    }
+
+    if (isViewingCurrentVersion) {
+      setSelectedVersionDoc(null);
+      setLoadingVersionDoc(false);
       return;
     }
 
@@ -419,6 +572,7 @@ export default function KnowledgeBaseDetailPage() {
 
     const run = async () => {
       setLoadingVersionDoc(true);
+      setSelectedVersionDoc(null);
 
       try {
         const detail = await getDocument(selectedVersionId);
@@ -437,7 +591,7 @@ export default function KnowledgeBaseDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedVersionId]);
+  }, [isViewingCurrentVersion, selectedVersionId]);
 
   useEffect(() => {
     if (!isEditorDirty) return;
@@ -453,10 +607,7 @@ export default function KnowledgeBaseDetailPage() {
 
   useEffect(() => {
     const article = previewArticleRef.current;
-    if (!article || previewHeadings.length === 0) {
-      setActivePreviewHeadingId(null);
-      return;
-    }
+    if (!article || previewHeadings.length === 0) return;
 
     const headingElements = Array.from(article.querySelectorAll("h1, h2, h3"));
     headingElements.forEach((element, index) => {
@@ -465,29 +616,37 @@ export default function KnowledgeBaseDetailPage() {
       element.id = heading.id;
       (element as HTMLElement).style.scrollMarginTop = "104px";
     });
-
-    setActivePreviewHeadingId(previewHeadings[0]?.id ?? null);
-  }, [previewHeadings, selectedDoc?.content]);
+  }, [activeDoc?.content, previewHeadings]);
 
   const reload = () => setReloadToken((value) => value + 1);
 
   const openDocumentsList = () => {
-    if (!confirmDiscardDraft("返回知识库列表会丢失当前未保存修改，确定继续吗？")) return;
-    router.push("/documents");
+    requestDiscardDraft({
+      title: "离开当前文档工作台？",
+      description: "你还没有保存当前修改。现在返回知识库列表，会直接丢失这部分编辑内容。",
+      confirmLabel: "放弃修改并返回",
+      onConfirm: () => router.push("/documents"),
+    });
   };
 
   const onDetailTabChange = (nextTab: DetailTabValue) => {
     if (nextTab === detailTab) return;
-    if (
-      detailTab === "edit" &&
-      nextTab !== "edit" &&
-      !confirmDiscardDraft("切换标签会丢失当前未保存修改，确定继续吗？")
-    ) {
+    if (detailTab === "edit" && nextTab !== "edit") {
+      requestDiscardDraft({
+        title: "切换标签页？",
+        description: "当前编辑内容还没有保存。离开编辑区后，这些本地修改会被放弃。",
+        confirmLabel: "放弃修改并切换",
+        onConfirm: () => setDetailTab(nextTab),
+      });
       return;
     }
 
-    if (nextTab === "edit" && selectedDoc) {
-      resetEditorState(selectedDoc.content);
+    if (nextTab === "edit") {
+      if (!activeDoc) {
+        toast.error("当前版本内容仍在加载，请稍后再试");
+        return;
+      }
+      resetEditorState(activeDoc.content);
     }
 
     setDetailTab(nextTab);
@@ -498,21 +657,27 @@ export default function KnowledgeBaseDetailPage() {
       setDetailTab("preview");
       return;
     }
-    if (!confirmDiscardDraft("切换文档会丢失当前未保存修改，确定继续吗？")) return;
-    setSelectedDocId(docId);
-    setDetailTab("preview");
+    requestDiscardDraft({
+      title: "切换到另一篇文档？",
+      description: "当前文档还有未保存修改。现在切换文档，会丢失这部分编辑内容。",
+      confirmLabel: "放弃修改并切换",
+      onConfirm: () => {
+        setSelectedDocId(docId);
+        setDetailTab("preview");
+      },
+    });
   };
 
   const scrollPreviewToTop = () => {
     previewScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-    setActivePreviewHeadingId(previewHeadings[0]?.id ?? null);
   };
 
   const onSelectPreviewHeading = (headingId: string) => {
-    const target = previewArticleRef.current?.querySelector<HTMLElement>(`#${headingId}`);
+    const target = Array.from(
+      previewArticleRef.current?.querySelectorAll<HTMLElement>("h1, h2, h3") ?? [],
+    ).find((element) => element.id === headingId);
     if (!target) return;
     target.scrollIntoView({ behavior: "smooth", block: "start" });
-    setActivePreviewHeadingId(headingId);
   };
 
   const onSearch = () => {
@@ -526,17 +691,37 @@ export default function KnowledgeBaseDetailPage() {
     setDocPage(1);
   };
 
-  const onStartEditing = () => {
-    if (!selectedDoc) return;
-    resetEditorState(selectedDoc.content);
+  const onEditFromVersion = () => {
+    if (!activeDoc) return;
+    setEditorContent(activeDoc.content);
+    setEditing(selectedDoc?.content !== activeDoc.content);
     setDetailTab("edit");
   };
 
-  const onEditFromVersion = () => {
-    if (!selectedVersionDoc) return;
-    setEditorContent(selectedVersionDoc.content);
-    setEditing(selectedDoc?.content !== selectedVersionDoc.content);
-    setDetailTab("edit");
+  const onSwitchCurrentVersion = async () => {
+    if (!selectedVersionId || isViewingCurrentVersion) return;
+    openConfirmDialog({
+      title: "切换当前生效版本？",
+      description:
+        "切换后，这个版本会立即成为知识库问答的生效内容；原当前版本将不再参与检索。",
+      confirmLabel: "确认切换",
+      tone: "primary",
+      onConfirm: async () => {
+        setSwitchingCurrentVersion(true);
+        try {
+          const updated = await switchCurrentDocumentVersion(selectedVersionId);
+          setSelectedDocId(updated.id);
+          setSelectedVersionId(updated.id);
+          setDetailTab("preview");
+          toast.success(`已切换为当前版本 v${updated.version}`);
+          reload();
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "切换当前版本失败");
+        } finally {
+          setSwitchingCurrentVersion(false);
+        }
+      },
+    });
   };
 
   const onReindexAll = async () => {
@@ -569,18 +754,24 @@ export default function KnowledgeBaseDetailPage() {
 
   const onDeleteOne = async () => {
     if (!selectedDocListItem) return;
-    if (!window.confirm(`确认删除“${selectedDocListItem.title}”及其全部版本吗？`)) return;
-
-    setDeletingOne(true);
-    try {
-      await deleteDocument(selectedDocListItem.id);
-      toast.success("文档已删除");
-      reload();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "删除失败");
-    } finally {
-      setDeletingOne(false);
-    }
+    openConfirmDialog({
+      title: "删除这篇文档？",
+      description: `“${selectedDocListItem.title}”及其全部版本都会被删除，相关版本记录也无法恢复。`,
+      confirmLabel: "确认删除",
+      tone: "danger",
+      onConfirm: async () => {
+        setDeletingOne(true);
+        try {
+          await deleteDocument(selectedDocListItem.id);
+          toast.success("文档已删除");
+          reload();
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "删除失败");
+        } finally {
+          setDeletingOne(false);
+        }
+      },
+    });
   };
 
   const uploadFiles = async (files: File[] | FileList | null) => {
@@ -910,45 +1101,86 @@ export default function KnowledgeBaseDetailPage() {
                   >
                     <div className="border-b border-slate-200 bg-white">
                       <div className="px-5 py-4">
-                        <div className="hidden items-start justify-between gap-3">
-                          <div className="min-w-0">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0 flex-1">
                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                               文档工作台
                             </p>
-                            <h3 className="mt-1 line-clamp-2 text-lg font-semibold text-slate-900">
+                            <h3 className="mt-1 line-clamp-2 text-xl font-semibold text-slate-900">
                               {selectedDocListItem.title}
                             </h3>
-                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                              <span className="rounded-full bg-slate-100 px-2.5 py-1">
-                                v{selectedDocVersion}
-                              </span>
-                              <span className="rounded-full bg-slate-100 px-2.5 py-1">
-                                {selectedDocType}
-                              </span>
-                              <span className="rounded-full bg-slate-100 px-2.5 py-1">
-                                {formatBytes(selectedDocListItem.size)}
-                              </span>
-                              <span
+                            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                              <Badge
+                                variant="outline"
+                                className="border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                              >
+                                {viewingVersionLabel}
+                              </Badge>
+                              <Badge
+                                variant="outline"
+                                className={cn("px-2 py-0.5 text-xs font-medium", retrievalStatus.className)}
+                              >
+                                {retrievalStatus.label}
+                              </Badge>
+                              {selectedDocSummary ? (
+                                <p className="min-w-0 truncate text-sm text-slate-500">
+                                  {selectedDocSummary}
+                                </p>
+                              ) : null}
+                            </div>
+                            {primaryWarning ? (
+                              <div
                                 className={cn(
-                                  "rounded-full px-2.5 py-1",
-                                  selectedDocIndexed
-                                    ? "bg-emerald-100 text-emerald-700"
-                                    : "bg-amber-100 text-amber-700",
+                                  "mt-3 rounded-xl px-3.5 py-2.5 text-sm",
+                                  primaryWarning.tone === "blue"
+                                    ? "border border-blue-200 bg-blue-50 text-blue-800"
+                                    : "border border-amber-200 bg-amber-50 text-amber-800",
                                 )}
                               >
-                                {selectedDocIndexed ? "已索引" : "未索引"}
-                              </span>
-                            </div>
+                                {primaryWarning.message}
+                              </div>
+                            ) : null}
                           </div>
-                          <div className="shrink-0 text-right text-xs text-slate-500">
-                            <p>更新时间</p>
-                            <p className="mt-1 font-medium text-slate-700">
-                              {formatDateTime(selectedDocListItem.updated_at)}
-                            </p>
+                          <div className="flex shrink-0 items-start gap-2">
+                            <DropdownMenu.Root>
+                              <DropdownMenu.Trigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="border-slate-200 text-slate-500 hover:text-slate-900"
+                                  aria-label="更多操作"
+                                >
+                                  更多操作
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenu.Trigger>
+                              <DropdownMenu.Portal>
+                                <DropdownMenu.Content
+                                  side="bottom"
+                                  align="end"
+                                  sideOffset={8}
+                                  className="z-50 min-w-[168px] rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
+                                >
+                                  <DropdownMenu.Item
+                                    onSelect={() => void onDeleteOne()}
+                                    disabled={!selectedDocListItem || deletingOne}
+                                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-600 outline-none transition-colors hover:bg-red-50 focus:bg-red-50 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
+                                  >
+                                    {deletingOne ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="h-4 w-4" />
+                                    )}
+                                    删除文档
+                                  </DropdownMenu.Item>
+                                </DropdownMenu.Content>
+                              </DropdownMenu.Portal>
+                            </DropdownMenu.Root>
                           </div>
                         </div>
 
-                        <TabsList className="grid h-11 w-full grid-cols-3 rounded-xl bg-slate-100 p-1">
+                        <TabsList className="mt-4 grid h-10 w-full grid-cols-3 rounded-xl bg-slate-100 p-1">
                           <TabsTrigger value="preview" className="gap-1.5 rounded-lg">
                             <Eye className="h-3.5 w-3.5" />
                             预览
@@ -965,101 +1197,84 @@ export default function KnowledgeBaseDetailPage() {
                       </div>
                     </div>
 
-                    <TabsContent value="preview" className="mt-0 min-h-0 flex-1">
-                      <div className="flex h-full min-h-0 flex-col">
-                        <div ref={previewScrollRef} className="min-h-0 flex-1 overflow-y-auto">
-                          <div className="hidden sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-5 py-3 backdrop-blur">
-                            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">
-                                类型：{selectedDocType}
-                              </span>
-                              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">
-                                大小：{formatBytes(selectedDocListItem.size)}
-                              </span>
-                              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">
-                                更新时间：{formatDateTime(selectedDocListItem.updated_at)}
-                              </span>
-                            </div>
-                            {!selectedDocIndexed ? (
-                              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                                当前文档还未建立索引，现有内容暂时不会参与知识库问答检索。
-                              </div>
-                            ) : null}
+                    <TabsContent
+                      value="preview"
+                      ref={previewScrollRef}
+                      className="mt-0 min-h-0 flex-1 overflow-y-auto"
+                    >
+                      <div className="px-4 py-4 sm:px-5">
+                        {activeDocLoading ? (
+                          <div className="flex min-h-[320px] items-center justify-center text-sm text-slate-500">
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            正在加载正文...
                           </div>
-
-                          <div className="px-5 py-5">
-                            {loadingDoc ? (
-                              <div className="flex min-h-[320px] items-center justify-center text-sm text-slate-500">
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                正在加载正文...
-                              </div>
-                            ) : !selectedDoc?.content ? (
-                              <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 text-sm text-slate-500">
-                                当前文档还没有可预览的正文内容。
-                              </div>
-                            ) : (
-                              <div className="grid gap-5 xl:grid-cols-[260px_minmax(0,1fr)]">
-                                <aside className="max-h-[calc(100vh-20rem)] overflow-y-auto pr-1 xl:sticky xl:top-5 xl:self-start">
-                                  {previewHeadings.length > 0 ? (
-                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                                          文档目录
-                                        </p>
-                                        <button
-                                          type="button"
-                                          onClick={scrollPreviewToTop}
-                                          className="text-xs text-slate-500 transition-colors hover:text-slate-900"
-                                        >
-                                          回到顶部
-                                        </button>
-                                      </div>
-                                      <div className="mt-3 space-y-1">
-                                        {previewHeadings.map((heading) => (
-                                          <button
-                                            key={heading.id}
-                                            type="button"
-                                            onClick={() => onSelectPreviewHeading(heading.id)}
-                                            className={cn(
-                                              "block w-full rounded-lg px-3 py-2 text-left text-sm transition-colors",
-                                              heading.depth === 1
-                                                ? "font-medium"
-                                                : "text-slate-600",
-                                              heading.depth === 2 ? "pl-4" : "",
-                                              heading.depth === 3 ? "pl-6 text-[13px]" : "",
-                                              activePreviewHeadingId === heading.id
-                                                ? "bg-blue-50 text-blue-700"
-                                                : "text-slate-700 hover:bg-slate-50",
-                                            )}
-                                          >
-                                            {heading.text}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 p-4 text-sm text-slate-500">
-                                      这篇文档没有可提取的标题目录。
-                                    </div>
-                                  )}
-                                </aside>
-
-                                <article
-                                  ref={previewArticleRef}
-                                  className="mx-auto w-full max-w-4xl rounded-2xl border border-slate-200 bg-white px-6 py-6 shadow-sm"
-                                >
-                                  {previewSupportsMarkdown ? (
-                                    <AnswerMarkdown text={selectedDoc.content} />
-                                  ) : (
-                                    <pre className="whitespace-pre-wrap break-words font-sans text-[15px] leading-8 text-slate-700">
-                                      {selectedDoc.content}
-                                    </pre>
-                                  )}
-                                </article>
-                              </div>
+                        ) : !activeDoc?.content ? (
+                          <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 text-sm text-slate-500">
+                            当前文档还没有可预览的正文内容。
+                          </div>
+                        ) : (
+                          <div
+                            className={cn(
+                              "grid gap-4",
+                              hasPreviewHeadings
+                                ? "xl:grid-cols-[240px_minmax(0,1fr)]"
+                                : "xl:grid-cols-[minmax(0,1fr)]",
                             )}
+                          >
+                            {hasPreviewHeadings ? (
+                              <aside className="pr-1 xl:sticky xl:top-4 xl:self-start">
+                                <div className="rounded-2xl border border-slate-200 bg-white p-3.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                      文档目录
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={scrollPreviewToTop}
+                                      className="text-xs text-slate-500 transition-colors hover:text-slate-900"
+                                    >
+                                      回到顶部
+                                    </button>
+                                  </div>
+                                  <div className="mt-2.5 space-y-1">
+                                    {previewHeadings.map((heading) => (
+                                      <button
+                                        key={heading.id}
+                                        type="button"
+                                        onClick={() => onSelectPreviewHeading(heading.id)}
+                                        className={cn(
+                                          "block w-full rounded-lg px-3 py-1.5 text-left text-sm transition-colors",
+                                          heading.depth === 1 ? "font-medium" : "text-slate-600",
+                                          heading.depth === 2 ? "pl-4" : "",
+                                          heading.depth === 3 ? "pl-6 text-[13px]" : "",
+                                          "text-slate-700 hover:bg-slate-50",
+                                        )}
+                                      >
+                                        {heading.text}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              </aside>
+                            ) : null}
+
+                            <article
+                              ref={previewArticleRef}
+                              className={cn(
+                                "w-full rounded-2xl border border-slate-200 bg-white px-5 py-5",
+                                hasPreviewHeadings ? "mx-auto max-w-4xl" : "max-w-none",
+                              )}
+                            >
+                              {previewSupportsMarkdown ? (
+                                <AnswerMarkdown text={activeDoc.content} />
+                              ) : (
+                                <pre className="whitespace-pre-wrap break-words font-sans text-[15px] leading-8 text-slate-700">
+                                  {activeDoc.content}
+                                </pre>
+                              )}
+                            </article>
                           </div>
-                        </div>
+                        )}
                       </div>
                     </TabsContent>
 
@@ -1069,14 +1284,24 @@ export default function KnowledgeBaseDetailPage() {
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div className="space-y-1">
                               <p className="text-sm font-medium text-slate-900">
-                                正在编辑 v{selectedDocVersion}
+                                {isViewingCurrentVersion
+                                  ? `正在编辑当前版本 v${selectedDocVersion}`
+                                  : `正在基于历史版本 v${selectedDocVersion} 编辑`}
                               </p>
                               <p className="text-xs text-slate-500">
-                                {isEditorDirty ? "有未保存修改" : "当前内容与最新版本一致"}
+                                {isEditorDirty
+                                  ? "有未保存修改"
+                                  : isViewingCurrentVersion
+                                    ? "当前内容与所选当前版本一致"
+                                    : "保存后会生成一个新的最新版本"}
                               </p>
                             </div>
                             <p className="max-w-md text-xs leading-5 text-slate-500">
-                              推荐优先保存为新版本，覆盖当前版本会直接修改最新稿。
+                              {isViewingLatestVersion
+                                ? "推荐优先保存为新版本，覆盖当前版本会直接修改最新稿。"
+                                : isViewingCurrentVersion
+                                  ? "当前生效版本不是最新稿，因此不支持直接覆盖，请保存为新版本。"
+                                  : "历史版本不支持直接覆盖，请保存为新版本以保留版本链。"}
                             </p>
                           </div>
                         </div>
@@ -1095,13 +1320,13 @@ export default function KnowledgeBaseDetailPage() {
                       </div>
                     </TabsContent>
 
-                    <TabsContent value="versions" className="mt-0 min-h-0 flex-1">
-                      <div className="grid h-full min-h-0 gap-4 p-4 xl:grid-cols-[minmax(220px,0.6fr)_minmax(0,1.4fr)]">
-                        <div className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white">
+                    <TabsContent value="versions" className="mt-0 min-h-0 flex-1 overflow-y-auto">
+                      <div className="grid gap-4 p-4 xl:grid-cols-[minmax(220px,0.6fr)_minmax(0,1.4fr)]">
+                        <div className="rounded-2xl border border-slate-200 bg-white xl:sticky xl:top-4 xl:self-start">
                           <div className="border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-700">
-                            历史版本
+                            版本列表
                           </div>
-                          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+                          <div className="px-3 py-3">
                             {loadingVersions ? (
                               <div className="flex items-center px-1 py-3 text-sm text-slate-500">
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1109,7 +1334,7 @@ export default function KnowledgeBaseDetailPage() {
                               </div>
                             ) : versions.length === 0 ? (
                               <p className="px-1 py-3 text-sm text-slate-500">
-                                暂时没有可查看的历史版本。
+                                暂时没有可查看的版本记录。
                               </p>
                             ) : (
                               <div className="space-y-3">
@@ -1129,11 +1354,18 @@ export default function KnowledgeBaseDetailPage() {
                                       <span className="text-sm font-semibold text-slate-900">
                                         v{item.version}
                                       </span>
-                                      {item.is_latest ? (
-                                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
-                                          最新版本
-                                        </span>
-                                      ) : null}
+                                      <div className="flex flex-wrap items-center justify-end gap-1">
+                                        {item.is_current ? (
+                                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                                            当前版本
+                                          </span>
+                                        ) : null}
+                                        {item.is_latest ? (
+                                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                                            最新版本
+                                          </span>
+                                        ) : null}
+                                      </div>
                                     </div>
                                     <p className="mt-2 text-xs text-slate-500">
                                       创建于 {formatDateTime(item.created_at)}
@@ -1145,42 +1377,39 @@ export default function KnowledgeBaseDetailPage() {
                           </div>
                         </div>
 
-                        <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        <div className="rounded-2xl border border-slate-200 bg-white">
                           <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
                             <p className="text-sm font-medium text-slate-800">
-                              {selectedVersionDoc
-                                ? `版本 v${selectedVersionDoc.version}${
-                                    latestVersion?.id === selectedVersionDoc.id ? " | 最新版本" : ""
-                                  }`
+                              {activeDoc
+                                ? `版本 v${activeDoc.version}${
+                                    isViewingCurrentVersion ? " | 当前版本" : ""
+                                  }${isViewingLatestVersion ? " | 最新版本" : ""}`
                                 : "版本预览"}
                             </p>
-                            {selectedVersionDoc ? (
+                            {activeDoc ? (
                               <p className="mt-1 text-xs text-slate-500">
-                                创建时间：{formatDateTime(selectedVersionDoc.created_at)}
+                                创建时间：{formatDateTime(activeDoc.created_at)}
                               </p>
                             ) : null}
                           </div>
 
-                          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-                            {loadingVersionDoc ? (
+                          <div className="px-5 py-5">
+                            {activeDocLoading ? (
                               <div className="flex min-h-[320px] items-center justify-center text-sm text-slate-500">
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                 正在加载版本内容...
                               </div>
-                            ) : !selectedVersionDoc ? (
+                            ) : !activeDoc ? (
                               <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 text-sm text-slate-500">
                                 选择一个版本后，这里会显示对应内容。
                               </div>
                             ) : (
                               <article className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
-                                {looksLikeMarkdown(
-                                  selectedVersionDoc.document_type,
-                                  selectedVersionDoc.content,
-                                ) ? (
-                                  <AnswerMarkdown text={selectedVersionDoc.content} />
+                                {looksLikeMarkdown(activeDoc.document_type, activeDoc.content) ? (
+                                  <AnswerMarkdown text={activeDoc.content} />
                                 ) : (
                                   <pre className="whitespace-pre-wrap break-words font-sans text-[15px] leading-8 text-slate-700">
-                                    {selectedVersionDoc.content || "暂时没有内容。"}
+                                    {activeDoc.content || "暂时没有内容。"}
                                   </pre>
                                 )}
                               </article>
@@ -1190,41 +1419,42 @@ export default function KnowledgeBaseDetailPage() {
                       </div>
                     </TabsContent>
 
-                    <div className="border-t border-slate-200 bg-white px-5 py-4">
-                      {detailTab === "preview" ? (
-                        <div className="flex flex-wrap gap-2">
-                          {!selectedDocIndexed ? (
-                            <Button
-                              variant="outline"
-                              className="border-slate-200"
-                              onClick={() => void onReindexOne()}
-                              disabled={!selectedDocListItem || indexingOne}
-                            >
-                              {indexingOne ? (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              ) : (
-                                <RefreshCcw className="mr-2 h-4 w-4" />
-                              )}
-                              重新索引
-                            </Button>
-                          ) : null}
-                          <Button
-                            variant="destructive"
-                            className="ml-auto"
-                            onClick={() => void onDeleteOne()}
-                            disabled={!selectedDocListItem || deletingOne}
+                    {detailTab === "preview" && isViewingCurrentVersion ? (
+                      <div className="border-t border-slate-200 bg-white px-5 py-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p
+                            className={cn(
+                              "text-xs",
+                              selectedDocIndexed ? "text-slate-500" : "text-amber-700",
+                            )}
                           >
-                            {deletingOne ? (
+                            {selectedDocIndexed
+                              ? "当前版本已建立索引，需要时仍可手动重新构建。"
+                              : "当前版本尚未建立索引，暂时不会参与知识库问答检索。"}
+                          </p>
+                          <Button
+                            variant={selectedDocIndexed ? "outline" : "default"}
+                            className={
+                              selectedDocIndexed
+                                ? "border-slate-200"
+                                : "bg-amber-600 text-white hover:bg-amber-700"
+                            }
+                            onClick={() => void onReindexOne()}
+                            disabled={!selectedDocListItem || indexingOne}
+                          >
+                            {indexingOne ? (
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             ) : (
-                              <Trash2 className="mr-2 h-4 w-4" />
+                              <RefreshCcw className="mr-2 h-4 w-4" />
                             )}
-                            删除文档
+                            重新索引
                           </Button>
                         </div>
-                      ) : null}
+                      </div>
+                    ) : null}
 
-                      {detailTab === "edit" ? (
+                    {detailTab === "edit" ? (
+                      <div className="border-t border-slate-200 bg-white px-5 py-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div className="text-xs text-slate-500">
                             {isEditorDirty ? "存在未保存修改" : "当前没有本地修改"}
@@ -1242,7 +1472,14 @@ export default function KnowledgeBaseDetailPage() {
                               variant="outline"
                               className="border-slate-200"
                               onClick={() => void onSaveReplace()}
-                              disabled={loadingDoc || !selectedDoc || !isEditorDirty || savingReplace}
+                              disabled={
+                                activeDocLoading ||
+                                !selectedDoc ||
+                                !isViewingCurrentVersion ||
+                                !isViewingLatestVersion ||
+                                !isEditorDirty ||
+                                savingReplace
+                              }
                             >
                               {savingReplace ? (
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1267,17 +1504,32 @@ export default function KnowledgeBaseDetailPage() {
                             </Button>
                           </div>
                         </div>
-                      ) : null}
+                      </div>
+                    ) : null}
 
-                      {detailTab === "versions" ? (
+                    {detailTab === "versions" ? (
+                      <div className="border-t border-slate-200 bg-white px-5 py-4">
                         <div className="flex flex-wrap gap-2">
                           <Button
                             className="bg-blue-600 text-white hover:bg-blue-700"
                             onClick={onEditFromVersion}
-                            disabled={!selectedVersionDoc}
+                            disabled={!activeDoc}
                           >
                             <PencilLine className="mr-2 h-4 w-4" />
                             基于该版本继续编辑
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="border-slate-200"
+                            onClick={() => void onSwitchCurrentVersion()}
+                            disabled={!selectedVersionId || isViewingCurrentVersion || switchingCurrentVersion}
+                          >
+                            {switchingCurrentVersion ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <FileClock className="mr-2 h-4 w-4" />
+                            )}
+                            {isViewingCurrentVersion ? "当前生效版本" : "切换为当前版本"}
                           </Button>
                           <Button
                             variant="outline"
@@ -1288,28 +1540,55 @@ export default function KnowledgeBaseDetailPage() {
                             <Eye className="mr-2 h-4 w-4" />
                             查看最新版本
                           </Button>
-                          <Button
-                            variant="destructive"
-                            className="ml-auto"
-                            onClick={() => void onDeleteOne()}
-                            disabled={!selectedDocListItem || deletingOne}
-                          >
-                            {deletingOne ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <Trash2 className="mr-2 h-4 w-4" />
-                            )}
-                            删除文档
-                          </Button>
                         </div>
-                      ) : null}
-                    </div>
+                      </div>
+                    ) : null}
                   </Tabs>
                 </aside>
               ) : null}
             </div>
         </section>
       </main>
+
+      {confirmDialog.open ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm"
+          onClick={closeConfirmDialog}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-lg font-semibold text-slate-900">{confirmDialog.title}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  {confirmDialog.description}
+                </p>
+              </div>
+              <Button variant="ghost" size="icon" onClick={closeConfirmDialog}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-2">
+              <Button variant="outline" className="border-slate-200" onClick={closeConfirmDialog}>
+                取消
+              </Button>
+              <Button
+                className={
+                  confirmDialog.tone === "danger"
+                    ? "bg-red-600 text-white hover:bg-red-700"
+                    : "bg-blue-600 text-white hover:bg-blue-700"
+                }
+                onClick={runConfirmedAction}
+              >
+                {confirmDialog.confirmLabel}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {uploadModalOpen ? (
         <div

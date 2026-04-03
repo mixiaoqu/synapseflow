@@ -1,13 +1,34 @@
 import { apiClient } from "./client";
 
-export interface KnowledgeBaseWithCount {
+export interface KnowledgeBaseBase {
   id: number;
   name: string;
   team_id: number;
   description?: string | null;
-  document_count: number;
   created_at: string;
   updated_at: string;
+}
+
+export type KnowledgeBaseStatus = "available" | "indexing" | "error" | "empty";
+
+export interface KnowledgeBaseRecentDocument {
+  id: number;
+  title: string;
+  document_type: string | null;
+  size: number;
+  indexed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeBaseWithCount extends KnowledgeBaseBase {
+  document_count: number;
+  indexed_document_count: number;
+  unindexed_document_count: number;
+  last_document_updated_at: string | null;
+  last_uploaded_at: string | null;
+  status: KnowledgeBaseStatus;
+  recent_documents: KnowledgeBaseRecentDocument[];
 }
 
 export async function listKnowledgeBases(
@@ -23,7 +44,7 @@ export async function createKnowledgeBase(
   name: string,
   teamId: number,
   description?: string | null,
-): Promise<KnowledgeBaseWithCount> {
+): Promise<KnowledgeBaseBase> {
   return apiClient.post("/api/v1/knowledge-bases", {
     name,
     team_id: teamId,

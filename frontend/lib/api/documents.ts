@@ -30,6 +30,7 @@ export type DocumentVersionItem = {
   title: string;
   version: number;
   is_latest: boolean;
+  is_current: boolean;
   created_at: string;
 };
 
@@ -116,6 +117,10 @@ export async function createDocumentVersion(
   content: string,
 ): Promise<DocumentDetail> {
   return apiClient.post(`/api/v1/documents/${docId}/versions`, { content });
+}
+
+export async function switchCurrentDocumentVersion(docId: number): Promise<DocumentDetail> {
+  return apiClient.post(`/api/v1/documents/${docId}/current`, {});
 }
 
 export async function indexDocument(

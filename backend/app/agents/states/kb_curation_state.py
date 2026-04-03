@@ -1,15 +1,13 @@
 """State model for admin-facing knowledge-base curation QA."""
 
-from typing import Annotated, Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional
 
-from langgraph.graph.message import add_messages
+from app.agents.runtime.context import BaseAgentContext
 
 
-class KbCurationState(TypedDict, total=False):
+class KbCurationState(BaseAgentContext, total=False):
     """Admin workflow state for iterative knowledge-base curation."""
 
-    messages: Annotated[List, add_messages]
-    user_id: int
     query: str
     optimized_query: str
     knowledge_base_id: Optional[int]

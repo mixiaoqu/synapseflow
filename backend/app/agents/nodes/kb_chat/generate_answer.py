@@ -1,24 +1,33 @@
 """End-user knowledge-base answer generation helpers and node."""
 
-from typing import Any, AsyncGenerator, Callable, Dict, Optional
+from __future__ import annotations
+
+from typing import Any, AsyncGenerator, Callable, Optional
 
 from app.agents.prompts.kb_chat import build_kb_chat_answer_prompt
 from app.agents.states import KbChatState
-from app.core.llm import get_llm_for_generation
 
 KB_EMPTY_COLLECTION_REPLY = (
-    "当前选择的集合下还没有可检索的文档，请先在“文档库”中上传文档并完成索引。"
+    "The selected knowledge base does not have any indexed documents yet. "
+    "Please upload documents and finish indexing first."
 )
 KB_NO_HITS_REPLY = (
-    "没有在知识库中检索到与问题直接相关的资料。可以换一个说法或关键词，"
-    "或将检索范围设为“全部知识库”后再试。"
+    "I could not find directly relevant material in the knowledge base. "
+    "Try rephrasing the question or widening the retrieval scope."
 )
 
 
-def should_skip_kb_llm(state: Dict[str, Any]) -> Optional[str]:
+def _get_default_llm_factory() -> Callable[[], Any]:
+    from app.core.llm import get_llm_for_generation
+
+    return get_llm_for_generation
+
+
+def should_skip_kb_llm(state: dict[str, Any]) -> Optional[str]:
     """Return a fixed reply when retrieval yields nothing useful."""
+
     status = state.get("kb_retrieval_status")
-    if status == "empty_collection":
+    if status in {"empty_collection", "empty_knowledge_base"}:
         return KB_EMPTY_COLLECTION_REPLY
     if status == "no_hits":
         return KB_NO_HITS_REPLY
@@ -29,7 +38,7 @@ def should_skip_kb_llm(state: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _build_prompt(state: Dict[str, Any]) -> str:
+def _build_prompt(state: dict[str, Any]) -> str:
     return build_kb_chat_answer_prompt(
         state.get("query", ""),
         state.get("context", ""),
@@ -51,37 +60,39 @@ def _coerce_text(content: Any) -> str:
 
 
 async def generate_kb_chat_answer_text(
-    state: Dict[str, Any],
+    state: dict[str, Any],
     *,
-    llm_factory: Callable[[], Any] = get_llm_for_generation,
+    llm_factory: Callable[[], Any] | None = None,
 ) -> str:
     fixed = should_skip_kb_llm(state)
     if fixed:
         return fixed
 
-    llm = llm_factory()
+    resolved_llm_factory = llm_factory or _get_default_llm_factory()
+    llm = resolved_llm_factory()
     response = await llm.ainvoke(_build_prompt(state))
     return _coerce_text(getattr(response, "content", response))
 
 
 async def stream_kb_chat_answer_text(
-    state: Dict[str, Any],
+    state: dict[str, Any],
     *,
-    llm_factory: Callable[[], Any] = get_llm_for_generation,
+    llm_factory: Callable[[], Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     fixed = should_skip_kb_llm(state)
     if fixed:
         yield fixed
         return
 
-    llm = llm_factory()
+    resolved_llm_factory = llm_factory or _get_default_llm_factory()
+    llm = resolved_llm_factory()
     async for chunk in llm.astream(_build_prompt(state)):
         text = _coerce_text(getattr(chunk, "content", None))
         if text:
             yield text
 
 
-async def user_kb_generate_answer_node(state: KbChatState) -> Dict[str, Any]:
+async def user_kb_generate_answer_node(state: KbChatState) -> dict[str, Any]:
     text = await generate_kb_chat_answer_text(state)
     return {
         "answer": text,

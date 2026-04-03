@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, KnowledgeBase
@@ -35,6 +35,7 @@ class DocumentRepository:
             version=1,
             parent_id=None,
             is_latest=True,
+            is_current=True,
             knowledge_base_id=knowledge_base_id,
         )
         self.db.add(doc)
@@ -75,7 +76,7 @@ class DocumentRepository:
     ) -> tuple[list[tuple[Document, str | None]], int]:
         """Return paginated latest documents plus knowledge-base name."""
         base_filter = Document.user_id == self.user_id
-        base_filter = base_filter & Document.is_latest.is_(True)
+        base_filter = base_filter & Document.is_current.is_(True)
         if keyword and keyword.strip():
             base_filter = base_filter & Document.title.ilike(f"%{keyword.strip()}%")
         if knowledge_base_id is not None:
@@ -159,6 +160,48 @@ class DocumentRepository:
         await self.db.refresh(doc)
         return doc
 
+    async def get_current_by_root_id(self, root_id: int) -> Document | None:
+        """Fetch the current version for a version chain."""
+        result = await self.db.execute(
+            select(Document)
+            .where(
+                Document.root_id == root_id,
+                Document.user_id == self.user_id,
+                Document.is_current.is_(True),
+            )
+            .order_by(
+                Document.is_latest.desc(),
+                Document.version.desc(),
+                Document.updated_at.desc(),
+                Document.id.desc(),
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def clear_current_flags_for_root_id(self, root_id: int) -> None:
+        """Clear current flags for every version in a chain."""
+        await self.db.execute(
+            update(Document)
+            .where(
+                Document.root_id == root_id,
+                Document.user_id == self.user_id,
+                Document.is_current.is_(True),
+            )
+            .values(is_current=False)
+        )
+
+    async def get_latest_by_root_id(self, root_id: int) -> Document | None:
+        """Fetch the latest version for a version chain."""
+        result = await self.db.execute(
+            select(Document).where(
+                Document.root_id == root_id,
+                Document.user_id == self.user_id,
+                Document.is_latest.is_(True),
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def create_version(
         self,
         doc_id: int,
@@ -171,25 +214,25 @@ class DocumentRepository:
         if not orig:
             return None
         root_id = orig.root_id or orig.id
-        max_stmt = select(Document.version).where(
-            Document.root_id == root_id,
-            Document.is_latest.is_(True),
-        )
-        max_res = await self.db.execute(max_stmt)
-        max_version = max_res.scalar_one_or_none()
+        latest_doc = await self.get_latest_by_root_id(root_id)
+        current_doc = await self.get_current_by_root_id(root_id)
+        max_version = getattr(latest_doc, "version", None)
         new_doc = Document(
             user_id=self.user_id,
-            title=orig.title,
+            title=(latest_doc.title if latest_doc else orig.title),
             content=content,
-            document_type=orig.document_type,
+            document_type=(latest_doc.document_type if latest_doc else orig.document_type),
             size=len(content.encode("utf-8")),
             version=(max_version or 1) + 1,
-            parent_id=orig.id,
+            parent_id=(latest_doc.id if latest_doc else orig.id),
             root_id=root_id,
             is_latest=True,
-            knowledge_base_id=getattr(orig, "knowledge_base_id", None),
+            is_current=True,
+            knowledge_base_id=getattr(latest_doc or orig, "knowledge_base_id", None),
         )
-        orig.is_latest = False
+        if latest_doc:
+            latest_doc.is_latest = False
+        await self.clear_current_flags_for_root_id(root_id)
         self.db.add(new_doc)
         if commit:
             await self.db.commit()
@@ -197,6 +240,35 @@ class DocumentRepository:
         else:
             await self.db.flush()
         return new_doc
+
+    async def switch_current_version(
+        self,
+        doc_id: int,
+        *,
+        commit: bool = True,
+    ) -> tuple[Document | None, Document | None]:
+        """Switch the current version within a document chain."""
+        target = await self.get_by_id_for_user(doc_id)
+        if not target:
+            return None, None
+
+        root_id = target.root_id or target.id
+        current_doc = await self.get_current_by_root_id(root_id)
+        if current_doc and current_doc.id == target.id:
+            return target, current_doc
+
+        await self.clear_current_flags_for_root_id(root_id)
+        target.is_current = True
+
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(target)
+            if current_doc:
+                await self.db.refresh(current_doc)
+        else:
+            await self.db.flush()
+
+        return target, current_doc
 
     async def get_by_ids(self, ids: list[int]) -> list[Document]:
         """Fetch multiple documents scoped to the current user."""

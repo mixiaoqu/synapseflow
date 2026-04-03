@@ -1,48 +1,42 @@
 "use client";
 
-import {
-  ChangeEvent,
-  DragEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   ArrowRight,
+  CheckCircle2,
+  Clock3,
   Database,
+  FileText,
   Loader2,
+  MoreHorizontal,
   Plus,
   Search,
   UploadCloud,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
-import {
-  listDocuments,
-  uploadDocument,
-  uploadDocumentsBatch,
-  type DocumentListItem,
-} from "@/lib/api/documents";
+import { uploadDocument, uploadDocumentsBatch } from "@/lib/api/documents";
 import {
   createKnowledgeBase,
   listKnowledgeBases,
+  type KnowledgeBaseStatus,
   type KnowledgeBaseWithCount,
 } from "@/lib/api/knowledgeBases";
 import { listTeams, type Team } from "@/lib/api/teams";
+import { cn } from "@/lib/utils";
 
 const ACCEPT_FILES = ".txt,.md,.pdf,.docx";
 const SUPPORTED_EXTENSIONS = new Set([".txt", ".md", ".pdf", ".docx"]);
 const MAX_SIZE = 10 * 1024 * 1024;
 const MAX_BATCH = 20;
-
 const coverThemes = [
   "from-emerald-200/90 via-cyan-200/80 to-sky-300/70",
   "from-amber-200/90 via-orange-200/80 to-rose-300/70",
@@ -52,8 +46,44 @@ const coverThemes = [
   "from-slate-200/90 via-zinc-200/80 to-stone-300/70",
 ];
 
-function formatDate(value: string) {
-  return new Date(value).toLocaleDateString("zh-CN");
+const statusMeta: Record<
+  KnowledgeBaseStatus,
+  { label: string; icon: LucideIcon; chip: string; dot: string }
+> = {
+  available: {
+    label: "可用",
+    icon: CheckCircle2,
+    chip: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    dot: "bg-emerald-500",
+  },
+  indexing: {
+    label: "索引中",
+    icon: Clock3,
+    chip: "border-amber-200 bg-amber-50 text-amber-700",
+    dot: "bg-amber-500",
+  },
+  error: {
+    label: "有异常",
+    icon: AlertTriangle,
+    chip: "border-rose-200 bg-rose-50 text-rose-700",
+    dot: "bg-rose-500",
+  },
+  empty: {
+    label: "空库",
+    icon: FileText,
+    chip: "border-slate-200 bg-slate-100 text-slate-600",
+    dot: "bg-slate-400",
+  },
+};
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "暂无";
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function formatBytes(size: number) {
@@ -62,22 +92,14 @@ function formatBytes(size: number) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type FileValidation = {
-  accepted: File[];
-  invalidTypeCount: number;
-  oversizeCount: number;
-  overflowCount: number;
-};
-
-function validateFiles(files: File[] | FileList): FileValidation {
+function validateFiles(files: File[] | FileList) {
   const allFiles = Array.from(files);
   const acceptedBeforeCap: File[] = [];
   let invalidTypeCount = 0;
   let oversizeCount = 0;
-
   for (const file of allFiles) {
-    const extension = "." + (file.name.split(".").pop()?.toLowerCase() || "");
-    if (!SUPPORTED_EXTENSIONS.has(extension)) {
+    const ext = "." + (file.name.split(".").pop()?.toLowerCase() || "");
+    if (!SUPPORTED_EXTENSIONS.has(ext)) {
       invalidTypeCount += 1;
       continue;
     }
@@ -87,15 +109,12 @@ function validateFiles(files: File[] | FileList): FileValidation {
     }
     acceptedBeforeCap.push(file);
   }
-
   const accepted = acceptedBeforeCap.slice(0, MAX_BATCH);
-  const overflowCount = Math.max(acceptedBeforeCap.length - accepted.length, 0);
-
   return {
     accepted,
     invalidTypeCount,
     oversizeCount,
-    overflowCount,
+    overflowCount: Math.max(acceptedBeforeCap.length - accepted.length, 0),
   };
 }
 
@@ -107,20 +126,14 @@ export default function DocumentsPage() {
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseWithCount[]>([]);
   const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState<number | null>(null);
-  const [docs, setDocs] = useState<DocumentListItem[]>([]);
-
   const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
-
   const [loadingTeams, setLoadingTeams] = useState(false);
   const [loadingKnowledgeBases, setLoadingKnowledgeBases] = useState(false);
-  const [loadingDocs, setLoadingDocs] = useState(false);
   const [creatingKnowledgeBase, setCreatingKnowledgeBase] = useState(false);
-
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createDescription, setCreateDescription] = useState("");
-
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [uploadCollectionId, setUploadCollectionId] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -130,28 +143,13 @@ export default function DocumentsPage() {
     () => teams.find((item) => item.id === selectedTeamId) ?? null,
     [selectedTeamId, teams],
   );
-
   const displayedKnowledgeBases = useMemo(() => {
     const q = keyword.trim().toLowerCase();
     if (!q) return knowledgeBases;
-
-    return knowledgeBases.filter((item) => {
-      const name = item.name.toLowerCase();
-      const description = (item.description || "").toLowerCase();
-      return name.includes(q) || description.includes(q);
-    });
+    return knowledgeBases.filter((item) =>
+      [item.name, item.description || ""].some((value) => value.toLowerCase().includes(q)),
+    );
   }, [keyword, knowledgeBases]);
-
-  const previewMap = useMemo(() => {
-    const map = new Map<number, DocumentListItem[]>();
-    docs.forEach((item) => {
-      if (!item.knowledge_base_id) return;
-      const list = map.get(item.knowledge_base_id) ?? [];
-      if (list.length < 4) list.push(item);
-      map.set(item.knowledge_base_id, list);
-    });
-    return map;
-  }, [docs]);
 
   const loadTeams = useCallback(async () => {
     setLoadingTeams(true);
@@ -173,7 +171,6 @@ export default function DocumentsPage() {
       setUploadCollectionId(null);
       return;
     }
-
     setLoadingKnowledgeBases(true);
     try {
       const list = await listKnowledgeBases(selectedTeamId);
@@ -194,68 +191,46 @@ export default function DocumentsPage() {
     }
   }, [selectedTeamId]);
 
-  const loadDocumentsPreview = useCallback(async () => {
-    if (selectedTeamId == null) {
-      setDocs([]);
-      return;
-    }
-
-    setLoadingDocs(true);
-    try {
-      const response = await listDocuments({
-        page: 1,
-        page_size: 100,
-        team_id: selectedTeamId,
-      });
-      setDocs(response.items);
-    } catch {
-      toast.error("加载文档预览失败");
-      setDocs([]);
-    } finally {
-      setLoadingDocs(false);
-    }
-  }, [selectedTeamId]);
-
   useEffect(() => {
     void loadTeams();
   }, [loadTeams]);
 
   useEffect(() => {
     void loadKnowledgeBases();
-    void loadDocumentsPreview();
-  }, [loadDocumentsPreview, loadKnowledgeBases]);
-
-  const handleSearch = () => {
-    setKeyword(searchInput.trim());
-  };
-
-  const clearSearch = () => {
-    setSearchInput("");
-    setKeyword("");
-  };
+  }, [loadKnowledgeBases]);
 
   const openCreateModal = () => {
-    if (selectedTeamId == null) {
-      toast.error("请先选择团队");
-      return;
-    }
+    if (selectedTeamId == null) return toast.error("请先选择团队");
     setCreateName("");
     setCreateDescription("");
     setCreateModalOpen(true);
   };
 
-  const handleCreateKnowledgeBase = async () => {
-    const name = createName.trim();
-    const description = createDescription.trim();
-    if (!name || selectedTeamId == null) return;
+  const openUploadModal = (knowledgeBaseId?: number) => {
+    const targetId = knowledgeBaseId ?? selectedKnowledgeBaseId ?? knowledgeBases[0]?.id ?? null;
+    if (!targetId) return toast.error("请先创建知识库，再上传文档");
+    setUploadCollectionId(targetId);
+    setDragOver(false);
+    setUploadModalOpen(true);
+  };
 
+  const openKnowledgeBase = (knowledgeBaseId: number) => {
+    const query = new URLSearchParams();
+    if (selectedTeamId != null) query.set("teamId", String(selectedTeamId));
+    router.push(`/documents/${knowledgeBaseId}${query.toString() ? `?${query.toString()}` : ""}`);
+  };
+
+  const handleCreateKnowledgeBase = async () => {
+    if (!createName.trim() || selectedTeamId == null) return;
     setCreatingKnowledgeBase(true);
     try {
-      const created = await createKnowledgeBase(name, selectedTeamId, description || undefined);
+      const created = await createKnowledgeBase(
+        createName.trim(),
+        selectedTeamId,
+        createDescription.trim() || undefined,
+      );
       toast.success("知识库已创建");
       setCreateModalOpen(false);
-      setCreateName("");
-      setCreateDescription("");
       await loadKnowledgeBases();
       setSelectedKnowledgeBaseId(created.id);
       setUploadCollectionId(created.id);
@@ -266,52 +241,26 @@ export default function DocumentsPage() {
     }
   };
 
-  const openUploadModal = (knowledgeBaseId?: number) => {
-    const targetId = knowledgeBaseId ?? selectedKnowledgeBaseId ?? knowledgeBases[0]?.id ?? null;
-    if (!targetId) {
-      toast.error("请先创建知识库，再上传文档");
-      return;
-    }
-
-    setUploadCollectionId(targetId);
-    setDragOver(false);
-    setUploadModalOpen(true);
-  };
-
   const uploadFiles = async (files: File[] | FileList | null) => {
     if (!files || files.length === 0) return;
-
     const { accepted, invalidTypeCount, oversizeCount, overflowCount } = validateFiles(files);
-
-    if (accepted.length === 0) {
-      toast.error("没有符合要求的文件，请检查格式或大小限制");
-      return;
-    }
+    if (accepted.length === 0) return toast.error("没有符合要求的文件，请检查格式或大小限制");
 
     setUploading(true);
     try {
       const knowledgeBaseId =
         uploadCollectionId && uploadCollectionId > 0 ? uploadCollectionId : undefined;
-
-      if (accepted.length === 1) {
-        await uploadDocument(accepted[0], knowledgeBaseId);
-      } else {
-        await uploadDocumentsBatch(accepted, knowledgeBaseId);
-      }
+      if (accepted.length === 1) await uploadDocument(accepted[0], knowledgeBaseId);
+      else await uploadDocumentsBatch(accepted, knowledgeBaseId);
 
       const notes: string[] = [];
       if (invalidTypeCount > 0) notes.push(`${invalidTypeCount} 个格式不支持`);
       if (oversizeCount > 0) notes.push(`${oversizeCount} 个超过 10MB`);
       if (overflowCount > 0) notes.push(`${overflowCount} 个超出单次 20 个文件上限`);
-
-      if (notes.length > 0) {
-        toast.success(`已上传 ${accepted.length} 个文件，${notes.join("，")}`);
-      } else {
-        toast.success(`已成功上传 ${accepted.length} 个文件`);
-      }
-
+      toast.success(
+        notes.length ? `已上传 ${accepted.length} 个文件，${notes.join("，")}` : `已成功上传 ${accepted.length} 个文件`,
+      );
       setUploadModalOpen(false);
-      await loadDocumentsPreview();
       await loadKnowledgeBases();
     } catch (error: unknown) {
       toast.error((error as { message?: string }).message || "上传失败");
@@ -331,22 +280,12 @@ export default function DocumentsPage() {
     event.target.value = "";
   };
 
-  const openKnowledgeBase = (knowledgeBaseId: number) => {
-    const query = new URLSearchParams();
-    if (selectedTeamId != null) {
-      query.set("teamId", String(selectedTeamId));
-    }
-    const suffix = query.toString();
-    router.push(`/documents/${knowledgeBaseId}${suffix ? `?${suffix}` : ""}`);
-  };
-
-  const isLoading = loadingTeams || loadingKnowledgeBases || loadingDocs;
+  const isLoading = loadingTeams || loadingKnowledgeBases;
   const hasKnowledgeBases = knowledgeBases.length > 0;
 
   return (
     <div className="flex min-h-full flex-col bg-gray-50 text-slate-900">
       <Toaster position="top-right" richColors />
-
       <header className="px-4 pt-6 sm:px-6">
         <div className="mx-auto max-w-[1700px]">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
@@ -365,14 +304,14 @@ export default function DocumentsPage() {
                 <Input
                   value={searchInput}
                   onChange={(event) => setSearchInput(event.target.value)}
-                  onKeyDown={(event) => event.key === "Enter" && handleSearch()}
+                  onKeyDown={(event) => event.key === "Enter" && setKeyword(searchInput.trim())}
                   placeholder="搜索知识库名称或描述"
                   className="h-11 rounded-xl border-slate-200 bg-white pl-10 text-slate-800 placeholder:text-slate-400"
                 />
               </div>
               <Button
                 variant="outline"
-                onClick={handleSearch}
+                onClick={() => setKeyword(searchInput.trim())}
                 className="h-11 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
               >
                 搜索
@@ -423,13 +362,10 @@ export default function DocumentsPage() {
           ) : null}
         </div>
       </header>
-
       <main className="flex-1 px-4 pb-8 pt-4 sm:px-6">
         <section className="mx-auto max-w-[1700px]">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
-            <span>
-              {isLoading ? "正在同步团队与知识库内容..." : `共找到 ${displayedKnowledgeBases.length} 个知识库`}
-            </span>
+            <span>{isLoading ? "正在同步团队与知识库内容..." : `共找到 ${displayedKnowledgeBases.length} 个知识库`}</span>
             <span>{activeTeam?.name || "未选择团队"}</span>
           </div>
 
@@ -443,23 +379,19 @@ export default function DocumentsPage() {
               </h2>
               <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500">
                 {keyword
-                  ? "可以试试更换关键词，或者直接新建一个知识库。"
+                  ? "可以尝试更换关键词，或者直接新建一个知识库。"
                   : "先创建一个知识库，再上传文档、建立索引并进入详细工作区。"}
               </p>
               <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-                <Button
-                  onClick={openCreateModal}
-                  className="rounded-xl bg-blue-600 text-white hover:bg-blue-700"
-                >
+                <Button onClick={openCreateModal} className="rounded-xl bg-blue-600 text-white hover:bg-blue-700">
                   <Plus className="mr-2 h-4 w-4" />
                   新建知识库
                 </Button>
                 {keyword ? (
-                  <Button
-                    variant="outline"
-                    className="rounded-xl border-slate-200"
-                    onClick={clearSearch}
-                  >
+                  <Button variant="outline" className="rounded-xl border-slate-200" onClick={() => {
+                    setSearchInput("");
+                    setKeyword("");
+                  }}>
                     清空搜索
                   </Button>
                 ) : null}
@@ -468,16 +400,16 @@ export default function DocumentsPage() {
           ) : (
             <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {displayedKnowledgeBases.map((knowledgeBase, index) => {
-                const previews = previewMap.get(knowledgeBase.id) ?? [];
-                const isActive = selectedKnowledgeBaseId === knowledgeBase.id;
-                const coverTheme = coverThemes[(knowledgeBase.id + index) % coverThemes.length];
-
+                const active = selectedKnowledgeBaseId === knowledgeBase.id;
+                const theme = coverThemes[(knowledgeBase.id + index) % coverThemes.length];
+                const meta = statusMeta[knowledgeBase.status];
+                const StatusIcon = meta.icon;
                 return (
                   <div
                     key={knowledgeBase.id}
                     className={cn(
-                      "group overflow-hidden rounded-2xl border bg-white p-5 shadow-sm transition-all",
-                      isActive
+                      "overflow-hidden rounded-2xl border bg-white p-5 shadow-sm transition-all",
+                      active
                         ? "border-blue-200 ring-2 ring-blue-100"
                         : "border-slate-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md",
                     )}
@@ -487,82 +419,122 @@ export default function DocumentsPage() {
                       onClick={() => setSelectedKnowledgeBaseId(knowledgeBase.id)}
                       className="block w-full text-left"
                     >
-                      <div className={cn("h-28 rounded-xl bg-gradient-to-br p-4", coverTheme)}>
-                        <div className="flex items-center justify-between">
-                          <span className="rounded-md bg-white/70 px-2 py-1 text-xs font-medium text-slate-700">
-                            知识库
-                          </span>
-                          <Database className="h-4 w-4 text-slate-700/70" />
+                      <div className={cn("rounded-2xl bg-gradient-to-br p-4", theme)}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <span className="inline-flex rounded-md bg-white/70 px-2 py-1 text-xs font-medium text-slate-700">知识库</span>
+                            <h3 className="mt-4 line-clamp-2 text-xl font-semibold text-slate-900">{knowledgeBase.name}</h3>
+                          </div>
+                          <div className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium", meta.chip)}>
+                            <span className={cn("h-2 w-2 rounded-full", meta.dot)} />
+                            <StatusIcon className="h-3.5 w-3.5" />
+                            {meta.label}
+                          </div>
                         </div>
                       </div>
 
-                      <div className="mt-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <h3 className="line-clamp-1 text-xl font-medium text-slate-900">
-                            {knowledgeBase.name}
-                          </h3>
-                          <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-500">
-                            {knowledgeBase.document_count} 篇
-                          </span>
-                        </div>
-                        <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">
-                          {knowledgeBase.description || "围绕单个主题集中组织文档、检索与问答。"}
-                        </p>
-                      </div>
+                      <p className="mt-4 line-clamp-2 min-h-[48px] text-sm leading-6 text-slate-500">
+                        {knowledgeBase.description || "围绕单个主题集中组织文档、检索与问答。"}
+                      </p>
                     </button>
 
-                    <div className="mt-4 flex h-[170px] flex-col rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-                      <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
-                        <span>最近文档预览</span>
-                        <span>{formatDate(knowledgeBase.updated_at)}</span>
+                    <div className="mt-4 rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
+                          <p className="text-xs text-slate-400">文档总数</p>
+                          <p className="mt-2 text-lg font-semibold text-slate-900">{knowledgeBase.document_count}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
+                          <p className="text-xs text-slate-400">已索引 / 未索引</p>
+                          <p className="mt-2 text-lg font-semibold text-slate-900">
+                            {knowledgeBase.indexed_document_count} / {knowledgeBase.unindexed_document_count}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
+                          <p className="text-xs text-slate-400">最近更新时间</p>
+                          <p className="mt-2 text-sm font-medium text-slate-700">
+                            {formatDateTime(knowledgeBase.last_document_updated_at || knowledgeBase.updated_at)}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
+                          <p className="text-xs text-slate-400">最近上传时间</p>
+                          <p className="mt-2 text-sm font-medium text-slate-700">
+                            {formatDateTime(knowledgeBase.last_uploaded_at)}
+                          </p>
+                        </div>
                       </div>
 
-                      {previews.length > 0 ? (
-                        <div className="flex-1 space-y-1 overflow-y-auto pr-1">
-                          {previews.map((item) => (
-                            <div
-                              key={item.id}
-                              className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm"
-                            >
-                              <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
-                              <span className="min-w-0 flex-1 truncate text-slate-700">
-                                {item.title}
-                              </span>
-                              <span className="shrink-0 text-xs text-slate-400">
-                                {formatBytes(item.size)}
-                              </span>
-                            </div>
-                          ))}
+                      <div className="mt-4 border-t border-slate-200 pt-4">
+                        <div className="mb-3 flex items-center justify-between text-xs text-slate-400">
+                          <span>最近 3 篇文档</span>
+                          <span>{knowledgeBase.document_count} 篇文档</span>
                         </div>
-                      ) : (
-                        <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-3 py-5 text-center text-sm text-slate-400">
-                          当前知识库还没有文档，先上传几篇材料就能开始使用。
-                        </div>
-                      )}
+                        {knowledgeBase.recent_documents.length > 0 ? (
+                          <div className="space-y-2">
+                            {knowledgeBase.recent_documents.map((item) => (
+                              <div key={item.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-medium text-slate-800">{item.title}</p>
+                                    <p className="mt-1 text-xs text-slate-400">上传于 {formatDateTime(item.created_at)}</p>
+                                  </div>
+                                  <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium", item.indexed ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>
+                                    {item.indexed ? "已索引" : "待索引"}
+                                  </span>
+                                </div>
+                                <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
+                                  <span>{item.document_type || "未知类型"}</span>
+                                  <span>{formatBytes(item.size)}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white/80 px-3 py-8 text-center text-sm text-slate-400">
+                            当前知识库还没有文档，先上传几篇材料就能开始使用。
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="mt-4 flex items-center gap-2 border-t border-slate-200 pt-3">
-                      <Button
-                        variant="outline"
-                        className="flex-1 rounded-xl border-slate-200"
-                        onClick={() => {
-                          setSelectedKnowledgeBaseId(knowledgeBase.id);
-                          openUploadModal(knowledgeBase.id);
-                        }}
-                      >
-                        <UploadCloud className="mr-2 h-4 w-4" />
-                        上传到此库
-                      </Button>
-                      <Button
-                        className="flex-1 rounded-xl bg-slate-900 text-white hover:bg-slate-800"
-                        onClick={() => {
-                          setSelectedKnowledgeBaseId(knowledgeBase.id);
-                          openKnowledgeBase(knowledgeBase.id);
-                        }}
-                      >
-                        进入工作区
+                      <Button variant="outline" className="flex-1 rounded-xl border-slate-200" onClick={() => {
+                        setSelectedKnowledgeBaseId(knowledgeBase.id);
+                        openKnowledgeBase(knowledgeBase.id);
+                      }}>
+                        进入工作台
                         <ArrowRight className="ml-2 h-4 w-4" />
                       </Button>
+                      <Button variant="outline" className="flex-1 rounded-xl border-slate-200" onClick={() => {
+                        setSelectedKnowledgeBaseId(knowledgeBase.id);
+                        openUploadModal(knowledgeBase.id);
+                      }}>
+                        <UploadCloud className="mr-2 h-4 w-4" />
+                        上传文档
+                      </Button>
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <Button variant="outline" size="icon" className="rounded-xl border-slate-200 px-0" aria-label="更多操作">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content side="bottom" align="end" sideOffset={8} className="z-50 min-w-[160px] rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-xl">
+                            <DropdownMenu.Item onSelect={() => openKnowledgeBase(knowledgeBase.id)} className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
+                              <ArrowRight className="h-4 w-4" />
+                              进入工作台
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item onSelect={() => openUploadModal(knowledgeBase.id)} className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
+                              <UploadCloud className="h-4 w-4" />
+                              上传文档
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item onSelect={() => void navigator.clipboard.writeText(String(knowledgeBase.id)).then(() => toast.success("知识库 ID 已复制")).catch(() => toast.error("复制失败"))} className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
+                              <FileText className="h-4 w-4" />
+                              复制知识库 ID
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
                     </div>
                   </div>
                 );
@@ -571,7 +543,6 @@ export default function DocumentsPage() {
           )}
         </section>
       </main>
-
       {createModalOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
@@ -605,7 +576,6 @@ export default function DocumentsPage() {
                   {activeTeam?.name || "未选择团队"}
                 </div>
               </div>
-
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700">知识库名称</label>
                 <Input
@@ -615,7 +585,6 @@ export default function DocumentsPage() {
                   className="h-11 rounded-xl border-slate-200"
                 />
               </div>
-
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700">知识库描述</label>
                 <Textarea
@@ -625,13 +594,8 @@ export default function DocumentsPage() {
                   className="min-h-[120px] rounded-xl border-slate-200"
                 />
               </div>
-
               <div className="flex items-center justify-end gap-2 pt-2">
-                <Button
-                  variant="outline"
-                  onClick={() => !creatingKnowledgeBase && setCreateModalOpen(false)}
-                  className="rounded-xl border-slate-200"
-                >
+                <Button variant="outline" onClick={() => !creatingKnowledgeBase && setCreateModalOpen(false)} className="rounded-xl border-slate-200">
                   取消
                 </Button>
                 <Button
@@ -651,7 +615,6 @@ export default function DocumentsPage() {
           </div>
         </div>
       ) : null}
-
       {uploadModalOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
@@ -720,7 +683,6 @@ export default function DocumentsPage() {
                   onChange={onFileSelect}
                   className="hidden"
                 />
-
                 {uploading ? (
                   <div className="inline-flex items-center gap-2 text-slate-600">
                     <Loader2 className="h-4 w-4 animate-spin" />
