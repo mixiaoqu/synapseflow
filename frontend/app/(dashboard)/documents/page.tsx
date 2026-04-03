@@ -23,7 +23,11 @@ import { Toaster, toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { uploadDocument, uploadDocumentsBatch } from "@/lib/api/documents";
+import {
+  uploadDocument,
+  uploadDocumentsBatch,
+  type DocumentIndexStatus,
+} from "@/lib/api/documents";
 import {
   createKnowledgeBase,
   listKnowledgeBases,
@@ -91,6 +95,28 @@ function formatBytes(size: number) {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+const documentIndexStatusMeta: Record<
+  DocumentIndexStatus,
+  { label: string; chip: string }
+> = {
+  queued: {
+    label: "排队中",
+    chip: "bg-slate-100 text-slate-700",
+  },
+  processing: {
+    label: "索引中",
+    chip: "bg-amber-50 text-amber-700",
+  },
+  indexed: {
+    label: "已索引",
+    chip: "bg-emerald-50 text-emerald-700",
+  },
+  failed: {
+    label: "失败",
+    chip: "bg-rose-50 text-rose-700",
+  },
+};
 
 function validateFiles(files: File[] | FileList) {
   const allFiles = Array.from(files);
@@ -199,6 +225,14 @@ export default function DocumentsPage() {
     void loadKnowledgeBases();
   }, [loadKnowledgeBases]);
 
+  useEffect(() => {
+    if (!knowledgeBases.some((item) => item.status === "indexing")) return undefined;
+    const timer = window.setTimeout(() => {
+      void loadKnowledgeBases();
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [knowledgeBases, loadKnowledgeBases]);
+
   const openCreateModal = () => {
     if (selectedTeamId == null) return toast.error("请先选择团队");
     setCreateName("");
@@ -258,7 +292,9 @@ export default function DocumentsPage() {
       if (oversizeCount > 0) notes.push(`${oversizeCount} 个超过 10MB`);
       if (overflowCount > 0) notes.push(`${overflowCount} 个超出单次 20 个文件上限`);
       toast.success(
-        notes.length ? `已上传 ${accepted.length} 个文件，${notes.join("，")}` : `已成功上传 ${accepted.length} 个文件`,
+        notes.length
+          ? `已上传 ${accepted.length} 个文件，并加入索引队列，${notes.join("，")}`
+          : `已上传 ${accepted.length} 个文件，并加入索引队列`,
       );
       setUploadModalOpen(false);
       await loadKnowledgeBases();
@@ -445,9 +481,11 @@ export default function DocumentsPage() {
                           <p className="mt-2 text-lg font-semibold text-slate-900">{knowledgeBase.document_count}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
-                          <p className="text-xs text-slate-400">已索引 / 未索引</p>
+                          <p className="text-xs text-slate-400">已索引 / 处理中 / 失败</p>
                           <p className="mt-2 text-lg font-semibold text-slate-900">
-                            {knowledgeBase.indexed_document_count} / {knowledgeBase.unindexed_document_count}
+                            {knowledgeBase.indexed_document_count} /{" "}
+                            {knowledgeBase.queued_document_count + knowledgeBase.processing_document_count} /{" "}
+                            {knowledgeBase.failed_document_count}
                           </p>
                         </div>
                         <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
@@ -471,23 +509,29 @@ export default function DocumentsPage() {
                         </div>
                         {knowledgeBase.recent_documents.length > 0 ? (
                           <div className="space-y-2">
-                            {knowledgeBase.recent_documents.map((item) => (
-                              <div key={item.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <p className="truncate text-sm font-medium text-slate-800">{item.title}</p>
-                                    <p className="mt-1 text-xs text-slate-400">上传于 {formatDateTime(item.created_at)}</p>
+                            {knowledgeBase.recent_documents.map((item) => {
+                              const indexMeta = documentIndexStatusMeta[item.index_status];
+                              return (
+                                <div key={item.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-medium text-slate-800">{item.title}</p>
+                                      <p className="mt-1 text-xs text-slate-400">上传于 {formatDateTime(item.created_at)}</p>
+                                    </div>
+                                    <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium", indexMeta.chip)}>
+                                      {indexMeta.label}
+                                    </span>
                                   </div>
-                                  <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium", item.indexed ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>
-                                    {item.indexed ? "已索引" : "待索引"}
-                                  </span>
+                                  <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
+                                    <span>{item.document_type || "未知类型"}</span>
+                                    <span>{formatBytes(item.size)}</span>
+                                  </div>
+                                  {item.index_error ? (
+                                    <p className="mt-2 text-xs text-rose-600">{item.index_error}</p>
+                                  ) : null}
                                 </div>
-                                <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
-                                  <span>{item.document_type || "未知类型"}</span>
-                                  <span>{formatBytes(item.size)}</span>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         ) : (
                           <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white/80 px-3 py-8 text-center text-sm text-slate-400">
@@ -628,7 +672,7 @@ export default function DocumentsPage() {
               <div>
                 <h3 className="text-xl font-semibold text-slate-900">上传文档</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  选择目标知识库后上传，系统会自动提取文本并建立索引。
+                  选择目标知识库后上传，系统会自动提取文本并加入索引队列。
                 </p>
               </div>
               <Button
@@ -686,7 +730,7 @@ export default function DocumentsPage() {
                 {uploading ? (
                   <div className="inline-flex items-center gap-2 text-slate-600">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    正在上传并建立索引...
+                    正在上传并加入索引队列...
                   </div>
                 ) : (
                   <>

@@ -1,4 +1,5 @@
 import { apiClient } from "./client";
+import type { DocumentIndexStatus } from "./documents";
 
 export interface KnowledgeBaseBase {
   id: number;
@@ -17,6 +18,8 @@ export interface KnowledgeBaseRecentDocument {
   document_type: string | null;
   size: number;
   indexed: boolean;
+  index_status: DocumentIndexStatus;
+  index_error: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -24,6 +27,9 @@ export interface KnowledgeBaseRecentDocument {
 export interface KnowledgeBaseWithCount extends KnowledgeBaseBase {
   document_count: number;
   indexed_document_count: number;
+  queued_document_count: number;
+  processing_document_count: number;
+  failed_document_count: number;
   unindexed_document_count: number;
   last_document_updated_at: string | null;
   last_uploaded_at: string | null;

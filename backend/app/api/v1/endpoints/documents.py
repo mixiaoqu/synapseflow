@@ -1,6 +1,6 @@
 """Document management API."""
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import get_current_user
@@ -20,12 +20,14 @@ router = APIRouter()
 
 @router.post("", response_model=DocumentResponse)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Document file"),
     knowledge_base_id: int | None = Form(None, description="Owning knowledge base id"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     return await document_service.upload_document(
+        background_tasks=background_tasks,
         db=db,
         user_id=current_user.id,
         file=file,
@@ -35,12 +37,14 @@ async def upload_document(
 
 @router.post("/batch", response_model=list[DocumentResponse])
 async def upload_documents_batch(
+    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(..., description="Document files"),
     knowledge_base_id: int | None = Form(None, description="Owning knowledge base id"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     return await document_service.upload_documents_batch(
+        background_tasks=background_tasks,
         db=db,
         user_id=current_user.id,
         files=files,
@@ -50,11 +54,13 @@ async def upload_documents_batch(
 
 @router.post("/from-content", response_model=DocumentResponse)
 async def create_document_from_content(
+    background_tasks: BackgroundTasks,
     body: DocumentCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     return await document_service.create_document_from_content(
+        background_tasks=background_tasks,
         db=db,
         user_id=current_user.id,
         body=body,
@@ -110,14 +116,18 @@ async def get_document(
 
 @router.post("/reindex-all")
 async def reindex_all_documents(
+    background_tasks: BackgroundTasks,
     team_id: int | None = Query(None, description="Reindex documents for team id"),
     knowledge_base_id: int | None = Query(
         None,
         description="Reindex documents for knowledge base id",
     ),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     return await document_service.reindex_all_documents(
+        background_tasks=background_tasks,
+        db=db,
         user_id=current_user.id,
         team_id=team_id,
         knowledge_base_id=knowledge_base_id,
@@ -126,11 +136,13 @@ async def reindex_all_documents(
 
 @router.post("/{doc_id}/index")
 async def index_single_document(
+    background_tasks: BackgroundTasks,
     doc_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     return await document_service.index_single_document(
+        background_tasks=background_tasks,
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,
@@ -139,12 +151,14 @@ async def index_single_document(
 
 @router.put("/{doc_id}/content", response_model=DocumentResponse)
 async def replace_document_content(
+    background_tasks: BackgroundTasks,
     doc_id: int,
     body: DocumentContentUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     return await document_service.replace_document_content(
+        background_tasks=background_tasks,
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,
@@ -154,12 +168,14 @@ async def replace_document_content(
 
 @router.post("/{doc_id}/versions", response_model=DocumentResponse)
 async def create_document_version(
+    background_tasks: BackgroundTasks,
     doc_id: int,
     body: DocumentContentUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     return await document_service.create_document_version(
+        background_tasks=background_tasks,
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,
@@ -169,11 +185,13 @@ async def create_document_version(
 
 @router.post("/{doc_id}/current", response_model=DocumentResponse)
 async def switch_current_document_version(
+    background_tasks: BackgroundTasks,
     doc_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     return await document_service.switch_current_document_version(
+        background_tasks=background_tasks,
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,

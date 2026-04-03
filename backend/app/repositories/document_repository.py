@@ -6,6 +6,10 @@ from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, KnowledgeBase
+from app.services.document_index_state import (
+    INDEX_STATUS_QUEUED,
+    compute_content_hash,
+)
 
 
 class DocumentRepository:
@@ -32,6 +36,10 @@ class DocumentRepository:
             content=content,
             document_type=document_type,
             size=size,
+            content_hash=compute_content_hash(content),
+            index_status=INDEX_STATUS_QUEUED,
+            index_error=None,
+            indexed_at=None,
             version=1,
             parent_id=None,
             is_latest=True,
@@ -155,6 +163,10 @@ class DocumentRepository:
             return None
         doc.content = content
         doc.size = len(content.encode("utf-8"))
+        doc.content_hash = compute_content_hash(content)
+        doc.index_status = INDEX_STATUS_QUEUED
+        doc.index_error = None
+        doc.indexed_at = None
         doc.version = (doc.version or 1) + 1
         await self.db.commit()
         await self.db.refresh(doc)
@@ -223,6 +235,10 @@ class DocumentRepository:
             content=content,
             document_type=(latest_doc.document_type if latest_doc else orig.document_type),
             size=len(content.encode("utf-8")),
+            content_hash=compute_content_hash(content),
+            index_status=INDEX_STATUS_QUEUED,
+            index_error=None,
+            indexed_at=None,
             version=(max_version or 1) + 1,
             parent_id=(latest_doc.id if latest_doc else orig.id),
             root_id=root_id,
@@ -259,6 +275,9 @@ class DocumentRepository:
 
         await self.clear_current_flags_for_root_id(root_id)
         target.is_current = True
+        target.index_status = INDEX_STATUS_QUEUED
+        target.index_error = None
+        target.indexed_at = None
 
         if commit:
             await self.db.commit()

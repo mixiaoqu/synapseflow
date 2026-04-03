@@ -1,13 +1,14 @@
-"""Application service for document management orchestration."""
+"""Application service for document persistence and document-facing workflows."""
 
 from __future__ import annotations
 
 from typing import Sequence
 
-from fastapi import HTTPException, UploadFile
+from fastapi import BackgroundTasks, HTTPException, UploadFile
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.indexing_service import indexing_service
 from app.db.models import Document
 from app.models.schemas.document import (
     DocumentContentUpdate,
@@ -19,13 +20,16 @@ from app.models.schemas.document import (
     DocumentVersionsResponse,
 )
 from app.repositories.document_repository import DocumentRepository
-from app.services.document_indexer import index_document, index_documents_batch, reindex_all
-from app.services.vector_store import delete_by_document_id
+from app.services.document_index_state import (
+    INDEX_STATUS_QUEUED,
+    compute_content_hash,
+    is_indexed_status,
+)
 from app.utils.file_parser import MAX_FILE_SIZE, SUPPORTED_EXTENSIONS, extract_text_from_file
 
 
 class DocumentService:
-    """Coordinates document CRUD, versioning, and indexing workflows."""
+    """Coordinates document CRUD and delegates indexing orchestration."""
 
     @staticmethod
     def _get_title_and_type(filename: str) -> tuple[str, str]:
@@ -61,6 +65,9 @@ class DocumentService:
             size=self._document_size(doc),
             version=getattr(doc, "version", 1),
             knowledge_base_id=getattr(doc, "knowledge_base_id", None),
+            index_status=getattr(doc, "index_status", INDEX_STATUS_QUEUED),
+            index_error=getattr(doc, "index_error", None),
+            indexed_at=getattr(doc, "indexed_at", None),
             created_at=doc.created_at,
             updated_at=doc.updated_at,
         )
@@ -68,6 +75,7 @@ class DocumentService:
     async def upload_document(
         self,
         *,
+        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         file: UploadFile,
@@ -85,22 +93,20 @@ class DocumentService:
             document_type=doc_type,
             size=len(text.encode("utf-8")),
             knowledge_base_id=knowledge_base_id,
-            commit=False,
+            commit=True,
         )
-
-        try:
-            await index_document(db, doc.id, doc.content, commit=True)
-        except Exception as exc:
-            await db.commit()
-            logger.warning("Document indexing failed doc_id={}: {}", doc.id, exc)
-
-        await db.refresh(doc)
+        indexing_service.enqueue_document(
+            background_tasks,
+            document_id=doc.id,
+            expected_content_hash=doc.content_hash,
+        )
         logger.info("Uploaded document id={} title={}", doc.id, doc.title)
         return self._to_response(doc)
 
     async def upload_documents_batch(
         self,
         *,
+        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         files: Sequence[UploadFile],
@@ -127,6 +133,10 @@ class DocumentService:
                     content=text,
                     document_type=doc_type,
                     size=len(text.encode("utf-8")),
+                    content_hash=compute_content_hash(text),
+                    index_status=INDEX_STATUS_QUEUED,
+                    index_error=None,
+                    indexed_at=None,
                     version=1,
                     parent_id=None,
                     is_latest=True,
@@ -140,24 +150,17 @@ class DocumentService:
             except Exception:
                 continue
 
-        await repo.prepare_batch_create(created)
-        try:
-            await index_documents_batch(
-                db,
-                [(doc.id, doc.content or "") for doc in created],
-                commit=True,
-            )
-        except Exception as exc:
-            await db.commit()
-            logger.warning("Batch document indexing failed count={}: {}", len(created), exc)
-
-        for doc in created:
-            await db.refresh(doc)
+        await repo.commit_and_refresh_root_ids(created)
+        indexing_service.enqueue_documents_batch(
+            background_tasks,
+            documents=[(doc.id, doc.content_hash) for doc in created],
+        )
         return [self._to_response(doc) for doc in created]
 
     async def create_document_from_content(
         self,
         *,
+        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         body: DocumentCreate,
@@ -172,15 +175,13 @@ class DocumentService:
             document_type=body.document_type or "txt",
             size=len(body.content.encode("utf-8")),
             knowledge_base_id=body.knowledge_base_id,
-            commit=False,
+            commit=True,
         )
-        try:
-            await index_document(db, doc.id, doc.content, commit=True)
-        except Exception as exc:
-            await db.commit()
-            logger.warning("Document indexing failed doc_id={}: {}", doc.id, exc)
-
-        await db.refresh(doc)
+        indexing_service.enqueue_document(
+            background_tasks,
+            document_id=doc.id,
+            expected_content_hash=doc.content_hash,
+        )
         logger.info("Created document from content id={} title={}", doc.id, doc.title)
         return self._to_response(doc)
 
@@ -215,7 +216,10 @@ class DocumentService:
                 version=getattr(doc, "version", 1),
                 created_at=doc.created_at,
                 updated_at=doc.updated_at,
-                indexed=getattr(doc, "indexed_at", None) is not None,
+                indexed=is_indexed_status(getattr(doc, "index_status", None)),
+                index_status=getattr(doc, "index_status", INDEX_STATUS_QUEUED),
+                index_error=getattr(doc, "index_error", None),
+                indexed_at=getattr(doc, "indexed_at", None),
                 knowledge_base_id=getattr(doc, "knowledge_base_id", None),
                 knowledge_base_name=knowledge_base_name,
             )
@@ -265,42 +269,39 @@ class DocumentService:
     async def reindex_all_documents(
         self,
         *,
+        background_tasks: BackgroundTasks,
+        db: AsyncSession,
         user_id: int,
         team_id: int | None = None,
         knowledge_base_id: int | None = None,
     ) -> dict[str, int | str]:
-        try:
-            count = await reindex_all(
-                user_id=user_id,
-                team_id=team_id,
-                knowledge_base_id=knowledge_base_id,
-            )
-            logger.info("Finished full reindex for {} documents", count)
-            return {"message": f"Reindexed {count} documents", "indexed": count}
-        except Exception as exc:
-            logger.exception("Full reindex failed: {}", exc)
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return await indexing_service.reindex_all_documents(
+            background_tasks=background_tasks,
+            db=db,
+            user_id=user_id,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+        )
 
     async def index_single_document(
         self,
         *,
+        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         doc_id: int,
     ) -> dict[str, int | str]:
-        repo = DocumentRepository(db, user_id=user_id)
-        doc = await repo.get_by_id_for_user(doc_id)
-        if not doc:
-            raise HTTPException(status_code=404, detail="Document not found")
-        try:
-            count = await index_document(db, doc.id, doc.content or "", commit=True)
-            return {"message": f"Indexed {count} chunks", "chunks": count}
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return await indexing_service.index_single_document(
+            background_tasks=background_tasks,
+            db=db,
+            user_id=user_id,
+            doc_id=doc_id,
+        )
 
     async def replace_document_content(
         self,
         *,
+        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         doc_id: int,
@@ -318,16 +319,18 @@ class DocumentService:
         doc = await repo.update_content(doc_id, body.content)
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
-        try:
-            await index_document(db, doc.id, doc.content, commit=True)
-        except Exception as exc:
-            logger.warning("Document indexing failed doc_id={}: {}", doc.id, exc)
+        indexing_service.enqueue_document(
+            background_tasks,
+            document_id=doc.id,
+            expected_content_hash=doc.content_hash,
+        )
         logger.info("Replaced document content id={}", doc_id)
         return self._to_response(doc)
 
     async def create_document_version(
         self,
         *,
+        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         doc_id: int,
@@ -340,47 +343,42 @@ class DocumentService:
 
         root_id = getattr(orig, "root_id", None) or orig.id
         current_doc = await repo.get_current_by_root_id(root_id)
-        new_doc = await repo.create_version(doc_id, body.content, commit=False)
+        new_doc = await repo.create_version(doc_id, body.content, commit=True)
         if not new_doc:
             raise HTTPException(status_code=404, detail="Source document not found")
-
-        try:
-            if current_doc:
-                current_doc.indexed_at = None
-                await delete_by_document_id(db, current_doc.id, commit=False)
-            await index_document(db, new_doc.id, new_doc.content, commit=True)
-        except Exception as exc:
-            await db.commit()
-            logger.warning("Document indexing failed doc_id={}: {}", new_doc.id, exc)
-
-        await db.refresh(new_doc)
+        indexing_service.enqueue_current_document_reindex(
+            background_tasks,
+            target_document_id=new_doc.id,
+            target_content_hash=new_doc.content_hash,
+            previous_document_id=(
+                current_doc.id if current_doc and current_doc.id != new_doc.id else None
+            ),
+        )
         logger.info("Created document version id={} from doc_id={}", new_doc.id, doc_id)
         return self._to_response(new_doc)
 
     async def switch_current_document_version(
         self,
         *,
+        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         doc_id: int,
     ) -> DocumentResponse:
         repo = DocumentRepository(db, user_id=user_id)
-        target, previous_current = await repo.switch_current_version(doc_id, commit=False)
+        target, previous_current = await repo.switch_current_version(doc_id, commit=True)
         if not target:
             raise HTTPException(status_code=404, detail="Document not found")
-
-        if previous_current and previous_current.id != target.id:
-            previous_current.indexed_at = None
-
-        try:
-            if previous_current and previous_current.id != target.id:
-                await delete_by_document_id(db, previous_current.id, commit=False)
-            await index_document(db, target.id, target.content or "", commit=True)
-        except Exception as exc:
-            await db.commit()
-            logger.warning("Switch current version indexing failed doc_id={}: {}", target.id, exc)
-
-        await db.refresh(target)
+        indexing_service.enqueue_current_document_reindex(
+            background_tasks,
+            target_document_id=target.id,
+            target_content_hash=target.content_hash,
+            previous_document_id=(
+                previous_current.id
+                if previous_current and previous_current.id != target.id
+                else None
+            ),
+        )
         logger.info("Switched current document version id={}", target.id)
         return self._to_response(target)
 

@@ -41,6 +41,7 @@ import {
   uploadDocument,
   uploadDocumentsBatch,
   type DocumentDetail,
+  type DocumentIndexStatus,
   type DocumentListItem,
   type DocumentVersionItem,
 } from "@/lib/api/documents";
@@ -52,7 +53,7 @@ const SUPPORTED_EXTENSIONS = [".txt", ".md", ".pdf", ".docx"];
 const MAX_SIZE = 10 * 1024 * 1024;
 const PAGE_SIZE_OPTIONS = [20, 50, 100];
 
-type StatusValue = "all" | "indexed" | "pending";
+type StatusValue = "all" | DocumentIndexStatus;
 type DetailTabValue = "preview" | "edit" | "versions";
 type ConfirmDialogState = {
   open: boolean;
@@ -131,6 +132,32 @@ function extractMarkdownHeadings(content: string) {
     });
 }
 
+const documentIndexMeta: Record<
+  DocumentIndexStatus,
+  { label: string; className: string; tone: "slate" | "amber" | "emerald" | "rose" }
+> = {
+  queued: {
+    label: "排队中",
+    className: "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-50",
+    tone: "slate",
+  },
+  processing: {
+    label: "索引中",
+    className: "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-50",
+    tone: "amber",
+  },
+  indexed: {
+    label: "已索引",
+    className: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50",
+    tone: "emerald",
+  },
+  failed: {
+    label: "索引失败",
+    className: "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-50",
+    tone: "rose",
+  },
+};
+
 export default function KnowledgeBaseDetailPage() {
   const params = useParams<{ knowledgeBaseId: string }>();
   const searchParams = useSearchParams();
@@ -193,10 +220,7 @@ export default function KnowledgeBaseDetailPage() {
     ),
   );
   const filteredDocs = docs.filter((item) => {
-    const hitStatus =
-      status === "all" ||
-      (status === "indexed" && item.indexed) ||
-      (status === "pending" && !item.indexed);
+    const hitStatus = status === "all" || item.index_status === status;
     const hitType = docType === "all" || item.document_type === docType;
     return hitStatus && hitType;
   });
@@ -219,11 +243,18 @@ export default function KnowledgeBaseDetailPage() {
   const pageEnd = docsTotal === 0 ? 0 : Math.min(docPage * docPageSize, docsTotal);
   const isEditorDirty = activeDoc != null && editorContent !== activeDoc.content;
   const selectedDocVersion = activeDoc?.version ?? selectedDocListItem?.version ?? 1;
-  const selectedDocIndexed = isViewingCurrentVersion ? (selectedDocListItem?.indexed ?? false) : false;
+  const selectedDocIndexStatus = isViewingCurrentVersion
+    ? (selectedDoc?.index_status ?? selectedDocListItem?.index_status ?? "queued")
+    : null;
+  const selectedDocIndexed = selectedDocIndexStatus === "indexed";
   const selectedDocType =
     activeDoc?.document_type || selectedDocListItem?.document_type || "未知类型";
   const selectedDocSize = activeDoc?.size ?? selectedDocListItem?.size ?? 0;
   const selectedDocUpdatedAt = activeDoc?.updated_at ?? selectedDocListItem?.updated_at ?? null;
+  const selectedDocIndexError =
+    isViewingCurrentVersion
+      ? (selectedDoc?.index_error ?? selectedDocListItem?.index_error ?? null)
+      : null;
   const lastViewedDocStorageKey =
     Number.isFinite(kbId) && kbId > 0 ? getLastViewedDocStorageKey(kbId) : null;
   const viewingVersionLabel = isViewingCurrentVersion
@@ -231,22 +262,24 @@ export default function KnowledgeBaseDetailPage() {
     : isViewingLatestVersion
       ? `v${selectedDocVersion} · 最新版本`
       : `v${selectedDocVersion} · 历史版本`;
+  const currentIndexMeta = selectedDocIndexStatus
+    ? documentIndexMeta[selectedDocIndexStatus]
+    : null;
   const retrievalStatus = !isViewingCurrentVersion
     ? {
         label: "不参与检索",
         className:
           "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-50",
       }
-    : selectedDocIndexed
+    : currentIndexMeta
       ? {
-          label: "已索引",
-          className:
-            "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50",
+          label: currentIndexMeta.label,
+          className: currentIndexMeta.className,
         }
       : {
-          label: "未索引",
+          label: "状态未知",
           className:
-            "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-50",
+            "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-50",
         };
   const selectedDocSummary = [
     selectedDocType,
@@ -260,12 +293,27 @@ export default function KnowledgeBaseDetailPage() {
         tone: "blue" as const,
         message: "当前正在查看非生效版本。只有切换为当前版本后，它才会参与知识库问答检索。",
       }
-    : !selectedDocIndexed
+    : selectedDocIndexStatus === "failed"
       ? {
-          tone: "amber" as const,
-          message: "当前文档还未建立索引，现有内容暂时不会参与知识库问答检索。",
+          tone: "rose" as const,
+          message: selectedDocIndexError || "当前文档索引失败，请重新排队索引后再检索。",
         }
-      : null;
+      : selectedDocIndexStatus === "processing"
+        ? {
+            tone: "amber" as const,
+            message: "当前文档正在建立索引，完成前暂时不会参与知识库问答检索。",
+          }
+        : selectedDocIndexStatus === "queued"
+          ? {
+              tone: "slate" as const,
+              message: "当前文档已进入索引队列，完成前暂时不会参与知识库问答检索。",
+            }
+          : !selectedDocIndexed
+            ? {
+                tone: "amber" as const,
+                message: "当前文档还未建立索引，现有内容暂时不会参与知识库问答检索。",
+              }
+            : null;
   const previewSupportsMarkdown = looksLikeMarkdown(
     activeDoc?.document_type ?? selectedDocListItem?.document_type,
     activeDoc?.content ?? "",
@@ -512,6 +560,16 @@ export default function KnowledgeBaseDetailPage() {
   }, [reloadToken, selectedDocId]);
 
   useEffect(() => {
+    if (!docs.some((item) => item.index_status === "queued" || item.index_status === "processing")) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setReloadToken((value) => value + 1);
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [docs]);
+
+  useEffect(() => {
     if (!selectedDocId) {
       setVersions([]);
       setSelectedVersionId(null);
@@ -713,7 +771,7 @@ export default function KnowledgeBaseDetailPage() {
           setSelectedDocId(updated.id);
           setSelectedVersionId(updated.id);
           setDetailTab("preview");
-          toast.success(`已切换为当前版本 v${updated.version}`);
+          toast.success(`已切换为当前版本 v${updated.version}，并加入索引队列`);
           reload();
         } catch (error) {
           toast.error(error instanceof Error ? error.message : "切换当前版本失败");
@@ -727,8 +785,8 @@ export default function KnowledgeBaseDetailPage() {
   const onReindexAll = async () => {
     setReindexingAll(true);
     try {
-      await reindexAll({ team_id: teamId ?? undefined, knowledge_base_id: kbId });
-      toast.success("全量重建索引已完成");
+      const result = await reindexAll({ team_id: teamId ?? undefined, knowledge_base_id: kbId });
+      toast.success(result.message || `已将 ${result.queued} 篇文档加入重建队列`);
       reload();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "全量重建索引失败");
@@ -742,8 +800,8 @@ export default function KnowledgeBaseDetailPage() {
 
     setIndexingOne(true);
     try {
-      await indexDocument(selectedDocListItem.id);
-      toast.success("文档已重新索引");
+      const result = await indexDocument(selectedDocListItem.id);
+      toast.success(result.message || "文档已加入索引队列");
       reload();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "文档重新索引失败");
@@ -793,7 +851,7 @@ export default function KnowledgeBaseDetailPage() {
       if (validFiles.length === 1) await uploadDocument(validFiles[0], kbId);
       else await uploadDocumentsBatch(validFiles, kbId);
 
-      toast.success(`已上传 ${validFiles.length} 个文件`);
+      toast.success(`已上传 ${validFiles.length} 个文件，并加入索引队列`);
       setUploadModalOpen(false);
       setDocPage(1);
       reload();
@@ -830,7 +888,7 @@ export default function KnowledgeBaseDetailPage() {
       setEditing(false);
       setSelectedVersionId(updated.id);
       setDetailTab("preview");
-      toast.success("当前文档内容已更新");
+      toast.success("当前文档内容已更新，并重新加入索引队列");
       reload();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败");
@@ -850,7 +908,7 @@ export default function KnowledgeBaseDetailPage() {
       setDocPage(1);
       setSelectedDocId(created.id);
       setSelectedVersionId(created.id);
-      toast.success(`已保存为版本 v${created.version}`);
+      toast.success(`已保存为版本 v${created.version}，并加入索引队列`);
       reload();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "新建版本失败");
@@ -948,8 +1006,10 @@ export default function KnowledgeBaseDetailPage() {
                       className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
                     >
                       <option value="all">全部</option>
+                      <option value="queued">排队中</option>
+                      <option value="processing">索引中</option>
                       <option value="indexed">已索引</option>
-                      <option value="pending">未索引</option>
+                      <option value="failed">索引失败</option>
                     </select>
                   </div>
 
@@ -972,8 +1032,9 @@ export default function KnowledgeBaseDetailPage() {
                   <div className="flex min-w-[220px] flex-1 flex-wrap gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
                     <span>搜索结果：{docsTotal}</span>
                     <span>当前页文档：{docs.length}</span>
-                    <span>当前页已索引：{docs.filter((item) => item.indexed).length}</span>
-                    <span>当前页未索引：{docs.filter((item) => !item.indexed).length}</span>
+                    <span>当前页已索引：{docs.filter((item) => item.index_status === "indexed").length}</span>
+                    <span>当前页处理中：{docs.filter((item) => item.index_status === "queued" || item.index_status === "processing").length}</span>
+                    <span>当前页失败：{docs.filter((item) => item.index_status === "failed").length}</span>
                   </div>
                 </div>
 
@@ -1027,18 +1088,25 @@ export default function KnowledgeBaseDetailPage() {
                             <span
                               className={cn(
                                 "rounded-full px-2 py-0.5 text-xs",
-                                item.indexed
+                                item.index_status === "indexed"
                                   ? "bg-emerald-100 text-emerald-700"
-                                  : "bg-amber-100 text-amber-700",
+                                  : item.index_status === "failed"
+                                    ? "bg-rose-100 text-rose-700"
+                                    : item.index_status === "processing"
+                                      ? "bg-amber-100 text-amber-700"
+                                      : "bg-slate-100 text-slate-700",
                               )}
                             >
-                              {item.indexed ? "已索引" : "未索引"}
+                              {documentIndexMeta[item.index_status].label}
                             </span>
                           </div>
                           <p className="mt-1 text-xs text-slate-500">
                             {item.document_type || "未知类型"} | {formatDate(item.updated_at)} |{" "}
                             {formatBytes(item.size)}
                           </p>
+                          {item.index_error ? (
+                            <p className="mt-1 text-xs text-rose-600">{item.index_error}</p>
+                          ) : null}
                         </button>
                       ))}
                     </div>
@@ -1134,7 +1202,11 @@ export default function KnowledgeBaseDetailPage() {
                                   "mt-3 rounded-xl px-3.5 py-2.5 text-sm",
                                   primaryWarning.tone === "blue"
                                     ? "border border-blue-200 bg-blue-50 text-blue-800"
-                                    : "border border-amber-200 bg-amber-50 text-amber-800",
+                                    : primaryWarning.tone === "rose"
+                                      ? "border border-rose-200 bg-rose-50 text-rose-800"
+                                      : primaryWarning.tone === "slate"
+                                        ? "border border-slate-200 bg-slate-50 text-slate-800"
+                                        : "border border-amber-200 bg-amber-50 text-amber-800",
                                 )}
                               >
                                 {primaryWarning.message}
@@ -1425,19 +1497,31 @@ export default function KnowledgeBaseDetailPage() {
                           <p
                             className={cn(
                               "text-xs",
-                              selectedDocIndexed ? "text-slate-500" : "text-amber-700",
+                              selectedDocIndexStatus === "failed"
+                                ? "text-rose-700"
+                                : selectedDocIndexed
+                                  ? "text-slate-500"
+                                  : "text-amber-700",
                             )}
                           >
-                            {selectedDocIndexed
-                              ? "当前版本已建立索引，需要时仍可手动重新构建。"
-                              : "当前版本尚未建立索引，暂时不会参与知识库问答检索。"}
+                            {selectedDocIndexStatus === "indexed"
+                              ? "当前版本已建立索引，需要时仍可手动重新排队构建。"
+                              : selectedDocIndexStatus === "processing"
+                                ? "当前版本正在建立索引，完成前暂时不会参与知识库问答检索。"
+                                : selectedDocIndexStatus === "queued"
+                                  ? "当前版本已进入索引队列，完成前暂时不会参与知识库问答检索。"
+                                  : selectedDocIndexStatus === "failed"
+                                    ? `当前版本索引失败：${selectedDocIndexError || "请重新排队索引。"}`
+                                    : "当前版本尚未建立索引，暂时不会参与知识库问答检索。"}
                           </p>
                           <Button
                             variant={selectedDocIndexed ? "outline" : "default"}
                             className={
                               selectedDocIndexed
                                 ? "border-slate-200"
-                                : "bg-amber-600 text-white hover:bg-amber-700"
+                                : selectedDocIndexStatus === "failed"
+                                  ? "bg-rose-600 text-white hover:bg-rose-700"
+                                  : "bg-amber-600 text-white hover:bg-amber-700"
                             }
                             onClick={() => void onReindexOne()}
                             disabled={!selectedDocListItem || indexingOne}
@@ -1447,7 +1531,7 @@ export default function KnowledgeBaseDetailPage() {
                             ) : (
                               <RefreshCcw className="mr-2 h-4 w-4" />
                             )}
-                            重新索引
+                            重新排队索引
                           </Button>
                         </div>
                       </div>
@@ -1602,7 +1686,7 @@ export default function KnowledgeBaseDetailPage() {
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-lg font-semibold">上传文档</p>
-                <p className="text-sm text-slate-500">上传后的文件会自动归入当前知识库。</p>
+                <p className="text-sm text-slate-500">上传后的文件会自动归入当前知识库并加入索引队列。</p>
               </div>
               <Button
                 variant="ghost"

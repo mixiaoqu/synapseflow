@@ -1,149 +1,350 @@
-"""
-向量索引用分块：仅在 # / ## / ### 处切段（不把 #### 及以下当边界），
-段内按空行段落合并，单块总长度不超过 max_chars；超长块再用 RecursiveCharacterTextSplitter 细分。
-每块写入向量前增加「[模块路径] 父 > 子」前缀（与正文一并 embedding）。
-"""
+"""Semantic chunking for vector indexing."""
+
+from __future__ import annotations
+
 import re
-from typing import List, Tuple
+from dataclasses import dataclass
+from typing import Any
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
-def _format_module_prefix(crumb: str, max_chars: int) -> str:
-    if not crumb:
+@dataclass(frozen=True)
+class VectorIndexChunk:
+    """Structured chunk payload for embedding, lexical search, and display."""
+
+    display_text: str
+    embedding_text: str
+    search_text: str
+    metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _Section:
+    title: str | None
+    heading_level: int | None
+    section_path: str | None
+    parent_heading: str | None
+    section_start: int
+    section_end: int
+    body_text: str
+    body_start: int
+    body_end: int
+
+
+_HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$", flags=re.MULTILINE)
+
+
+def _trim_span(text: str, start: int, end: int) -> tuple[str, int, int]:
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return text[start:end], start, end
+
+
+def _module_prefix(section_path: str | None) -> str:
+    if not section_path:
         return ""
-    head, tail = "[模块路径] ", "\n\n"
-    reserve_body = 48
-    max_crumb = max_chars - len(head) - len(tail) - reserve_body
-    if max_crumb < 4:
-        return ""
-    c = crumb if len(crumb) <= max_crumb else crumb[: max_crumb - 1] + "…"
-    return head + c + tail
+    return f"[模块路径] {section_path}\n\n"
 
 
-def _body_budget(max_chars: int, prefix: str) -> int:
-    """正文允许的最大长度，使 len(prefix) + body <= max_chars（极端情况至少保留 1）。"""
-    return max(1, max_chars - len(prefix))
+def _search_titles(doc_title: str | None, section_title: str | None) -> list[str]:
+    titles: list[str] = []
+    for value in (doc_title, section_title):
+        cleaned = (value or "").strip()
+        if cleaned and cleaned not in titles:
+            titles.append(cleaned)
+    return titles
 
 
-def _parse_heading_line(line: str) -> Tuple[int, str] | None:
-    m = re.match(r"^(#{1,3})\s+(.+)$", line.strip())
-    if not m:
-        return None
-    return len(m.group(1)), m.group(2).strip()
+def _search_text(doc_title: str | None, section_title: str | None, display_text: str) -> str:
+    titles = _search_titles(doc_title, section_title)
+    if titles:
+        return ("\n".join(titles) + "\n\n" + display_text).strip()
+    return display_text
 
 
-def _sections_with_breadcrumbs(doc: str) -> List[Tuple[str, str]]:
-    """按 #～### 切段顺序扫描，为每段生成 (面包屑, 段原文)。"""
-    parts = re.split(r"(?=^#{1,3}\s+)", doc, flags=re.MULTILINE)
-    stack: List[Tuple[int, str]] = []
-    out: List[Tuple[str, str]] = []
-    for part in parts:
-        part = part.strip()
-        if not part:
+def _body_budget(
+    max_chars: int,
+    section_path: str | None,
+    doc_title: str | None,
+    section_title: str | None,
+) -> int:
+    reserve = max(
+        len(_module_prefix(section_path)),
+        len(_search_text(doc_title, section_title, "")),
+    )
+    return max(1, max_chars - reserve)
+
+
+def _sections_with_metadata(doc: str) -> list[_Section]:
+    matches = list(_HEADING_RE.finditer(doc))
+    if not matches:
+        body_text, body_start, body_end = _trim_span(doc, 0, len(doc))
+        if not body_text:
+            return []
+        return [
+            _Section(
+                title=None,
+                heading_level=None,
+                section_path=None,
+                parent_heading=None,
+                section_start=body_start,
+                section_end=body_end,
+                body_text=body_text,
+                body_start=body_start,
+                body_end=body_end,
+            )
+        ]
+
+    out: list[_Section] = []
+    stack: list[tuple[int, str]] = []
+    first_heading = matches[0].start()
+    if first_heading > 0:
+        body_text, body_start, body_end = _trim_span(doc, 0, first_heading)
+        if body_text:
+            out.append(
+                _Section(
+                    title=None,
+                    heading_level=None,
+                    section_path=None,
+                    parent_heading=None,
+                    section_start=body_start,
+                    section_end=body_end,
+                    body_text=body_text,
+                    body_start=body_start,
+                    body_end=body_end,
+                )
+            )
+
+    for idx, match in enumerate(matches):
+        raw_start = match.start()
+        raw_end = matches[idx + 1].start() if idx + 1 < len(matches) else len(doc)
+        _, section_start, section_end = _trim_span(doc, raw_start, raw_end)
+        if section_start >= section_end:
             continue
-        first = part.split("\n", 1)[0].strip()
-        parsed = _parse_heading_line(first)
-        if parsed:
-            level, title = parsed
-            while stack and stack[-1][0] >= level:
-                stack.pop()
-            stack.append((level, title))
-            crumb = " > ".join(t for _, t in stack)
+
+        level = len(match.group(1))
+        title = match.group(2).strip()
+        while stack and stack[-1][0] >= level:
+            stack.pop()
+        stack.append((level, title))
+        section_path = " > ".join(item for _, item in stack) or None
+        parent_heading = stack[-2][1] if len(stack) >= 2 else None
+
+        heading_line_end = doc.find("\n", section_start, section_end)
+        if heading_line_end == -1:
+            body_text = ""
+            body_start = section_end
+            body_end = section_end
         else:
-            crumb = ""
-        out.append((crumb, part))
+            body_text, body_start, body_end = _trim_span(doc, heading_line_end + 1, section_end)
+
+        out.append(
+            _Section(
+                title=title,
+                heading_level=level,
+                section_path=section_path,
+                parent_heading=parent_heading,
+                section_start=section_start,
+                section_end=section_end,
+                body_text=body_text,
+                body_start=body_start,
+                body_end=body_end,
+            )
+        )
+
     return out
 
 
-def _pack_paragraphs(parts: List[str], max_chars: int) -> List[str]:
-    """将段落列表按 max_chars 合并为若干块。"""
-    chunks_raw: List[str] = []
-    current = ""
-    for p in parts:
-        p = p.strip()
-        if not p:
-            continue
-        if len(current) + len(p) + 2 <= max_chars:
-            current = (current + "\n\n" + p).strip() if current else p
-        else:
-            if current:
-                chunks_raw.append(current)
-            if len(p) <= max_chars:
-                current = p
-            else:
-                subparts = re.split(r"(?<=[。\n])", p)
-                current = ""
-                for sp in subparts:
-                    sp = sp.strip()
-                    if not sp:
-                        continue
-                    while len(sp) > max_chars:
-                        if current:
-                            chunks_raw.append(current)
-                            current = ""
-                        chunks_raw.append(sp[:max_chars])
-                        sp = sp[max_chars:].lstrip()
-                    if len(current) + len(sp) + 2 <= max_chars:
-                        current = (current + "\n\n" + sp).strip() if current else sp
-                    else:
-                        if current:
-                            chunks_raw.append(current)
-                        current = sp
+def _split_paragraph_spans(doc: str, start: int, end: int) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    cursor = start
+    region = doc[start:end]
+    for match in re.finditer(r"\n\s*\n+", region):
+        _, para_start, para_end = _trim_span(doc, cursor, start + match.start())
+        if para_start < para_end:
+            spans.append((para_start, para_end))
+        cursor = start + match.end()
+
+    _, para_start, para_end = _trim_span(doc, cursor, end)
+    if para_start < para_end:
+        spans.append((para_start, para_end))
+    return spans
+
+
+def _spans_text(doc: str, spans: list[tuple[int, int]]) -> str:
+    return "\n\n".join(doc[start:end] for start, end in spans).strip()
+
+
+def _pack_paragraphs(
+    spans: list[tuple[int, int]],
+    max_chars: int,
+) -> list[list[tuple[int, int]]]:
+    packed: list[list[tuple[int, int]]] = []
+    current: list[tuple[int, int]] = []
+    current_len = 0
+
+    for span in spans:
+        start, end = span
+        part_len = end - start
+        joiner = 2 if current else 0
+        if current and current_len + joiner + part_len > max_chars:
+            packed.append(current)
+            current = []
+            current_len = 0
+
+        current.append(span)
+        current_len += part_len if current_len == 0 else joiner + part_len
+
     if current:
-        chunks_raw.append(current)
-    return chunks_raw
+        packed.append(current)
+    return packed
 
 
 def _split_oversized_with_splitter(
-    text: str, body_max: int, overlap: int
-) -> List[str]:
+    text: str,
+    abs_start: int,
+    body_max: int,
+    overlap: int,
+) -> list[tuple[str, int, int]]:
     if len(text) <= body_max:
-        return [text] if text.strip() else []
-    ov = min(overlap, max(0, body_max - 1))
+        piece, rel_start, rel_end = _trim_span(text, 0, len(text))
+        if not piece:
+            return []
+        return [(piece, abs_start + rel_start, abs_start + rel_end)]
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=body_max,
-        chunk_overlap=ov,
+        chunk_overlap=min(overlap, max(0, body_max - 1)),
         length_function=len,
         separators=["\n\n", "\n", "。", "！", "？", ".", "!", "?", " "],
     )
-    return [x.strip() for x in splitter.split_text(text) if x.strip()]
+    pieces = [item for item in splitter.split_text(text) if item.strip()]
+
+    out: list[tuple[str, int, int]] = []
+    cursor = 0
+    for piece in pieces:
+        search_from = max(0, cursor - overlap - 64)
+        rel_start = text.find(piece, search_from)
+        if rel_start < 0:
+            rel_start = text.find(piece)
+        if rel_start < 0:
+            rel_start = search_from
+        rel_end = min(len(text), rel_start + len(piece))
+        trimmed, trimmed_start, trimmed_end = _trim_span(text, rel_start, rel_end)
+        if trimmed:
+            out.append(
+                (trimmed, abs_start + trimmed_start, abs_start + trimmed_end)
+            )
+        cursor = rel_end
+    return out
 
 
-def split_for_vector_index(text: str, max_chars: int, overlap: int) -> List[str]:
-    """
-    :param text: 全文
-    :param max_chars: 单块最大字符数（含「模块路径」前缀，来自 embedding.yaml chunk.size）
-    :param overlap: 仅在对超长正文做字符级切分时使用（chunk.overlap）
-    """
-    if not text.strip():
+def _make_chunk(
+    *,
+    body_text: str,
+    body_start: int,
+    body_end: int,
+    doc_title: str | None,
+    section: _Section,
+) -> VectorIndexChunk | None:
+    display_text = body_text.strip()
+    if not display_text:
+        return None
+
+    embedding_text = (_module_prefix(section.section_path) + display_text).strip()
+    search_text = _search_text(doc_title, section.title, display_text)
+    metadata = {
+        "section_path": section.section_path,
+        "section_title": section.title,
+        "heading_level": section.heading_level,
+        "parent_heading": section.parent_heading,
+        "start_offset": body_start,
+        "end_offset": body_end,
+    }
+    return VectorIndexChunk(
+        display_text=display_text,
+        embedding_text=embedding_text or display_text,
+        search_text=search_text or display_text,
+        metadata=metadata,
+    )
+
+
+def split_for_vector_index(
+    text: str,
+    max_chars: int,
+    overlap: int,
+    *,
+    document_title: str | None = None,
+) -> list[VectorIndexChunk]:
+    """Split a document into structured chunks for indexing."""
+    if not text or not text.strip():
         return []
-    doc = text.strip()
-    sections = _sections_with_breadcrumbs(doc)
-    out: List[str] = []
 
-    for crumb, section in sections:
-        prefix = _format_module_prefix(crumb, max_chars)
-        body_max = _body_budget(max_chars, prefix)
-
-        if len(section) <= body_max:
-            piece = (prefix + section).strip() if prefix else section
-            if piece:
-                out.append(piece)
+    chunks: list[VectorIndexChunk] = []
+    for section in _sections_with_metadata(text):
+        if not section.body_text:
+            fallback = _make_chunk(
+                body_text=section.title or "",
+                body_start=section.section_start,
+                body_end=section.section_end,
+                doc_title=document_title,
+                section=section,
+            )
+            if fallback:
+                chunks.append(fallback)
             continue
 
-        inner = [p.strip() for p in re.split(r"\n\s*\n+", section) if p.strip()]
-        raw_chunks = _pack_paragraphs(inner, body_max)
-        for c in raw_chunks:
-            c = c.strip()
-            if not c:
-                continue
-            if len(c) <= body_max:
-                piece = (prefix + c).strip() if prefix else c
-                out.append(piece)
-            else:
-                for sub in _split_oversized_with_splitter(c, body_max, overlap):
-                    piece = (prefix + sub).strip() if prefix else sub
-                    out.append(piece)
+        body_max = _body_budget(
+            max_chars,
+            section.section_path,
+            document_title,
+            section.title,
+        )
+        if len(section.body_text) <= body_max:
+            chunk = _make_chunk(
+                body_text=section.body_text,
+                body_start=section.body_start,
+                body_end=section.body_end,
+                doc_title=document_title,
+                section=section,
+            )
+            if chunk:
+                chunks.append(chunk)
+            continue
 
-    return [x for x in out if x]
+        paragraph_spans = _split_paragraph_spans(text, section.body_start, section.body_end)
+        packed_spans = _pack_paragraphs(paragraph_spans, body_max)
+        for span_group in packed_spans:
+            body_text = _spans_text(text, span_group)
+            if not body_text:
+                continue
+
+            if len(body_text) <= body_max:
+                chunk = _make_chunk(
+                    body_text=body_text,
+                    body_start=span_group[0][0],
+                    body_end=span_group[-1][1],
+                    doc_title=document_title,
+                    section=section,
+                )
+                if chunk:
+                    chunks.append(chunk)
+                continue
+
+            start, end = span_group[0]
+            oversized = _split_oversized_with_splitter(text[start:end], start, body_max, overlap)
+            for sub_text, sub_start, sub_end in oversized:
+                chunk = _make_chunk(
+                    body_text=sub_text,
+                    body_start=sub_start,
+                    body_end=sub_end,
+                    doc_title=document_title,
+                    section=section,
+                )
+                if chunk:
+                    chunks.append(chunk)
+
+    return chunks

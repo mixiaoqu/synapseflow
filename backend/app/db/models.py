@@ -107,6 +107,9 @@ class Document(Base):
         nullable=True,
         index=True,
     )
+    index_status = Column(String(20), nullable=False, default="queued", index=True)
+    index_error = Column(Text, nullable=True)
+    content_hash = Column(String(32), nullable=False, default="")
     indexed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -120,6 +123,7 @@ class Embedding(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
     chunk_text = Column(Text, nullable=False)
+    search_text = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)
     chunk_tsv = Column(TSVECTOR, nullable=True)
     embedding = Column(Vector(EMBEDDING_DIM), nullable=False)

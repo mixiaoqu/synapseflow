@@ -1,7 +1,5 @@
 """Knowledge-base management endpoints."""
 
-from datetime import datetime, timedelta
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,18 +22,20 @@ def _resolve_knowledge_base_status(
     *,
     document_count: int,
     indexed_document_count: int,
+    queued_document_count: int,
+    processing_document_count: int,
+    failed_document_count: int,
     unindexed_document_count: int,
-    last_uploaded_at: datetime | None,
 ) -> str:
-    """Infer a card-friendly status from observable indexing data."""
+    """Infer a card-friendly status from explicit indexing data."""
     if document_count <= 0:
         return "empty"
-    if unindexed_document_count <= 0:
+    if queued_document_count > 0 or processing_document_count > 0:
+        return "indexing"
+    if failed_document_count > 0:
+        return "error"
+    if indexed_document_count > 0 or unindexed_document_count <= 0:
         return "available"
-    if indexed_document_count > 0:
-        return "indexing"
-    if last_uploaded_at and last_uploaded_at >= datetime.utcnow() - timedelta(minutes=5):
-        return "indexing"
     return "error"
 
 
@@ -57,14 +57,19 @@ async def list_knowledge_bases(
             updated_at=row.knowledge_base.updated_at,
             document_count=row.document_count,
             indexed_document_count=row.indexed_document_count,
+            queued_document_count=row.queued_document_count,
+            processing_document_count=row.processing_document_count,
+            failed_document_count=row.failed_document_count,
             unindexed_document_count=row.unindexed_document_count,
             last_document_updated_at=row.last_document_updated_at,
             last_uploaded_at=row.last_uploaded_at,
             status=_resolve_knowledge_base_status(
                 document_count=row.document_count,
                 indexed_document_count=row.indexed_document_count,
+                queued_document_count=row.queued_document_count,
+                processing_document_count=row.processing_document_count,
+                failed_document_count=row.failed_document_count,
                 unindexed_document_count=row.unindexed_document_count,
-                last_uploaded_at=row.last_uploaded_at,
             ),
             recent_documents=[
                 KnowledgeBaseRecentDocument(
@@ -73,6 +78,8 @@ async def list_knowledge_bases(
                     document_type=doc.document_type,
                     size=doc.size,
                     indexed=doc.indexed,
+                    index_status=doc.index_status,
+                    index_error=doc.index_error,
                     created_at=doc.created_at,
                     updated_at=doc.updated_at,
                 )

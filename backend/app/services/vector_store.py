@@ -7,12 +7,13 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, Embedding
+from app.services.semantic_chunk import VectorIndexChunk
 
 
 async def add_document_chunks(
     db: AsyncSession,
     document_id: int,
-    chunks: List[str],
+    chunks: List[VectorIndexChunk],
     vectors: List[List[float]],
     *,
     commit: bool = True,
@@ -23,10 +24,11 @@ async def add_document_chunks(
     rows = [
         Embedding(
             document_id=document_id,
-            chunk_text=chunk,
+            chunk_text=chunk.display_text,
+            search_text=chunk.search_text,
             chunk_index=i,
             embedding=vec,
-            metadata_={"chunk_index": i},
+            metadata_={"chunk_index": i, **chunk.metadata},
         )
         for i, (chunk, vec) in enumerate(zip(chunks, vectors))
     ]
@@ -70,8 +72,10 @@ async def search(
     stmt = (
         select(
             Embedding.chunk_text,
+            Embedding.search_text,
             Embedding.document_id,
             Embedding.chunk_index,
+            Embedding.metadata_,
             dist_col,
             Document.title.label("document_title"),
         )
@@ -86,12 +90,23 @@ async def search(
 
     result = await db.execute(stmt)
     out: List[dict] = []
-    for chunk_text, document_id, chunk_index, dist_val, document_title in result.all():
+    for (
+        chunk_text,
+        search_text,
+        document_id,
+        chunk_index,
+        raw_metadata,
+        dist_val,
+        document_title,
+    ) in result.all():
+        metadata = dict(raw_metadata or {})
         out.append(
             {
                 "chunk_text": chunk_text,
+                "search_text": search_text or chunk_text,
                 "document_id": int(document_id),
                 "chunk_index": int(chunk_index),
+                "metadata": metadata,
                 "distance": float(dist_val) if dist_val is not None else 0.0,
                 "document_title": document_title or "Unknown document",
             }
@@ -128,8 +143,10 @@ def reciprocal_rank_fusion(
         if key not in by_key:
             by_key[key] = {
                 "chunk_text": row["chunk_text"],
+                "search_text": row.get("search_text", row["chunk_text"]),
                 "document_id": row["document_id"],
                 "chunk_index": row["chunk_index"],
+                "metadata": dict(row.get("metadata") or {}),
                 "distance": 2.0,
                 "document_title": row.get("document_title", "Unknown document"),
             }
@@ -165,7 +182,7 @@ async def search_lexical(
         return []
 
     sql_lines = [
-        "SELECT e.chunk_text, e.document_id, e.chunk_index, d.title AS document_title,",
+        "SELECT e.chunk_text, e.search_text, e.document_id, e.chunk_index, e.metadata, d.title AS document_title,",
         "       ts_rank_cd(e.chunk_tsv, websearch_to_tsquery('simple', :q)) AS lr",
         "FROM embeddings e",
         "JOIN documents d ON d.id = e.document_id",
@@ -195,12 +212,23 @@ async def search_lexical(
         return []
 
     out: List[dict] = []
-    for chunk_text, document_id, chunk_index, document_title, lexical_rank in result.all():
+    for (
+        chunk_text,
+        search_text,
+        document_id,
+        chunk_index,
+        raw_metadata,
+        document_title,
+        lexical_rank,
+    ) in result.all():
+        metadata = dict(raw_metadata or {})
         out.append(
             {
                 "chunk_text": chunk_text,
+                "search_text": search_text or chunk_text,
                 "document_id": int(document_id),
                 "chunk_index": int(chunk_index),
+                "metadata": metadata,
                 "distance": 2.0,
                 "lexical_rank": float(lexical_rank) if lexical_rank is not None else 0.0,
                 "document_title": document_title or "Unknown document",

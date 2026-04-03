@@ -7,6 +7,12 @@ from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, KnowledgeBase
+from app.services.document_index_state import (
+    INDEX_STATUS_FAILED,
+    INDEX_STATUS_INDEXED,
+    INDEX_STATUS_PROCESSING,
+    INDEX_STATUS_QUEUED,
+)
 
 
 @dataclass(slots=True)
@@ -18,6 +24,8 @@ class KnowledgeBaseRecentDocumentRecord:
     document_type: str | None
     size: int
     indexed: bool
+    index_status: str
+    index_error: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -29,6 +37,9 @@ class KnowledgeBaseSummaryRecord:
     knowledge_base: KnowledgeBase
     document_count: int
     indexed_document_count: int
+    queued_document_count: int
+    processing_document_count: int
+    failed_document_count: int
     unindexed_document_count: int
     last_document_updated_at: datetime | None
     last_uploaded_at: datetime | None
@@ -48,11 +59,16 @@ class KnowledgeBaseRepository:
         team_id: int | None = None,
     ) -> list[KnowledgeBaseSummaryRecord]:
         """List knowledge bases with dashboard summary metrics."""
-        indexed_count = func.sum(case((Document.indexed_at.is_not(None), 1), else_=0))
+        indexed_count = func.sum(case((Document.index_status == INDEX_STATUS_INDEXED, 1), else_=0))
+        queued_count = func.sum(case((Document.index_status == INDEX_STATUS_QUEUED, 1), else_=0))
+        processing_count = func.sum(
+            case((Document.index_status == INDEX_STATUS_PROCESSING, 1), else_=0)
+        )
+        failed_count = func.sum(case((Document.index_status == INDEX_STATUS_FAILED, 1), else_=0))
         unindexed_count = func.sum(
             case(
                 (
-                    Document.id.is_not(None) & Document.indexed_at.is_(None),
+                    Document.id.is_not(None) & (Document.index_status != INDEX_STATUS_INDEXED),
                     1,
                 ),
                 else_=0,
@@ -63,6 +79,9 @@ class KnowledgeBaseRepository:
                 KnowledgeBase,
                 func.count(Document.id).label("doc_count"),
                 indexed_count.label("indexed_doc_count"),
+                queued_count.label("queued_doc_count"),
+                processing_count.label("processing_doc_count"),
+                failed_count.label("failed_doc_count"),
                 unindexed_count.label("unindexed_doc_count"),
                 func.max(Document.updated_at).label("last_document_updated_at"),
                 func.max(Document.created_at).label("last_uploaded_at"),
@@ -86,6 +105,9 @@ class KnowledgeBaseRepository:
                 knowledge_base=knowledge_base,
                 document_count=doc_count or 0,
                 indexed_document_count=indexed_doc_count or 0,
+                queued_document_count=queued_doc_count or 0,
+                processing_document_count=processing_doc_count or 0,
+                failed_document_count=failed_doc_count or 0,
                 unindexed_document_count=unindexed_doc_count or 0,
                 last_document_updated_at=last_document_updated_at,
                 last_uploaded_at=last_uploaded_at,
@@ -95,6 +117,9 @@ class KnowledgeBaseRepository:
                 knowledge_base,
                 doc_count,
                 indexed_doc_count,
+                queued_doc_count,
+                processing_doc_count,
+                failed_doc_count,
                 unindexed_doc_count,
                 last_document_updated_at,
                 last_uploaded_at,
@@ -118,7 +143,9 @@ class KnowledgeBaseRepository:
                 Document.size.label("size"),
                 Document.created_at.label("created_at"),
                 Document.updated_at.label("updated_at"),
-                Document.indexed_at.is_not(None).label("indexed"),
+                (Document.index_status == INDEX_STATUS_INDEXED).label("indexed"),
+                Document.index_status.label("index_status"),
+                Document.index_error.label("index_error"),
                 func.row_number()
                 .over(
                     partition_by=Document.knowledge_base_id,
@@ -156,6 +183,8 @@ class KnowledgeBaseRepository:
                     document_type=row.document_type,
                     size=row.size or 0,
                     indexed=bool(row.indexed),
+                    index_status=row.index_status or INDEX_STATUS_QUEUED,
+                    index_error=row.index_error,
                     created_at=row.created_at,
                     updated_at=row.updated_at,
                 )

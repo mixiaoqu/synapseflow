@@ -124,7 +124,7 @@ async def rerank(query: str, chunks: List[dict], top_k: int | None = None) -> Li
         return []
 
     top_k = top_k or config_registry.get_rag_config().retrieval.final_top_k
-    documents = [c["chunk_text"] for c in chunks]
+    documents = [c.get("search_text") or c["chunk_text"] for c in chunks]
 
     try:
         url, headers = _get_url_and_headers()

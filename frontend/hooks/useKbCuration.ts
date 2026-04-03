@@ -122,9 +122,9 @@ export function useKbCuration() {
     setReindexing(true);
     try {
       const res = await reindexAll();
-      toast.success(res.message || `Reindexed ${res.indexed} documents`);
-      if (res.indexed > 0) {
-        toast.info("Run the question again to get the latest retrieval result.");
+      toast.success(res.message || `Queued ${res.queued} documents for reindexing`);
+      if (res.queued > 0) {
+        toast.info("Run the question again after indexing finishes to get the latest retrieval result.");
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Reindex failed");

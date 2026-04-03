@@ -16,8 +16,13 @@ from app.services.vector_store import search, search_hybrid_rrf
 
 
 def _format_kb_chunk(doc: Dict[str, Any], content: str) -> str:
-    title = doc.get("metadata", {}).get("document_title", "Unknown document")
-    return f"[Document: {title}]\n{content}"
+    meta = doc.get("metadata", {}) or {}
+    title = meta.get("document_title", "Unknown document")
+    section_path = meta.get("section_path")
+    header = f"[Document: {title}]"
+    if section_path:
+        header += f"\n[Section: {section_path}]"
+    return f"{header}\n{content}"
 
 
 def _apply_kb_context_budget(
@@ -210,7 +215,9 @@ async def run_kb_retrieval(
 
     retrieved_docs = []
     for row in results:
+        chunk_meta = dict(row.get("metadata") or {})
         meta = {
+            **chunk_meta,
             "document_id": row["document_id"],
             "document_title": row.get("document_title", "Unknown document"),
             "chunk_index": row["chunk_index"],

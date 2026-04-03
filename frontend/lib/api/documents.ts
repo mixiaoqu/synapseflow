@@ -1,5 +1,7 @@
 import { apiClient } from "./client";
 
+export type DocumentIndexStatus = "queued" | "processing" | "indexed" | "failed";
+
 export type DocumentListItem = {
   id: number;
   title: string;
@@ -7,6 +9,9 @@ export type DocumentListItem = {
   size: number;
   version: number;
   indexed: boolean;
+  index_status: DocumentIndexStatus;
+  index_error: string | null;
+  indexed_at: string | null;
   knowledge_base_id: number | null;
   knowledge_base_name: string | null;
   created_at: string;
@@ -21,6 +26,9 @@ export type DocumentDetail = {
   size: number;
   version: number;
   knowledge_base_id: number | null;
+  index_status: DocumentIndexStatus;
+  index_error: string | null;
+  indexed_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -32,6 +40,11 @@ export type DocumentVersionItem = {
   is_latest: boolean;
   is_current: boolean;
   created_at: string;
+};
+
+export type DocumentIndexQueueResponse = {
+  message: string;
+  queued: number;
 };
 
 export async function listDocuments(params: {
@@ -125,14 +138,14 @@ export async function switchCurrentDocumentVersion(docId: number): Promise<Docum
 
 export async function indexDocument(
   docId: number,
-): Promise<{ message: string; chunks: number }> {
+): Promise<DocumentIndexQueueResponse> {
   return apiClient.post(`/api/v1/documents/${docId}/index`, {});
 }
 
 export async function reindexAll(params?: {
   team_id?: number | null;
   knowledge_base_id?: number | null;
-}): Promise<{ message: string; indexed: number }> {
+}): Promise<DocumentIndexQueueResponse> {
   const sp = new URLSearchParams();
   if (params?.team_id != null) sp.set("team_id", String(params.team_id));
   if (params?.knowledge_base_id != null) {
