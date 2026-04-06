@@ -45,6 +45,7 @@ def test_kb_chat_stream_emits_standardized_envelopes():
         request = SimpleNamespace(
             query="What is LangGraph?",
             knowledge_base_id=9,
+            category_id=4,
             session_id=None,
         )
 
@@ -75,3 +76,19 @@ def test_kb_chat_stream_emits_standardized_envelopes():
         "LangGraph Intro"
     )
     assert payloads[-1]["data"]["answer"] == "LangGraph helps compose flows."
+
+
+def test_kb_chat_build_initial_state_keeps_category_id():
+    service = KbChatService(llm_factory=lambda: None)
+    request = SimpleNamespace(
+        query="退款规则是什么",
+        knowledge_base_id=3,
+        category_id=7,
+        session_id="session-1",
+    )
+
+    state = service.build_initial_state(request, user_id=99)
+
+    assert state["knowledge_base_id"] == 3
+    assert state["category_id"] == 7
+    assert state["query"] == "退款规则是什么"

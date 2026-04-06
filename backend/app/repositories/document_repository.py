@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Document, KnowledgeBase
+from app.db.models import Document, DocumentCategory, KnowledgeBase
 from app.services.document_index_state import (
     INDEX_STATUS_QUEUED,
     compute_content_hash,
@@ -27,6 +27,8 @@ class DocumentRepository:
         document_type: str | None = None,
         size: int = 0,
         knowledge_base_id: int | None = None,
+        category_id: int | None = None,
+        source_path: str | None = None,
         commit: bool = True,
     ) -> Document:
         """Create a document row and set its root_id in the same transaction."""
@@ -45,6 +47,8 @@ class DocumentRepository:
             is_latest=True,
             is_current=True,
             knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            source_path=source_path,
         )
         self.db.add(doc)
         await self.db.flush()
@@ -81,8 +85,9 @@ class DocumentRepository:
         keyword: str | None = None,
         team_id: int | None = None,
         knowledge_base_id: int | None = None,
-    ) -> tuple[list[tuple[Document, str | None]], int]:
-        """Return paginated latest documents plus knowledge-base name."""
+        category_id: int | None = None,
+    ) -> tuple[list[tuple[Document, str | None, str | None]], int]:
+        """Return paginated current documents plus knowledge-base/category names."""
         base_filter = Document.user_id == self.user_id
         base_filter = base_filter & Document.is_current.is_(True)
         if keyword and keyword.strip():
@@ -92,11 +97,17 @@ class DocumentRepository:
                 base_filter = base_filter & Document.knowledge_base_id.is_(None)
             else:
                 base_filter = base_filter & (Document.knowledge_base_id == knowledge_base_id)
+        if category_id is not None:
+            if category_id == 0:
+                base_filter = base_filter & Document.category_id.is_(None)
+            else:
+                base_filter = base_filter & (Document.category_id == category_id)
 
         count_query = (
             select(func.count())
             .select_from(Document)
             .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
             .where(base_filter)
         )
         if team_id is not None:
@@ -110,8 +121,13 @@ class DocumentRepository:
 
         offset = (page - 1) * page_size
         stmt = (
-            select(Document, KnowledgeBase.name.label("knowledge_base_name"))
+            select(
+                Document,
+                KnowledgeBase.name.label("knowledge_base_name"),
+                DocumentCategory.name.label("category_name"),
+            )
             .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
             .where(base_filter)
             .order_by(Document.created_at.desc())
             .offset(offset)
@@ -126,6 +142,20 @@ class DocumentRepository:
             )
         result = await self.db.execute(stmt)
         return list(result.all()), total
+
+    async def get_category_name(self, category_id: int | None) -> str | None:
+        """Fetch a category name scoped to the current user."""
+        if category_id is None:
+            return None
+        result = await self.db.execute(
+            select(DocumentCategory.name)
+            .join(KnowledgeBase, KnowledgeBase.id == DocumentCategory.knowledge_base_id)
+            .where(
+                DocumentCategory.id == category_id,
+                KnowledgeBase.user_id == self.user_id,
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def get_by_id(self, doc_id: int) -> Document | None:
         """Fetch a document by id without user filtering."""
@@ -245,6 +275,8 @@ class DocumentRepository:
             is_latest=True,
             is_current=True,
             knowledge_base_id=getattr(latest_doc or orig, "knowledge_base_id", None),
+            category_id=getattr(latest_doc or orig, "category_id", None),
+            source_path=getattr(latest_doc or orig, "source_path", None),
         )
         if latest_doc:
             latest_doc.is_latest = False

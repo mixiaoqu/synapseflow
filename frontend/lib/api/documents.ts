@@ -14,6 +14,9 @@ export type DocumentListItem = {
   indexed_at: string | null;
   knowledge_base_id: number | null;
   knowledge_base_name: string | null;
+  category_id: number | null;
+  category_name: string | null;
+  source_path: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -26,6 +29,9 @@ export type DocumentDetail = {
   size: number;
   version: number;
   knowledge_base_id: number | null;
+  category_id: number | null;
+  category_name: string | null;
+  source_path: string | null;
   index_status: DocumentIndexStatus;
   index_error: string | null;
   indexed_at: string | null;
@@ -53,6 +59,7 @@ export async function listDocuments(params: {
   keyword?: string | null;
   team_id?: number | null;
   knowledge_base_id?: number | null;
+  category_id?: number | null;
 }): Promise<{
   items: DocumentListItem[];
   total: number;
@@ -68,6 +75,9 @@ export async function listDocuments(params: {
   }
   if (params.knowledge_base_id !== undefined && params.knowledge_base_id !== null) {
     sp.set("knowledge_base_id", String(params.knowledge_base_id));
+  }
+  if (params.category_id !== undefined && params.category_id !== null) {
+    sp.set("category_id", String(params.category_id));
   }
 
   const q = sp.toString();
@@ -88,11 +98,21 @@ export async function getDocumentVersions(docId: number): Promise<DocumentVersio
 export async function uploadDocument(
   file: File,
   knowledgeBaseId?: number | null,
+  options?: {
+    categoryId?: number | null;
+    sourcePath?: string | null;
+  },
 ): Promise<DocumentDetail> {
   const form = new FormData();
   form.append("file", file);
   if (knowledgeBaseId != null && knowledgeBaseId > 0) {
     form.append("knowledge_base_id", String(knowledgeBaseId));
+  }
+  if (options?.categoryId != null && options.categoryId > 0) {
+    form.append("category_id", String(options.categoryId));
+  }
+  if (options?.sourcePath) {
+    form.append("source_path", options.sourcePath);
   }
   return apiClient.postForm("/api/v1/documents", form);
 }
@@ -100,11 +120,21 @@ export async function uploadDocument(
 export async function uploadDocumentsBatch(
   files: File[],
   knowledgeBaseId?: number | null,
+  options?: {
+    categoryId?: number | null;
+    sourcePaths?: Array<string | null | undefined>;
+  },
 ): Promise<DocumentDetail[]> {
   const form = new FormData();
   for (const f of files) form.append("files", f);
   if (knowledgeBaseId != null && knowledgeBaseId > 0) {
     form.append("knowledge_base_id", String(knowledgeBaseId));
+  }
+  if (options?.categoryId != null && options.categoryId > 0) {
+    form.append("category_id", String(options.categoryId));
+  }
+  for (const sourcePath of options?.sourcePaths ?? []) {
+    if (sourcePath) form.append("source_paths", sourcePath);
   }
   return apiClient.postForm("/api/v1/documents/batch", form);
 }
@@ -114,6 +144,8 @@ export async function createDocumentFromContent(body: {
   content: string;
   document_type?: string;
   knowledge_base_id?: number | null;
+  category_id?: number | null;
+  source_path?: string | null;
 }): Promise<DocumentDetail> {
   return apiClient.post("/api/v1/documents/from-content", body);
 }

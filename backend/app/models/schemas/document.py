@@ -15,6 +15,8 @@ class DocumentCreate(BaseModel):
     content: str = Field(..., description="Document content")
     document_type: str | None = Field(None, description="Document type such as txt/md/pdf/docx")
     knowledge_base_id: int | None = Field(None, description="Owning knowledge base id")
+    category_id: int | None = Field(None, description="Owning category id")
+    source_path: str | None = Field(None, description="Original relative source path")
 
 
 class DocumentResponse(BaseModel):
@@ -29,6 +31,9 @@ class DocumentResponse(BaseModel):
     size: int = 0
     version: int = 1
     knowledge_base_id: int | None = Field(None, description="Owning knowledge base id")
+    category_id: int | None = Field(None, description="Owning category id")
+    category_name: str | None = Field(None, description="Owning category name")
+    source_path: str | None = Field(None, description="Original relative source path")
     index_status: DocumentIndexStatus = "queued"
     index_error: str | None = None
     indexed_at: datetime | None = None
@@ -52,6 +57,9 @@ class DocumentListItem(BaseModel):
     indexed_at: datetime | None = None
     knowledge_base_id: int | None = None
     knowledge_base_name: str | None = None
+    category_id: int | None = None
+    category_name: str | None = None
+    source_path: str | None = None
     created_at: datetime
     updated_at: datetime
 

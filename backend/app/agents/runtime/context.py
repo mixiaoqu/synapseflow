@@ -18,6 +18,7 @@ class BaseAgentContext(TypedDict, total=False):
     user_id: Optional[int]
     team_id: Optional[int]
     knowledge_base_id: Optional[int]
+    category_id: Optional[int]
     request_id: Optional[str]
     run_id: Optional[str]
     metadata: dict[str, Any]
@@ -28,6 +29,7 @@ def build_base_agent_context(
     user_id: int | None = None,
     team_id: int | None = None,
     knowledge_base_id: int | None = None,
+    category_id: int | None = None,
     request_id: str | None = None,
     run_id: str | None = None,
     messages: list[Any] | None = None,
@@ -40,6 +42,7 @@ def build_base_agent_context(
         "user_id": user_id,
         "team_id": team_id,
         "knowledge_base_id": knowledge_base_id,
+        "category_id": category_id,
         "request_id": request_id,
         "run_id": run_id,
         "metadata": dict(metadata or {}),

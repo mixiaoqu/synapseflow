@@ -42,6 +42,14 @@ function SourceChunkCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold text-slate-800">{title}</span>
+            {doc.metadata?.category_name ? (
+              <Badge
+                variant="outline"
+                className="border-slate-200 px-1.5 py-0 text-[10px] font-normal text-slate-600"
+              >
+                {doc.metadata.category_name}
+              </Badge>
+            ) : null}
             {doc.metadata?.chunk_index != null && (
               <Badge
                 variant="secondary"
@@ -54,6 +62,9 @@ function SourceChunkCard({
           <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
             {expanded || !needsExpand ? body : truncateText(body, previewLen)}
           </p>
+          {doc.metadata?.source_path ? (
+            <p className="mt-1 text-[11px] text-slate-400">{doc.metadata.source_path}</p>
+          ) : null}
           {needsExpand && (
             <span className="mt-1.5 inline-block text-[11px] font-medium text-teal-700">
               {expanded ? "收起" : "展开全文"}

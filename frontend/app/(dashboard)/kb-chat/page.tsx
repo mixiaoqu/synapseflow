@@ -46,7 +46,10 @@ export default function KbChatPage() {
     setQuery,
     knowledgeBaseId,
     setKnowledgeBaseId,
+    categoryId,
+    setCategoryId,
     knowledgeBases,
+    categories,
     loading,
     turns,
     expandedChunks,
@@ -244,9 +247,11 @@ export default function KbChatPage() {
               <select
                 id="kb-collection"
                 value={knowledgeBaseId ?? ""}
-                onChange={(e) =>
-                  setKnowledgeBaseId(e.target.value ? Number(e.target.value) : null)
-                }
+                  onChange={(e) => {
+                    const nextValue = e.target.value ? Number(e.target.value) : null;
+                    setKnowledgeBaseId(nextValue);
+                    setCategoryId(null);
+                  }}
                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-600/30 sm:min-w-[180px] sm:w-auto"
                 disabled={loading}
               >
@@ -256,8 +261,33 @@ export default function KbChatPage() {
                     {collection.name}（{collection.document_count} 篇）
                   </option>
                 ))}
-              </select>
-            </div>
+                </select>
+              </div>
+
+              <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                <label
+                  htmlFor="kb-category"
+                  className="shrink-0 whitespace-nowrap text-xs text-slate-500"
+                >
+                  分类
+                </label>
+                <select
+                  id="kb-category"
+                  value={categoryId ?? ""}
+                  onChange={(e) =>
+                    setCategoryId(e.target.value ? Number(e.target.value) : null)
+                  }
+                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-600/30 sm:min-w-[180px] sm:w-auto"
+                  disabled={loading || !knowledgeBaseId}
+                >
+                  <option value="">{knowledgeBaseId ? "全部分类" : "先选择知识库"}</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}（{category.document_count}）
+                    </option>
+                  ))}
+                </select>
+              </div>
 
             <Button
               type="submit"

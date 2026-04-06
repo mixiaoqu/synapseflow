@@ -70,6 +70,7 @@ def _apply_kb_context_budget(
 async def _knowledge_base_has_documents(
     *,
     knowledge_base_id: int,
+    category_id: int | None,
     user_id: int | None,
 ) -> bool:
     async with AsyncSessionLocal() as db:
@@ -77,6 +78,8 @@ async def _knowledge_base_has_documents(
             Document.knowledge_base_id == knowledge_base_id,
             Document.is_current.is_(True),
         )
+        if category_id is not None:
+            stmt = stmt.where(Document.category_id == category_id)
         if user_id is not None:
             stmt = stmt.where(Document.user_id == user_id)
         result = await db.execute(stmt.limit(1))
@@ -87,6 +90,7 @@ async def _retrieve_ranked_rows(
     *,
     query: str,
     knowledge_base_id: Optional[int],
+    category_id: Optional[int],
     user_id: int | None,
     recall_k: int,
     final_top_k: int,
@@ -105,6 +109,7 @@ async def _retrieve_ranked_rows(
                 k_lexical=rag.lexical_k,
                 user_id=user_id,
                 knowledge_base_id=knowledge_base_id,
+                category_id=category_id,
                 rrf_k=rag.rrf_k,
                 pool_limit=max(pool_limit, 1),
             )
@@ -115,6 +120,7 @@ async def _retrieve_ranked_rows(
                 k=recall_k,
                 user_id=user_id,
                 knowledge_base_id=knowledge_base_id,
+                category_id=category_id,
             )
 
     recall_n = len(results)
@@ -132,6 +138,7 @@ async def _retrieve_ranked_rows(
     if knowledge_base_id is not None and recall_n == 0:
         has_documents = await _knowledge_base_has_documents(
             knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
             user_id=user_id,
         )
 
@@ -142,6 +149,7 @@ async def run_kb_retrieval(
     *,
     query: str,
     knowledge_base_id: Optional[int],
+    category_id: Optional[int] = None,
     iteration: int = 0,
     log_prefix: str = "[KB Retrieval]",
     user_id: int | None = None,
@@ -157,6 +165,7 @@ async def run_kb_retrieval(
     results, has_documents = await _retrieve_ranked_rows(
         query=query,
         knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
         user_id=user_id,
         recall_k=recall_k,
         final_top_k=final_top_k,
@@ -206,7 +215,12 @@ async def run_kb_retrieval(
                 "kb_retrieval_status": "empty_knowledge_base",
             }
 
-        logger.warning("{} no hits | knowledge_base={}", log_prefix, knowledge_base_id or "all")
+        logger.warning(
+            "{} no hits | knowledge_base={} category={}",
+            log_prefix,
+            knowledge_base_id or "all",
+            category_id or "all",
+        )
         return {
             "retrieved_docs": [],
             "context": "(No relevant documents were found. Please confirm the KB has indexed content.)",

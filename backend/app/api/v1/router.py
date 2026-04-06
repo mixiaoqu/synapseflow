@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
     auth,
+    document_categories,
     documents,
     health,
     kb_chat,
@@ -23,6 +24,11 @@ api_router.include_router(kb_chat.router, prefix="/kb-chat", tags=["kb-chat"])
 api_router.include_router(revision.router, prefix="/revision", tags=["revision"])
 api_router.include_router(prototype_stream.router, prefix="/prototype", tags=["prototype"])
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
+api_router.include_router(
+    document_categories.router,
+    prefix="/document-categories",
+    tags=["document-categories"],
+)
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(
     knowledge_bases.router,

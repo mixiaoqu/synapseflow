@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+  listDocumentCategories,
+  type DocumentCategory,
+} from "@/lib/api/documentCategories";
+import {
   listKnowledgeBases,
   type KnowledgeBaseWithCount,
 } from "@/lib/api/knowledgeBases";
@@ -24,7 +28,9 @@ export interface KbChatTurn {
 export function useKbChat() {
   const [query, setQuery] = useState("");
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<number | null>(null);
+  const [categoryId, setCategoryId] = useState<number | null>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseWithCount[]>([]);
+  const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [loading, setLoading] = useState(false);
   const [turns, setTurns] = useState<KbChatTurn[]>([]);
   const [expandedChunks, setExpandedChunks] = useState<Set<string>>(new Set());
@@ -44,6 +50,38 @@ export function useKbChat() {
     void loadKnowledgeBases();
   }, [loadKnowledgeBases]);
 
+  useEffect(() => {
+    if (!knowledgeBaseId || knowledgeBaseId <= 0) {
+      setCategories([]);
+      setCategoryId(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const items = await listDocumentCategories(knowledgeBaseId);
+        if (cancelled) return;
+        setCategories(items);
+        setCategoryId((prev) =>
+          prev && items.some((item) => item.id === prev) ? prev : null,
+        );
+      } catch {
+        if (!cancelled) {
+          setCategories([]);
+          setCategoryId(null);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [knowledgeBaseId]);
+
   const toggleChunk = useCallback((key: string) => {
     setExpandedChunks((prev) => {
       const next = new Set(prev);
@@ -62,13 +100,18 @@ export function useKbChat() {
 
   const knowledgeBaseLabel = useMemo(() => {
     if (knowledgeBaseId && knowledgeBaseId > 0) {
-      return (
+      const kbLabel =
         knowledgeBases.find((kb) => kb.id === knowledgeBaseId)?.name ??
-        "Selected knowledge base"
-      );
+        "Selected knowledge base";
+      if (categoryId && categoryId > 0) {
+        const categoryLabel =
+          categories.find((item) => item.id === categoryId)?.name ?? "Selected category";
+        return `${kbLabel} / ${categoryLabel}`;
+      }
+      return kbLabel;
     }
     return "All knowledge bases";
-  }, [knowledgeBaseId, knowledgeBases]);
+  }, [categories, categoryId, knowledgeBaseId, knowledgeBases]);
 
   const expandAllChunks = useCallback(() => {
     if (!lastTurn?.retrievedDocs.length) return;
@@ -90,6 +133,8 @@ export function useKbChat() {
         request?.knowledge_base_id !== undefined
           ? request.knowledge_base_id
           : knowledgeBaseId;
+      const nextCategoryId =
+        request?.category_id !== undefined ? request.category_id : categoryId;
 
       if (!nextQuery || loading) return false;
 
@@ -109,6 +154,7 @@ export function useKbChat() {
           query: nextQuery,
           knowledge_base_id:
             nextKnowledgeBaseId && nextKnowledgeBaseId > 0 ? nextKnowledgeBaseId : null,
+          category_id: nextCategoryId && nextCategoryId > 0 ? nextCategoryId : null,
         });
 
         await consumeSseStream(stream, (event) => {
@@ -193,7 +239,7 @@ export function useKbChat() {
         activeTurnIdRef.current = null;
       }
     },
-    [knowledgeBaseId, loading, query],
+    [categoryId, knowledgeBaseId, loading, query],
   );
 
   return {
@@ -201,7 +247,10 @@ export function useKbChat() {
     setQuery,
     knowledgeBaseId,
     setKnowledgeBaseId,
+    categoryId,
+    setCategoryId,
     knowledgeBases,
+    categories,
     loading,
     turns,
     expandedChunks,

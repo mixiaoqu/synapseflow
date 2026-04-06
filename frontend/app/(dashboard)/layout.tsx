@@ -130,7 +130,7 @@ export default function DashboardLayout({
                 (item.href !== "/" && pathname.startsWith(`${item.href}/`));
 
               return (
-                <Link key={item.href} href={item.href}>
+                <Link key={item.href} href={item.href} prefetch={true}>
                   <div
                     className={`rounded-lg border-l-2 px-4 py-3 transition-colors ${
                       isActive

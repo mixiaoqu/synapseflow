@@ -10,6 +10,7 @@ class KbChatState(BaseAgentContext, total=False):
 
     query: str
     knowledge_base_id: Optional[int]
+    category_id: Optional[int]
     retrieved_docs: List[Dict[str, Any]]
     context: str
     answer: str

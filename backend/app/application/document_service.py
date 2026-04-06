@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Sequence
 
 from fastapi import BackgroundTasks, HTTPException, UploadFile
@@ -19,13 +20,17 @@ from app.models.schemas.document import (
     DocumentVersionItem,
     DocumentVersionsResponse,
 )
+from app.repositories.document_category_repository import DocumentCategoryRepository
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 from app.services.document_index_state import (
     INDEX_STATUS_QUEUED,
     compute_content_hash,
     is_indexed_status,
 )
 from app.utils.file_parser import MAX_FILE_SIZE, SUPPORTED_EXTENSIONS, extract_text_from_file
+
+MAX_BATCH_UPLOAD_FILES = 100
 
 
 class DocumentService:
@@ -56,7 +61,74 @@ class DocumentService:
     def _document_size(doc: Document) -> int:
         return getattr(doc, "size", 0) or len((doc.content or "").encode("utf-8"))
 
-    def _to_response(self, doc: Document) -> DocumentResponse:
+    @staticmethod
+    def _normalize_source_path(source_path: str | None) -> str | None:
+        raw = (source_path or "").replace("\\", "/").strip().strip("/")
+        if not raw:
+            return None
+        parts = [part.strip() for part in raw.split("/") if part.strip() and part.strip() != "."]
+        if not parts:
+            return None
+        return str(PurePosixPath(*parts))
+
+    @classmethod
+    def _infer_category_name(cls, source_path: str | None) -> str | None:
+        normalized = cls._normalize_source_path(source_path)
+        if not normalized or "/" not in normalized:
+            return None
+        return normalized.split("/", 1)[0].strip() or None
+
+    async def _resolve_document_location(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        knowledge_base_id: int | None,
+        category_id: int | None,
+        source_path: str | None,
+    ) -> tuple[int | None, int | None, str | None, str | None]:
+        normalized_path = self._normalize_source_path(source_path)
+        category_repo = DocumentCategoryRepository(db, user_id=user_id)
+        knowledge_base_repo = KnowledgeBaseRepository(db, user_id=user_id)
+        category = None
+
+        if category_id is not None:
+            category = await category_repo.get_by_id(category_id)
+            if not category:
+                raise HTTPException(status_code=404, detail="Category not found")
+            if knowledge_base_id is None:
+                knowledge_base_id = category.knowledge_base_id
+            elif category.knowledge_base_id != knowledge_base_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Category does not belong to the selected knowledge base",
+                )
+        elif knowledge_base_id is not None:
+            knowledge_base = await knowledge_base_repo.get_by_id(knowledge_base_id)
+            if not knowledge_base:
+                raise HTTPException(status_code=404, detail="Knowledge base not found")
+            inferred_name = self._infer_category_name(normalized_path)
+            if inferred_name:
+                category = await category_repo.get_or_create(
+                    knowledge_base_id=knowledge_base_id,
+                    name=inferred_name,
+                )
+        elif knowledge_base_id is None and category_id is None:
+            return knowledge_base_id, None, None, normalized_path
+
+        return (
+            knowledge_base_id,
+            category.id if category else None,
+            category.name if category else None,
+            normalized_path,
+        )
+
+    def _to_response(
+        self,
+        doc: Document,
+        *,
+        category_name: str | None = None,
+    ) -> DocumentResponse:
         return DocumentResponse(
             id=doc.id,
             title=doc.title,
@@ -65,6 +137,9 @@ class DocumentService:
             size=self._document_size(doc),
             version=getattr(doc, "version", 1),
             knowledge_base_id=getattr(doc, "knowledge_base_id", None),
+            category_id=getattr(doc, "category_id", None),
+            category_name=category_name,
+            source_path=getattr(doc, "source_path", None),
             index_status=getattr(doc, "index_status", INDEX_STATUS_QUEUED),
             index_error=getattr(doc, "index_error", None),
             indexed_at=getattr(doc, "indexed_at", None),
@@ -80,12 +155,26 @@ class DocumentService:
         user_id: int,
         file: UploadFile,
         knowledge_base_id: int | None,
+        category_id: int | None,
+        source_path: str | None,
     ) -> DocumentResponse:
         content = await file.read()
         if len(content) > MAX_FILE_SIZE:
             raise HTTPException(status_code=400, detail="File exceeds the 10MB limit")
 
         title, doc_type, text = self._parse_single_file(file, content)
+        (
+            knowledge_base_id,
+            category_id,
+            category_name,
+            source_path,
+        ) = await self._resolve_document_location(
+            db=db,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            source_path=source_path,
+        )
         repo = DocumentRepository(db, user_id=user_id)
         doc = await repo.create(
             title=title,
@@ -93,6 +182,8 @@ class DocumentService:
             document_type=doc_type,
             size=len(text.encode("utf-8")),
             knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            source_path=source_path,
             commit=True,
         )
         indexing_service.enqueue_document(
@@ -101,7 +192,7 @@ class DocumentService:
             expected_content_hash=doc.content_hash,
         )
         logger.info("Uploaded document id={} title={}", doc.id, doc.title)
-        return self._to_response(doc)
+        return self._to_response(doc, category_name=category_name)
 
     async def upload_documents_batch(
         self,
@@ -111,14 +202,26 @@ class DocumentService:
         user_id: int,
         files: Sequence[UploadFile],
         knowledge_base_id: int | None,
+        category_id: int | None,
+        source_paths: Sequence[str] | None,
     ) -> list[DocumentResponse]:
-        if len(files) > 20:
-            raise HTTPException(status_code=400, detail="At most 20 files can be uploaded at once")
+        if len(files) > MAX_BATCH_UPLOAD_FILES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"At most {MAX_BATCH_UPLOAD_FILES} files can be uploaded at once",
+            )
+        if source_paths is not None and len(source_paths) not in (0, len(files)):
+            raise HTTPException(
+                status_code=400,
+                detail="source_paths must be empty or match the number of files",
+            )
 
         repo = DocumentRepository(db, user_id=user_id)
         created: list[Document] = []
+        category_names_by_doc_key: dict[int, str | None] = {}
+        normalized_source_paths = list(source_paths or [])
 
-        for file in files:
+        for index, file in enumerate(files):
             try:
                 content = await file.read()
                 if len(content) > MAX_FILE_SIZE:
@@ -127,6 +230,22 @@ class DocumentService:
                 if ext not in SUPPORTED_EXTENSIONS:
                     continue
                 title, doc_type, text = self._parse_single_file(file, content)
+                (
+                    resolved_knowledge_base_id,
+                    resolved_category_id,
+                    category_name,
+                    normalized_source_path,
+                ) = await self._resolve_document_location(
+                    db=db,
+                    user_id=user_id,
+                    knowledge_base_id=knowledge_base_id,
+                    category_id=category_id,
+                    source_path=(
+                        normalized_source_paths[index]
+                        if index < len(normalized_source_paths)
+                        else None
+                    ),
+                )
                 doc = Document(
                     user_id=repo.user_id,
                     title=title,
@@ -141,10 +260,13 @@ class DocumentService:
                     parent_id=None,
                     is_latest=True,
                     is_current=True,
-                    knowledge_base_id=knowledge_base_id,
+                    knowledge_base_id=resolved_knowledge_base_id,
+                    category_id=resolved_category_id,
+                    source_path=normalized_source_path,
                 )
                 await repo.add_for_batch(doc)
                 created.append(doc)
+                category_names_by_doc_key[id(doc)] = category_name
             except HTTPException:
                 raise
             except Exception:
@@ -155,7 +277,10 @@ class DocumentService:
             background_tasks,
             documents=[(doc.id, doc.content_hash) for doc in created],
         )
-        return [self._to_response(doc) for doc in created]
+        return [
+            self._to_response(doc, category_name=category_names_by_doc_key.get(id(doc)))
+            for doc in created
+        ]
 
     async def create_document_from_content(
         self,
@@ -168,13 +293,27 @@ class DocumentService:
         if not body.content.strip():
             raise HTTPException(status_code=400, detail="Document content cannot be empty")
 
+        (
+            knowledge_base_id,
+            category_id,
+            category_name,
+            source_path,
+        ) = await self._resolve_document_location(
+            db=db,
+            user_id=user_id,
+            knowledge_base_id=body.knowledge_base_id,
+            category_id=body.category_id,
+            source_path=body.source_path,
+        )
         repo = DocumentRepository(db, user_id=user_id)
         doc = await repo.create(
             title=(body.title or "").strip() or "Untitled document",
             content=body.content,
             document_type=body.document_type or "txt",
             size=len(body.content.encode("utf-8")),
-            knowledge_base_id=body.knowledge_base_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            source_path=source_path,
             commit=True,
         )
         indexing_service.enqueue_document(
@@ -183,7 +322,7 @@ class DocumentService:
             expected_content_hash=doc.content_hash,
         )
         logger.info("Created document from content id={} title={}", doc.id, doc.title)
-        return self._to_response(doc)
+        return self._to_response(doc, category_name=category_name)
 
     async def list_documents(
         self,
@@ -195,6 +334,7 @@ class DocumentService:
         keyword: str | None,
         team_id: int | None,
         knowledge_base_id: int | None,
+        category_id: int | None,
     ) -> DocumentListResponse:
         page = max(page, 1)
         page_size = 20 if page_size < 1 or page_size > 100 else page_size
@@ -206,6 +346,7 @@ class DocumentService:
             keyword=keyword,
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
         )
         items = [
             DocumentListItem(
@@ -221,9 +362,12 @@ class DocumentService:
                 index_error=getattr(doc, "index_error", None),
                 indexed_at=getattr(doc, "indexed_at", None),
                 knowledge_base_id=getattr(doc, "knowledge_base_id", None),
+                category_id=getattr(doc, "category_id", None),
                 knowledge_base_name=knowledge_base_name,
+                category_name=category_name,
+                source_path=getattr(doc, "source_path", None),
             )
-            for doc, knowledge_base_name in rows
+            for doc, knowledge_base_name, category_name in rows
         ]
         return DocumentListResponse(items=items, total=total, page=page, page_size=page_size)
 
@@ -264,7 +408,8 @@ class DocumentService:
         doc = await repo.get_by_id_for_user(doc_id)
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
-        return self._to_response(doc)
+        category_name = await repo.get_category_name(getattr(doc, "category_id", None))
+        return self._to_response(doc, category_name=category_name)
 
     async def reindex_all_documents(
         self,
@@ -325,7 +470,8 @@ class DocumentService:
             expected_content_hash=doc.content_hash,
         )
         logger.info("Replaced document content id={}", doc_id)
-        return self._to_response(doc)
+        category_name = await repo.get_category_name(getattr(doc, "category_id", None))
+        return self._to_response(doc, category_name=category_name)
 
     async def create_document_version(
         self,
@@ -355,7 +501,8 @@ class DocumentService:
             ),
         )
         logger.info("Created document version id={} from doc_id={}", new_doc.id, doc_id)
-        return self._to_response(new_doc)
+        category_name = await repo.get_category_name(getattr(new_doc, "category_id", None))
+        return self._to_response(new_doc, category_name=category_name)
 
     async def switch_current_document_version(
         self,
@@ -380,7 +527,8 @@ class DocumentService:
             ),
         )
         logger.info("Switched current document version id={}", target.id)
-        return self._to_response(target)
+        category_name = await repo.get_category_name(getattr(target, "category_id", None))
+        return self._to_response(target, category_name=category_name)
 
     async def delete_documents_batch(
         self,

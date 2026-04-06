@@ -12,8 +12,10 @@ import {
   FileText,
   Loader2,
   MoreHorizontal,
+  PencilLine,
   Plus,
   Search,
+  Trash2,
   UploadCloud,
   X,
   type LucideIcon,
@@ -30,7 +32,9 @@ import {
 } from "@/lib/api/documents";
 import {
   createKnowledgeBase,
+  deleteKnowledgeBase,
   listKnowledgeBases,
+  updateKnowledgeBase,
   type KnowledgeBaseStatus,
   type KnowledgeBaseWithCount,
 } from "@/lib/api/knowledgeBases";
@@ -40,7 +44,7 @@ import { cn } from "@/lib/utils";
 const ACCEPT_FILES = ".txt,.md,.pdf,.docx";
 const SUPPORTED_EXTENSIONS = new Set([".txt", ".md", ".pdf", ".docx"]);
 const MAX_SIZE = 10 * 1024 * 1024;
-const MAX_BATCH = 20;
+const MAX_BATCH = 100;
 const coverThemes = [
   "from-emerald-200/90 via-cyan-200/80 to-sky-300/70",
   "from-amber-200/90 via-orange-200/80 to-rose-300/70",
@@ -118,6 +122,15 @@ const documentIndexStatusMeta: Record<
   },
 };
 
+type ConfirmDialogState = {
+  open: boolean;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  tone: "primary" | "danger";
+  onConfirm: null | (() => void | Promise<void>);
+};
+
 function validateFiles(files: File[] | FileList) {
   const allFiles = Array.from(files);
   const acceptedBeforeCap: File[] = [];
@@ -144,9 +157,15 @@ function validateFiles(files: File[] | FileList) {
   };
 }
 
+function getSourcePaths(files: File[]) {
+  const paths = files.map((file) => file.webkitRelativePath || null);
+  return paths.some(Boolean) ? paths : undefined;
+}
+
 export default function DocumentsPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
@@ -160,10 +179,24 @@ export default function DocumentsPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createDescription, setCreateDescription] = useState("");
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingKnowledgeBaseId, setEditingKnowledgeBaseId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [savingKnowledgeBase, setSavingKnowledgeBase] = useState(false);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [uploadCollectionId, setUploadCollectionId] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [deletingKnowledgeBaseId, setDeletingKnowledgeBaseId] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
+    open: false,
+    title: "",
+    description: "",
+    confirmLabel: "确认",
+    tone: "primary",
+    onConfirm: null,
+  });
 
   const activeTeam = useMemo(
     () => teams.find((item) => item.id === selectedTeamId) ?? null,
@@ -233,11 +266,40 @@ export default function DocumentsPage() {
     return () => window.clearTimeout(timer);
   }, [knowledgeBases, loadKnowledgeBases]);
 
+  const closeConfirmDialog = () => {
+    setConfirmDialog((prev) => ({
+      ...prev,
+      open: false,
+      onConfirm: null,
+    }));
+  };
+
+  const openConfirmDialog = (options: Omit<ConfirmDialogState, "open">) => {
+    setConfirmDialog({
+      open: true,
+      ...options,
+    });
+  };
+
+  const runConfirmedAction = () => {
+    const action = confirmDialog.onConfirm;
+    closeConfirmDialog();
+    if (!action) return;
+    void Promise.resolve(action());
+  };
+
   const openCreateModal = () => {
     if (selectedTeamId == null) return toast.error("请先选择团队");
     setCreateName("");
     setCreateDescription("");
     setCreateModalOpen(true);
+  };
+
+  const openEditModal = (knowledgeBase: KnowledgeBaseWithCount) => {
+    setEditingKnowledgeBaseId(knowledgeBase.id);
+    setEditName(knowledgeBase.name);
+    setEditDescription(knowledgeBase.description || "");
+    setEditModalOpen(true);
   };
 
   const openUploadModal = (knowledgeBaseId?: number) => {
@@ -275,6 +337,87 @@ export default function DocumentsPage() {
     }
   };
 
+  const legacyHandleDeleteKnowledgeBase = async (knowledgeBase: KnowledgeBaseWithCount) => {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `删除知识库“${knowledgeBase.name}”？\n\n知识库会被删除，文档会从知识库解绑。此操作不可恢复。`,
+      );
+      if (!confirmed) return;
+    }
+
+    setDeletingKnowledgeBaseId(knowledgeBase.id);
+    try {
+      await deleteKnowledgeBase(knowledgeBase.id);
+      toast.success("知识库已删除");
+      await loadKnowledgeBases();
+    } catch (error: unknown) {
+      toast.error((error as { message?: string }).message || "删除失败");
+    } finally {
+      setDeletingKnowledgeBaseId(null);
+    }
+  };
+
+  const handleEditKnowledgeBase = async () => {
+    if (!editName.trim() || editingKnowledgeBaseId == null) return;
+
+    setSavingKnowledgeBase(true);
+    try {
+      await updateKnowledgeBase(editingKnowledgeBaseId, {
+        name: editName.trim(),
+        description: editDescription.trim() || undefined,
+      });
+      toast.success("知识库已更新");
+      setEditModalOpen(false);
+      await loadKnowledgeBases();
+    } catch (error: unknown) {
+      toast.error((error as { message?: string }).message || "更新失败");
+    } finally {
+      setSavingKnowledgeBase(false);
+    }
+  };
+
+  const brokenHandleDeleteKnowledgeBase = (knowledgeBase: KnowledgeBaseWithCount) => {
+    openConfirmDialog({
+      title: "删除这个知识库？",
+      description: `“${knowledgeBase.name}”会被删除，文档会从知识库解绑。此操作不可恢复。`,
+      confirmLabel: "确认删除",
+      tone: "danger",
+      onConfirm: async () => {
+        setDeletingKnowledgeBaseId(knowledgeBase.id);
+        try {
+          await deleteKnowledgeBase(knowledgeBase.id);
+          toast.success("知识库已删除");
+          await loadKnowledgeBases();
+        } catch (error: unknown) {
+          toast.error((error as { message?: string }).message || "删除失败");
+        } finally {
+          setDeletingKnowledgeBaseId(null);
+        }
+      },
+    });
+  };
+
+  const handleDeleteKnowledgeBase = (knowledgeBase: KnowledgeBaseWithCount) => {
+    openConfirmDialog({
+      title: "删除这个知识库？",
+      description: `“${knowledgeBase.name}”会被删除，文档会从知识库解绑。此操作不可恢复。`,
+      confirmLabel: "确认删除",
+      tone: "danger",
+      onConfirm: async () => {
+        setDeletingKnowledgeBaseId(knowledgeBase.id);
+        try {
+          await deleteKnowledgeBase(knowledgeBase.id);
+          toast.success("知识库已删除");
+          await loadKnowledgeBases();
+        } catch (error: unknown) {
+          toast.error((error as { message?: string }).message || "删除失败");
+        } finally {
+          setDeletingKnowledgeBaseId(null);
+        }
+      },
+    });
+  };
+
   const uploadFiles = async (files: File[] | FileList | null) => {
     if (!files || files.length === 0) return;
     const { accepted, invalidTypeCount, oversizeCount, overflowCount } = validateFiles(files);
@@ -284,8 +427,16 @@ export default function DocumentsPage() {
     try {
       const knowledgeBaseId =
         uploadCollectionId && uploadCollectionId > 0 ? uploadCollectionId : undefined;
-      if (accepted.length === 1) await uploadDocument(accepted[0], knowledgeBaseId);
-      else await uploadDocumentsBatch(accepted, knowledgeBaseId);
+      const sourcePaths = getSourcePaths(accepted);
+      if (accepted.length === 1) {
+        await uploadDocument(accepted[0], knowledgeBaseId, {
+          sourcePath: sourcePaths?.[0] ?? null,
+        });
+      } else {
+        await uploadDocumentsBatch(accepted, knowledgeBaseId, {
+          sourcePaths,
+        });
+      }
 
       const notes: string[] = [];
       if (invalidTypeCount > 0) notes.push(`${invalidTypeCount} 个格式不支持`);
@@ -556,21 +707,97 @@ export default function DocumentsPage() {
                         <UploadCloud className="mr-2 h-4 w-4" />
                         上传文档
                       </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="hidden rounded-xl border-rose-200 px-0 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                        onClick={() => void handleDeleteKnowledgeBase(knowledgeBase)}
+                        disabled={deletingKnowledgeBaseId === knowledgeBase.id}
+                        aria-label="删除知识库"
+                      >
+                        {deletingKnowledgeBaseId === knowledgeBase.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </Button>
                       <DropdownMenu.Root>
                         <DropdownMenu.Trigger asChild>
-                          <Button variant="outline" size="icon" className="rounded-xl border-slate-200 px-0" aria-label="更多操作">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="rounded-xl border-slate-200 px-0"
+                            aria-label="更多操作"
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            side="bottom"
+                            align="end"
+                            sideOffset={8}
+                            className="z-50 min-w-[180px] rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-xl"
+                          >
+                            <DropdownMenu.Item
+                              onSelect={() => openEditModal(knowledgeBase)}
+                              className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100"
+                            >
+                              <PencilLine className="h-4 w-4" />
+                              编辑知识库
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              onSelect={() =>
+                                void navigator.clipboard
+                                  .writeText(String(knowledgeBase.id))
+                                  .then(() => toast.success("知识库 ID 已复制"))
+                                  .catch(() => toast.error("复制失败"))
+                              }
+                              className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100"
+                            >
+                              <FileText className="h-4 w-4" />
+                              复制知识库 ID
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Separator className="my-1 h-px bg-slate-200" />
+                            <DropdownMenu.Item
+                              onSelect={() => handleDeleteKnowledgeBase(knowledgeBase)}
+                              disabled={deletingKnowledgeBaseId === knowledgeBase.id}
+                              className={cn(
+                                "flex select-none items-center gap-2 rounded-lg px-3 py-2 outline-none transition-colors",
+                                deletingKnowledgeBaseId === knowledgeBase.id
+                                  ? "cursor-not-allowed text-rose-300"
+                                  : "cursor-pointer text-rose-600 hover:bg-rose-50 focus:bg-rose-50",
+                              )}
+                            >
+                              {deletingKnowledgeBaseId === knowledgeBase.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                              删除知识库
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <Button variant="outline" size="icon" className="hidden rounded-xl border-slate-200 px-0" aria-label="更多操作">
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenu.Trigger>
                         <DropdownMenu.Portal>
                           <DropdownMenu.Content side="bottom" align="end" sideOffset={8} className="z-50 min-w-[160px] rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-xl">
-                            <DropdownMenu.Item onSelect={() => openKnowledgeBase(knowledgeBase.id)} className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
+                            <DropdownMenu.Item onSelect={() => openKnowledgeBase(knowledgeBase.id)} className="hidden cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
                               <ArrowRight className="h-4 w-4" />
                               进入工作台
                             </DropdownMenu.Item>
-                            <DropdownMenu.Item onSelect={() => openUploadModal(knowledgeBase.id)} className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
+                            <DropdownMenu.Item onSelect={() => openUploadModal(knowledgeBase.id)} className="hidden cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
                               <UploadCloud className="h-4 w-4" />
                               上传文档
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item onSelect={() => void navigator.clipboard.writeText(String(knowledgeBase.id)).then(() => toast.success("知识库 ID 已复制")).catch(() => toast.error("复制失败"))} className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
+                              <PencilLine className="h-4 w-4" />
+                              编辑知识库
                             </DropdownMenu.Item>
                             <DropdownMenu.Item onSelect={() => void navigator.clipboard.writeText(String(knowledgeBase.id)).then(() => toast.success("知识库 ID 已复制")).catch(() => toast.error("复制失败"))} className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
                               <FileText className="h-4 w-4" />
@@ -659,6 +886,120 @@ export default function DocumentsPage() {
           </div>
         </div>
       ) : null}
+      {editModalOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
+          onClick={() => !savingKnowledgeBase && setEditModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-semibold text-slate-900">编辑知识库</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  可以更新知识库名称和概述，方便团队后续识别和管理。
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => !savingKnowledgeBase && setEditModalOpen(false)}
+                className="rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">知识库名称</label>
+                <Input
+                  value={editName}
+                  onChange={(event) => setEditName(event.target.value)}
+                  placeholder="例如：产品文档、实施规范、培训资料"
+                  className="h-11 rounded-xl border-slate-200"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">知识库概述</label>
+                <Textarea
+                  value={editDescription}
+                  onChange={(event) => setEditDescription(event.target.value)}
+                  placeholder="补充这个知识库包含的内容范围，方便团队理解。"
+                  className="min-h-[120px] rounded-xl border-slate-200"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => !savingKnowledgeBase && setEditModalOpen(false)}
+                  className="rounded-xl border-slate-200"
+                >
+                  取消
+                </Button>
+                <Button
+                  onClick={() => void handleEditKnowledgeBase()}
+                  disabled={savingKnowledgeBase || !editName.trim() || editingKnowledgeBaseId == null}
+                  className="rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  {savingKnowledgeBase ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <PencilLine className="mr-2 h-4 w-4" />
+                  )}
+                  保存修改
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {confirmDialog.open ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
+          onClick={closeConfirmDialog}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-semibold text-slate-900">{confirmDialog.title}</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  {confirmDialog.description}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={closeConfirmDialog}
+                className="rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <Button variant="outline" onClick={closeConfirmDialog} className="rounded-xl border-slate-200">
+                取消
+              </Button>
+              <Button
+                onClick={runConfirmedAction}
+                className={
+                  confirmDialog.tone === "danger"
+                    ? "rounded-xl bg-rose-600 text-white hover:bg-rose-700"
+                    : "rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+                }
+              >
+                {confirmDialog.confirmLabel}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {uploadModalOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
@@ -710,9 +1051,8 @@ export default function DocumentsPage() {
                 }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={onDrop}
-                onClick={() => fileInputRef.current?.click()}
                 className={cn(
-                  "cursor-pointer rounded-2xl border-2 border-dashed p-10 text-center transition-all",
+                  "rounded-2xl border-2 border-dashed p-10 text-center transition-all",
                   dragOver
                     ? "border-blue-300 bg-blue-50/70"
                     : "border-slate-300 bg-slate-50 hover:border-slate-400 hover:bg-slate-100",
@@ -726,6 +1066,14 @@ export default function DocumentsPage() {
                   multiple
                   onChange={onFileSelect}
                   className="hidden"
+                />
+                <input
+                  ref={folderInputRef}
+                  type="file"
+                  multiple
+                  onChange={onFileSelect}
+                  className="hidden"
+                  {...({ webkitdirectory: "true", directory: "true" } as Record<string, string>)}
                 />
                 {uploading ? (
                   <div className="inline-flex items-center gap-2 text-slate-600">
@@ -741,9 +1089,33 @@ export default function DocumentsPage() {
                     <p className="mt-2 text-sm text-slate-500">
                       支持 txt / md / pdf / docx，单文件最大 10MB，单次最多 20 个文件
                     </p>
+                    <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-xl border-slate-200"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          fileInputRef.current?.click();
+                        }}
+                      >
+                        选择文件
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-xl border-slate-200"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          folderInputRef.current?.click();
+                        }}
+                      >
+                        选择文件夹
+                      </Button>
+                    </div>
                   </>
-                )}
-              </div>
+                  )}
+                </div>
             </div>
           </div>
         </div>

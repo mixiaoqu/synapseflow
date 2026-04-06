@@ -47,6 +47,7 @@ class KbChatService(BaseAgentService):
         context = self.build_context(
             user_id=user_id,
             knowledge_base_id=request.knowledge_base_id,
+            category_id=getattr(request, "category_id", None),
             request_id=request.session_id,
             metadata={"workflow": "kb_chat"},
         )

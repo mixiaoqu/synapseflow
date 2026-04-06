@@ -18,7 +18,10 @@ export default function KbCurationPage() {
     setMaxIterations,
     knowledgeBaseId,
     setKnowledgeBaseId,
+    categoryId,
+    setCategoryId,
     knowledgeBases,
+    categories,
     loading,
     result,
     error,
@@ -73,9 +76,11 @@ export default function KbCurationPage() {
                     <label className="text-xs text-gray-500">检索范围</label>
                     <select
                       value={knowledgeBaseId ?? ""}
-                      onChange={(e) =>
-                        setKnowledgeBaseId(e.target.value ? Number(e.target.value) : null)
-                      }
+                      onChange={(e) => {
+                        const nextValue = e.target.value ? Number(e.target.value) : null;
+                        setKnowledgeBaseId(nextValue);
+                        setCategoryId(null);
+                      }}
                       className="min-w-[120px] rounded border px-2 py-1 text-sm"
                       disabled={loading}
                     >
@@ -88,6 +93,25 @@ export default function KbCurationPage() {
                     </select>
                   </div>
 
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500">分类</label>
+                    <select
+                      value={categoryId ?? ""}
+                      onChange={(e) =>
+                        setCategoryId(e.target.value ? Number(e.target.value) : null)
+                      }
+                      className="min-w-[120px] rounded border px-2 py-1 text-sm"
+                      disabled={loading || !knowledgeBaseId}
+                    >
+                      <option value="">{knowledgeBaseId ? "全部分类" : "先选知识库"}</option>
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name} ({category.document_count})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+  
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-500">最大轮次</label>
                     <select

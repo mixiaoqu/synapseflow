@@ -57,3 +57,17 @@ export async function createKnowledgeBase(
     description,
   });
 }
+
+export async function updateKnowledgeBase(
+  knowledgeBaseId: number,
+  payload: {
+    name: string;
+    description?: string | null;
+  },
+): Promise<KnowledgeBaseBase> {
+  return apiClient.put(`/api/v1/knowledge-bases/${knowledgeBaseId}`, payload);
+}
+
+export async function deleteKnowledgeBase(knowledgeBaseId: number): Promise<void> {
+  await apiClient.delete(`/api/v1/knowledge-bases/${knowledgeBaseId}`);
+}

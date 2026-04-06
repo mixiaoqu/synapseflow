@@ -6,7 +6,7 @@ from loguru import logger
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Document, Embedding
+from app.db.models import Document, DocumentCategory, Embedding
 from app.services.semantic_chunk import VectorIndexChunk
 
 
@@ -61,6 +61,7 @@ async def search(
     *,
     user_id: int | None = None,
     knowledge_base_id: int | None = None,
+    category_id: int | None = None,
 ) -> List[dict]:
     """
     Vector search across embeddings joined with the current document rows.
@@ -78,14 +79,20 @@ async def search(
             Embedding.metadata_,
             dist_col,
             Document.title.label("document_title"),
+            Document.category_id.label("category_id"),
+            Document.source_path.label("source_path"),
+            DocumentCategory.name.label("category_name"),
         )
         .join(Document, Document.id == Embedding.document_id)
+        .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
         .where(Document.is_current.is_(True))
     )
     if user_id is not None:
         stmt = stmt.where(Document.user_id == user_id)
     if knowledge_base_id is not None:
         stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)
+    if category_id is not None:
+        stmt = stmt.where(Document.category_id == category_id)
     stmt = stmt.order_by(dist_col).limit(k)
 
     result = await db.execute(stmt)
@@ -98,8 +105,14 @@ async def search(
         raw_metadata,
         dist_val,
         document_title,
+        row_category_id,
+        source_path,
+        category_name,
     ) in result.all():
         metadata = dict(raw_metadata or {})
+        metadata["category_id"] = int(row_category_id) if row_category_id is not None else None
+        metadata["category_name"] = category_name
+        metadata["source_path"] = source_path
         out.append(
             {
                 "chunk_text": chunk_text,
@@ -175,6 +188,7 @@ async def search_lexical(
     *,
     user_id: int | None = None,
     knowledge_base_id: int | None = None,
+    category_id: int | None = None,
 ) -> List[dict]:
     """PostgreSQL full-text retrieval joined with document metadata."""
     query = (query_text or "").strip()[:2000]
@@ -183,9 +197,11 @@ async def search_lexical(
 
     sql_lines = [
         "SELECT e.chunk_text, e.search_text, e.document_id, e.chunk_index, e.metadata, d.title AS document_title,",
+        "       d.category_id, d.source_path, dc.name AS category_name,",
         "       ts_rank_cd(e.chunk_tsv, websearch_to_tsquery('simple', :q)) AS lr",
         "FROM embeddings e",
         "JOIN documents d ON d.id = e.document_id",
+        "LEFT JOIN document_categories dc ON dc.id = d.category_id",
         "WHERE e.chunk_tsv @@ websearch_to_tsquery('simple', :q)",
         "  AND d.is_current IS TRUE",
     ]
@@ -197,6 +213,9 @@ async def search_lexical(
     if knowledge_base_id is not None:
         sql_lines.append("  AND d.knowledge_base_id = :knowledge_base_id")
         params["knowledge_base_id"] = knowledge_base_id
+    if category_id is not None:
+        sql_lines.append("  AND d.category_id = :category_id")
+        params["category_id"] = category_id
 
     sql_lines.extend(
         [
@@ -219,9 +238,15 @@ async def search_lexical(
         chunk_index,
         raw_metadata,
         document_title,
+        row_category_id,
+        source_path,
+        category_name,
         lexical_rank,
     ) in result.all():
         metadata = dict(raw_metadata or {})
+        metadata["category_id"] = int(row_category_id) if row_category_id is not None else None
+        metadata["category_name"] = category_name
+        metadata["source_path"] = source_path
         out.append(
             {
                 "chunk_text": chunk_text,
@@ -246,6 +271,7 @@ async def search_hybrid_rrf(
     k_lexical: int,
     user_id: int | None,
     knowledge_base_id: int | None,
+    category_id: int | None,
     rrf_k: int,
     pool_limit: int,
 ) -> List[dict]:
@@ -256,6 +282,7 @@ async def search_hybrid_rrf(
         k=k_dense,
         user_id=user_id,
         knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
     )
     lexical = await search_lexical(
         db,
@@ -263,5 +290,6 @@ async def search_hybrid_rrf(
         k=k_lexical,
         user_id=user_id,
         knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
     )
     return reciprocal_rank_fusion(dense, lexical, rrf_k=rrf_k, limit=pool_limit)

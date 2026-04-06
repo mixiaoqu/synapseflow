@@ -8,10 +8,11 @@ from pydantic import BaseModel, Field
 class QARequest(BaseModel):
     """Knowledge-base curation request."""
 
-    query: str = Field(..., description="用户问题")
-    max_iterations: int = Field(default=3, ge=1, le=5, description="最大迭代次数")
-    session_id: Optional[str] = Field(None, description="会话 ID")
-    knowledge_base_id: Optional[int] = Field(None, description="限定检索知识库 ID")
+    query: str = Field(..., description="User question")
+    max_iterations: int = Field(default=3, ge=1, le=5, description="Maximum iteration count")
+    session_id: Optional[str] = Field(None, description="Session id")
+    knowledge_base_id: Optional[int] = Field(None, description="Limit retrieval to one KB")
+    category_id: Optional[int] = Field(None, description="Limit retrieval to one category")
 
 
 class IterationRecord(BaseModel):
@@ -30,10 +31,19 @@ class IterationRecord(BaseModel):
 class QAResponse(BaseModel):
     """Knowledge-base curation response."""
 
-    answer: str = Field(..., description="回答内容")
-    confidence_score: float = Field(..., description="置信度分数")
-    iteration: int = Field(..., description="实际迭代次数")
-    retrieved_docs: List[Dict[str, Any]] = Field(default_factory=list, description="检索到的文档片段")
-    iteration_history: List[Dict[str, Any]] = Field(default_factory=list, description="迭代历史记录")
-    document_issues: List[Dict[str, Any]] = Field(default_factory=list, description="文档问题记录")
+    answer: str = Field(..., description="Answer content")
+    confidence_score: float = Field(..., description="Confidence score")
+    iteration: int = Field(..., description="Actual iteration count")
+    retrieved_docs: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Retrieved document chunks",
+    )
+    iteration_history: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Iteration history",
+    )
+    document_issues: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Document issues discovered during curation",
+    )
     session_id: Optional[str] = None

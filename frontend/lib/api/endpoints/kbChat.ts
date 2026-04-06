@@ -3,6 +3,7 @@ import { apiClient } from "../client";
 export interface KbChatRequest {
   query: string;
   knowledge_base_id?: number | null;
+  category_id?: number | null;
 }
 
 export interface RetrievedDoc {
@@ -13,6 +14,9 @@ export interface RetrievedDoc {
     chunk_index?: number;
     score?: number;
     rerank_score?: number;
+    category_id?: number | null;
+    category_name?: string | null;
+    source_path?: string | null;
   };
 }
 

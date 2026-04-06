@@ -5,6 +5,7 @@ export interface KbCurationRequest {
   query: string;
   max_iterations?: number;
   knowledge_base_id?: number | null;
+  category_id?: number | null;
 }
 
 export interface IterationRecord {

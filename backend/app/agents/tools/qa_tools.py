@@ -13,11 +13,13 @@ async def search_knowledge_base(
     query: str,
     k: int = 5,
     knowledge_base_id: Optional[int] = None,
+    category_id: Optional[int] = None,
 ) -> str:
     """Search the KB and return the top chunk texts."""
     result = await run_kb_retrieval(
         query=query,
         knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
         result_limit=max(1, k),
         context_budget=0,
         log_prefix="[QA Tool Retrieval]",

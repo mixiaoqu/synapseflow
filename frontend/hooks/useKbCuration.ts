@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
+  listDocumentCategories,
+  type DocumentCategory,
+} from "@/lib/api/documentCategories";
+import {
   listKnowledgeBases,
   type KnowledgeBaseWithCount,
 } from "@/lib/api/knowledgeBases";
@@ -43,7 +47,9 @@ export function useKbCuration() {
   const [query, setQuery] = useState("");
   const [maxIterations, setMaxIterations] = useState(3);
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<number | null>(null);
+  const [categoryId, setCategoryId] = useState<number | null>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseWithCount[]>([]);
+  const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<KbCurationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +67,38 @@ export function useKbCuration() {
   useEffect(() => {
     void loadKnowledgeBases();
   }, [loadKnowledgeBases]);
+
+  useEffect(() => {
+    if (!knowledgeBaseId || knowledgeBaseId <= 0) {
+      setCategories([]);
+      setCategoryId(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const items = await listDocumentCategories(knowledgeBaseId);
+        if (cancelled) return;
+        setCategories(items);
+        setCategoryId((prev) =>
+          prev && items.some((item) => item.id === prev) ? prev : null,
+        );
+      } catch {
+        if (!cancelled) {
+          setCategories([]);
+          setCategoryId(null);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [knowledgeBaseId]);
 
   useEffect(() => {
     if (result?.iteration_history?.length) {
@@ -104,6 +142,7 @@ export function useKbCuration() {
         query: query.trim(),
         max_iterations: maxIterations,
         knowledge_base_id: knowledgeBaseId && knowledgeBaseId > 0 ? knowledgeBaseId : null,
+        category_id: categoryId && categoryId > 0 ? categoryId : null,
       });
 
       setResult(response);
@@ -116,7 +155,7 @@ export function useKbCuration() {
     } finally {
       setLoading(false);
     }
-  }, [knowledgeBaseId, loading, maxIterations, query]);
+  }, [categoryId, knowledgeBaseId, loading, maxIterations, query]);
 
   const triggerReindex = useCallback(async () => {
     setReindexing(true);
@@ -140,7 +179,10 @@ export function useKbCuration() {
     setMaxIterations,
     knowledgeBaseId,
     setKnowledgeBaseId,
+    categoryId,
+    setCategoryId,
     knowledgeBases,
+    categories,
     loading,
     result,
     error,

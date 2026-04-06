@@ -23,6 +23,8 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Document file"),
     knowledge_base_id: int | None = Form(None, description="Owning knowledge base id"),
+    category_id: int | None = Form(None, description="Owning category id"),
+    source_path: str | None = Form(None, description="Original relative source path"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -32,6 +34,8 @@ async def upload_document(
         user_id=current_user.id,
         file=file,
         knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
+        source_path=source_path,
     )
 
 
@@ -40,6 +44,11 @@ async def upload_documents_batch(
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(..., description="Document files"),
     knowledge_base_id: int | None = Form(None, description="Owning knowledge base id"),
+    category_id: int | None = Form(None, description="Owning category id"),
+    source_paths: list[str] | None = Form(
+        None,
+        description="Relative source paths aligned with files order",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -49,6 +58,8 @@ async def upload_documents_batch(
         user_id=current_user.id,
         files=files,
         knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
+        source_paths=source_paths,
     )
 
 
@@ -74,6 +85,7 @@ async def list_documents(
     keyword: str | None = None,
     team_id: int | None = Query(None, description="Filter by team id"),
     knowledge_base_id: int | None = Query(None, description="Filter by knowledge base"),
+    category_id: int | None = Query(None, description="Filter by category"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -85,6 +97,7 @@ async def list_documents(
         keyword=keyword,
         team_id=team_id,
         knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
     )
 
 
