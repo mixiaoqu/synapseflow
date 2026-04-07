@@ -5,11 +5,6 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable
 
-from app.agents.nodes.kb_chat import user_kb_retrieve_node
-from app.agents.nodes.kb_chat.generate_answer import (
-    generate_kb_chat_answer_text,
-    stream_kb_chat_answer_text,
-)
 from app.agents.runtime import AgentEventType
 from app.application.agent_service import BaseAgentService
 from app.application.stream_events import (
@@ -29,12 +24,18 @@ if TYPE_CHECKING:
 class KbChatService(BaseAgentService):
     """Encapsulates end-user knowledge-base chat orchestration."""
 
-    def __init__(self, llm_factory: Callable[[], Any] | None = None):
+    def __init__(
+        self,
+        llm_factory: Callable[[], Any] | None = None,
+        graph: Any | None = None,
+    ):
         if llm_factory is None:
             from app.core.llm import get_llm_for_generation
 
             llm_factory = get_llm_for_generation
+
         self._llm_factory = llm_factory
+        self._graph = graph
 
     def build_initial_state(
         self,
@@ -55,6 +56,7 @@ class KbChatService(BaseAgentService):
             context,
             {
                 "query": request.query,
+                "retrieval_queries": [],
                 "retrieved_docs": [],
                 "context": "",
                 "answer": "",
@@ -62,24 +64,51 @@ class KbChatService(BaseAgentService):
             },
         )
 
-    async def _retrieve(self, state: dict[str, Any]) -> dict[str, Any]:
-        retrieve_out = await user_kb_retrieve_node(state)
-        state.update(retrieve_out)
-        return state
+    def _get_graph(self) -> Any:
+        if self._graph is None:
+            from app.agents.graphs.kb_chat_graph import create_kb_chat_graph
+
+            self._graph = create_kb_chat_graph(llm_factory=self._llm_factory)
+        return self._graph
+
+    @staticmethod
+    def _parse_stream_chunk(chunk: Any) -> tuple[str | None, dict[str, Any]]:
+        """Normalize LangGraph stream chunks across supported wire shapes."""
+
+        if isinstance(chunk, tuple) and len(chunk) == 2:
+            mode, data = chunk
+            if isinstance(mode, str) and isinstance(data, dict):
+                return mode, data
+            return None, {}
+
+        if isinstance(chunk, dict):
+            chunk_type = chunk.get("type")
+            chunk_data = chunk.get("data", {})
+            if isinstance(chunk_type, str) and isinstance(chunk_data, dict):
+                return chunk_type, chunk_data
+
+        return None, {}
+
+    @staticmethod
+    def _node_summary(node_id: str, state: dict[str, Any]) -> dict[str, Any]:
+        if node_id == "retrieve":
+            return {
+                "retrieved_count": len(state.get("retrieved_docs", [])),
+                "kb_retrieval_status": state.get("kb_retrieval_status"),
+            }
+        if node_id == "answer":
+            return {"answer_length": len(state.get("answer", ""))}
+        return {"keys": sorted(state.keys())}
 
     async def invoke(self, request: "KbChatRequest", *, user_id: int) -> "KbChatResponse":
-        """Run the chat pipeline and map its result to the response schema."""
+        """Run the chat graph and map its result to the response schema."""
 
         from app.models.schemas.kb_chat import KbChatResponse
 
-        state = await self._retrieve(self.build_initial_state(request, user_id=user_id))
-        state["answer"] = await generate_kb_chat_answer_text(
-            state,
-            llm_factory=self._llm_factory,
-        )
+        result = await self._get_graph().ainvoke(self.build_initial_state(request, user_id=user_id))
         return KbChatResponse(
-            answer=state.get("answer", ""),
-            retrieved_docs=state.get("retrieved_docs", []),
+            answer=result.get("answer", ""),
+            retrieved_docs=result.get("retrieved_docs", []),
             session_id=request.session_id,
         )
 
@@ -89,74 +118,83 @@ class KbChatService(BaseAgentService):
         *,
         user_id: int,
     ) -> AsyncGenerator[str, None]:
-        """Stream retrieved docs and answer tokens as SSE messages."""
+        """Stream graph updates and answer tokens as standardized SSE messages."""
 
         state = self.build_initial_state(request, user_id=user_id)
         run_id = state.get("run_id")
+        graph = self._get_graph()
+        started_nodes: set[str] = set()
+        final_state = dict(state)
 
         try:
             yield emit_start(run_id, "Starting knowledge-base chat")
-            yield emit_node_start(
-                "retrieve",
-                get_node_label("kb_chat", "retrieve"),
-                run_id,
-                message="Retrieving supporting documents",
-            )
 
-            state = await self._retrieve(state)
-            yield emit_event(
-                AgentEventType.RETRIEVED,
-                {"retrieved_docs": state.get("retrieved_docs", [])},
-                node_id="retrieve",
-                node_name=get_node_label("kb_chat", "retrieve"),
-                run_id=run_id,
-            )
-            yield emit_node_complete(
-                "retrieve",
-                get_node_label("kb_chat", "retrieve"),
-                run_id,
-                {
-                    "retrieved_count": len(state.get("retrieved_docs", [])),
-                    "kb_retrieval_status": state.get("kb_retrieval_status"),
-                },
-            )
-            await asyncio.sleep(0)
-
-            yield emit_node_start(
-                "answer",
-                get_node_label("kb_chat", "answer"),
-                run_id,
-                message="Generating answer",
-            )
-
-            full_answer: list[str] = []
-            async for text in stream_kb_chat_answer_text(
+            async for chunk in graph.astream(
                 state,
-                llm_factory=self._llm_factory,
+                stream_mode=["updates", "custom"],
+                version="v2",
             ):
-                full_answer.append(text)
-                yield emit_event(
-                    AgentEventType.TOKEN,
-                    {"text": text},
-                    node_id="answer",
-                    node_name=get_node_label("kb_chat", "answer"),
-                    run_id=run_id,
-                )
+                chunk_type, chunk_data = self._parse_stream_chunk(chunk)
 
-            state["answer"] = "".join(full_answer)
-            await asyncio.sleep(0)
+                if chunk_type == "updates":
+                    for node_id, node_state in chunk_data.items():
+                        node_name = get_node_label("kb_chat", node_id)
+                        if node_id not in started_nodes:
+                            yield emit_node_start(
+                                node_id,
+                                node_name,
+                                run_id,
+                                message=(
+                                    "Retrieving supporting documents"
+                                    if node_id == "retrieve"
+                                    else "Generating answer"
+                                ),
+                            )
+                            started_nodes.add(node_id)
 
-            yield emit_node_complete(
-                "answer",
-                get_node_label("kb_chat", "answer"),
-                run_id,
-                {"answer_length": len(state["answer"])},
-            )
+                        final_state.update(node_state)
+                        if node_id == "retrieve":
+                            yield emit_event(
+                                AgentEventType.RETRIEVED,
+                                {"retrieved_docs": node_state.get("retrieved_docs", [])},
+                                node_id=node_id,
+                                node_name=node_name,
+                                run_id=run_id,
+                            )
+
+                        yield emit_node_complete(
+                            node_id,
+                            node_name,
+                            run_id,
+                            self._node_summary(node_id, node_state),
+                        )
+                elif chunk_type == "custom":
+                    node_id = chunk_data.get("node_id") or "answer"
+                    node_name = get_node_label("kb_chat", node_id)
+                    if node_id not in started_nodes:
+                        yield emit_node_start(
+                            node_id,
+                            node_name,
+                            run_id,
+                            message="Generating answer",
+                        )
+                        started_nodes.add(node_id)
+
+                    text = chunk_data.get("text")
+                    if text:
+                        yield emit_event(
+                            AgentEventType.TOKEN,
+                            {"text": text},
+                            node_id=node_id,
+                            node_name=node_name,
+                            run_id=run_id,
+                        )
+
             yield emit_complete(
                 run_id,
                 {
-                    "answer": state["answer"],
-                    "retrieved_docs": state.get("retrieved_docs", []),
+                    "answer": final_state.get("answer", ""),
+                    "retrieved_docs": final_state.get("retrieved_docs", []),
                     "session_id": request.session_id,
                 },
             )
@@ -164,6 +202,7 @@ class KbChatService(BaseAgentService):
             raise
         except Exception as exc:
             yield emit_error(run_id, str(exc))
+
 
 kb_chat_service: KbChatService | None = None
 

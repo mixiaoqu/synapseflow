@@ -59,6 +59,20 @@ def _coerce_text(content: Any) -> str:
     return str(content or "")
 
 
+def _get_optional_stream_writer() -> Callable[[dict[str, Any]], None] | None:
+    """Return LangGraph's stream writer when available inside graph streaming."""
+
+    try:
+        from langgraph.config import get_stream_writer
+    except ModuleNotFoundError:  # pragma: no cover - optional dependency
+        return None
+
+    try:
+        return get_stream_writer()
+    except RuntimeError:  # pragma: no cover - no active graph stream context
+        return None
+
+
 async def generate_kb_chat_answer_text(
     state: dict[str, Any],
     *,
@@ -78,9 +92,12 @@ async def stream_kb_chat_answer_text(
     state: dict[str, Any],
     *,
     llm_factory: Callable[[], Any] | None = None,
+    stream_writer: Callable[[dict[str, Any]], None] | None = None,
 ) -> AsyncGenerator[str, None]:
     fixed = should_skip_kb_llm(state)
     if fixed:
+        if stream_writer is not None:
+            stream_writer({"node_id": "answer", "text": fixed})
         yield fixed
         return
 
@@ -89,12 +106,35 @@ async def stream_kb_chat_answer_text(
     async for chunk in llm.astream(_build_prompt(state)):
         text = _coerce_text(getattr(chunk, "content", None))
         if text:
+            if stream_writer is not None:
+                stream_writer({"node_id": "answer", "text": text})
             yield text
 
 
+def build_user_kb_generate_answer_node(
+    *,
+    llm_factory: Callable[[], Any] | None = None,
+) -> Callable[[KbChatState], Any]:
+    """Build an answer node that can emit token chunks through LangGraph custom streams."""
+
+    async def _node(state: KbChatState) -> dict[str, Any]:
+        parts: list[str] = []
+        stream_writer = _get_optional_stream_writer()
+        async for text in stream_kb_chat_answer_text(
+            state,
+            llm_factory=llm_factory,
+            stream_writer=stream_writer,
+        ):
+            parts.append(text)
+
+        answer = "".join(parts)
+        return {
+            "answer": answer,
+            "messages": [{"role": "assistant", "content": answer}],
+        }
+
+    return _node
+
+
 async def user_kb_generate_answer_node(state: KbChatState) -> dict[str, Any]:
-    text = await generate_kb_chat_answer_text(state)
-    return {
-        "answer": text,
-        "messages": [{"role": "assistant", "content": text}],
-    }
+    return await build_user_kb_generate_answer_node()(state)

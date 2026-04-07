@@ -13,49 +13,84 @@ def _decode_sse_payloads(events: list[str]) -> list[dict]:
     return payloads
 
 
+class FakeKbChatGraph:
+    async def ainvoke(self, state: dict) -> dict:
+        return {
+            **state,
+            "retrieved_docs": [
+                {
+                    "content": "LangGraph is a stateful orchestration framework.",
+                    "metadata": {"document_title": "LangGraph Intro"},
+                }
+            ],
+            "kb_retrieval_status": "ok",
+            "context": "LangGraph is a stateful orchestration framework.",
+            "answer": "LangGraph helps compose flows.",
+        }
+
+    async def astream(self, state: dict, *, stream_mode: list[str], version: str):
+        assert stream_mode == ["updates", "custom"]
+        assert version == "v2"
+        yield {
+            "type": "updates",
+            "data": {
+                "retrieve": {
+                    "retrieved_docs": [
+                        {
+                            "content": "LangGraph is a stateful orchestration framework.",
+                            "metadata": {"document_title": "LangGraph Intro"},
+                        }
+                    ],
+                    "kb_retrieval_status": "ok",
+                    "context": "LangGraph is a stateful orchestration framework.",
+                }
+            },
+        }
+        yield {"type": "custom", "data": {"node_id": "answer", "text": "LangGraph "}}
+        yield {"type": "custom", "data": {"node_id": "answer", "text": "helps "}}
+        yield {"type": "custom", "data": {"node_id": "answer", "text": "compose flows."}}
+        yield {
+            "type": "updates",
+            "data": {
+                "answer": {
+                    "answer": "LangGraph helps compose flows.",
+                    "messages": [
+                        {"role": "assistant", "content": "LangGraph helps compose flows."}
+                    ],
+                }
+            },
+        }
+
+
+def test_kb_chat_invoke_uses_graph_result():
+    service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph())
+    request = SimpleNamespace(
+        query="What is LangGraph?",
+        knowledge_base_id=9,
+        category_id=4,
+        session_id="session-1",
+    )
+
+    response = asyncio.run(service.invoke(request, user_id=42))
+
+    assert response.answer == "LangGraph helps compose flows."
+    assert response.retrieved_docs[0]["metadata"]["document_title"] == "LangGraph Intro"
+    assert response.session_id == "session-1"
+
+
 def test_kb_chat_stream_emits_standardized_envelopes():
-    service = KbChatService(llm_factory=lambda: None)
+    service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph())
+    request = SimpleNamespace(
+        query="What is LangGraph?",
+        knowledge_base_id=9,
+        category_id=4,
+        session_id=None,
+    )
 
-    async def fake_retrieve(state: dict) -> dict:
-        state.update(
-            {
-                "retrieved_docs": [
-                    {
-                        "content": "LangGraph is a stateful orchestration framework.",
-                        "metadata": {"document_title": "LangGraph Intro"},
-                    }
-                ],
-                "kb_retrieval_status": "ok",
-                "context": "LangGraph is a stateful orchestration framework.",
-            }
-        )
-        return state
+    async def collect() -> list[str]:
+        return [event async for event in service.stream(request, user_id=42)]
 
-    async def fake_answer_stream(state: dict, **_: object):
-        for chunk in ["LangGraph ", "helps ", "compose flows."]:
-            yield chunk
-
-    service._retrieve = fake_retrieve  # type: ignore[method-assign]
-
-    import app.application.kb_chat_service as kb_chat_service_module
-
-    original_stream = kb_chat_service_module.stream_kb_chat_answer_text
-    kb_chat_service_module.stream_kb_chat_answer_text = fake_answer_stream
-    try:
-        request = SimpleNamespace(
-            query="What is LangGraph?",
-            knowledge_base_id=9,
-            category_id=4,
-            session_id=None,
-        )
-
-        async def collect() -> list[str]:
-            return [event async for event in service.stream(request, user_id=42)]
-
-        events = asyncio.run(collect())
-    finally:
-        kb_chat_service_module.stream_kb_chat_answer_text = original_stream
-
+    events = asyncio.run(collect())
     payloads = _decode_sse_payloads(events)
     types = [payload["type"] for payload in payloads]
 
@@ -79,9 +114,9 @@ def test_kb_chat_stream_emits_standardized_envelopes():
 
 
 def test_kb_chat_build_initial_state_keeps_category_id():
-    service = KbChatService(llm_factory=lambda: None)
+    service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph())
     request = SimpleNamespace(
-        query="退款规则是什么",
+        query="What is the refund policy?",
         knowledge_base_id=3,
         category_id=7,
         session_id="session-1",
@@ -91,4 +126,4 @@ def test_kb_chat_build_initial_state_keeps_category_id():
 
     assert state["knowledge_base_id"] == 3
     assert state["category_id"] == 7
-    assert state["query"] == "退款规则是什么"
+    assert state["query"] == "What is the refund policy?"

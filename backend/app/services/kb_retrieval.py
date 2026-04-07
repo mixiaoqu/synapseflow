@@ -12,7 +12,7 @@ from app.db.models import Document
 from app.db.session import AsyncSessionLocal
 from app.services.embedding import embed_query
 from app.services.reranker import rerank
-from app.services.vector_store import search, search_hybrid_rrf
+from app.services.vector_store import reciprocal_rank_fusion_many, search, search_hybrid_rrf
 
 
 def _format_kb_chunk(doc: Dict[str, Any], content: str) -> str:
@@ -86,27 +86,47 @@ async def _knowledge_base_has_documents(
         return result.scalar_one_or_none() is not None
 
 
-async def _retrieve_ranked_rows(
+def _dedupe_queries(queries: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        normalized = " ".join((query or "").split()).strip()
+        key = normalized.casefold()
+        if not normalized or key in seen:
+            continue
+        out.append(normalized)
+        seen.add(key)
+    return out
+
+
+def _scaled_candidate_k(total_queries: int, base_k: int, floor: int) -> int:
+    if total_queries <= 1:
+        return max(1, base_k)
+    return max(floor, (base_k + total_queries - 1) // total_queries)
+
+
+async def _retrieve_candidate_rows(
     *,
     query: str,
     knowledge_base_id: Optional[int],
     category_id: Optional[int],
     user_id: int | None,
     recall_k: int,
-    final_top_k: int,
+    lexical_k: int | None = None,
 ) -> tuple[List[dict], bool]:
     rag = config_registry.get_rag_config().retrieval
     query_embedding = await asyncio.to_thread(embed_query, query)
+    lexical_limit = max(1, lexical_k if lexical_k is not None else rag.lexical_k)
 
     async with AsyncSessionLocal() as db:
         if rag.hybrid_enabled:
-            pool_limit = min(rag.hybrid_pool_limit, recall_k + rag.lexical_k)
+            pool_limit = min(rag.hybrid_pool_limit, recall_k + lexical_limit)
             results = await search_hybrid_rrf(
                 db,
                 query_text=query,
                 query_embedding=query_embedding,
                 k_dense=recall_k,
-                k_lexical=rag.lexical_k,
+                k_lexical=lexical_limit,
                 user_id=user_id,
                 knowledge_base_id=knowledge_base_id,
                 category_id=category_id,
@@ -123,19 +143,8 @@ async def _retrieve_ranked_rows(
                 category_id=category_id,
             )
 
-    recall_n = len(results)
-    if settings.RERANK_ENABLED and results:
-        logger.debug(
-            "KB retrieval rerank candidates={} final_top_k={}",
-            recall_n,
-            final_top_k,
-        )
-        results = await rerank(query, results, top_k=final_top_k)
-    else:
-        results = results[:final_top_k]
-
     has_documents = True
-    if knowledge_base_id is not None and recall_n == 0:
+    if knowledge_base_id is not None and not results:
         has_documents = await _knowledge_base_has_documents(
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
@@ -145,31 +154,37 @@ async def _retrieve_ranked_rows(
     return results, has_documents
 
 
-async def run_kb_retrieval(
+async def _finalize_ranked_rows(
     *,
     query: str,
-    knowledge_base_id: Optional[int],
-    category_id: Optional[int] = None,
-    iteration: int = 0,
-    log_prefix: str = "[KB Retrieval]",
-    user_id: int | None = None,
-    result_limit: int | None = None,
-    context_budget: int | None = None,
-) -> Dict[str, Any]:
-    """Retrieve KB chunks and return prompt-ready state."""
-    rag = config_registry.get_rag_config().retrieval
-    recall_k = rag.k_iteration if iteration > 0 else rag.k_first
-    final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
-    llm_ref_k = max(1, result_limit) if result_limit is not None else rag.llm_reference_top_k
+    results: List[dict],
+    final_top_k: int,
+) -> List[dict]:
+    if settings.RERANK_ENABLED and results:
+        logger.debug(
+            "KB retrieval rerank candidates={} final_top_k={}",
+            len(results),
+            final_top_k,
+        )
+        return await rerank(query, results, top_k=final_top_k)
+    return results[:final_top_k]
 
-    results, has_documents = await _retrieve_ranked_rows(
-        query=query,
-        knowledge_base_id=knowledge_base_id,
-        category_id=category_id,
-        user_id=user_id,
-        recall_k=recall_k,
-        final_top_k=final_top_k,
-    )
+
+def _build_retrieval_output(
+    *,
+    results: List[dict],
+    has_documents: bool,
+    knowledge_base_id: Optional[int],
+    category_id: Optional[int],
+    iteration: int,
+    log_prefix: str,
+    recall_k: int,
+    final_top_k: int,
+    llm_ref_k: int | None,
+    query_count: int,
+    context_budget: int | None,
+) -> Dict[str, Any]:
+    rag = config_registry.get_rag_config().retrieval
 
     if llm_ref_k is not None:
         results = results[: max(1, llm_ref_k)]
@@ -186,10 +201,11 @@ async def run_kb_retrieval(
         else "-"
     )
     logger.info(
-        "{} round={} mode={} result_count={} distance={} rerank={}",
+        "{} round={} mode={} query_count={} result_count={} distance={} rerank={}",
         log_prefix,
         iteration + 1,
         mode,
+        query_count,
         len(results),
         dist_s,
         rerank_s,
@@ -257,3 +273,130 @@ async def run_kb_retrieval(
         "context": context,
         "kb_retrieval_status": "ok",
     }
+
+
+async def run_kb_retrieval(
+    *,
+    query: str,
+    knowledge_base_id: Optional[int],
+    category_id: Optional[int] = None,
+    iteration: int = 0,
+    log_prefix: str = "[KB Retrieval]",
+    user_id: int | None = None,
+    result_limit: int | None = None,
+    context_budget: int | None = None,
+) -> Dict[str, Any]:
+    """Retrieve KB chunks and return prompt-ready state."""
+
+    rag = config_registry.get_rag_config().retrieval
+    recall_k = rag.k_iteration if iteration > 0 else rag.k_first
+    final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
+    llm_ref_k = max(1, result_limit) if result_limit is not None else rag.llm_reference_top_k
+
+    results, has_documents = await _retrieve_candidate_rows(
+        query=query,
+        knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
+        user_id=user_id,
+        recall_k=recall_k,
+    )
+    results = await _finalize_ranked_rows(
+        query=query,
+        results=results,
+        final_top_k=final_top_k,
+    )
+    return _build_retrieval_output(
+        results=results,
+        has_documents=has_documents,
+        knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
+        iteration=iteration,
+        log_prefix=log_prefix,
+        recall_k=recall_k,
+        final_top_k=final_top_k,
+        llm_ref_k=llm_ref_k,
+        query_count=1,
+        context_budget=context_budget,
+    )
+
+
+async def run_multi_query_kb_retrieval(
+    *,
+    query: str,
+    retrieval_queries: list[str],
+    knowledge_base_id: Optional[int],
+    category_id: Optional[int] = None,
+    iteration: int = 0,
+    log_prefix: str = "[KB Retrieval]",
+    user_id: int | None = None,
+    result_limit: int | None = None,
+    context_budget: int | None = None,
+) -> Dict[str, Any]:
+    """Retrieve KB chunks from multiple rewritten queries and fuse them with RRF."""
+
+    queries = _dedupe_queries(retrieval_queries or [query])
+    if len(queries) <= 1:
+        output = await run_kb_retrieval(
+            query=queries[0] if queries else query,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            iteration=iteration,
+            log_prefix=log_prefix,
+            user_id=user_id,
+            result_limit=result_limit,
+            context_budget=context_budget,
+        )
+        output["retrieval_queries"] = queries or [query]
+        return output
+
+    rag = config_registry.get_rag_config().retrieval
+    recall_k = rag.k_iteration if iteration > 0 else rag.k_first
+    final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
+    llm_ref_k = max(1, result_limit) if result_limit is not None else rag.llm_reference_top_k
+    per_query_recall_k = _scaled_candidate_k(len(queries), recall_k, final_top_k)
+    per_query_lexical_k = _scaled_candidate_k(len(queries), rag.lexical_k, final_top_k)
+
+    logger.debug("{} multi-query retrieval queries={}", log_prefix, queries)
+    batches = await asyncio.gather(
+        *[
+            _retrieve_candidate_rows(
+                query=item,
+                knowledge_base_id=knowledge_base_id,
+                category_id=category_id,
+                user_id=user_id,
+                recall_k=per_query_recall_k,
+                lexical_k=per_query_lexical_k,
+            )
+            for item in queries
+        ]
+    )
+
+    rankings = [rows for rows, _ in batches]
+    has_documents = all(has_docs for _, has_docs in batches)
+    fused_limit = min(rag.hybrid_pool_limit, max(final_top_k, final_top_k * len(queries)))
+    fused_results = reciprocal_rank_fusion_many(
+        rankings,
+        rrf_k=rag.rrf_k,
+        limit=fused_limit,
+        weights=[1.25] + [1.0] * (len(queries) - 1),
+    )
+    results = await _finalize_ranked_rows(
+        query=query,
+        results=fused_results,
+        final_top_k=final_top_k,
+    )
+    output = _build_retrieval_output(
+        results=results,
+        has_documents=has_documents,
+        knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
+        iteration=iteration,
+        log_prefix=log_prefix,
+        recall_k=per_query_recall_k,
+        final_top_k=final_top_k,
+        llm_ref_k=llm_ref_k,
+        query_count=len(queries),
+        context_budget=context_budget,
+    )
+    output["retrieval_queries"] = queries
+    return output

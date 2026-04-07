@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, KnowledgeBase
@@ -238,14 +238,15 @@ class KnowledgeBaseRepository:
         return knowledge_base
 
     async def delete(self, knowledge_base_id: int) -> bool:
-        """Delete a knowledge base and detach its documents."""
+        """Delete a knowledge base together with its documents."""
         knowledge_base = await self.get_by_id(knowledge_base_id)
         if not knowledge_base:
             return False
         await self.db.execute(
-            update(Document)
-            .where(Document.knowledge_base_id == knowledge_base_id)
-            .values(knowledge_base_id=None)
+            delete(Document).where(
+                Document.knowledge_base_id == knowledge_base_id,
+                Document.user_id == self.user_id,
+            )
         )
         await self.db.delete(knowledge_base)
         await self.db.commit()
