@@ -16,6 +16,11 @@ from app.application.stream_events import (
     emit_start,
 )
 from app.application.workflow_meta import get_node_label
+from app.services.chat_memory import (
+    ChatMemoryContext,
+    ChatMemoryStore,
+    DatabaseChatMemoryStore,
+)
 
 if TYPE_CHECKING:
     from app.models.schemas.kb_chat import KbChatRequest, KbChatResponse
@@ -28,6 +33,7 @@ class KbChatService(BaseAgentService):
         self,
         llm_factory: Callable[[], Any] | None = None,
         graph: Any | None = None,
+        memory_store: ChatMemoryStore | None = None,
     ):
         if llm_factory is None:
             from app.core.llm import get_llm_for_generation
@@ -36,26 +42,36 @@ class KbChatService(BaseAgentService):
 
         self._llm_factory = llm_factory
         self._graph = graph
+        self._memory_store = memory_store or DatabaseChatMemoryStore()
 
     def build_initial_state(
         self,
         request: "KbChatRequest",
         *,
         user_id: int,
+        session_id: str | None = None,
+        chat_history: list[dict[str, Any]] | None = None,
+        memory_summary: str | None = None,
     ) -> dict[str, Any]:
         """Build pipeline input state from the request payload."""
 
+        resolved_session_id = session_id or request.session_id or self._new_run_id()
+        history = list(chat_history or [])
         context = self.build_context(
             user_id=user_id,
             knowledge_base_id=request.knowledge_base_id,
             category_id=getattr(request, "category_id", None),
-            request_id=request.session_id,
+            request_id=resolved_session_id,
+            messages=history,
             metadata={"workflow": "kb_chat"},
         )
         return self.build_state(
             context,
             {
+                "session_id": resolved_session_id,
                 "query": request.query,
+                "chat_history": history,
+                "memory_summary": memory_summary,
                 "retrieval_queries": [],
                 "retrieved_docs": [],
                 "context": "",
@@ -70,6 +86,49 @@ class KbChatService(BaseAgentService):
 
             self._graph = create_kb_chat_graph(llm_factory=self._llm_factory)
         return self._graph
+
+    async def _load_memory_context(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+    ) -> ChatMemoryContext:
+        return await self._memory_store.load_context(user_id=user_id, session_id=session_id)
+
+    async def _prepare_state(
+        self,
+        request: "KbChatRequest",
+        *,
+        user_id: int,
+    ) -> dict[str, Any]:
+        resolved_session_id = request.session_id or self._new_run_id()
+        memory = await self._load_memory_context(user_id=user_id, session_id=resolved_session_id)
+        return self.build_initial_state(
+            request,
+            user_id=user_id,
+            session_id=resolved_session_id,
+            chat_history=memory.messages,
+            memory_summary=memory.summary,
+        )
+
+    async def _save_turn(
+        self,
+        *,
+        state: dict[str, Any],
+        answer: str,
+    ) -> None:
+        session_id = state.get("session_id")
+        user_id = state.get("user_id")
+        if not session_id or not user_id:
+            return
+        await self._memory_store.save_turn(
+            user_id=int(user_id),
+            session_id=session_id,
+            knowledge_base_id=state.get("knowledge_base_id"),
+            category_id=state.get("category_id"),
+            user_message=state.get("query", ""),
+            assistant_message=answer,
+        )
 
     @staticmethod
     def _parse_stream_chunk(chunk: Any) -> tuple[str | None, dict[str, Any]]:
@@ -105,11 +164,14 @@ class KbChatService(BaseAgentService):
 
         from app.models.schemas.kb_chat import KbChatResponse
 
-        result = await self._get_graph().ainvoke(self.build_initial_state(request, user_id=user_id))
+        state = await self._prepare_state(request, user_id=user_id)
+        result = await self._get_graph().ainvoke(state)
+        answer = result.get("answer", "")
+        await self._save_turn(state=state, answer=answer)
         return KbChatResponse(
-            answer=result.get("answer", ""),
+            answer=answer,
             retrieved_docs=result.get("retrieved_docs", []),
-            session_id=request.session_id,
+            session_id=state.get("session_id"),
         )
 
     async def stream(
@@ -120,7 +182,7 @@ class KbChatService(BaseAgentService):
     ) -> AsyncGenerator[str, None]:
         """Stream graph updates and answer tokens as standardized SSE messages."""
 
-        state = self.build_initial_state(request, user_id=user_id)
+        state = await self._prepare_state(request, user_id=user_id)
         run_id = state.get("run_id")
         graph = self._get_graph()
         started_nodes: set[str] = set()
@@ -190,12 +252,14 @@ class KbChatService(BaseAgentService):
                             run_id=run_id,
                         )
 
+            answer = final_state.get("answer", "")
+            await self._save_turn(state=state, answer=answer)
             yield emit_complete(
                 run_id,
                 {
-                    "answer": final_state.get("answer", ""),
+                    "answer": answer,
                     "retrieved_docs": final_state.get("retrieved_docs", []),
-                    "session_id": request.session_id,
+                    "session_id": state.get("session_id"),
                 },
             )
         except asyncio.CancelledError:

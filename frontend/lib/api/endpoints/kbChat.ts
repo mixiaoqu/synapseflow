@@ -4,6 +4,7 @@ export interface KbChatRequest {
   query: string;
   knowledge_base_id?: number | null;
   category_id?: number | null;
+  session_id?: string | null;
 }
 
 export interface RetrievedDoc {
@@ -23,6 +24,7 @@ export interface RetrievedDoc {
 export interface KbChatResponse {
   answer: string;
   retrieved_docs: RetrievedDoc[];
+  session_id?: string | null;
 }
 
 export const kbChatApi = {

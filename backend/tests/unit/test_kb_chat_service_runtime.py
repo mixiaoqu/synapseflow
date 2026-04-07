@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 from app.application.kb_chat_service import KbChatService
+from app.services.chat_memory import ChatMemoryContext
 
 
 def _decode_sse_payloads(events: list[str]) -> list[dict]:
@@ -14,7 +15,11 @@ def _decode_sse_payloads(events: list[str]) -> list[dict]:
 
 
 class FakeKbChatGraph:
+    def __init__(self) -> None:
+        self.last_state = None
+
     async def ainvoke(self, state: dict) -> dict:
+        self.last_state = state
         return {
             **state,
             "retrieved_docs": [
@@ -29,6 +34,7 @@ class FakeKbChatGraph:
         }
 
     async def astream(self, state: dict, *, stream_mode: list[str], version: str):
+        self.last_state = state
         assert stream_mode == ["updates", "custom"]
         assert version == "v2"
         yield {
@@ -62,8 +68,50 @@ class FakeKbChatGraph:
         }
 
 
+class FakeChatMemoryStore:
+    def __init__(self, context: ChatMemoryContext | None = None) -> None:
+        self.context = context or ChatMemoryContext(messages=[], summary=None)
+        self.load_calls = []
+        self.save_calls = []
+
+    async def load_context(self, *, user_id: int, session_id: str) -> ChatMemoryContext:
+        self.load_calls.append({"user_id": user_id, "session_id": session_id})
+        return self.context
+
+    async def save_turn(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+        knowledge_base_id: int | None,
+        category_id: int | None,
+        user_message: str,
+        assistant_message: str,
+    ) -> None:
+        self.save_calls.append(
+            {
+                "user_id": user_id,
+                "session_id": session_id,
+                "knowledge_base_id": knowledge_base_id,
+                "category_id": category_id,
+                "user_message": user_message,
+                "assistant_message": assistant_message,
+            }
+        )
+
+
 def test_kb_chat_invoke_uses_graph_result():
-    service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph())
+    graph = FakeKbChatGraph()
+    memory_store = FakeChatMemoryStore(
+        ChatMemoryContext(
+            messages=[
+                {"role": "user", "content": "What is LangGraph?"},
+                {"role": "assistant", "content": "It is an orchestration framework."},
+            ],
+            summary="The user is asking about LangGraph basics.",
+        )
+    )
+    service = KbChatService(llm_factory=lambda: None, graph=graph, memory_store=memory_store)
     request = SimpleNamespace(
         query="What is LangGraph?",
         knowledge_base_id=9,
@@ -76,10 +124,16 @@ def test_kb_chat_invoke_uses_graph_result():
     assert response.answer == "LangGraph helps compose flows."
     assert response.retrieved_docs[0]["metadata"]["document_title"] == "LangGraph Intro"
     assert response.session_id == "session-1"
+    assert graph.last_state["chat_history"][0]["role"] == "user"
+    assert graph.last_state["memory_summary"] == "The user is asking about LangGraph basics."
+    assert memory_store.load_calls == [{"user_id": 42, "session_id": "session-1"}]
+    assert memory_store.save_calls[0]["assistant_message"] == "LangGraph helps compose flows."
 
 
 def test_kb_chat_stream_emits_standardized_envelopes():
-    service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph())
+    graph = FakeKbChatGraph()
+    memory_store = FakeChatMemoryStore()
+    service = KbChatService(llm_factory=lambda: None, graph=graph, memory_store=memory_store)
     request = SimpleNamespace(
         query="What is LangGraph?",
         knowledge_base_id=9,
@@ -111,10 +165,18 @@ def test_kb_chat_stream_emits_standardized_envelopes():
         "LangGraph Intro"
     )
     assert payloads[-1]["data"]["answer"] == "LangGraph helps compose flows."
+    assert payloads[-1]["data"]["session_id"]
+    assert memory_store.load_calls[0]["session_id"] == payloads[-1]["data"]["session_id"]
+    assert memory_store.save_calls[0]["assistant_message"] == "LangGraph helps compose flows."
+    assert graph.last_state["session_id"] == payloads[-1]["data"]["session_id"]
 
 
 def test_kb_chat_build_initial_state_keeps_category_id():
-    service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph())
+    service = KbChatService(
+        llm_factory=lambda: None,
+        graph=FakeKbChatGraph(),
+        memory_store=FakeChatMemoryStore(),
+    )
     request = SimpleNamespace(
         query="What is the refund policy?",
         knowledge_base_id=3,
@@ -127,3 +189,5 @@ def test_kb_chat_build_initial_state_keeps_category_id():
     assert state["knowledge_base_id"] == 3
     assert state["category_id"] == 7
     assert state["query"] == "What is the refund policy?"
+    assert state["session_id"] == "session-1"
+    assert state["chat_history"] == []

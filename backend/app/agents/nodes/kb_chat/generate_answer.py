@@ -6,6 +6,7 @@ from typing import Any, AsyncGenerator, Callable, Optional
 
 from app.agents.prompts.kb_chat import build_kb_chat_answer_prompt
 from app.agents.states import KbChatState
+from app.services.chat_memory import format_chat_history
 
 KB_EMPTY_COLLECTION_REPLY = (
     "The selected knowledge base does not have any indexed documents yet. "
@@ -42,6 +43,8 @@ def _build_prompt(state: dict[str, Any]) -> str:
     return build_kb_chat_answer_prompt(
         state.get("query", ""),
         state.get("context", ""),
+        chat_history_text=format_chat_history(state.get("chat_history") or [], max_messages=6),
+        memory_summary=state.get("memory_summary") or "",
     )
 
 

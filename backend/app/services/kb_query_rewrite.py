@@ -113,7 +113,54 @@ def _build_fallback_queries(query: str, *, limit: int) -> list[str]:
     return _dedupe_keep_order(candidates, limit=limit)
 
 
-def _build_rewrite_prompt(query: str, *, max_queries: int) -> str:
+def _recent_user_context(chat_history: list[dict[str, str]] | None, *, limit: int = 2) -> str:
+    recent = [
+        _normalize_query(str(item.get("content") or ""))
+        for item in list(chat_history or [])
+        if str(item.get("role") or "").strip().lower() == "user"
+    ]
+    recent = [item for item in recent if item]
+    return " | ".join(recent[-limit:])
+
+
+def _augment_fallback_queries(
+    fallback: list[str],
+    *,
+    original: str,
+    chat_history: list[dict[str, str]] | None,
+    memory_summary: str | None,
+    limit: int,
+) -> list[str]:
+    recent_user_context = _recent_user_context(chat_history)
+    summary = _normalize_query(memory_summary or "")
+    candidates = [original, *fallback]
+
+    if recent_user_context:
+        candidates.append(_normalize_query(f"{recent_user_context} {original}"))
+    if summary:
+        candidates.append(_normalize_query(f"{summary} {original}"))
+
+    return _dedupe_keep_order(candidates, limit=limit)
+
+
+def _build_rewrite_prompt(
+    query: str,
+    *,
+    max_queries: int,
+    chat_history: list[dict[str, str]] | None = None,
+    memory_summary: str | None = None,
+) -> str:
+    history_lines = []
+    for item in list(chat_history or [])[-4:]:
+        role = str(item.get("role") or "").strip().lower() or "assistant"
+        content = _normalize_query(str(item.get("content") or ""))
+        if not content:
+            continue
+        history_lines.append(f"{role.title()}: {content}")
+
+    summary_text = _normalize_query(memory_summary or "") or "(none)"
+    context_text = "\n".join(history_lines) or "(none)"
+
     return f"""
 You are rewriting a single user question into short retrieval-focused queries for a knowledge base.
 
@@ -128,6 +175,12 @@ Rules:
 - Favor short search-style queries over full explanations.
 - When useful, cover terminology, scenario phrasing, and entity completion.
 
+Conversation summary:
+{summary_text}
+
+Recent chat turns:
+{context_text}
+
 User question:
 {query}
 """.strip()
@@ -136,6 +189,8 @@ User question:
 async def build_kb_chat_retrieval_queries(
     query: str,
     *,
+    chat_history: list[dict[str, str]] | None = None,
+    memory_summary: str | None = None,
     llm_factory: Callable[[], Any] | None = None,
     allow_llm: bool | None = None,
     max_queries: int | None = None,
@@ -147,7 +202,13 @@ async def build_kb_chat_retrieval_queries(
         return []
 
     limit = max(1, min(max_queries or _MAX_RETRIEVAL_QUERIES, _MAX_RETRIEVAL_QUERIES))
-    fallback = _build_fallback_queries(original, limit=limit)
+    fallback = _augment_fallback_queries(
+        _build_fallback_queries(original, limit=limit),
+        original=original,
+        chat_history=chat_history,
+        memory_summary=memory_summary,
+        limit=limit,
+    )
 
     should_use_llm = allow_llm if allow_llm is not None else config_registry.llm_configured
     if not should_use_llm and llm_factory is None:
@@ -156,7 +217,14 @@ async def build_kb_chat_retrieval_queries(
     try:
         resolved_factory = llm_factory or get_llm_for_analysis
         llm = resolved_factory()
-        response = await llm.ainvoke(_build_rewrite_prompt(original, max_queries=limit))
+        response = await llm.ainvoke(
+            _build_rewrite_prompt(
+                original,
+                max_queries=limit,
+                chat_history=chat_history,
+                memory_summary=memory_summary,
+            )
+        )
         parsed = extract_json_from_llm_response(_coerce_text(getattr(response, "content", response)))
         raw_queries = parsed.get("queries") or []
         llm_queries = [item for item in raw_queries if isinstance(item, str)]

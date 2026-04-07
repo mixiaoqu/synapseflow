@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TSVECTOR
 
 from app.core.config import config_registry
@@ -152,3 +152,48 @@ class Embedding(Base):
     chunk_tsv = Column(TSVECTOR, nullable=True)
     embedding = Column(Vector(EMBEDDING_DIM), nullable=False)
     metadata_ = Column("metadata", JSON, nullable=True)
+
+
+class ChatSession(Base):
+    """Persisted KB chat session metadata."""
+
+    __tablename__ = "chat_sessions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "session_id", name="uq_chat_sessions_user_session_id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    session_id = Column(String(64), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    category_id = Column(
+        Integer,
+        ForeignKey("document_categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    summary = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ChatMessage(Base):
+    """One persisted chat turn message inside a KB chat session."""
+
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    chat_session_id = Column(
+        Integer,
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role = Column(String(20), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

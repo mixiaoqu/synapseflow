@@ -53,8 +53,15 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
 
     captured: dict[str, object] = {}
 
-    async def fake_build_queries(query: str):
+    async def fake_build_queries(
+        query: str,
+        *,
+        chat_history: list[dict[str, str]] | None = None,
+        memory_summary: str | None = None,
+    ):
         assert query == "How do I configure the generation model?"
+        assert chat_history == []
+        assert memory_summary is None
         return [
             "How do I configure the generation model?",
             "generation model config",

@@ -37,6 +37,7 @@ export function useKbChat() {
   const [mobileTab, setMobileTab] = useState<"chat" | "sources">("chat");
 
   const activeTurnIdRef = useRef<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
 
   const loadKnowledgeBases = useCallback(async () => {
     try {
@@ -124,6 +125,7 @@ export function useKbChat() {
     setTurns([]);
     setExpandedChunks(new Set());
     setMobileTab("chat");
+    sessionIdRef.current = null;
   }, []);
 
   const submit = useCallback(
@@ -155,6 +157,7 @@ export function useKbChat() {
           knowledge_base_id:
             nextKnowledgeBaseId && nextKnowledgeBaseId > 0 ? nextKnowledgeBaseId : null,
           category_id: nextCategoryId && nextCategoryId > 0 ? nextCategoryId : null,
+          session_id: sessionIdRef.current,
         });
 
         await consumeSseStream(stream, (event) => {
@@ -178,6 +181,10 @@ export function useKbChat() {
             case "complete": {
               const answer = event.data.answer;
               const docs = event.data.retrieved_docs;
+              const sessionId = event.data.session_id;
+              if (typeof sessionId === "string" && sessionId) {
+                sessionIdRef.current = sessionId;
+              }
               setTurns((prev) =>
                 prev.map((turn) =>
                   turn.id === turnIdForUpdate
