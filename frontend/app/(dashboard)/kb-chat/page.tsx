@@ -1,27 +1,28 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   BookOpen,
   Copy,
+  History,
   Keyboard,
   Library,
   Loader2,
   MessageSquare,
   PanelRight,
+  Plus,
   SendHorizontal,
   Sparkles,
-  Trash2,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
+import { AnswerMarkdown } from "@/components/kb-chat/AnswerMarkdown";
+import { SourcesPanel } from "@/components/kb-chat/SourcesPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { AnswerMarkdown } from "@/components/kb-chat/AnswerMarkdown";
-import { SourcesPanel } from "@/components/kb-chat/SourcesPanel";
 import { useKbChat } from "@/hooks/useKbChat";
 
 const SUGGESTED_PROMPTS = [
@@ -51,7 +52,11 @@ export default function KbChatPage() {
     knowledgeBases,
     categories,
     loading,
+    historyLoading,
+    sessionLoading,
     turns,
+    sessions,
+    activeSessionId,
     expandedChunks,
     mobileTab,
     setMobileTab,
@@ -62,6 +67,7 @@ export default function KbChatPage() {
     expandAllChunks,
     collapseAllChunks,
     resetConversation,
+    openSession,
     submit,
   } = useKbChat();
 
@@ -75,7 +81,7 @@ export default function KbChatPage() {
       top: el.scrollHeight,
       behavior: loading ? "auto" : "smooth",
     });
-  }, [turns, loading]);
+  }, [loading, turns]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -102,6 +108,16 @@ export default function KbChatPage() {
       >
         {turns.length === 0 ? (
           <div className="relative mx-auto flex max-w-lg flex-col items-center justify-center py-14 text-center">
+            {sessionLoading ? (
+              <div className="flex flex-col items-center gap-3 rounded-2xl border border-teal-100 bg-teal-50/80 px-6 py-8 text-center shadow-sm">
+                <Loader2 className="h-6 w-6 animate-spin text-teal-600" />
+                <div>
+                  <p className="text-sm font-medium text-slate-700">正在恢复历史会话</p>
+                  <p className="mt-1 text-xs text-slate-500">稍等一下，旧消息马上回来。</p>
+                </div>
+              </div>
+            ) : (
+              <>
             <div
               className="pointer-events-none absolute inset-0 -z-10 opacity-[0.35]"
               style={{
@@ -118,7 +134,7 @@ export default function KbChatPage() {
               选择检索范围并输入问题，系统会基于知识库内容检索资料并流式生成回答。
             </p>
             <p className="mt-8 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-              可以这样问
+              你可以这样问
             </p>
             <div className="mt-3 flex w-full max-w-md flex-col gap-2">
               {SUGGESTED_PROMPTS.map((item) => (
@@ -136,9 +152,18 @@ export default function KbChatPage() {
                 </button>
               ))}
             </div>
+              </>
+            )}
           </div>
         ) : (
           <div className="mx-auto max-w-3xl space-y-10">
+            {sessionLoading ? (
+              <div className="flex items-center gap-2 rounded-xl border border-teal-100 bg-teal-50/80 px-4 py-3 text-sm text-teal-700">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                正在加载历史会话...
+              </div>
+            ) : null}
+
             <AnimatePresence initial={false}>
               {turns.map((turn) => (
                 <motion.div
@@ -148,11 +173,14 @@ export default function KbChatPage() {
                   transition={{ duration: 0.2, ease: "easeOut" }}
                   className="space-y-4"
                 >
-                  <div className="flex justify-end">
-                    <div className="max-w-[min(100%,36rem)] rounded-2xl rounded-br-md bg-gradient-to-br from-teal-600 to-emerald-700 px-4 py-3.5 text-[15px] leading-relaxed text-white shadow-md shadow-teal-700/20">
-                      {turn.query}
+                  {turn.query ? (
+                    <div className="flex justify-end">
+                      <div className="max-w-[min(100%,36rem)] rounded-2xl rounded-br-md bg-gradient-to-br from-teal-600 to-emerald-700 px-4 py-3.5 text-[15px] leading-relaxed text-white shadow-md shadow-teal-700/20">
+                        {turn.query}
+                      </div>
                     </div>
-                  </div>
+                  ) : null}
+
                   <div className="flex justify-start">
                     <div className="w-full max-w-[min(100%,40rem)] rounded-2xl rounded-bl-md border border-slate-100 bg-slate-50/95 px-4 py-4 shadow-sm">
                       <div className="mb-3 flex items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
@@ -247,11 +275,11 @@ export default function KbChatPage() {
               <select
                 id="kb-collection"
                 value={knowledgeBaseId ?? ""}
-                  onChange={(e) => {
-                    const nextValue = e.target.value ? Number(e.target.value) : null;
-                    setKnowledgeBaseId(nextValue);
-                    setCategoryId(null);
-                  }}
+                onChange={(e) => {
+                  const nextValue = e.target.value ? Number(e.target.value) : null;
+                  setKnowledgeBaseId(nextValue);
+                  setCategoryId(null);
+                }}
                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-600/30 sm:min-w-[180px] sm:w-auto"
                 disabled={loading}
               >
@@ -261,33 +289,31 @@ export default function KbChatPage() {
                     {collection.name}（{collection.document_count} 篇）
                   </option>
                 ))}
-                </select>
-              </div>
+              </select>
+            </div>
 
-              <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
-                <label
-                  htmlFor="kb-category"
-                  className="shrink-0 whitespace-nowrap text-xs text-slate-500"
-                >
-                  分类
-                </label>
-                <select
-                  id="kb-category"
-                  value={categoryId ?? ""}
-                  onChange={(e) =>
-                    setCategoryId(e.target.value ? Number(e.target.value) : null)
-                  }
-                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-600/30 sm:min-w-[180px] sm:w-auto"
-                  disabled={loading || !knowledgeBaseId}
-                >
-                  <option value="">{knowledgeBaseId ? "全部分类" : "先选择知识库"}</option>
-                  {categories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}（{category.document_count}）
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+              <label
+                htmlFor="kb-category"
+                className="shrink-0 whitespace-nowrap text-xs text-slate-500"
+              >
+                分类
+              </label>
+              <select
+                id="kb-category"
+                value={categoryId ?? ""}
+                onChange={(e) => setCategoryId(e.target.value ? Number(e.target.value) : null)}
+                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-600/30 sm:min-w-[180px] sm:w-auto"
+                disabled={loading || !knowledgeBaseId}
+              >
+                <option value="">{knowledgeBaseId ? "全部分类" : "先选择知识库"}</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}（{category.document_count}）
+                  </option>
+                ))}
+              </select>
+            </div>
 
             <Button
               type="submit"
@@ -308,11 +334,11 @@ export default function KbChatPage() {
             </Button>
           </div>
 
-          {knowledgeBases.length === 0 && (
+          {knowledgeBases.length === 0 ? (
             <p className="text-[11px] text-amber-700/90">
               当前还没有可用的文档集合，请先到“文档库”创建并上传文档。
             </p>
-          )}
+          ) : null}
         </form>
       </div>
     </section>
@@ -353,7 +379,31 @@ export default function KbChatPage() {
             </div>
           </div>
 
-          {turns.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-[230px] max-w-full items-center gap-2 rounded-lg border border-slate-200 bg-white/90 px-2.5 py-1.5 shadow-sm">
+              <History className="h-4 w-4 shrink-0 text-slate-400" />
+              <select
+                value={activeSessionId ?? ""}
+                onChange={(e) => {
+                  const nextSessionId = e.target.value;
+                  if (!nextSessionId) return;
+                  void openSession(nextSessionId);
+                }}
+                disabled={loading || historyLoading || sessions.length === 0}
+                className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none"
+              >
+                <option value="">
+                  {historyLoading ? "加载历史会话..." : sessions.length > 0 ? "选择历史会话" : "暂无历史会话"}
+                </option>
+                {sessions.map((session) => (
+                  <option key={session.session_id} value={session.session_id}>
+                    {session.title}
+                  </option>
+                ))}
+              </select>
+              {sessionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-teal-600" /> : null}
+            </div>
+
             <Button
               type="button"
               variant="outline"
@@ -364,10 +414,10 @@ export default function KbChatPage() {
                 requestAnimationFrame(() => textareaRef.current?.focus());
               }}
             >
-              <Trash2 className="h-3.5 w-3.5" />
-              清空对话
+              <Plus className="h-3.5 w-3.5" />
+              新建对话
             </Button>
-          )}
+          </div>
         </div>
       </header>
 

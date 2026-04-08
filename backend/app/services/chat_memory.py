@@ -9,7 +9,7 @@ from typing import Protocol
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ChatMessage, ChatSession
+from app.db.models import ChatMessage, ChatSession, DocumentCategory, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 
 _ROLE_LABELS = {
@@ -25,6 +25,29 @@ class ChatMemoryContext:
 
     messages: list[dict[str, str]]
     summary: str | None = None
+
+
+@dataclass(slots=True)
+class ChatSessionSummaryRecord:
+    """Session summary returned for history navigation."""
+
+    session_id: str
+    title: str
+    preview: str | None
+    knowledge_base_id: int | None
+    knowledge_base_name: str | None
+    category_id: int | None
+    category_name: str | None
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class ChatSessionDetailRecord(ChatSessionSummaryRecord):
+    """Session detail including messages."""
+
+    messages: list[dict[str, str | datetime]]
 
 
 class ChatMemoryStore(Protocol):
@@ -47,6 +70,20 @@ class ChatMemoryStore(Protocol):
         user_message: str,
         assistant_message: str,
     ) -> None: ...
+
+    async def list_sessions(
+        self,
+        *,
+        user_id: int,
+        limit: int = 30,
+    ) -> list[ChatSessionSummaryRecord]: ...
+
+    async def get_session_detail(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+    ) -> ChatSessionDetailRecord | None: ...
 
 
 def format_chat_history(
@@ -144,6 +181,83 @@ class DatabaseChatMemoryStore:
 
             await db.commit()
 
+    async def list_sessions(
+        self,
+        *,
+        user_id: int,
+        limit: int = 30,
+    ) -> list[ChatSessionSummaryRecord]:
+        normalized_limit = max(1, min(limit, 100))
+        async with AsyncSessionLocal() as db:
+            rows = await db.execute(
+                select(ChatSession, KnowledgeBase.name, DocumentCategory.name)
+                .outerjoin(KnowledgeBase, KnowledgeBase.id == ChatSession.knowledge_base_id)
+                .outerjoin(DocumentCategory, DocumentCategory.id == ChatSession.category_id)
+                .where(ChatSession.user_id == user_id)
+                .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
+                .limit(normalized_limit)
+            )
+            sessions = rows.all()
+            if not sessions:
+                return []
+
+            messages_by_session = await self._load_messages_for_sessions(
+                db,
+                [session.id for session, _, _ in sessions],
+            )
+            return [
+                self._build_session_summary(
+                    session,
+                    kb_name=knowledge_base_name,
+                    category_name=category_name,
+                    messages=messages_by_session.get(session.id, []),
+                )
+                for session, knowledge_base_name, category_name in sessions
+            ]
+
+    async def get_session_detail(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+    ) -> ChatSessionDetailRecord | None:
+        async with AsyncSessionLocal() as db:
+            row = await db.execute(
+                select(ChatSession, KnowledgeBase.name, DocumentCategory.name)
+                .outerjoin(KnowledgeBase, KnowledgeBase.id == ChatSession.knowledge_base_id)
+                .outerjoin(DocumentCategory, DocumentCategory.id == ChatSession.category_id)
+                .where(
+                    ChatSession.user_id == user_id,
+                    ChatSession.session_id == session_id,
+                )
+            )
+            result = row.one_or_none()
+            if result is None:
+                return None
+
+            session, knowledge_base_name, category_name = result
+            messages_by_session = await self._load_messages_for_sessions(db, [session.id])
+            messages = messages_by_session.get(session.id, [])
+            summary = self._build_session_summary(
+                session,
+                kb_name=knowledge_base_name,
+                category_name=category_name,
+                messages=messages,
+            )
+            return ChatSessionDetailRecord(
+                session_id=summary.session_id,
+                title=summary.title,
+                preview=summary.preview,
+                knowledge_base_id=summary.knowledge_base_id,
+                knowledge_base_name=summary.knowledge_base_name,
+                category_id=summary.category_id,
+                category_name=summary.category_name,
+                message_count=summary.message_count,
+                created_at=summary.created_at,
+                updated_at=summary.updated_at,
+                messages=messages,
+            )
+
     @staticmethod
     async def _get_session(
         db: AsyncSession,
@@ -177,3 +291,85 @@ class DatabaseChatMemoryStore:
         db.add(session)
         await db.flush()
         return session
+
+    @staticmethod
+    async def _load_messages_for_sessions(
+        db: AsyncSession,
+        session_ids: list[int],
+    ) -> dict[int, list[dict[str, str | datetime]]]:
+        if not session_ids:
+            return {}
+
+        result = await db.execute(
+            select(
+                ChatMessage.chat_session_id,
+                ChatMessage.role,
+                ChatMessage.content,
+                ChatMessage.created_at,
+            )
+            .where(ChatMessage.chat_session_id.in_(session_ids))
+            .order_by(
+                ChatMessage.chat_session_id.asc(),
+                ChatMessage.created_at.asc(),
+                ChatMessage.id.asc(),
+            )
+        )
+
+        grouped: dict[int, list[dict[str, str | datetime]]] = {session_id: [] for session_id in session_ids}
+        for chat_session_id, role, content, created_at in result.all():
+            grouped.setdefault(chat_session_id, []).append(
+                {
+                    "role": role,
+                    "content": content,
+                    "created_at": created_at,
+                }
+            )
+        return grouped
+
+    @staticmethod
+    def _build_session_summary(
+        session: ChatSession,
+        *,
+        kb_name: str | None,
+        category_name: str | None,
+        messages: list[dict[str, str | datetime]],
+    ) -> ChatSessionSummaryRecord:
+        title = "New conversation"
+        preview: str | None = None
+
+        for message in messages:
+            content = str(message.get("content") or "").strip()
+            if not content:
+                continue
+            if preview is None:
+                preview = DatabaseChatMemoryStore._truncate(content, 120)
+            if str(message.get("role") or "").lower() == "user":
+                title = DatabaseChatMemoryStore._truncate(content, 60)
+                break
+            if title == "New conversation":
+                title = DatabaseChatMemoryStore._truncate(content, 60)
+
+        if messages:
+            last_content = str(messages[-1].get("content") or "").strip()
+            if last_content:
+                preview = DatabaseChatMemoryStore._truncate(last_content, 120)
+
+        return ChatSessionSummaryRecord(
+            session_id=session.session_id,
+            title=title,
+            preview=preview,
+            knowledge_base_id=session.knowledge_base_id,
+            knowledge_base_name=kb_name,
+            category_id=session.category_id,
+            category_name=category_name,
+            message_count=len(messages),
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+        )
+
+    @staticmethod
+    def _truncate(value: str, limit: int) -> str:
+        normalized = " ".join(value.split())
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: max(1, limit - 1)].rstrip() + "…"

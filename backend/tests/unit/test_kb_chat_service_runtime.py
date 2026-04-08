@@ -1,9 +1,14 @@
 import asyncio
 import json
+from datetime import datetime
 from types import SimpleNamespace
 
 from app.application.kb_chat_service import KbChatService
-from app.services.chat_memory import ChatMemoryContext
+from app.services.chat_memory import (
+    ChatMemoryContext,
+    ChatSessionDetailRecord,
+    ChatSessionSummaryRecord,
+)
 
 
 def _decode_sse_payloads(events: list[str]) -> list[dict]:
@@ -73,6 +78,47 @@ class FakeChatMemoryStore:
         self.context = context or ChatMemoryContext(messages=[], summary=None)
         self.load_calls = []
         self.save_calls = []
+        self.list_calls = []
+        self.detail_calls = []
+        now = datetime.utcnow()
+        self.sessions = [
+            ChatSessionSummaryRecord(
+                session_id="session-1",
+                title="What is LangGraph?",
+                preview="LangGraph helps compose flows.",
+                knowledge_base_id=9,
+                knowledge_base_name="Product Docs",
+                category_id=4,
+                category_name="Guides",
+                message_count=2,
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+        self.session_detail = ChatSessionDetailRecord(
+            session_id="session-1",
+            title="What is LangGraph?",
+            preview="LangGraph helps compose flows.",
+            knowledge_base_id=9,
+            knowledge_base_name="Product Docs",
+            category_id=4,
+            category_name="Guides",
+            message_count=2,
+            created_at=now,
+            updated_at=now,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "What is LangGraph?",
+                    "created_at": now,
+                },
+                {
+                    "role": "assistant",
+                    "content": "LangGraph helps compose flows.",
+                    "created_at": now,
+                },
+            ],
+        )
 
     async def load_context(self, *, user_id: int, session_id: str) -> ChatMemoryContext:
         self.load_calls.append({"user_id": user_id, "session_id": session_id})
@@ -98,6 +144,16 @@ class FakeChatMemoryStore:
                 "assistant_message": assistant_message,
             }
         )
+
+    async def list_sessions(self, *, user_id: int, limit: int = 30):
+        self.list_calls.append({"user_id": user_id, "limit": limit})
+        return self.sessions[:limit]
+
+    async def get_session_detail(self, *, user_id: int, session_id: str):
+        self.detail_calls.append({"user_id": user_id, "session_id": session_id})
+        if self.session_detail.session_id != session_id:
+            return None
+        return self.session_detail
 
 
 def test_kb_chat_invoke_uses_graph_result():
@@ -191,3 +247,28 @@ def test_kb_chat_build_initial_state_keeps_category_id():
     assert state["query"] == "What is the refund policy?"
     assert state["session_id"] == "session-1"
     assert state["chat_history"] == []
+
+
+def test_kb_chat_list_sessions_returns_history_for_user():
+    memory_store = FakeChatMemoryStore()
+    service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store)
+
+    sessions = asyncio.run(service.list_sessions(user_id=42, limit=10))
+
+    assert len(sessions) == 1
+    assert sessions[0].session_id == "session-1"
+    assert sessions[0].knowledge_base_name == "Product Docs"
+    assert memory_store.list_calls == [{"user_id": 42, "limit": 10}]
+
+
+def test_kb_chat_get_session_returns_persisted_messages():
+    memory_store = FakeChatMemoryStore()
+    service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store)
+
+    session = asyncio.run(service.get_session(user_id=42, session_id="session-1"))
+
+    assert session is not None
+    assert session.session_id == "session-1"
+    assert session.messages[0].role == "user"
+    assert session.messages[1].content == "LangGraph helps compose flows."
+    assert memory_store.detail_calls == [{"user_id": 42, "session_id": "session-1"}]

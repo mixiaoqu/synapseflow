@@ -23,7 +23,12 @@ from app.services.chat_memory import (
 )
 
 if TYPE_CHECKING:
-    from app.models.schemas.kb_chat import KbChatRequest, KbChatResponse
+    from app.models.schemas.kb_chat import (
+        KbChatRequest,
+        KbChatResponse,
+        KbChatSessionDetail,
+        KbChatSessionSummary,
+    )
 
 
 class KbChatService(BaseAgentService):
@@ -172,6 +177,71 @@ class KbChatService(BaseAgentService):
             answer=answer,
             retrieved_docs=result.get("retrieved_docs", []),
             session_id=state.get("session_id"),
+        )
+
+    async def list_sessions(
+        self,
+        *,
+        user_id: int,
+        limit: int = 30,
+    ) -> list["KbChatSessionSummary"]:
+        """List persisted KB chat sessions for the current user."""
+
+        from app.models.schemas.kb_chat import KbChatSessionSummary
+
+        records = await self._memory_store.list_sessions(user_id=user_id, limit=limit)
+        return [
+            KbChatSessionSummary(
+                session_id=record.session_id,
+                title=record.title,
+                preview=record.preview,
+                knowledge_base_id=record.knowledge_base_id,
+                knowledge_base_name=record.knowledge_base_name,
+                category_id=record.category_id,
+                category_name=record.category_name,
+                message_count=record.message_count,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            )
+            for record in records
+        ]
+
+    async def get_session(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+    ) -> "KbChatSessionDetail | None":
+        """Load one persisted KB chat session for the current user."""
+
+        from app.models.schemas.kb_chat import KbChatSessionDetail, KbChatSessionMessage
+
+        record = await self._memory_store.get_session_detail(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if record is None:
+            return None
+
+        return KbChatSessionDetail(
+            session_id=record.session_id,
+            title=record.title,
+            preview=record.preview,
+            knowledge_base_id=record.knowledge_base_id,
+            knowledge_base_name=record.knowledge_base_name,
+            category_id=record.category_id,
+            category_name=record.category_name,
+            message_count=record.message_count,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            messages=[
+                KbChatSessionMessage(
+                    role=str(message.get("role") or ""),
+                    content=str(message.get("content") or ""),
+                    created_at=message["created_at"],
+                )
+                for message in record.messages
+            ],
         )
 
     async def stream(
