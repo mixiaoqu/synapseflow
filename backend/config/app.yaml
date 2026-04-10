@@ -1,5 +1,10 @@
+# 应用基础配置。
 app:
+  # 项目名称，用于接口文档、日志和页面展示。
   project_name: SynapseFlow
+  # 当前后端服务版本号。
   version: 0.1.0
-  description: 基于LangGraph的智能体协同系统
+  # 项目描述，用于 OpenAPI 文档等场景。
+  description: 基于 LangGraph 的智能协作平台后端服务
+  # API v1 的统一路由前缀。
   api_v1_str: /api/v1

@@ -111,7 +111,7 @@ export default function LoginPage() {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-70" />
                 <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
               </span>
-              SynapseFlow Platform
+              企业知识库系统
             </div>
 
             <h1 className="mt-8 text-5xl font-semibold tracking-[-0.04em] text-white sm:text-6xl lg:text-[4.5rem] lg:leading-[0.95]">
@@ -152,7 +152,7 @@ export default function LoginPage() {
           <div className="w-full max-w-[440px]">
             <div className="mb-8 lg:hidden motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-4 motion-safe:duration-700 motion-safe:delay-100">
               <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/15 bg-white/[0.04] px-3.5 py-1.5 text-xs font-medium text-emerald-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-md">
-                SynapseFlow
+                企业知识库系统
               </div>
               <h2 className="mt-4 text-3xl font-semibold tracking-tight text-white">
                 登录以继续

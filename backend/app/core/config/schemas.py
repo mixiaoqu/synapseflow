@@ -30,6 +30,13 @@ class EmbeddingConfig:
 
 
 @dataclass(frozen=True)
+class IndexingBatchConfig:
+    max_docs: int
+    max_chunks: int
+    max_chars: int
+
+
+@dataclass(frozen=True)
 class RagChunkConfig:
     size: int
     overlap: int

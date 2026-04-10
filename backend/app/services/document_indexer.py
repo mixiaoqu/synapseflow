@@ -26,6 +26,17 @@ def _chunk_text(content: str, document_title: str | None = None) -> List[VectorI
     )
 
 
+def estimate_document_chunk_count(
+    content: str,
+    title: str | None = None,
+) -> int:
+    """Estimate how many vector chunks a document will produce."""
+    source = content or ""
+    if not source.strip():
+        return 0
+    return len(_chunk_text(source, title))
+
+
 def _prepare_chunk_batches(
     documents: Sequence[tuple[int, str, str | None]],
 ) -> list[tuple[int, list[VectorIndexChunk]]]:

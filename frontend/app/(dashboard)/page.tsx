@@ -38,7 +38,7 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
       <div className="container mx-auto px-4 py-16">
         <div className="mb-16 text-center">
-          <h1 className="mb-4 text-5xl font-bold text-gray-900">SynapseFlow</h1>
+          <h1 className="mb-4 text-5xl font-bold text-gray-900">企业知识库系统</h1>
           <p className="mx-auto max-w-2xl text-xl text-gray-600">
             选择一个工作场景，开始知识问答、知识治理或文档协作。
           </p>

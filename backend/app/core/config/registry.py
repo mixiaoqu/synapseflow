@@ -18,6 +18,7 @@ from .loader import (
 from .schemas import (
     AppConfig,
     EmbeddingConfig,
+    IndexingBatchConfig,
     LoggingConfig,
     LoggingFileConfig,
     ModelConfig,
@@ -96,6 +97,17 @@ class ConfigRegistry:
             dim=int(emb.get("dim", 1024)),
             device=str(emb.get("device", "cpu")),
             batch_size=max(1, int(emb.get("batch_size", 32))),
+        )
+
+    @functools.lru_cache(maxsize=1)
+    def get_indexing_batch_config(self) -> IndexingBatchConfig:
+        """Get dynamic multi-document indexing batch config from `config/embedding.yaml`."""
+        data = load_embedding_raw()
+        batch = data.get("indexing_batch", {}) or {}
+        return IndexingBatchConfig(
+            max_docs=max(1, int(batch.get("max_docs", 8))),
+            max_chunks=max(1, int(batch.get("max_chunks", 256))),
+            max_chars=max(1, int(batch.get("max_chars", 200_000))),
         )
 
     @functools.lru_cache(maxsize=1)

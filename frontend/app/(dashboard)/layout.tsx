@@ -117,7 +117,7 @@ export default function DashboardLayout({
       <aside className="flex w-64 shrink-0 flex-col bg-gray-900 text-white">
         <div className="border-b border-gray-800 p-6">
           <Link href="/">
-            <h2 className="text-xl font-bold">SynapseFlow</h2>
+            <h2 className="text-xl font-bold">企业知识库系统</h2>
           </Link>
           <p className="mt-1 text-xs text-gray-400">面向知识治理的协作工作台</p>
         </div>

@@ -1,45 +1,69 @@
-# 向量嵌入与知识库检索相关配置（索引分块、召回、评估截断等）
-
+# 向量模型、索引批处理与 RAG 检索相关配置。
 embedding:
+  # 向量模型名称，用于把 query / chunk 转成 embedding。
   model: BAAI/bge-m3
+  # 向量维度，必须与模型实际输出维度以及数据库向量字段维度一致。
   dim: 1024
+  # 向量模型运行设备，可选 cpu / cuda 等。
   device: cpu
+  # 单次调用 embedding 模型时内部 encode 的 batch 大小。
   batch_size: 32
-  description: 多语言向量嵌入模型，支持长文本，检索效果更好
+  # 当前 embedding 模型说明，主要用于配置可读性。
+  description: Multilingual embedding model for semantic retrieval.
 
-# 文档入库：按 Markdown 标题（#～######）与空行段落切分，再合并到不超过 size；
-# 仍超长时按 overlap 做字符级二次切分。修改后需对已有文档重新索引。
+# 多文档索引时的动态分批配置。
+indexing_batch:
+  # 单个索引批次最多允许包含多少篇文档。
+  max_docs: 8
+  # 单个索引批次最多允许累计多少个 chunk。
+  max_chunks: 256
+  # 单个索引批次最多允许累计多少正文字符，用于控制内存与单批耗时。
+  max_chars: 200000
+
+# 文档切块配置。
 chunk:
+  # 单个 chunk 的目标最大字符数。
   size: 700
+  # 相邻 chunk 之间保留的重叠字符数，用于减少上下文断裂。
   overlap: 100
 
-# 向量检索与进入生成/Rerank 的条数（余弦距离越小越相似）
-# QA 检索不按距离阈值过滤；RERANK_ENABLED=true 时对每条召回结果调用精排（条数仍截断为 final_top_k）
-# hybrid_enabled：开启后与 PostgreSQL 全文检索（tsvector + ts_rank_cd）做 RRF 融合，增强关键词命中（非 ES 的 Okapi BM25）
-# 启用前需执行迁移 e5f6a7b8c9d0 为 embeddings 增加 chunk_tsv；已有数据迁移会自动回填
-# distance_* / fallback_top_n：保留兼容，检索节点未使用
+# 检索配置。
 retrieval:
-  k_first: 32 # 首轮向量召回条数（增大后再经 Rerank 截断）
-  k_iteration: 32 # 迭代向量召回条数
+  # 首轮检索时 dense / hybrid 通道拉取的候选条数。
+  k_first: 32
+  # 迭代检索时拉取的候选条数。
+  k_iteration: 32
+  # 是否开启混合检索；开启后会融合向量检索与词法检索结果。
   hybrid_enabled: true
-  lexical_k: 32 # 词法通道条数
-  rrf_k: 60 # RRF 平滑常数 k
-  hybrid_pool_limit: 64 # 融合后进入 Rerank 的候选上限
-  distance_threshold: 0.5 # 距离阈值
-  distance_threshold_iteration: 0.6 # 迭代距离阈值
-  fallback_top_n: 3 # 回退条数
-  # 向量召回 + Rerank 后最多保留的切片条数（须 >= llm_reference_top_k）
+  # 词法检索通道最多拉取的候选条数。
+  lexical_k: 32
+  # RRF 融合时使用的平滑常数，影响不同排序列表的融合权重衰减。
+  rrf_k: 60
+  # 混合检索融合后，允许进入后续 rerank 的最大候选数。
+  hybrid_pool_limit: 64
+  # 向量距离阈值，当前主要作为兼容保留项。
+  distance_threshold: 0.5
+  # 迭代检索阶段的向量距离阈值，当前主要作为兼容保留项。
+  distance_threshold_iteration: 0.6
+  # 当结果不足时的回退条数，当前主要作为兼容保留项。
+  fallback_top_n: 3
+  # 最终保留给应用层的检索结果上限。
   final_top_k: 10
-  # 拼进「知识库内容」、交给答案生成大模型的条数（精排后的前 N 条）
+  # 最终真正送入大模型 prompt 的参考片段上限。
   llm_reference_top_k: 10
-  # 用户知识库/迭代 QA：拼入提示的摘录总字符上限（按条顺序截断，超出部分不送入大模型）；0 表示不限制
+  # 拼接知识库上下文时允许注入 prompt 的总字符上限。
   kb_context_max_chars: 12000
 
-# 迭代 QA 评估节点
+# 评估配置。
 evaluate:
+  # 评估阶段允许送入评估 prompt 的上下文最大字符数。
   context_max_chars: 3000
+  # 评估通过阈值，低于该值时可进入下一轮优化与问答。
   pass_threshold: 0.75
   weights:
+    # 回答与问题的相关性权重。
     relevance: 0.25
+    # 回答是否基于检索内容、是否有依据的权重。
     groundedness: 0.45
+    # 回答覆盖问题要点完整程度的权重。
     completeness: 0.30

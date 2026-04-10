@@ -1,13 +1,19 @@
-# 日志配置
-
+# 日志系统配置。
 logging:
+  # 全局日志级别，例如 DEBUG / INFO / WARNING / ERROR。
   level: INFO
+  # 是否输出为 JSON 格式，便于日志平台采集。
   json: false
+  # 是否同时写入日志文件。
   to_file: true
+  # 是否开启更详细的异常诊断信息。
   diagnose: false
-  
-  # 日志文件配置
+
+  # 文件日志相关配置。
   file:
+    # 日志文件路径；相对路径默认相对于 backend 项目根目录。
     path: logs/synapseflow.log
+    # 日志轮转策略，达到该条件后切分新文件。
     rotation: 10 MB
+    # 日志保留时长，超过后自动清理旧日志。
     retention: 7 days

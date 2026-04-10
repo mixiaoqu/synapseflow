@@ -5,8 +5,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "SynapseFlow - 智能体协同系统",
-  description: "基于LangGraph的多智能体协作平台",
+  title: "企业知识库系统",
+  description: "企业知识管理与智能问答工作台",
 };
 
 export default function RootLayout({
