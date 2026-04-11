@@ -10,7 +10,7 @@ WORKDIR /app
 ARG UV_INDEX_URL=https://pypi.org/simple
 ENV UV_INDEX_URL=${UV_INDEX_URL}
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN python -m pip install --no-cache-dir --index-url "${UV_INDEX_URL}" "uv>=0.7,<1"
 
 ENV UV_COMPILE_BYTECODE=0 \
     UV_LINK_MODE=copy \

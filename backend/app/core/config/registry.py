@@ -92,8 +92,9 @@ class ConfigRegistry:
         """Get embedding config from `config/embedding.yaml`."""
         data = load_embedding_raw()
         emb = data.get("embedding", {})
+        model_override = (settings.EMBEDDING_MODEL or "").strip()
         return EmbeddingConfig(
-            model=emb.get("model", "BAAI/bge-m3"),
+            model=model_override or emb.get("model", "BAAI/bge-m3"),
             dim=int(emb.get("dim", 1024)),
             device=str(emb.get("device", "cpu")),
             batch_size=max(1, int(emb.get("batch_size", 32))),
@@ -139,6 +140,11 @@ class ConfigRegistry:
                 distance_threshold=float(retrieval.get("distance_threshold", 0.5)),
                 distance_threshold_iteration=float(
                     retrieval.get("distance_threshold_iteration", 0.6)
+                ),
+                rerank_threshold=(
+                    float(retrieval["rerank_threshold"])
+                    if retrieval.get("rerank_threshold") is not None
+                    else None
                 ),
                 fallback_top_n=int(retrieval.get("fallback_top_n", 3)),
                 final_top_k=int(retrieval.get("final_top_k", 6)),

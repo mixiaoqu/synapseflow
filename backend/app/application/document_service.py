@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Sequence
 
-from fastapi import BackgroundTasks, HTTPException, UploadFile
+from fastapi import HTTPException, UploadFile
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -150,7 +150,6 @@ class DocumentService:
     async def upload_document(
         self,
         *,
-        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         file: UploadFile,
@@ -187,7 +186,6 @@ class DocumentService:
             commit=True,
         )
         indexing_service.enqueue_document(
-            background_tasks,
             document_id=doc.id,
             expected_content_hash=doc.content_hash,
         )
@@ -197,7 +195,6 @@ class DocumentService:
     async def upload_documents_batch(
         self,
         *,
-        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         files: Sequence[UploadFile],
@@ -274,7 +271,6 @@ class DocumentService:
 
         await repo.commit_and_refresh_root_ids(created)
         indexing_service.enqueue_documents_batch(
-            background_tasks,
             documents=[(doc.id, doc.content_hash) for doc in created],
         )
         return [
@@ -285,7 +281,6 @@ class DocumentService:
     async def create_document_from_content(
         self,
         *,
-        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         body: DocumentCreate,
@@ -317,7 +312,6 @@ class DocumentService:
             commit=True,
         )
         indexing_service.enqueue_document(
-            background_tasks,
             document_id=doc.id,
             expected_content_hash=doc.content_hash,
         )
@@ -414,14 +408,12 @@ class DocumentService:
     async def reindex_all_documents(
         self,
         *,
-        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         team_id: int | None = None,
         knowledge_base_id: int | None = None,
     ) -> dict[str, int | str]:
         return await indexing_service.reindex_all_documents(
-            background_tasks=background_tasks,
             db=db,
             user_id=user_id,
             team_id=team_id,
@@ -431,13 +423,11 @@ class DocumentService:
     async def index_single_document(
         self,
         *,
-        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         doc_id: int,
     ) -> dict[str, int | str]:
         return await indexing_service.index_single_document(
-            background_tasks=background_tasks,
             db=db,
             user_id=user_id,
             doc_id=doc_id,
@@ -446,7 +436,6 @@ class DocumentService:
     async def replace_document_content(
         self,
         *,
-        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         doc_id: int,
@@ -465,7 +454,6 @@ class DocumentService:
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
         indexing_service.enqueue_document(
-            background_tasks,
             document_id=doc.id,
             expected_content_hash=doc.content_hash,
         )
@@ -476,7 +464,6 @@ class DocumentService:
     async def create_document_version(
         self,
         *,
-        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         doc_id: int,
@@ -493,7 +480,6 @@ class DocumentService:
         if not new_doc:
             raise HTTPException(status_code=404, detail="Source document not found")
         indexing_service.enqueue_current_document_reindex(
-            background_tasks,
             target_document_id=new_doc.id,
             target_content_hash=new_doc.content_hash,
             previous_document_id=(
@@ -507,7 +493,6 @@ class DocumentService:
     async def switch_current_document_version(
         self,
         *,
-        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         doc_id: int,
@@ -517,7 +502,6 @@ class DocumentService:
         if not target:
             raise HTTPException(status_code=404, detail="Document not found")
         indexing_service.enqueue_current_document_reindex(
-            background_tasks,
             target_document_id=target.id,
             target_content_hash=target.content_hash,
             previous_document_id=(

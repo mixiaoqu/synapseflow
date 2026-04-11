@@ -1,60 +1,75 @@
 import asyncio
-from fastapi import BackgroundTasks
 
 from app.application.indexing_service import indexing_service
 from app.core.config.registry import config_registry
+from app.services.semantic_chunk import VectorIndexChunk
 
 
-def test_enqueue_document_adds_background_task():
-    tasks = BackgroundTasks()
+def test_enqueue_document_sends_dramatiq_message(monkeypatch):
+    captured = {}
 
-    indexing_service.enqueue_document(
-        tasks,
-        document_id=42,
-        expected_content_hash="abc123",
-    )
+    class DummyActor:
+        def send(self, **kwargs):
+            captured["kwargs"] = kwargs
 
-    assert len(tasks.tasks) == 1
-    task = tasks.tasks[0]
-    assert task.func == indexing_service.index_document_task
-    assert task.kwargs == {
+    class DummyModule:
+        index_document_actor = DummyActor()
+
+    monkeypatch.setattr(indexing_service, "_actor_module", lambda: DummyModule)
+
+    indexing_service.enqueue_document(document_id=42, expected_content_hash="abc123")
+
+    assert captured["kwargs"] == {
         "document_id": 42,
         "expected_content_hash": "abc123",
     }
 
 
-def test_enqueue_current_document_reindex_adds_transition_task():
-    tasks = BackgroundTasks()
+def test_enqueue_current_document_reindex_sends_transition_task(monkeypatch):
+    captured = {}
+
+    class DummyActor:
+        def send(self, **kwargs):
+            captured["kwargs"] = kwargs
+
+    class DummyModule:
+        reindex_current_document_actor = DummyActor()
+
+    monkeypatch.setattr(indexing_service, "_actor_module", lambda: DummyModule)
 
     indexing_service.enqueue_current_document_reindex(
-        tasks,
         target_document_id=9,
         target_content_hash="hash-9",
         previous_document_id=3,
     )
 
-    assert len(tasks.tasks) == 1
-    task = tasks.tasks[0]
-    assert task.func == indexing_service.reindex_current_document_task
-    assert task.kwargs == {
+    assert captured["kwargs"] == {
         "target_document_id": 9,
         "target_content_hash": "hash-9",
         "previous_document_id": 3,
     }
 
 
-def test_enqueue_documents_batch_adds_background_task():
-    tasks = BackgroundTasks()
+def test_enqueue_documents_batch_sends_serialized_documents(monkeypatch):
+    captured = {}
 
-    indexing_service.enqueue_documents_batch(
-        tasks,
-        documents=[(1, "hash-1"), (2, "hash-2")],
-    )
+    class DummyActor:
+        def send(self, **kwargs):
+            captured["kwargs"] = kwargs
 
-    assert len(tasks.tasks) == 1
-    task = tasks.tasks[0]
-    assert task.func == indexing_service.index_documents_batch_task
-    assert task.kwargs == {"documents": [(1, "hash-1"), (2, "hash-2")]}
+    class DummyModule:
+        index_documents_batch_actor = DummyActor()
+
+    monkeypatch.setattr(indexing_service, "_actor_module", lambda: DummyModule)
+
+    indexing_service.enqueue_documents_batch(documents=[(1, "hash-1"), (2, "hash-2")])
+
+    assert captured["kwargs"] == {
+        "documents": [
+            {"document_id": 1, "expected_content_hash": "hash-1"},
+            {"document_id": 2, "expected_content_hash": "hash-2"},
+        ]
+    }
 
 
 def test_build_dynamic_batches_splits_on_chunk_and_char_limits():
@@ -156,3 +171,66 @@ def test_index_documents_batch_task_processes_dynamic_batches(monkeypatch):
     )
 
     assert seen_batches == [[1, 2], [3]]
+
+
+def test_run_document_batch_index_reuses_prepared_chunks(monkeypatch):
+    batch = [
+        {
+            "document_id": 1,
+            "expected_content_hash": "hash-1",
+            "content": "original content should not be rechunked",
+            "title": "Doc 1",
+            "char_count": 10,
+            "chunk_count": 1,
+            "chunks": [
+                VectorIndexChunk(
+                    display_text="prepared body",
+                    embedding_text="prepared embedding text",
+                    search_text="prepared search text",
+                    metadata={"chunk_index": 0},
+                )
+            ],
+        }
+    ]
+
+    captured: dict[str, object] = {}
+
+    async def fake_index_prepared_documents_batch(db, prepared_docs, *, commit):
+        captured["prepared_docs"] = prepared_docs
+        captured["commit"] = commit
+        return {1: 1}
+
+    async def fake_get_document_hashes(db, document_ids):
+        assert document_ids == [1]
+        return {1: "hash-1"}
+
+    class DummyExecuteResult:
+        rowcount = 1
+
+    class DummyDB:
+        def __init__(self) -> None:
+            self.commits = 0
+            self.executed = []
+
+        async def execute(self, stmt):
+            self.executed.append(stmt)
+            return DummyExecuteResult()
+
+        async def commit(self):
+            self.commits += 1
+
+    monkeypatch.setattr(
+        "app.application.indexing_service.index_prepared_documents_batch",
+        fake_index_prepared_documents_batch,
+    )
+    monkeypatch.setattr(indexing_service, "_get_document_hashes", fake_get_document_hashes)
+
+    db = DummyDB()
+    counts = asyncio.run(indexing_service._run_document_batch_index(db, batch=batch))
+
+    assert counts == {1: 1}
+    assert captured["commit"] is False
+    prepared_docs = captured["prepared_docs"]
+    assert prepared_docs[0][0] == 1
+    assert prepared_docs[0][1][0].display_text == "prepared body"
+    assert db.commits == 1

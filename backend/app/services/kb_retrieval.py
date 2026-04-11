@@ -159,6 +159,7 @@ async def _finalize_ranked_rows(
     query: str,
     results: List[dict],
     final_top_k: int,
+    iteration: int,
 ) -> List[dict]:
     if settings.RERANK_ENABLED and results:
         logger.debug(
@@ -166,8 +167,88 @@ async def _finalize_ranked_rows(
             len(results),
             final_top_k,
         )
-        return await rerank(query, results, top_k=final_top_k)
-    return results[:final_top_k]
+        results = await rerank(query, results, top_k=final_top_k)
+    else:
+        results = results[:final_top_k]
+    return _apply_retrieval_thresholds(
+        results,
+        iteration=iteration,
+        rerank_enabled=settings.RERANK_ENABLED,
+    )
+
+
+def _meaningful_dense_distance(row: dict) -> float | None:
+    raw_distance = row.get("distance")
+    if raw_distance is None:
+        return None
+    try:
+        distance = float(raw_distance)
+    except (TypeError, ValueError):
+        return None
+    return distance
+
+
+def _passes_distance_threshold(row: dict, threshold: float) -> bool:
+    distance = _meaningful_dense_distance(row)
+    return distance is None or distance <= threshold
+
+
+def _passes_rerank_threshold(
+    row: dict,
+    *,
+    rerank_enabled: bool,
+    threshold: float | None,
+) -> bool:
+    if not rerank_enabled or threshold is None:
+        return True
+    raw_score = row.get("rerank_score")
+    if raw_score is None:
+        return True
+    try:
+        return float(raw_score) >= threshold
+    except (TypeError, ValueError):
+        return False
+
+
+def _apply_retrieval_thresholds(
+    results: List[dict],
+    *,
+    iteration: int,
+    rerank_enabled: bool,
+) -> List[dict]:
+    if not results:
+        return []
+
+    rag = config_registry.get_rag_config().retrieval
+    distance_threshold = (
+        rag.distance_threshold_iteration if iteration > 0 else rag.distance_threshold
+    )
+    rerank_threshold = rag.rerank_threshold
+
+    filtered = [
+        row
+        for row in results
+        if _passes_distance_threshold(row, distance_threshold)
+        and _passes_rerank_threshold(
+            row,
+            rerank_enabled=rerank_enabled,
+            threshold=rerank_threshold,
+        )
+    ]
+    removed = len(results) - len(filtered)
+    if removed:
+        logger.info(
+            "KB retrieval thresholds filtered {} of {} rows | distance<= {:.3f} rerank>= {}",
+            removed,
+            len(results),
+            distance_threshold,
+            (
+                f"{rerank_threshold:.3f}"
+                if rerank_enabled and rerank_threshold is not None
+                else "-"
+            ),
+        )
+    return filtered
 
 
 def _build_retrieval_output(
@@ -304,6 +385,7 @@ async def run_kb_retrieval(
         query=query,
         results=results,
         final_top_k=final_top_k,
+        iteration=iteration,
     )
     return _build_retrieval_output(
         results=results,
@@ -384,6 +466,7 @@ async def run_multi_query_kb_retrieval(
         query=query,
         results=fused_results,
         final_top_k=final_top_k,
+        iteration=iteration,
     )
     output = _build_retrieval_output(
         results=results,

@@ -41,6 +41,7 @@ def test_split_for_vector_index_returns_structured_chunk_payloads():
     )
     assert child.search_text == (
         "System Design Notes\n"
+        "Parent > Child\n"
         "Child\n\n"
         "Child body sentence one.\nChild body sentence two."
     )
@@ -57,7 +58,7 @@ def test_add_document_chunks_stores_display_search_and_metadata():
     chunk = VectorIndexChunk(
         display_text="Rendered body",
         embedding_text="[模块路径] Parent > Child\n\nRendered body",
-        search_text="System Design Notes\nChild\n\nRendered body",
+        search_text="System Design Notes\nParent > Child\nChild\n\nRendered body",
         metadata={
             "section_path": "Parent > Child",
             "section_title": "Child",
@@ -76,7 +77,7 @@ def test_add_document_chunks_stores_display_search_and_metadata():
     row = db.rows[0]
     assert row.document_id == 7
     assert row.chunk_text == "Rendered body"
-    assert row.search_text == "System Design Notes\nChild\n\nRendered body"
+    assert row.search_text == "System Design Notes\nParent > Child\nChild\n\nRendered body"
     assert row.metadata_["chunk_index"] == 0
     assert row.metadata_["section_path"] == "Parent > Child"
     assert row.metadata_["section_title"] == "Child"

@@ -85,7 +85,7 @@ def _build_ranked_row(
     row_category_id: int | None,
     source_path: str | None,
     category_name: str | None,
-    distance: float,
+    distance: float | None,
     lexical_rank: float | None = None,
     lexical_source: str | None = None,
 ) -> dict:
@@ -100,7 +100,7 @@ def _build_ranked_row(
         "document_id": int(document_id),
         "chunk_index": int(chunk_index),
         "metadata": metadata,
-        "distance": float(distance),
+        "distance": float(distance) if distance is not None else None,
         "document_title": document_title or "Unknown document",
     }
     if lexical_rank is not None:
@@ -193,7 +193,11 @@ def _copy_ranked_row(row: dict) -> dict:
         "document_id": int(row["document_id"]),
         "chunk_index": int(row["chunk_index"]),
         "metadata": dict(row.get("metadata") or {}),
-        "distance": float(row.get("distance", 2.0)),
+        "distance": (
+            float(row["distance"])
+            if row.get("distance") is not None
+            else None
+        ),
         "document_title": row.get("document_title", "Unknown document"),
         **(
             {"lexical_rank": float(row["lexical_rank"])}
@@ -205,9 +209,19 @@ def _copy_ranked_row(row: dict) -> dict:
 
 
 def _merge_ranked_row(existing: dict, incoming: dict) -> None:
-    incoming_distance = float(incoming.get("distance", 2.0))
-    existing_distance = float(existing.get("distance", 2.0))
-    if incoming_distance < existing_distance:
+    incoming_distance = (
+        float(incoming["distance"])
+        if incoming.get("distance") is not None
+        else None
+    )
+    existing_distance = (
+        float(existing["distance"])
+        if existing.get("distance") is not None
+        else None
+    )
+    if incoming_distance is not None and (
+        existing_distance is None or incoming_distance < existing_distance
+    ):
         existing["distance"] = incoming_distance
     if existing.get("document_title") == "Unknown document" and incoming.get("document_title"):
         existing["document_title"] = incoming["document_title"]
@@ -356,7 +370,7 @@ async def _search_lexical_fts(
                 row_category_id=row_category_id,
                 source_path=source_path,
                 category_name=category_name,
-                distance=2.0,
+                distance=None,
                 lexical_rank=float(lexical_rank) if lexical_rank is not None else 0.0,
                 lexical_source="fts",
             )
@@ -467,7 +481,7 @@ async def _search_lexical_trgm(
                 row_category_id=row_category_id,
                 source_path=source_path,
                 category_name=category_name,
-                distance=2.0,
+                distance=None,
                 lexical_rank=float(lexical_rank) if lexical_rank is not None else 0.0,
                 lexical_source="trgm",
             )
@@ -491,23 +505,23 @@ async def search_lexical(
         return []
 
     rag = config_registry.get_rag_config().retrieval
-    fts_rows, trgm_rows = await asyncio.gather(
-        _search_lexical_fts(
-            db,
-            query,
-            k=k,
-            user_id=user_id,
-            knowledge_base_id=knowledge_base_id,
-            category_id=category_id,
-        ),
-        _search_lexical_trgm(
-            db,
-            query,
-            k=k,
-            user_id=user_id,
-            knowledge_base_id=knowledge_base_id,
-            category_id=category_id,
-        ),
+    # One AsyncSession cannot safely provision or use the same connection for
+    # concurrent statements, so run the lexical channels in sequence here.
+    fts_rows = await _search_lexical_fts(
+        db,
+        query,
+        k=k,
+        user_id=user_id,
+        knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
+    )
+    trgm_rows = await _search_lexical_trgm(
+        db,
+        query,
+        k=k,
+        user_id=user_id,
+        knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
     )
     weights = [1.0, 1.2 if _contains_cjk(query) else 0.8]
     return reciprocal_rank_fusion_many(
@@ -533,22 +547,20 @@ async def search_hybrid_rrf(
 ) -> List[dict]:
     """Dense vector retrieval plus lexical retrieval fused with RRF."""
 
-    dense, lexical = await asyncio.gather(
-        search(
-            db,
-            query_embedding,
-            k=k_dense,
-            user_id=user_id,
-            knowledge_base_id=knowledge_base_id,
-            category_id=category_id,
-        ),
-        search_lexical(
-            db,
-            query_text,
-            k=k_lexical,
-            user_id=user_id,
-            knowledge_base_id=knowledge_base_id,
-            category_id=category_id,
-        ),
+    dense = await search(
+        db,
+        query_embedding,
+        k=k_dense,
+        user_id=user_id,
+        knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
+    )
+    lexical = await search_lexical(
+        db,
+        query_text,
+        k=k_lexical,
+        user_id=user_id,
+        knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
     )
     return reciprocal_rank_fusion(dense, lexical, rrf_k=rrf_k, limit=pool_limit)

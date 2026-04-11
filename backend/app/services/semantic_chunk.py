@@ -49,17 +49,26 @@ def _module_prefix(section_path: str | None) -> str:
     return f"[模块路径] {section_path}\n\n"
 
 
-def _search_titles(doc_title: str | None, section_title: str | None) -> list[str]:
+def _search_titles(
+    doc_title: str | None,
+    section_path: str | None,
+    section_title: str | None,
+) -> list[str]:
     titles: list[str] = []
-    for value in (doc_title, section_title):
+    for value in (doc_title, section_path, section_title):
         cleaned = (value or "").strip()
         if cleaned and cleaned not in titles:
             titles.append(cleaned)
     return titles
 
 
-def _search_text(doc_title: str | None, section_title: str | None, display_text: str) -> str:
-    titles = _search_titles(doc_title, section_title)
+def _search_text(
+    doc_title: str | None,
+    section_path: str | None,
+    section_title: str | None,
+    display_text: str,
+) -> str:
+    titles = _search_titles(doc_title, section_path, section_title)
     if titles:
         return ("\n".join(titles) + "\n\n" + display_text).strip()
     return display_text
@@ -73,7 +82,7 @@ def _body_budget(
 ) -> int:
     reserve = max(
         len(_module_prefix(section_path)),
-        len(_search_text(doc_title, section_title, "")),
+        len(_search_text(doc_title, section_path, section_title, "")),
     )
     return max(1, max_chars - reserve)
 
@@ -255,7 +264,12 @@ def _make_chunk(
         return None
 
     embedding_text = (_module_prefix(section.section_path) + display_text).strip()
-    search_text = _search_text(doc_title, section.title, display_text)
+    search_text = _search_text(
+        doc_title,
+        section.section_path,
+        section.title,
+        display_text,
+    )
     metadata = {
         "section_path": section.section_path,
         "section_title": section.title,

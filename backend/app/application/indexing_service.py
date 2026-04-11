@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from importlib import import_module
 from typing import Any
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,9 +24,9 @@ from app.services.document_index_state import (
     INDEX_STATUS_QUEUED,
 )
 from app.services.document_indexer import (
-    estimate_document_chunk_count,
     index_document,
-    index_documents_batch,
+    index_prepared_documents_batch,
+    prepare_document_chunks,
 )
 from app.services.vector_store import delete_by_document_id
 
@@ -34,6 +35,20 @@ MAX_INDEX_ERROR_LENGTH = 1000
 
 class IndexingService:
     """Owns index queueing, background execution, and explicit document states."""
+
+    @staticmethod
+    def _actor_module():
+        return import_module("app.workers.indexing_tasks")
+
+    @staticmethod
+    def _serialize_documents(documents: Sequence[tuple[int, str]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "document_id": int(document_id),
+                "expected_content_hash": str(expected_content_hash),
+            }
+            for document_id, expected_content_hash in documents
+        ]
 
     @staticmethod
     def _truncate_error(error: Exception) -> str:
@@ -78,43 +93,40 @@ class IndexingService:
 
     def enqueue_document(
         self,
-        background_tasks: BackgroundTasks,
         *,
         document_id: int,
         expected_content_hash: str,
     ) -> None:
         """Queue one document indexing task."""
-        background_tasks.add_task(
-            self.index_document_task,
+        actor_module = self._actor_module()
+        actor_module.index_document_actor.send(
             document_id=document_id,
             expected_content_hash=expected_content_hash,
         )
 
     def enqueue_documents_batch(
         self,
-        background_tasks: BackgroundTasks,
         *,
         documents: Sequence[tuple[int, str]],
     ) -> None:
         """Queue multiple document indexing tasks."""
         if not documents:
             return
-        background_tasks.add_task(
-            self.index_documents_batch_task,
-            documents=list(documents),
+        actor_module = self._actor_module()
+        actor_module.index_documents_batch_actor.send(
+            documents=self._serialize_documents(documents),
         )
 
     def enqueue_current_document_reindex(
         self,
-        background_tasks: BackgroundTasks,
         *,
         target_document_id: int,
         target_content_hash: str,
         previous_document_id: int | None = None,
     ) -> None:
         """Queue a current-version switch/index task."""
-        background_tasks.add_task(
-            self.reindex_current_document_task,
+        actor_module = self._actor_module()
+        actor_module.reindex_current_document_actor.send(
             target_document_id=target_document_id,
             target_content_hash=target_content_hash,
             previous_document_id=previous_document_id,
@@ -349,6 +361,7 @@ class IndexingService:
 
             content = refreshed.content or ""
             title = refreshed.title
+            chunks = prepare_document_chunks(content, title)
             prepared.append(
                 {
                     "document_id": refreshed.id,
@@ -356,7 +369,8 @@ class IndexingService:
                     "content": content,
                     "title": title,
                     "char_count": len(content),
-                    "chunk_count": estimate_document_chunk_count(content, title),
+                    "chunk_count": len(chunks),
+                    "chunks": chunks,
                 }
             )
 
@@ -368,11 +382,21 @@ class IndexingService:
         *,
         batch: Sequence[dict[str, Any]],
     ) -> dict[int, int]:
-        raw_documents = [
-            (int(item["document_id"]), str(item["content"]), item.get("title"))
+        prepared_documents = [
+            (
+                int(item["document_id"]),
+                item.get("chunks") or prepare_document_chunks(
+                    str(item["content"]),
+                    item.get("title"),
+                ),
+            )
             for item in batch
         ]
-        counts = await index_documents_batch(db, raw_documents, commit=False)
+        counts = await index_prepared_documents_batch(
+            db,
+            prepared_documents,
+            commit=False,
+        )
         current_hashes = await self._get_document_hashes(
             db,
             [int(item["document_id"]) for item in batch],
@@ -518,7 +542,6 @@ class IndexingService:
     async def reindex_all_documents(
         self,
         *,
-        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         team_id: int | None = None,
@@ -540,7 +563,7 @@ class IndexingService:
             await db.refresh(doc)
 
         queued_docs = [(doc.id, doc.content_hash) for doc in docs]
-        self.enqueue_documents_batch(background_tasks, documents=queued_docs)
+        self.enqueue_documents_batch(documents=queued_docs)
         logger.info("Queued full reindex for {} documents", len(queued_docs))
         return {
             "message": f"Queued {len(queued_docs)} documents for reindexing",
@@ -550,7 +573,6 @@ class IndexingService:
     async def index_single_document(
         self,
         *,
-        background_tasks: BackgroundTasks,
         db: AsyncSession,
         user_id: int,
         doc_id: int,
@@ -573,7 +595,6 @@ class IndexingService:
         await db.commit()
         await db.refresh(doc)
         self.enqueue_document(
-            background_tasks,
             document_id=doc.id,
             expected_content_hash=doc.content_hash,
         )

@@ -26,15 +26,23 @@ def _chunk_text(content: str, document_title: str | None = None) -> List[VectorI
     )
 
 
+def prepare_document_chunks(
+    content: str,
+    title: str | None = None,
+) -> list[VectorIndexChunk]:
+    """Build reusable chunk payloads for one document."""
+    source = content or ""
+    if not source.strip():
+        return []
+    return _chunk_text(source, title)
+
+
 def estimate_document_chunk_count(
     content: str,
     title: str | None = None,
 ) -> int:
     """Estimate how many vector chunks a document will produce."""
-    source = content or ""
-    if not source.strip():
-        return 0
-    return len(_chunk_text(source, title))
+    return len(prepare_document_chunks(content, title))
 
 
 def _prepare_chunk_batches(
@@ -42,9 +50,7 @@ def _prepare_chunk_batches(
 ) -> list[tuple[int, list[VectorIndexChunk]]]:
     prepared: list[tuple[int, list[VectorIndexChunk]]] = []
     for doc_id, content, title in documents:
-        source = content or ""
-        chunks = _chunk_text(source, title) if source.strip() else []
-        prepared.append((doc_id, chunks))
+        prepared.append((doc_id, prepare_document_chunks(content, title)))
     return prepared
 
 
@@ -101,17 +107,38 @@ async def index_documents_batch(
         return {}
 
     prepared_docs = _prepare_chunk_batches(documents)
-    all_chunks = [chunk.embedding_text for _, chunks in prepared_docs for chunk in chunks]
+    return await index_prepared_documents_batch(
+        db,
+        prepared_docs,
+        commit=commit,
+    )
+
+
+async def index_prepared_documents_batch(
+    db: AsyncSession,
+    prepared_docs: Sequence[tuple[int, Sequence[VectorIndexChunk]]],
+    *,
+    commit: bool = True,
+) -> dict[int, int]:
+    """Index documents from precomputed chunk payloads."""
+    if not prepared_docs:
+        return {}
+
+    normalized_docs = [
+        (int(doc_id), list(chunks))
+        for doc_id, chunks in prepared_docs
+    ]
+    all_chunks = [chunk.embedding_text for _, chunks in normalized_docs for chunk in chunks]
     all_vectors = await asyncio.to_thread(embed_documents, all_chunks) if all_chunks else []
 
     vectors_by_doc: list[list[list[float]]] = []
     offset = 0
-    for _, chunks in prepared_docs:
+    for _, chunks in normalized_docs:
         next_offset = offset + len(chunks)
         vectors_by_doc.append(all_vectors[offset:next_offset])
         offset = next_offset
 
-    counts = await _write_index_rows(db, prepared_docs, vectors_by_doc)
+    counts = await _write_index_rows(db, normalized_docs, vectors_by_doc)
     if commit:
         await db.commit()
     return counts

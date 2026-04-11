@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     DATABASE_URL: str = "postgresql+asyncpg://synapseflow:password@localhost:5432/synapseflow"
+    REDIS_URL: str = "redis://localhost:6379/0"
+    DRAMATIQ_INDEXING_QUEUE: str = "indexing"
+    EMBEDDING_MODEL: Optional[str] = None
 
     DEEPSEEK_API_KEY: str = ""
     KIMI_API_KEY: str = ""

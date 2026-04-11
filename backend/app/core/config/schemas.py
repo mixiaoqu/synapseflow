@@ -48,6 +48,7 @@ class RagRetrievalConfig:
     k_iteration: int
     distance_threshold: float
     distance_threshold_iteration: float
+    rerank_threshold: float | None
     fallback_top_n: int
     final_top_k: int
     llm_reference_top_k: int | None
