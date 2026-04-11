@@ -44,17 +44,19 @@ class _MissingActor:
 if dramatiq is not None:
 
     @dramatiq.actor(queue_name=settings.DRAMATIQ_INDEXING_QUEUE)
-    async def index_document_actor(document_id: int, expected_content_hash: str) -> None:
+    async def index_document_actor(document_id: int, expected_content_hash: str, job_id: int) -> None:
         await indexing_service.index_document_task(
             document_id=document_id,
             expected_content_hash=expected_content_hash,
+            job_id=job_id,
         )
 
 
     @dramatiq.actor(queue_name=settings.DRAMATIQ_INDEXING_QUEUE)
-    async def index_documents_batch_actor(documents: list[dict[str, Any]]) -> None:
+    async def index_documents_batch_actor(documents: list[dict[str, Any]], job_id: int) -> None:
         await indexing_service.index_documents_batch_task(
             documents=_normalize_documents(documents),
+            job_id=job_id,
         )
 
 
@@ -62,11 +64,13 @@ if dramatiq is not None:
     async def reindex_current_document_actor(
         target_document_id: int,
         target_content_hash: str,
+        job_id: int,
         previous_document_id: int | None = None,
     ) -> None:
         await indexing_service.reindex_current_document_task(
             target_document_id=target_document_id,
             target_content_hash=target_content_hash,
+            job_id=job_id,
             previous_document_id=previous_document_id,
         )
 

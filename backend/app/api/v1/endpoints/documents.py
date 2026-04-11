@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.models.schemas.document import (
     DocumentContentUpdate,
     DocumentCreate,
+    IndexingPanelSummaryResponse,
     DocumentListResponse,
     DocumentResponse,
     DocumentVersionsResponse,
@@ -69,6 +70,17 @@ async def create_document_from_content(
         db=db,
         user_id=current_user.id,
         body=body,
+    )
+
+
+@router.get("/indexing/panel-summary", response_model=IndexingPanelSummaryResponse)
+async def get_indexing_panel_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await document_service.get_indexing_panel_summary(
+        db=db,
+        user_id=current_user.id,
     )
 
 

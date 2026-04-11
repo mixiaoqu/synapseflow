@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { LogOut, MoreHorizontal } from "lucide-react";
 
+import { BackgroundTasksPanel } from "@/components/tasks/BackgroundTasksPanel";
 import { authApi } from "@/lib/api/endpoints/auth";
 import {
   AUTH_CHANGED_EVENT,
@@ -196,7 +197,10 @@ export default function DashboardLayout({
         </div>
       </aside>
 
-      <main className="flex min-h-0 flex-1 flex-col overflow-auto">{children}</main>
+      <main className="relative flex min-h-0 flex-1 flex-col overflow-auto">
+        <BackgroundTasksPanel />
+        {children}
+      </main>
     </div>
   );
 }

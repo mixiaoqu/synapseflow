@@ -53,6 +53,46 @@ export type DocumentIndexQueueResponse = {
   queued: number;
 };
 
+export type ActiveIndexingJob = {
+  job_id: number;
+  title: string;
+  job_type: string;
+  job_status: "queued" | "processing" | "completed" | "partial_failed" | "failed";
+  knowledge_base_id: number | null;
+  knowledge_base_name: string | null;
+  queued: number;
+  processing: number;
+  indexed: number;
+  failed: number;
+  total: number;
+  created_at: string;
+  updated_at: string | null;
+  progress_percent: number;
+};
+
+export type FailedIndexingItem = {
+  job_id: number;
+  document_id: number;
+  title: string;
+  job_title: string;
+  knowledge_base_id: number | null;
+  knowledge_base_name: string | null;
+  index_error: string | null;
+  updated_at: string;
+};
+
+export type IndexingPanelSummary = {
+  queued: number;
+  processing: number;
+  indexed: number;
+  failed: number;
+  total: number;
+  has_active: boolean;
+  active_job_count: number;
+  active_jobs: ActiveIndexingJob[];
+  recent_failed: FailedIndexingItem[];
+};
+
 export async function listDocuments(params: {
   page?: number;
   page_size?: number;
@@ -82,6 +122,10 @@ export async function listDocuments(params: {
 
   const q = sp.toString();
   return apiClient.get(`/api/v1/documents${q ? `?${q}` : ""}`);
+}
+
+export async function getIndexingPanelSummary(): Promise<IndexingPanelSummary> {
+  return apiClient.get("/api/v1/documents/indexing/panel-summary");
 }
 
 export async function getDocument(docId: number): Promise<DocumentDetail> {

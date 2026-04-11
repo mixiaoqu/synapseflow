@@ -12,16 +12,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.indexing_service import indexing_service
 from app.db.models import Document
 from app.models.schemas.document import (
+    ActiveIndexingJob,
     DocumentContentUpdate,
     DocumentCreate,
+    FailedIndexingItem,
     DocumentListItem,
     DocumentListResponse,
     DocumentResponse,
     DocumentVersionItem,
     DocumentVersionsResponse,
+    IndexingPanelSummaryResponse,
 )
 from app.repositories.document_category_repository import DocumentCategoryRepository
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.index_job_repository import IndexJobRepository
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 from app.services.document_index_state import (
     INDEX_STATUS_QUEUED,
@@ -185,9 +189,13 @@ class DocumentService:
             source_path=source_path,
             commit=True,
         )
-        indexing_service.enqueue_document(
+        await indexing_service.enqueue_document_job(
+            db=db,
+            user_id=user_id,
             document_id=doc.id,
             expected_content_hash=doc.content_hash,
+            knowledge_base_id=knowledge_base_id,
+            title=f"索引《{doc.title}》",
         )
         logger.info("Uploaded document id={} title={}", doc.id, doc.title)
         return self._to_response(doc, category_name=category_name)
@@ -270,8 +278,20 @@ class DocumentService:
                 continue
 
         await repo.commit_and_refresh_root_ids(created)
-        indexing_service.enqueue_documents_batch(
+        await indexing_service.enqueue_documents_batch_job(
+            db=db,
+            user_id=user_id,
             documents=[(doc.id, doc.content_hash) for doc in created],
+            knowledge_base_id=(
+                created[0].knowledge_base_id
+                if created and all(doc.knowledge_base_id == created[0].knowledge_base_id for doc in created)
+                else None
+            ),
+            title=(
+                f"索引《{created[0].title}》"
+                if len(created) == 1
+                else f"批量索引 {len(created)} 个文档"
+            ),
         )
         return [
             self._to_response(doc, category_name=category_names_by_doc_key.get(id(doc)))
@@ -311,9 +331,13 @@ class DocumentService:
             source_path=source_path,
             commit=True,
         )
-        indexing_service.enqueue_document(
+        await indexing_service.enqueue_document_job(
+            db=db,
+            user_id=user_id,
             document_id=doc.id,
             expected_content_hash=doc.content_hash,
+            knowledge_base_id=knowledge_base_id,
+            title=f"索引《{doc.title}》",
         )
         logger.info("Created document from content id={} title={}", doc.id, doc.title)
         return self._to_response(doc, category_name=category_name)
@@ -364,6 +388,75 @@ class DocumentService:
             for doc, knowledge_base_name, category_name in rows
         ]
         return DocumentListResponse(items=items, total=total, page=page, page_size=page_size)
+
+    async def get_indexing_panel_summary(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+    ) -> IndexingPanelSummaryResponse:
+        repo = IndexJobRepository(db, user_id=user_id)
+        job_rows = await repo.list_active_jobs(limit=5)
+        active_jobs: list[ActiveIndexingJob] = []
+        queued = 0
+        processing = 0
+        indexed = 0
+        failed = 0
+        total = 0
+        for row in job_rows:
+            scope_total = row.total or 0
+            completed = (row.indexed or 0) + (row.failed or 0)
+            progress_percent = 100 if scope_total <= 0 else int((completed * 100) / scope_total)
+            active_jobs.append(
+                ActiveIndexingJob(
+                    job_id=row.job_id,
+                    title=row.title,
+                    job_type=row.job_type,
+                    job_status=row.job_status,  # type: ignore[arg-type]
+                    knowledge_base_id=row.knowledge_base_id,
+                    knowledge_base_name=row.knowledge_base_name,
+                    queued=row.queued or 0,
+                    processing=row.processing or 0,
+                    indexed=row.indexed or 0,
+                    failed=row.failed or 0,
+                    total=scope_total,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at,
+                    progress_percent=max(0, min(100, progress_percent)),
+                )
+            )
+            queued += row.queued or 0
+            processing += row.processing or 0
+            indexed += row.indexed or 0
+            failed += row.failed or 0
+            total += scope_total
+
+        failed_docs = await repo.list_recent_failed_documents(limit=5)
+        recent_failed = [
+            FailedIndexingItem(
+                job_id=item.job_id,
+                document_id=item.document_id,
+                title=item.title,
+                job_title=item.job_title,
+                knowledge_base_id=item.knowledge_base_id,
+                knowledge_base_name=item.knowledge_base_name,
+                index_error=item.index_error,
+                updated_at=item.updated_at,
+            )
+            for item in failed_docs
+        ]
+
+        return IndexingPanelSummaryResponse(
+            queued=queued,
+            processing=processing,
+            indexed=indexed,
+            failed=failed,
+            total=total,
+            has_active=(queued + processing) > 0,
+            active_job_count=len(active_jobs),
+            active_jobs=active_jobs[:5],
+            recent_failed=recent_failed,
+        )
 
     async def get_document_versions(
         self,
@@ -453,9 +546,13 @@ class DocumentService:
         doc = await repo.update_content(doc_id, body.content)
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
-        indexing_service.enqueue_document(
+        await indexing_service.enqueue_document_job(
+            db=db,
+            user_id=user_id,
             document_id=doc.id,
             expected_content_hash=doc.content_hash,
+            knowledge_base_id=getattr(doc, "knowledge_base_id", None),
+            title=f"重新索引《{doc.title}》",
         )
         logger.info("Replaced document content id={}", doc_id)
         category_name = await repo.get_category_name(getattr(doc, "category_id", None))
@@ -479,9 +576,13 @@ class DocumentService:
         new_doc = await repo.create_version(doc_id, body.content, commit=True)
         if not new_doc:
             raise HTTPException(status_code=404, detail="Source document not found")
-        indexing_service.enqueue_current_document_reindex(
+        await indexing_service.enqueue_current_document_reindex_job(
+            db=db,
+            user_id=user_id,
             target_document_id=new_doc.id,
             target_content_hash=new_doc.content_hash,
+            knowledge_base_id=getattr(new_doc, "knowledge_base_id", None),
+            title=f"重建当前版本《{new_doc.title}》",
             previous_document_id=(
                 current_doc.id if current_doc and current_doc.id != new_doc.id else None
             ),
@@ -501,9 +602,13 @@ class DocumentService:
         target, previous_current = await repo.switch_current_version(doc_id, commit=True)
         if not target:
             raise HTTPException(status_code=404, detail="Document not found")
-        indexing_service.enqueue_current_document_reindex(
+        await indexing_service.enqueue_current_document_reindex_job(
+            db=db,
+            user_id=user_id,
             target_document_id=target.id,
             target_content_hash=target.content_hash,
+            knowledge_base_id=getattr(target, "knowledge_base_id", None),
+            title=f"切换当前版本并重建《{target.title}》",
             previous_document_id=(
                 previous_current.id
                 if previous_current and previous_current.id != target.id

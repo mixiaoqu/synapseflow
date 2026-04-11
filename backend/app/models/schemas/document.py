@@ -4,12 +4,17 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from app.utils.time import serialize_utc_datetime
 
 DocumentIndexStatus = Literal["queued", "processing", "indexed", "failed"]
+IndexJobStatus = Literal["queued", "processing", "completed", "partial_failed", "failed"]
+UTC_MODEL_CONFIG = ConfigDict(json_encoders={datetime: serialize_utc_datetime})
 
 
 class DocumentCreate(BaseModel):
     """Create a document from text content."""
+
+    model_config = UTC_MODEL_CONFIG
 
     title: str = Field(..., description="Document title")
     content: str = Field(..., description="Document content")
@@ -22,7 +27,7 @@ class DocumentCreate(BaseModel):
 class DocumentResponse(BaseModel):
     """Document detail response."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, json_encoders={datetime: serialize_utc_datetime})
 
     id: int
     title: str
@@ -44,7 +49,7 @@ class DocumentResponse(BaseModel):
 class DocumentListItem(BaseModel):
     """Document list item."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, json_encoders={datetime: serialize_utc_datetime})
 
     id: int
     title: str
@@ -67,6 +72,8 @@ class DocumentListItem(BaseModel):
 class DocumentListResponse(BaseModel):
     """Paginated document list response."""
 
+    model_config = UTC_MODEL_CONFIG
+
     items: list[DocumentListItem]
     total: int
     page: int
@@ -76,13 +83,15 @@ class DocumentListResponse(BaseModel):
 class DocumentContentUpdate(BaseModel):
     """Update document content request."""
 
+    model_config = UTC_MODEL_CONFIG
+
     content: str = Field(..., description="Updated document content")
 
 
 class DocumentVersionItem(BaseModel):
     """Document version item."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, json_encoders={datetime: serialize_utc_datetime})
 
     id: int
     title: str
@@ -95,4 +104,58 @@ class DocumentVersionItem(BaseModel):
 class DocumentVersionsResponse(BaseModel):
     """Document version list response."""
 
+    model_config = UTC_MODEL_CONFIG
+
     items: list[DocumentVersionItem]
+
+
+class ActiveIndexingJob(BaseModel):
+    """Compact progress summary for one active indexing job."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    job_id: int
+    title: str
+    job_type: str
+    job_status: IndexJobStatus
+    knowledge_base_id: int | None = None
+    knowledge_base_name: str | None = None
+    queued: int
+    processing: int
+    indexed: int
+    failed: int
+    total: int
+    created_at: datetime
+    updated_at: datetime | None = None
+    progress_percent: int
+
+
+class FailedIndexingItem(BaseModel):
+    """Recent failed indexing document entry for the task panel."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    job_id: int
+    document_id: int
+    title: str
+    job_title: str
+    knowledge_base_id: int | None = None
+    knowledge_base_name: str | None = None
+    index_error: str | None = None
+    updated_at: datetime
+
+
+class IndexingPanelSummaryResponse(BaseModel):
+    """Aggregated task-panel payload for document indexing."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    queued: int
+    processing: int
+    indexed: int
+    failed: int
+    total: int
+    has_active: bool
+    active_job_count: int
+    active_jobs: list[ActiveIndexingJob]
+    recent_failed: list[FailedIndexingItem]

@@ -2,14 +2,51 @@
 
 from __future__ import annotations
 
-from sqlalchemy import and_, func, select, update
+from dataclasses import dataclass
+from datetime import datetime
+
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, DocumentCategory, KnowledgeBase
 from app.services.document_index_state import (
+    INDEX_STATUS_FAILED,
+    INDEX_STATUS_INDEXED,
+    INDEX_STATUS_PROCESSING,
     INDEX_STATUS_QUEUED,
     compute_content_hash,
 )
+
+
+@dataclass(slots=True)
+class DocumentIndexingStatusCounts:
+    queued: int
+    processing: int
+    indexed: int
+    failed: int
+    total: int
+
+
+@dataclass(slots=True)
+class RecentFailedDocumentRecord:
+    document_id: int
+    title: str
+    knowledge_base_id: int | None
+    knowledge_base_name: str | None
+    index_error: str | None
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class ActiveIndexingScopeRecord:
+    knowledge_base_id: int | None
+    knowledge_base_name: str
+    queued: int
+    processing: int
+    indexed: int
+    failed: int
+    total: int
+    updated_at: datetime | None
 
 
 class DocumentRepository:
@@ -356,3 +393,185 @@ class DocumentRepository:
         """Count all documents in the table."""
         result = await self.db.execute(select(func.count()).select_from(Document))
         return result.scalar() or 0
+
+    async def get_indexing_status_counts(self) -> DocumentIndexingStatusCounts:
+        """Return aggregated indexing status counters for current documents."""
+        indexed_count = func.sum(case((Document.index_status == INDEX_STATUS_INDEXED, 1), else_=0))
+        queued_count = func.sum(case((Document.index_status == INDEX_STATUS_QUEUED, 1), else_=0))
+        processing_count = func.sum(
+            case((Document.index_status == INDEX_STATUS_PROCESSING, 1), else_=0)
+        )
+        failed_count = func.sum(case((Document.index_status == INDEX_STATUS_FAILED, 1), else_=0))
+        result = await self.db.execute(
+            select(
+                func.count(Document.id).label("total"),
+                indexed_count.label("indexed"),
+                queued_count.label("queued"),
+                processing_count.label("processing"),
+                failed_count.label("failed"),
+            ).where(
+                Document.user_id == self.user_id,
+                Document.is_current.is_(True),
+            )
+        )
+        row = result.one()
+        return DocumentIndexingStatusCounts(
+            queued=row.queued or 0,
+            processing=row.processing or 0,
+            indexed=row.indexed or 0,
+            failed=row.failed or 0,
+            total=row.total or 0,
+        )
+
+    async def list_recent_failed_documents(
+        self,
+        *,
+        limit: int = 5,
+    ) -> list[RecentFailedDocumentRecord]:
+        """Return recent failed current documents for the task panel."""
+        stmt = (
+            select(
+                Document.id.label("document_id"),
+                Document.title.label("title"),
+                Document.knowledge_base_id.label("knowledge_base_id"),
+                KnowledgeBase.name.label("knowledge_base_name"),
+                Document.index_error.label("index_error"),
+                Document.updated_at.label("updated_at"),
+            )
+            .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .where(
+                Document.user_id == self.user_id,
+                Document.is_current.is_(True),
+                Document.index_status == INDEX_STATUS_FAILED,
+            )
+            .order_by(Document.updated_at.desc(), Document.id.desc())
+            .limit(limit)
+        )
+        result = await self.db.execute(stmt)
+        return [
+            RecentFailedDocumentRecord(
+                document_id=row.document_id,
+                title=row.title,
+                knowledge_base_id=row.knowledge_base_id,
+                knowledge_base_name=row.knowledge_base_name,
+                index_error=row.index_error,
+                updated_at=row.updated_at,
+            )
+            for row in result
+        ]
+
+    async def list_active_indexing_scopes(self) -> list[ActiveIndexingScopeRecord]:
+        """Return current-task progress grouped by knowledge base.
+
+        The "current task" boundary is inferred from the earliest queued/processing
+        document update within each active knowledge base. Documents updated after
+        that timestamp are treated as part of the same indexing wave.
+        """
+        active_start_stmt = (
+            select(
+                Document.knowledge_base_id.label("knowledge_base_id"),
+                KnowledgeBase.name.label("knowledge_base_name"),
+                func.min(Document.updated_at).label("started_at"),
+            )
+            .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .where(
+                Document.user_id == self.user_id,
+                Document.is_current.is_(True),
+                Document.index_status.in_((INDEX_STATUS_QUEUED, INDEX_STATUS_PROCESSING)),
+            )
+            .group_by(Document.knowledge_base_id, KnowledgeBase.name)
+        )
+        active_rows = (await self.db.execute(active_start_stmt)).all()
+        if not active_rows:
+            return []
+
+        starts_by_kb: dict[int | None, tuple[str, datetime]] = {}
+        knowledge_base_ids: list[int] = []
+        for row in active_rows:
+            if row.started_at is None:
+                continue
+            starts_by_kb[row.knowledge_base_id] = (
+                row.knowledge_base_name or "未归档文档",
+                row.started_at,
+            )
+            if row.knowledge_base_id is not None:
+                knowledge_base_ids.append(row.knowledge_base_id)
+
+        filters = [Document.knowledge_base_id.in_(knowledge_base_ids)] if knowledge_base_ids else []
+        if None in starts_by_kb:
+            filters.append(Document.knowledge_base_id.is_(None))
+
+        if not filters:
+            return []
+
+        docs_stmt = (
+            select(
+                Document.knowledge_base_id.label("knowledge_base_id"),
+                KnowledgeBase.name.label("knowledge_base_name"),
+                Document.index_status.label("index_status"),
+                Document.updated_at.label("updated_at"),
+                Document.indexed_at.label("indexed_at"),
+            )
+            .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .where(
+                Document.user_id == self.user_id,
+                Document.is_current.is_(True),
+                or_(*filters),
+            )
+        )
+        rows = (await self.db.execute(docs_stmt)).all()
+
+        buckets: dict[int | None, ActiveIndexingScopeRecord] = {}
+        for row in rows:
+            kb_id = row.knowledge_base_id
+            if kb_id not in starts_by_kb:
+                continue
+            kb_name, started_at = starts_by_kb[kb_id]
+            updated_at = row.updated_at
+            indexed_at = row.indexed_at
+            qualifies = False
+            if updated_at and updated_at >= started_at:
+                qualifies = True
+            if indexed_at and indexed_at >= started_at:
+                qualifies = True
+            if not qualifies:
+                continue
+
+            record = buckets.get(kb_id)
+            if record is None:
+                record = ActiveIndexingScopeRecord(
+                    knowledge_base_id=kb_id,
+                    knowledge_base_name=row.knowledge_base_name or kb_name,
+                    queued=0,
+                    processing=0,
+                    indexed=0,
+                    failed=0,
+                    total=0,
+                    updated_at=started_at,
+                )
+                buckets[kb_id] = record
+
+            status = row.index_status or INDEX_STATUS_QUEUED
+            if status == INDEX_STATUS_QUEUED:
+                record.queued += 1
+            elif status == INDEX_STATUS_PROCESSING:
+                record.processing += 1
+            elif status == INDEX_STATUS_INDEXED:
+                record.indexed += 1
+            elif status == INDEX_STATUS_FAILED:
+                record.failed += 1
+
+            record.total += 1
+            latest_point = indexed_at or updated_at
+            if latest_point and (record.updated_at is None or latest_point > record.updated_at):
+                record.updated_at = latest_point
+
+        return sorted(
+            buckets.values(),
+            key=lambda item: (
+                item.processing,
+                item.queued,
+                item.updated_at.timestamp() if item.updated_at else 0.0,
+            ),
+            reverse=True,
+        )

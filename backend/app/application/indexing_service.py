@@ -16,6 +16,7 @@ from app.core.config.registry import config_registry
 from app.db.models import Document, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.index_job_repository import IndexJobRepository
 from app.services.document_index_state import (
     ACTIVE_INDEX_STATUSES,
     INDEX_STATUS_FAILED,
@@ -28,6 +29,12 @@ from app.services.document_indexer import (
     index_prepared_documents_batch,
     prepare_document_chunks,
 )
+from app.services.index_job_state import (
+    INDEX_JOB_DOCUMENT_STATUS_FAILED,
+    INDEX_JOB_DOCUMENT_STATUS_INDEXED,
+    INDEX_JOB_DOCUMENT_STATUS_PROCESSING,
+)
+from app.utils.time import utc_now
 from app.services.vector_store import delete_by_document_id
 
 MAX_INDEX_ERROR_LENGTH = 1000
@@ -91,23 +98,144 @@ class IndexingService:
         result = await db.execute(select(Document).where(Document.id.in_(document_ids)))
         return {int(doc.id): doc for doc in result.scalars().all()}
 
+    async def _create_job(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        documents: Sequence[tuple[int, str]],
+        title: str,
+        job_type: str,
+        knowledge_base_id: int | None,
+    ) -> int:
+        repo = IndexJobRepository(db)
+        job = await repo.create_job(
+            user_id=user_id,
+            title=title,
+            job_type=job_type,
+            knowledge_base_id=knowledge_base_id,
+            documents=list(documents),
+        )
+        return job.id
+
+    async def enqueue_document_job(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        document_id: int,
+        expected_content_hash: str,
+        knowledge_base_id: int | None,
+        title: str,
+        job_type: str = "index_document",
+    ) -> int:
+        job_id = await self._create_job(
+            db,
+            user_id=user_id,
+            documents=[(document_id, expected_content_hash)],
+            title=title,
+            job_type=job_type,
+            knowledge_base_id=knowledge_base_id,
+        )
+        try:
+            self.enqueue_document(
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+                job_id=job_id,
+            )
+        except Exception as exc:
+            await IndexJobRepository(db).mark_job_dispatch_failed(
+                job_id=job_id,
+                error_message=self._truncate_error(exc),
+            )
+            raise
+        return job_id
+
+    async def enqueue_documents_batch_job(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        documents: Sequence[tuple[int, str]],
+        knowledge_base_id: int | None,
+        title: str,
+        job_type: str = "index_documents_batch",
+    ) -> int | None:
+        if not documents:
+            return None
+        job_id = await self._create_job(
+            db,
+            user_id=user_id,
+            documents=documents,
+            title=title,
+            job_type=job_type,
+            knowledge_base_id=knowledge_base_id,
+        )
+        try:
+            self.enqueue_documents_batch(documents=documents, job_id=job_id)
+        except Exception as exc:
+            await IndexJobRepository(db).mark_job_dispatch_failed(
+                job_id=job_id,
+                error_message=self._truncate_error(exc),
+            )
+            raise
+        return job_id
+
+    async def enqueue_current_document_reindex_job(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        target_document_id: int,
+        target_content_hash: str,
+        knowledge_base_id: int | None,
+        title: str,
+        previous_document_id: int | None = None,
+        job_type: str = "reindex_current_document",
+    ) -> int:
+        job_id = await self._create_job(
+            db,
+            user_id=user_id,
+            documents=[(target_document_id, target_content_hash)],
+            title=title,
+            job_type=job_type,
+            knowledge_base_id=knowledge_base_id,
+        )
+        try:
+            self.enqueue_current_document_reindex(
+                target_document_id=target_document_id,
+                target_content_hash=target_content_hash,
+                previous_document_id=previous_document_id,
+                job_id=job_id,
+            )
+        except Exception as exc:
+            await IndexJobRepository(db).mark_job_dispatch_failed(
+                job_id=job_id,
+                error_message=self._truncate_error(exc),
+            )
+            raise
+        return job_id
+
     def enqueue_document(
         self,
         *,
         document_id: int,
         expected_content_hash: str,
+        job_id: int,
     ) -> None:
         """Queue one document indexing task."""
         actor_module = self._actor_module()
         actor_module.index_document_actor.send(
             document_id=document_id,
             expected_content_hash=expected_content_hash,
+            job_id=job_id,
         )
 
     def enqueue_documents_batch(
         self,
         *,
         documents: Sequence[tuple[int, str]],
+        job_id: int,
     ) -> None:
         """Queue multiple document indexing tasks."""
         if not documents:
@@ -115,6 +243,7 @@ class IndexingService:
         actor_module = self._actor_module()
         actor_module.index_documents_batch_actor.send(
             documents=self._serialize_documents(documents),
+            job_id=job_id,
         )
 
     def enqueue_current_document_reindex(
@@ -122,6 +251,7 @@ class IndexingService:
         *,
         target_document_id: int,
         target_content_hash: str,
+        job_id: int,
         previous_document_id: int | None = None,
     ) -> None:
         """Queue a current-version switch/index task."""
@@ -130,6 +260,48 @@ class IndexingService:
             target_document_id=target_document_id,
             target_content_hash=target_content_hash,
             previous_document_id=previous_document_id,
+            job_id=job_id,
+        )
+
+    async def _set_job_document_status(
+        self,
+        db: AsyncSession,
+        *,
+        job_id: int | None,
+        document_id: int,
+        expected_content_hash: str,
+        status: str,
+        error_message: str | None = None,
+        indexed_at: datetime | None = None,
+    ) -> None:
+        if job_id is None:
+            return
+        await IndexJobRepository(db).set_document_status(
+            job_id=job_id,
+            document_id=document_id,
+            expected_content_hash=expected_content_hash,
+            status=status,
+            error_message=error_message,
+            indexed_at=indexed_at,
+        )
+
+    async def _mark_job_document_failed(
+        self,
+        db: AsyncSession,
+        *,
+        job_id: int | None,
+        document_id: int,
+        expected_content_hash: str,
+        error_message: str,
+    ) -> None:
+        await self._set_job_document_status(
+            db,
+            job_id=job_id,
+            document_id=document_id,
+            expected_content_hash=expected_content_hash,
+            status=INDEX_JOB_DOCUMENT_STATUS_FAILED,
+            error_message=error_message,
+            indexed_at=None,
         )
 
     async def _mark_processing(
@@ -184,9 +356,17 @@ class IndexingService:
         *,
         document_id: int,
         expected_content_hash: str,
+        job_id: int | None = None,
     ) -> int | None:
         doc = await self._get_document(db, document_id)
         if not doc:
+            await self._mark_job_document_failed(
+                db,
+                job_id=job_id,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+                error_message="文档不存在，任务已跳过",
+            )
             logger.warning(
                 "Skipped document indexing because doc_id={} was not found",
                 document_id,
@@ -194,6 +374,13 @@ class IndexingService:
             return None
 
         if doc.content_hash != expected_content_hash:
+            await self._mark_job_document_failed(
+                db,
+                job_id=job_id,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+                error_message="文档内容已变化，旧任务已跳过",
+            )
             logger.info(
                 "Skipped stale indexing task doc_id={} expected_hash={} actual_hash={}",
                 document_id,
@@ -207,14 +394,36 @@ class IndexingService:
             document_id=document_id,
             expected_content_hash=expected_content_hash,
         ):
+            await self._mark_job_document_failed(
+                db,
+                job_id=job_id,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+                error_message="文档内容已变化，旧任务已跳过",
+            )
             logger.info(
                 "Skipped document indexing because doc_id={} no longer matches queued hash",
                 document_id,
             )
             return None
 
+        await self._set_job_document_status(
+            db,
+            job_id=job_id,
+            document_id=document_id,
+            expected_content_hash=expected_content_hash,
+            status=INDEX_JOB_DOCUMENT_STATUS_PROCESSING,
+        )
+
         doc = await self._get_document(db, document_id)
         if not doc or doc.content_hash != expected_content_hash:
+            await self._mark_job_document_failed(
+                db,
+                job_id=job_id,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+                error_message="文档内容已变化，旧任务已跳过",
+            )
             logger.info("Skipped document indexing after refresh because doc_id={} changed", document_id)
             return None
 
@@ -229,6 +438,13 @@ class IndexingService:
             current_hash = await self._get_document_hash(db, doc.id)
             if current_hash != expected_content_hash:
                 await db.rollback()
+                await self._mark_job_document_failed(
+                    db,
+                    job_id=job_id,
+                    document_id=doc.id,
+                    expected_content_hash=expected_content_hash,
+                    error_message="文档内容已变化，索引结果已丢弃",
+                )
                 logger.info(
                     "Discarded stale indexing result doc_id={} expected_hash={} actual_hash={}",
                     doc.id,
@@ -237,6 +453,7 @@ class IndexingService:
                 )
                 return None
 
+            indexed_at = utc_now()
             await db.execute(
                 update(Document)
                 .where(
@@ -246,19 +463,35 @@ class IndexingService:
                 .values(
                     index_status=INDEX_STATUS_INDEXED,
                     index_error=None,
-                    indexed_at=datetime.utcnow(),
+                    indexed_at=indexed_at,
                 )
             )
             await db.commit()
+            await self._set_job_document_status(
+                db,
+                job_id=job_id,
+                document_id=doc.id,
+                expected_content_hash=expected_content_hash,
+                status=INDEX_JOB_DOCUMENT_STATUS_INDEXED,
+                indexed_at=indexed_at,
+            )
             logger.info("Indexed document doc_id={} chunks={}", doc.id, count)
             return count
         except Exception as exc:
             await db.rollback()
+            error_message = self._truncate_error(exc)
             await self._mark_failed(
                 db,
                 document_id=document_id,
                 expected_content_hash=expected_content_hash,
-                error_message=self._truncate_error(exc),
+                error_message=error_message,
+            )
+            await self._mark_job_document_failed(
+                db,
+                job_id=job_id,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+                error_message=error_message,
             )
             logger.warning("Document indexing failed doc_id={}: {}", document_id, exc)
             return None
@@ -317,6 +550,8 @@ class IndexingService:
         self,
         db: AsyncSession,
         documents: Sequence[tuple[int, str]],
+        *,
+        job_id: int | None = None,
     ) -> list[dict[str, Any]]:
         document_ids = [document_id for document_id, _ in documents]
         docs_by_id = await self._get_documents_for_ids(db, document_ids)
@@ -325,6 +560,13 @@ class IndexingService:
         for document_id, expected_content_hash in documents:
             doc = docs_by_id.get(document_id)
             if not doc:
+                await self._mark_job_document_failed(
+                    db,
+                    job_id=job_id,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                    error_message="文档不存在，任务已跳过",
+                )
                 logger.warning(
                     "Skipped document indexing because doc_id={} was not found",
                     document_id,
@@ -332,6 +574,13 @@ class IndexingService:
                 continue
 
             if doc.content_hash != expected_content_hash:
+                await self._mark_job_document_failed(
+                    db,
+                    job_id=job_id,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                    error_message="文档内容已变化，旧任务已跳过",
+                )
                 logger.info(
                     "Skipped stale indexing task doc_id={} expected_hash={} actual_hash={}",
                     document_id,
@@ -345,14 +594,36 @@ class IndexingService:
                 document_id=document_id,
                 expected_content_hash=expected_content_hash,
             ):
+                await self._mark_job_document_failed(
+                    db,
+                    job_id=job_id,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                    error_message="文档内容已变化，旧任务已跳过",
+                )
                 logger.info(
                     "Skipped document indexing because doc_id={} no longer matches queued hash",
                     document_id,
                 )
                 continue
 
+            await self._set_job_document_status(
+                db,
+                job_id=job_id,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+                status=INDEX_JOB_DOCUMENT_STATUS_PROCESSING,
+            )
+
             refreshed = await self._get_document(db, document_id)
             if not refreshed or refreshed.content_hash != expected_content_hash:
+                await self._mark_job_document_failed(
+                    db,
+                    job_id=job_id,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                    error_message="文档内容已变化，旧任务已跳过",
+                )
                 logger.info(
                     "Skipped document indexing after refresh because doc_id={} changed",
                     document_id,
@@ -381,6 +652,7 @@ class IndexingService:
         db: AsyncSession,
         *,
         batch: Sequence[dict[str, Any]],
+        job_id: int | None = None,
     ) -> dict[int, int]:
         prepared_documents = [
             (
@@ -401,8 +673,9 @@ class IndexingService:
             db,
             [int(item["document_id"]) for item in batch],
         )
-        indexed_at = datetime.utcnow()
+        indexed_at = utc_now()
         finalized_counts: dict[int, int] = {}
+        job_outcomes: list[tuple[int, str, str, Any | None, str | None]] = []
 
         for item in batch:
             document_id = int(item["document_id"])
@@ -410,6 +683,15 @@ class IndexingService:
             current_hash = current_hashes.get(document_id)
             if current_hash != expected_content_hash:
                 await delete_by_document_id(db, document_id, commit=False)
+                job_outcomes.append(
+                    (
+                        document_id,
+                        expected_content_hash,
+                        INDEX_JOB_DOCUMENT_STATUS_FAILED,
+                        None,
+                        "文档内容已变化，索引结果已丢弃",
+                    )
+                )
                 logger.info(
                     "Discarded stale batched indexing result doc_id={} expected_hash={} actual_hash={}",
                     document_id,
@@ -431,8 +713,31 @@ class IndexingService:
                 )
             )
             finalized_counts[document_id] = counts.get(document_id, 0)
+            job_outcomes.append(
+                (
+                    document_id,
+                    expected_content_hash,
+                    INDEX_JOB_DOCUMENT_STATUS_INDEXED,
+                    indexed_at,
+                    None,
+                )
+            )
 
         await db.commit()
+
+        if job_id is not None and job_outcomes:
+            repo = IndexJobRepository(db)
+            for document_id, expected_content_hash, status, item_indexed_at, error_message in job_outcomes:
+                await repo.set_document_status(
+                    job_id=job_id,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                    status=status,
+                    error_message=error_message,
+                    indexed_at=item_indexed_at,
+                    refresh_job=False,
+                )
+            await repo.refresh_job_state(job_id=job_id)
         return finalized_counts
 
     async def index_document_task(
@@ -440,6 +745,7 @@ class IndexingService:
         *,
         document_id: int,
         expected_content_hash: str,
+        job_id: int,
     ) -> None:
         """Background entrypoint for one document."""
         async with AsyncSessionLocal() as db:
@@ -447,21 +753,23 @@ class IndexingService:
                 db,
                 document_id=document_id,
                 expected_content_hash=expected_content_hash,
+                job_id=job_id,
             )
 
     async def index_documents_batch_task(
         self,
         *,
         documents: Sequence[tuple[int, str]],
+        job_id: int,
     ) -> None:
         """Background entrypoint for multiple documents."""
         async with AsyncSessionLocal() as db:
-            prepared = await self._prepare_batch_candidates(db, documents)
+            prepared = await self._prepare_batch_candidates(db, documents, job_id=job_id)
             batches = self._build_dynamic_batches(prepared)
 
             for batch in batches:
                 try:
-                    counts = await self._run_document_batch_index(db, batch=batch)
+                    counts = await self._run_document_batch_index(db, batch=batch, job_id=job_id)
                     total_chunks = sum(counts.values())
                     logger.info(
                         "Indexed batch docs={} chunks={}",
@@ -480,6 +788,7 @@ class IndexingService:
                             db,
                             document_id=int(item["document_id"]),
                             expected_content_hash=str(item["expected_content_hash"]),
+                            job_id=job_id,
                         )
 
     async def reindex_current_document_task(
@@ -487,6 +796,7 @@ class IndexingService:
         *,
         target_document_id: int,
         target_content_hash: str,
+        job_id: int,
         previous_document_id: int | None = None,
     ) -> None:
         """Background entrypoint for current-version switches and new versions."""
@@ -508,9 +818,17 @@ class IndexingService:
                     db,
                     document_id=target_document_id,
                     expected_content_hash=target_content_hash,
+                    job_id=job_id,
                 )
             except Exception as exc:
                 await db.rollback()
+                await self._mark_job_document_failed(
+                    db,
+                    job_id=job_id,
+                    document_id=target_document_id,
+                    expected_content_hash=target_content_hash,
+                    error_message=self._truncate_error(exc),
+                )
                 logger.warning(
                     "Current document reindex failed target_doc_id={}: {}",
                     target_document_id,
@@ -563,11 +881,19 @@ class IndexingService:
             await db.refresh(doc)
 
         queued_docs = [(doc.id, doc.content_hash) for doc in docs]
-        self.enqueue_documents_batch(documents=queued_docs)
+        job_id = await self.enqueue_documents_batch_job(
+            db=db,
+            user_id=user_id,
+            documents=queued_docs,
+            knowledge_base_id=knowledge_base_id if knowledge_base_id is not None else None,
+            title="批量重建索引" if knowledge_base_id is not None else "全量重建索引",
+            job_type="reindex_all_documents",
+        )
         logger.info("Queued full reindex for {} documents", len(queued_docs))
         return {
             "message": f"Queued {len(queued_docs)} documents for reindexing",
             "queued": len(queued_docs),
+            "job_id": job_id or 0,
         }
 
     async def index_single_document(
@@ -594,13 +920,19 @@ class IndexingService:
         doc.indexed_at = None
         await db.commit()
         await db.refresh(doc)
-        self.enqueue_document(
+        job_id = await self.enqueue_document_job(
+            db=db,
+            user_id=user_id,
             document_id=doc.id,
             expected_content_hash=doc.content_hash,
+            knowledge_base_id=getattr(doc, "knowledge_base_id", None),
+            title=f"重新索引《{doc.title}》",
+            job_type="index_single_document",
         )
         return {
             "message": "Document queued for indexing",
             "queued": 1,
+            "job_id": job_id,
         }
 
 

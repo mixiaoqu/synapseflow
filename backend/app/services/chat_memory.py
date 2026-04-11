@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ChatMessage, ChatSession, DocumentCategory, KnowledgeBase
 from app.db.session import AsyncSessionLocal
+from app.utils.time import utc_now
 
 _ROLE_LABELS = {
     "user": "User",
@@ -160,7 +161,7 @@ class DatabaseChatMemoryStore:
             )
             session.knowledge_base_id = knowledge_base_id
             session.category_id = category_id
-            session.updated_at = datetime.utcnow()
+            session.updated_at = utc_now()
 
             if normalized_user:
                 db.add(
