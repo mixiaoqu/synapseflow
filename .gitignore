@@ -33,6 +33,7 @@ env/
 
 # 环境变量
 .env
+.env.prod
 .env.local
 backend/.env
 backend/langgraph.env

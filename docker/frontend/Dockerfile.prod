@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+
+FROM node:20-alpine AS base
+
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+FROM base AS deps
+
+COPY package.json pnpm-lock.yaml ./
+
+ENV NODE_OPTIONS="--max-old-space-size=1024"
+
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile --network-concurrency 1 --child-concurrency 1
+
+FROM base AS builder
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+
+ENV NODE_ENV=production \
+    NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+RUN pnpm build
+
+FROM base AS runner
+
+ENV NODE_ENV=production
+
+COPY --from=builder /app /app
+
+EXPOSE 3000
+
+CMD ["pnpm", "exec", "next", "start", "-H", "0.0.0.0", "-p", "3000"]

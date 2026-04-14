@@ -1,0 +1,169 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-synapseflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-synapseflow}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - synapseflow-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-synapseflow} -d ${POSTGRES_DB:-synapseflow}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+    volumes:
+      - redis_data:/data
+    networks:
+      - synapseflow-network
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  backend:
+    image: synapseflow-backend:prod
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+      args:
+        UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://pypi.org/simple}
+    restart: unless-stopped
+    environment: &backend-env
+      ENV: ${SF_ENV:-production}
+      DEBUG: ${SF_DEBUG:-false}
+      SECRET_KEY: ${SF_SECRET_KEY:?set SF_SECRET_KEY}
+      CORS_ORIGINS: ${SF_CORS_ORIGINS:?set SF_CORS_ORIGINS}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-synapseflow}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-synapseflow}
+      REDIS_URL: redis://redis:6379/0
+      DRAMATIQ_INDEXING_QUEUE: ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing}
+      EMBEDDING_MODEL: ${SF_EMBEDDING_MODEL:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      KIMI_API_KEY: ${KIMI_API_KEY:-}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      MODELSCOPE_API_KEY: ${MODELSCOPE_API_KEY:-}
+      AIHUBMIX_API_KEY: ${AIHUBMIX_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      MOYU_API_KEY: ${MOYU_API_KEY:-}
+      RERANK_ENABLED: ${SF_RERANK_ENABLED:-true}
+      RERANK_API_URL: ${SF_RERANK_API_URL:-http://localhost:8012}
+      RERANK_API_KEY: ${SF_RERANK_API_KEY:-}
+      PREVIEW_DIR: /app/previews
+      UPLOAD_DIR: /app/uploads
+      LANGSMITH_TRACING: ${SF_LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${SF_LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${SF_LANGSMITH_PROJECT:-}
+      LANGSMITH_WORKSPACE_ID: ${SF_LANGSMITH_WORKSPACE_ID:-}
+      LOG_LEVEL: ${SF_LOG_LEVEL:-INFO}
+      LOG_JSON: ${SF_LOG_JSON:-false}
+    ports:
+      - 127.0.0.1:${SF_BACKEND_PORT:-8000}:8000
+    volumes:
+      - backend_previews:/app/previews
+      - backend_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synapseflow-network
+    command:
+      - sh
+      - -c
+      - uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${SF_BACKEND_WORKERS:-4}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    logging: *default-logging
+
+  backend-worker:
+    image: synapseflow-backend:prod
+    restart: unless-stopped
+    environment: *backend-env
+    volumes:
+      - backend_previews:/app/previews
+      - backend_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synapseflow-network
+    command:
+      - sh
+      - -c
+      - uv run dramatiq app.workers.indexing_tasks --processes ${SF_DRAMATIQ_PROCESSES:-2} --threads ${SF_DRAMATIQ_THREADS:-2}
+    logging: *default-logging
+
+  frontend:
+    image: synapseflow-frontend:prod
+    build:
+      context: ./frontend
+      dockerfile: ../docker/frontend/Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:?set SF_NEXT_PUBLIC_API_URL}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:?set SF_NEXT_PUBLIC_API_URL}
+    ports:
+      - 127.0.0.1:${SF_FRONTEND_PORT:-3000}:3000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - synapseflow-network
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - 'fetch("http://127.0.0.1:3000").then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))'
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_previews:
+  backend_uploads:
+
+networks:
+  synapseflow-network:
+    driver: bridge
