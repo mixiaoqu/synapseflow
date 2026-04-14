@@ -313,7 +313,7 @@ export default function DocumentsPage() {
   const openKnowledgeBase = (knowledgeBaseId: number) => {
     const query = new URLSearchParams();
     if (selectedTeamId != null) query.set("teamId", String(selectedTeamId));
-    router.push(`/documents/${knowledgeBaseId}${query.toString() ? `?${query.toString()}` : ""}`);
+    router.push(`/admin/documents/${knowledgeBaseId}${query.toString() ? `?${query.toString()}` : ""}`);
   };
 
   const handleCreateKnowledgeBase = async () => {

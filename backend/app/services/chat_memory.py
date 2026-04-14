@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ChatMessage, ChatSession, DocumentCategory, KnowledgeBase
@@ -35,6 +35,7 @@ class ChatSessionSummaryRecord:
     session_id: str
     title: str
     preview: str | None
+    team_id: int | None
     knowledge_base_id: int | None
     knowledge_base_name: str | None
     category_id: int | None
@@ -48,7 +49,7 @@ class ChatSessionSummaryRecord:
 class ChatSessionDetailRecord(ChatSessionSummaryRecord):
     """Session detail including messages."""
 
-    messages: list[dict[str, str | datetime]]
+    messages: list[dict[str, Any]]
 
 
 class ChatMemoryStore(Protocol):
@@ -66,10 +67,12 @@ class ChatMemoryStore(Protocol):
         *,
         user_id: int,
         session_id: str,
+        team_id: int | None,
         knowledge_base_id: int | None,
         category_id: int | None,
         user_message: str,
         assistant_message: str,
+        assistant_metadata: dict[str, Any] | None = None,
     ) -> None: ...
 
     async def list_sessions(
@@ -85,6 +88,13 @@ class ChatMemoryStore(Protocol):
         user_id: int,
         session_id: str,
     ) -> ChatSessionDetailRecord | None: ...
+
+    async def delete_session(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+    ) -> bool: ...
 
 
 def format_chat_history(
@@ -143,10 +153,12 @@ class DatabaseChatMemoryStore:
         *,
         user_id: int,
         session_id: str,
+        team_id: int | None,
         knowledge_base_id: int | None,
         category_id: int | None,
         user_message: str,
         assistant_message: str,
+        assistant_metadata: dict[str, Any] | None = None,
     ) -> None:
         normalized_user = (user_message or "").strip()
         normalized_assistant = (assistant_message or "").strip()
@@ -159,6 +171,7 @@ class DatabaseChatMemoryStore:
                 user_id=user_id,
                 session_id=session_id,
             )
+            session.team_id = team_id
             session.knowledge_base_id = knowledge_base_id
             session.category_id = category_id
             session.updated_at = utc_now()
@@ -177,6 +190,7 @@ class DatabaseChatMemoryStore:
                         chat_session_id=session.id,
                         role="assistant",
                         content=normalized_assistant,
+                        metadata_=assistant_metadata or None,
                     )
                 )
 
@@ -249,6 +263,7 @@ class DatabaseChatMemoryStore:
                 session_id=summary.session_id,
                 title=summary.title,
                 preview=summary.preview,
+                team_id=summary.team_id,
                 knowledge_base_id=summary.knowledge_base_id,
                 knowledge_base_name=summary.knowledge_base_name,
                 category_id=summary.category_id,
@@ -258,6 +273,29 @@ class DatabaseChatMemoryStore:
                 updated_at=summary.updated_at,
                 messages=messages,
             )
+
+    async def delete_session(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+    ) -> bool:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                delete(ChatSession)
+                .where(
+                    ChatSession.user_id == user_id,
+                    ChatSession.session_id == session_id,
+                )
+                .returning(ChatSession.id)
+            )
+            deleted_row = result.first()
+            if deleted_row is None:
+                await db.rollback()
+                return False
+
+            await db.commit()
+            return True
 
     @staticmethod
     async def _get_session(
@@ -297,7 +335,7 @@ class DatabaseChatMemoryStore:
     async def _load_messages_for_sessions(
         db: AsyncSession,
         session_ids: list[int],
-    ) -> dict[int, list[dict[str, str | datetime]]]:
+    ) -> dict[int, list[dict[str, Any]]]:
         if not session_ids:
             return {}
 
@@ -306,6 +344,7 @@ class DatabaseChatMemoryStore:
                 ChatMessage.chat_session_id,
                 ChatMessage.role,
                 ChatMessage.content,
+                ChatMessage.metadata_,
                 ChatMessage.created_at,
             )
             .where(ChatMessage.chat_session_id.in_(session_ids))
@@ -316,12 +355,13 @@ class DatabaseChatMemoryStore:
             )
         )
 
-        grouped: dict[int, list[dict[str, str | datetime]]] = {session_id: [] for session_id in session_ids}
-        for chat_session_id, role, content, created_at in result.all():
+        grouped: dict[int, list[dict[str, Any]]] = {session_id: [] for session_id in session_ids}
+        for chat_session_id, role, content, metadata, created_at in result.all():
             grouped.setdefault(chat_session_id, []).append(
                 {
                     "role": role,
                     "content": content,
+                    "metadata": metadata or None,
                     "created_at": created_at,
                 }
             )
@@ -333,7 +373,7 @@ class DatabaseChatMemoryStore:
         *,
         kb_name: str | None,
         category_name: str | None,
-        messages: list[dict[str, str | datetime]],
+        messages: list[dict[str, Any]],
     ) -> ChatSessionSummaryRecord:
         title = "New conversation"
         preview: str | None = None
@@ -359,6 +399,7 @@ class DatabaseChatMemoryStore:
             session_id=session.session_id,
             title=title,
             preview=preview,
+            team_id=session.team_id,
             knowledge_base_id=session.knowledge_base_id,
             knowledge_base_name=kb_name,
             category_id=session.category_id,

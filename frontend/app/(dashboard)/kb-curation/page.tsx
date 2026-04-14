@@ -36,22 +36,31 @@ export default function KbCurationPage() {
   } = useKbCuration();
 
   return (
-    <div className="min-h-full flex flex-col bg-gray-50">
-      <Toaster position="top-right" />
+    <div className="min-h-full flex flex-col bg-gradient-to-br from-slate-50 via-white to-indigo-50/20">
+      <Toaster position="top-right" richColors />
 
-      <div className="shrink-0 border-b bg-white px-6 py-4">
-        <h1 className="text-2xl font-bold text-gray-900">知识库治理</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          面向管理员的多轮评估与修订入口，用于发现知识缺口并形成文档修订建议。
-        </p>
+      <div className="shrink-0 border-b border-slate-200/80 bg-white/85 backdrop-blur-md px-6 py-5 shadow-sm">
+        <div className="flex items-start gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 text-white shadow-lg shadow-indigo-600/25">
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">知识库治理</h1>
+            <p className="mt-1 text-sm leading-relaxed text-slate-500">
+              面向管理员的多轮评估与修订入口，用于发现知识缺口并形成文档修订建议。
+            </p>
+          </div>
+        </div>
       </div>
 
-      <div className="grid flex-1 gap-4 p-4 lg:grid-cols-2 min-h-0">
-        <div className="flex min-h-0 flex-col gap-4 overflow-hidden">
-          <Card className="shrink-0">
-            <CardHeader>
-              <CardTitle className="text-base">治理问题</CardTitle>
-              <p className="text-xs text-gray-500">
+      <div className="grid flex-1 gap-5 p-5 lg:grid-cols-2 min-h-0">
+        <div className="flex min-h-0 flex-col gap-5 overflow-hidden">
+          <Card className="shrink-0 border-slate-200/90 shadow-sm ring-1 ring-slate-900/[0.04]">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base font-semibold text-slate-900">治理问题</CardTitle>
+              <p className="text-xs leading-relaxed text-slate-500">
                 输入一个需要校验和治理的问题，系统会多轮评估回答质量并输出修订建议。
               </p>
             </CardHeader>
@@ -66,7 +75,7 @@ export default function KbCurationPage() {
                 <textarea
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  className="min-h-[100px] w-full resize-none rounded-lg border p-3 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+                  className="min-h-[100px] w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-800 placeholder:text-slate-400 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
                   placeholder="例如：当前知识库对组件命名规范的说明是否足够清晰？如果不够，请指出需要修订的文档。"
                   disabled={loading}
                 />
@@ -131,7 +140,7 @@ export default function KbCurationPage() {
                   <button
                     type="submit"
                     disabled={loading || !query.trim()}
-                    className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-5 py-2 text-sm font-medium text-white shadow-md shadow-indigo-600/20 transition-all hover:from-indigo-700 hover:to-purple-700 hover:shadow-lg hover:shadow-indigo-600/30 disabled:opacity-50 disabled:shadow-none"
                   >
                     {loading ? "治理中..." : "开始治理"}
                   </button>
@@ -140,9 +149,9 @@ export default function KbCurationPage() {
             </CardContent>
           </Card>
 
-          <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">治理过程</CardTitle>
+          <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-slate-200/90 shadow-sm ring-1 ring-slate-900/[0.04]">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base font-semibold text-slate-900">治理过程</CardTitle>
             </CardHeader>
             <CardContent className="flex-1 overflow-auto pt-0">
               {loading ? (
@@ -164,11 +173,11 @@ export default function KbCurationPage() {
           </Card>
         </div>
 
-        <div className="flex min-h-0 flex-col gap-4 overflow-hidden">
-          <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <CardHeader className="pb-2">
+        <div className="flex min-h-0 flex-col gap-5 overflow-hidden">
+          <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-slate-200/90 shadow-sm ring-1 ring-slate-900/[0.04]">
+            <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base">最终回答</CardTitle>
+                <CardTitle className="text-base font-semibold text-slate-900">最终回答</CardTitle>
                 <ResultPanelAction result={result} />
               </div>
             </CardHeader>
@@ -178,9 +187,9 @@ export default function KbCurationPage() {
           </Card>
 
           {result && (
-            <Card className="shrink-0">
+            <Card className="shrink-0 border-slate-200/90 shadow-sm ring-1 ring-slate-900/[0.04]">
               <CardHeader className="py-3">
-                <CardTitle className="text-sm">
+                <CardTitle className="text-sm font-semibold text-slate-900">
                   引用文档（{docNames.length} 篇）
                   {docNames.length === 0 && (
                     <span className="ml-2 font-normal text-amber-600">

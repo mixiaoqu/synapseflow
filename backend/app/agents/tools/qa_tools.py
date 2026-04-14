@@ -18,6 +18,7 @@ async def search_knowledge_base(
     """Search the KB and return the top chunk texts."""
     result = await run_kb_retrieval(
         query=query,
+        team_id=None,
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
         result_limit=max(1, k),

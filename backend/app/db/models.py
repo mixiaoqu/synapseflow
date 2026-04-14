@@ -21,6 +21,7 @@ class User(Base):
     email = Column(String(255), nullable=False, unique=True, index=True)
     full_name = Column(String(100), nullable=True)
     hashed_password = Column(String(255), nullable=False)
+    role = Column(String(30), nullable=False, default="end_user", index=True)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
@@ -48,6 +49,64 @@ class TeamMember(Base):
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(String(30), nullable=False, default="member")
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class SensitiveWordSetting(Base):
+    """Scoped sensitive-word runtime settings."""
+
+    __tablename__ = "sensitive_word_settings"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=True, index=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    block_query = Column(Boolean, nullable=False, default=True)
+    block_document_publish = Column(Boolean, nullable=False, default=False)
+    created_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    updated_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class SensitiveWord(Base):
+    """One sensitive word row under the global or team scope."""
+
+    __tablename__ = "sensitive_words"
+    __table_args__ = (
+        UniqueConstraint("team_id", "normalized_word", name="uq_sensitive_words_team_normalized"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=True, index=True)
+    word = Column(String(255), nullable=False)
+    normalized_word = Column(String(255), nullable=False, index=True)
+    category = Column(String(50), nullable=True, index=True)
+    match_mode = Column(String(20), nullable=False, default="contains")
+    enabled = Column(Boolean, nullable=False, default=True)
+    remark = Column(Text, nullable=True)
+    created_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    updated_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -130,6 +189,11 @@ class Document(Base):
         index=True,
     )
     source_path = Column(String(1024), nullable=True)
+    status = Column(String(20), nullable=False, default="draft", index=True)
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    published_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    reviewed_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     index_status = Column(String(20), nullable=False, default="queued", index=True)
     index_error = Column(Text, nullable=True)
     content_hash = Column(String(32), nullable=False, default="")
@@ -210,6 +274,7 @@ class ChatSession(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     session_id = Column(String(64), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True)
     knowledge_base_id = Column(
         Integer,
         ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
@@ -241,4 +306,46 @@ class ChatMessage(Base):
     )
     role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
+    metadata_ = Column("metadata", JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
+
+
+class KbChatLog(Base):
+    """Persisted KB chat execution log for admin QA and feedback."""
+
+    __tablename__ = "kb_chat_logs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id = Column(String(64), nullable=True, index=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    category_id = Column(
+        Integer,
+        ForeignKey("document_categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    query = Column(Text, nullable=False)
+    answer_text = Column(Text, nullable=False)
+    answer_status = Column(String(20), nullable=False, default="answered", index=True)
+    retrieval_status = Column(String(30), nullable=True, index=True)
+    retrieved_count = Column(Integer, nullable=False, default=0)
+    latency_ms = Column(Integer, nullable=True)
+    feedback_value = Column(String(20), nullable=True, index=True)
+    feedback_note = Column(Text, nullable=True)
+    review_label = Column(String(40), nullable=True, index=True)
+    review_note = Column(Text, nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    reviewed_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)

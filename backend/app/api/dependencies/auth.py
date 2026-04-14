@@ -6,6 +6,13 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.authz import (
+    ADMIN_ROLES,
+    CONTENT_ROLES,
+    REVIEW_ROLES,
+    ROLE_KB_ADMIN,
+    has_any_role,
+)
 from app.db.models import User
 from app.db.session import get_db
 from app.repositories.user_repository import UserRepository
@@ -48,3 +55,39 @@ async def get_current_user(
             detail="User is inactive",
         )
     return user
+
+
+def require_roles(*roles: str):
+    async def _dependency(current_user: User = Depends(get_current_user)) -> User:
+        if not has_any_role(getattr(current_user, "role", None), roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+        return current_user
+
+    return _dependency
+
+
+def require_any_admin_role(
+    current_user: User = Depends(require_roles(*ADMIN_ROLES)),
+) -> User:
+    return current_user
+
+
+def require_content_roles(
+    current_user: User = Depends(require_roles(*CONTENT_ROLES)),
+) -> User:
+    return current_user
+
+
+def require_review_roles(
+    current_user: User = Depends(require_roles(*REVIEW_ROLES)),
+) -> User:
+    return current_user
+
+
+def require_kb_admin_role(
+    current_user: User = Depends(require_roles(ROLE_KB_ADMIN)),
+) -> User:
+    return current_user

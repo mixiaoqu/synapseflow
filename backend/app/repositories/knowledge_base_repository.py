@@ -7,6 +7,7 @@ from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, KnowledgeBase
+from app.repositories.access_scope import accessible_knowledge_base_condition
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
     INDEX_STATUS_INDEXED,
@@ -91,7 +92,7 @@ class KnowledgeBaseRepository:
                 (Document.knowledge_base_id == KnowledgeBase.id)
                 & (Document.is_current.is_(True)),
             )
-            .where(KnowledgeBase.user_id == self.user_id)
+            .where(accessible_knowledge_base_condition(self.user_id))
         )
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
@@ -154,7 +155,6 @@ class KnowledgeBaseRepository:
                 .label("row_num"),
             )
             .where(
-                Document.user_id == self.user_id,
                 Document.is_current.is_(True),
                 Document.knowledge_base_id.in_(knowledge_base_ids),
             )
@@ -215,7 +215,7 @@ class KnowledgeBaseRepository:
         result = await self.db.execute(
             select(KnowledgeBase).where(
                 KnowledgeBase.id == knowledge_base_id,
-                KnowledgeBase.user_id == self.user_id,
+                accessible_knowledge_base_condition(self.user_id),
             )
         )
         return result.scalar_one_or_none()
@@ -245,7 +245,6 @@ class KnowledgeBaseRepository:
         await self.db.execute(
             delete(Document).where(
                 Document.knowledge_base_id == knowledge_base_id,
-                Document.user_id == self.user_id,
             )
         )
         await self.db.delete(knowledge_base)

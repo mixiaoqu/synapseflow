@@ -8,6 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, DocumentCategory, KnowledgeBase
+from app.repositories.access_scope import accessible_knowledge_base_condition
 
 
 @dataclass(slots=True)
@@ -43,7 +44,7 @@ class DocumentCategoryRepository:
                 (Document.category_id == DocumentCategory.id) & Document.is_current.is_(True),
             )
             .where(
-                KnowledgeBase.user_id == self.user_id,
+                accessible_knowledge_base_condition(self.user_id),
                 DocumentCategory.knowledge_base_id == knowledge_base_id,
             )
             .group_by(DocumentCategory.id)
@@ -61,7 +62,7 @@ class DocumentCategoryRepository:
             .join(KnowledgeBase, KnowledgeBase.id == DocumentCategory.knowledge_base_id)
             .where(
                 DocumentCategory.id == category_id,
-                KnowledgeBase.user_id == self.user_id,
+                accessible_knowledge_base_condition(self.user_id),
             )
         )
         return result.scalar_one_or_none()
@@ -79,7 +80,7 @@ class DocumentCategoryRepository:
             select(DocumentCategory)
             .join(KnowledgeBase, KnowledgeBase.id == DocumentCategory.knowledge_base_id)
             .where(
-                KnowledgeBase.user_id == self.user_id,
+                accessible_knowledge_base_condition(self.user_id),
                 DocumentCategory.knowledge_base_id == knowledge_base_id,
                 func.lower(DocumentCategory.name) == normalized_name.lower(),
             )

@@ -9,7 +9,7 @@ export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace(getAccessToken() ? "/kb-chat" : "/login");
+    router.replace(getAccessToken() ? "/ask" : "/login");
   }, [router]);
 
   return null;

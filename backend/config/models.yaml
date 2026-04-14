@@ -49,9 +49,9 @@ providers:
 models:
   planner:
     # 当前角色使用的 provider 标识。
-    provider: moyu
+    provider: deepseek
     # 实际调用的模型名称。
-    model: deepseek-v3
+    model: deepseek-chat
     # 角色名称说明。
     name: 规划任务模型
     # 采样温度，越低越稳定，越高越发散。
@@ -67,8 +67,8 @@ models:
       - 选择处理方案
 
   analysis:
-    provider: moyu
-    model: deepseek-v3
+    provider: deepseek
+    model: deepseek-chat
     name: 分析理解模型
     temperature: 0.3
     request_timeout: 180
@@ -80,8 +80,8 @@ models:
       - 检查内容一致性
 
   generation:
-    provider: moyu
-    model: deepseek-v3
+    provider: deepseek
+    model: deepseek-chat
     name: 内容生成模型
     temperature: 0.5
     request_timeout: 180
@@ -92,8 +92,8 @@ models:
       - 生成 HTML、CSS、JS 代码
 
   tool:
-    provider: moyu
-    model: deepseek-v3
+    provider: deepseek
+    model: deepseek-chat
     name: 工具调用模型
     temperature: 0.2
     request_timeout: 60

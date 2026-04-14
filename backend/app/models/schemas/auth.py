@@ -30,6 +30,7 @@ class UserResponse(BaseModel):
     username: str
     email: str
     full_name: str | None = None
+    role: str
     is_active: bool
     created_at: datetime
     updated_at: datetime

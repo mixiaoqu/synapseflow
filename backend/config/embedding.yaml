@@ -45,14 +45,14 @@ retrieval:
   distance_threshold: 0.5
   # 迭代检索阶段的向量距离阈值，当前主要作为兼容保留项。
   distance_threshold_iteration: 0.6
-  # 精排最低保留分数；低于该值的结果不会进入最终上下文。
-  rerank_threshold: 0.35
+  # 精排最低保留分数；适度提高阈值，减少弱相关片段进入最终上下文。
+  rerank_threshold: 0.45
   # 当结果不足时的回退条数，当前主要作为兼容保留项。
   fallback_top_n: 3
-  # 最终保留给应用层的检索结果上限。
-  final_top_k: 10
-  # 最终真正送入大模型 prompt 的参考片段上限。
-  llm_reference_top_k: 10
+  # 最终保留给应用层的检索结果上限；适度收紧，避免过多弱相关候选残留。
+  final_top_k: 8
+  # 最终真正送入大模型 prompt 的参考片段上限；优先保留更强证据，降低噪声。
+  llm_reference_top_k: 5
   # 拼接知识库上下文时允许注入 prompt 的总字符上限。
   kb_context_max_chars: 12000
 

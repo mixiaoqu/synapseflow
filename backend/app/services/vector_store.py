@@ -11,7 +11,8 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.registry import config_registry
-from app.db.models import Document, DocumentCategory, Embedding
+from app.db.models import Document, DocumentCategory, Embedding, KnowledgeBase
+from app.repositories.access_scope import accessible_document_condition
 from app.services.semantic_chunk import VectorIndexChunk
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
@@ -116,8 +117,10 @@ async def search(
     k: int = 5,
     *,
     user_id: int | None = None,
+    team_id: int | None = None,
     knowledge_base_id: int | None = None,
     category_id: int | None = None,
+    document_statuses: Sequence[str] | None = None,
 ) -> List[dict]:
     """
     Vector search across embeddings joined with the current document rows.
@@ -140,15 +143,20 @@ async def search(
             DocumentCategory.name.label("category_name"),
         )
         .join(Document, Document.id == Embedding.document_id)
+        .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
         .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
         .where(Document.is_current.is_(True))
     )
     if user_id is not None:
-        stmt = stmt.where(Document.user_id == user_id)
+        stmt = stmt.where(accessible_document_condition(user_id))
+    if team_id is not None:
+        stmt = stmt.where(KnowledgeBase.team_id == team_id)
     if knowledge_base_id is not None:
         stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)
     if category_id is not None:
         stmt = stmt.where(Document.category_id == category_id)
+    if document_statuses:
+        stmt = stmt.where(Document.status.in_(list(document_statuses)))
     stmt = stmt.order_by(dist_col).limit(k)
 
     result = await db.execute(stmt)
@@ -302,8 +310,10 @@ async def _search_lexical_fts(
     k: int,
     *,
     user_id: int | None = None,
+    team_id: int | None = None,
     knowledge_base_id: int | None = None,
     category_id: int | None = None,
+    document_statuses: Sequence[str] | None = None,
 ) -> List[dict]:
     """PostgreSQL full-text retrieval joined with document metadata."""
 
@@ -313,7 +323,7 @@ async def _search_lexical_fts(
 
     sql_lines = [
         "SELECT e.chunk_text, e.search_text, e.document_id, e.chunk_index, e.metadata, d.title AS document_title,",
-        "       d.category_id, d.source_path, dc.name AS category_name,",
+        "       d.category_id, d.source_path, d.status, dc.name AS category_name,",
         "       ts_rank_cd(e.chunk_tsv, websearch_to_tsquery('simple', :q)) AS lr",
         "FROM embeddings e",
         "JOIN documents d ON d.id = e.document_id",
@@ -324,15 +334,40 @@ async def _search_lexical_fts(
     params: dict[str, object] = {"q": query, "lim": k}
 
     if user_id is not None:
-        sql_lines.append("  AND d.user_id = :user_id")
+        sql_lines.extend(
+            [
+                "  AND (",
+                "    d.user_id = :user_id",
+                "    OR EXISTS (",
+                "      SELECT 1 FROM knowledge_bases kb",
+                "      WHERE kb.id = d.knowledge_base_id",
+                "        AND (",
+                "          kb.user_id = :user_id",
+                "          OR EXISTS (",
+                "            SELECT 1 FROM team_members tm",
+                "            WHERE tm.team_id = kb.team_id AND tm.user_id = :user_id",
+                "          )",
+                "          OR EXISTS (",
+                "            SELECT 1 FROM knowledge_base_members kbm",
+                "            WHERE kbm.knowledge_base_id = kb.id AND kbm.user_id = :user_id",
+                "          )",
+                "        )",
+                "    )",
+                "  )",
+            ]
+        )
         params["user_id"] = user_id
     if knowledge_base_id is not None:
         sql_lines.append("  AND d.knowledge_base_id = :knowledge_base_id")
         params["knowledge_base_id"] = knowledge_base_id
+    if team_id is not None:
+        sql_lines.append(
+            "  AND EXISTS (SELECT 1 FROM knowledge_bases kb WHERE kb.id = d.knowledge_base_id AND kb.team_id = :team_id)"
+        )
+        params["team_id"] = team_id
     if category_id is not None:
         sql_lines.append("  AND d.category_id = :category_id")
         params["category_id"] = category_id
-
     sql_lines.extend(
         [
             "ORDER BY lr DESC NULLS LAST",
@@ -356,9 +391,12 @@ async def _search_lexical_fts(
         document_title,
         row_category_id,
         source_path,
+        document_status,
         category_name,
         lexical_rank,
     ) in result.all():
+        if document_statuses and document_status not in set(document_statuses):
+            continue
         out.append(
             _build_ranked_row(
                 chunk_text=chunk_text,
@@ -384,8 +422,10 @@ async def _search_lexical_trgm(
     k: int,
     *,
     user_id: int | None = None,
+    team_id: int | None = None,
     knowledge_base_id: int | None = None,
     category_id: int | None = None,
+    document_statuses: Sequence[str] | None = None,
 ) -> List[dict]:
     """Chinese-friendly phrase and trigram retrieval on ``search_text``."""
 
@@ -402,7 +442,7 @@ async def _search_lexical_trgm(
     )
     sql_lines = [
         "SELECT e.chunk_text, e.search_text, e.document_id, e.chunk_index, e.metadata, d.title AS document_title,",
-        "       d.category_id, d.source_path, dc.name AS category_name,",
+        "       d.category_id, d.source_path, d.status, dc.name AS category_name,",
         "       (",
         "         CASE WHEN lower(e.search_text) LIKE :phrase_like THEN 1.5 ELSE 0.0 END +",
         f"         CASE WHEN {compact_expr} LIKE :compact_like THEN 1.2 ELSE 0.0 END +",
@@ -435,15 +475,40 @@ async def _search_lexical_trgm(
     }
 
     if user_id is not None:
-        sql_lines.append("  AND d.user_id = :user_id")
+        sql_lines.extend(
+            [
+                "  AND (",
+                "    d.user_id = :user_id",
+                "    OR EXISTS (",
+                "      SELECT 1 FROM knowledge_bases kb",
+                "      WHERE kb.id = d.knowledge_base_id",
+                "        AND (",
+                "          kb.user_id = :user_id",
+                "          OR EXISTS (",
+                "            SELECT 1 FROM team_members tm",
+                "            WHERE tm.team_id = kb.team_id AND tm.user_id = :user_id",
+                "          )",
+                "          OR EXISTS (",
+                "            SELECT 1 FROM knowledge_base_members kbm",
+                "            WHERE kbm.knowledge_base_id = kb.id AND kbm.user_id = :user_id",
+                "          )",
+                "        )",
+                "    )",
+                "  )",
+            ]
+        )
         params["user_id"] = user_id
     if knowledge_base_id is not None:
         sql_lines.append("  AND d.knowledge_base_id = :knowledge_base_id")
         params["knowledge_base_id"] = knowledge_base_id
+    if team_id is not None:
+        sql_lines.append(
+            "  AND EXISTS (SELECT 1 FROM knowledge_bases kb WHERE kb.id = d.knowledge_base_id AND kb.team_id = :team_id)"
+        )
+        params["team_id"] = team_id
     if category_id is not None:
         sql_lines.append("  AND d.category_id = :category_id")
         params["category_id"] = category_id
-
     sql_lines.extend(
         [
             "ORDER BY lr DESC NULLS LAST",
@@ -467,9 +532,12 @@ async def _search_lexical_trgm(
         document_title,
         row_category_id,
         source_path,
+        document_status,
         category_name,
         lexical_rank,
     ) in result.all():
+        if document_statuses and document_status not in set(document_statuses):
+            continue
         out.append(
             _build_ranked_row(
                 chunk_text=chunk_text,
@@ -495,8 +563,10 @@ async def search_lexical(
     k: int,
     *,
     user_id: int | None = None,
+    team_id: int | None = None,
     knowledge_base_id: int | None = None,
     category_id: int | None = None,
+    document_statuses: Sequence[str] | None = None,
 ) -> List[dict]:
     """Chinese-aware lexical retrieval fused from FTS and trigram/phrase channels."""
 
@@ -512,16 +582,20 @@ async def search_lexical(
         query,
         k=k,
         user_id=user_id,
+        team_id=team_id,
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
+        document_statuses=document_statuses,
     )
     trgm_rows = await _search_lexical_trgm(
         db,
         query,
         k=k,
         user_id=user_id,
+        team_id=team_id,
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
+        document_statuses=document_statuses,
     )
     weights = [1.0, 1.2 if _contains_cjk(query) else 0.8]
     return reciprocal_rank_fusion_many(
@@ -540,8 +614,10 @@ async def search_hybrid_rrf(
     k_dense: int,
     k_lexical: int,
     user_id: int | None,
+    team_id: int | None,
     knowledge_base_id: int | None,
     category_id: int | None,
+    document_statuses: Sequence[str] | None,
     rrf_k: int,
     pool_limit: int,
 ) -> List[dict]:
@@ -552,15 +628,19 @@ async def search_hybrid_rrf(
         query_embedding,
         k=k_dense,
         user_id=user_id,
+        team_id=team_id,
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
+        document_statuses=document_statuses,
     )
     lexical = await search_lexical(
         db,
         query_text,
         k=k_lexical,
         user_id=user_id,
+        team_id=team_id,
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
+        document_statuses=document_statuses,
     )
     return reciprocal_rank_fusion(dense, lexical, rrf_k=rrf_k, limit=pool_limit)

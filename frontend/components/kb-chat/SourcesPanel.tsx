@@ -11,28 +11,82 @@ function truncateText(value: string, max: number): string {
   return `${normalized.slice(0, max)}...`;
 }
 
+function buildChunkKey(turnId: string, index: number): string {
+  return `${turnId}-${index}`;
+}
+
+function getHighlightTerms(query: string): string[] {
+  return Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .split(/[\s,，。！？；：、/\\|()[\]{}"'`~\-]+/)
+        .map((term) => term.trim())
+        .filter((term) => term.length >= 2),
+    ),
+  ).slice(0, 8);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function renderHighlightedText(text: string, query?: string): React.ReactNode {
+  const terms = getHighlightTerms(query ?? "");
+  if (!text) return null;
+  if (terms.length === 0) return text;
+
+  const regex = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+
+  return text.split(regex).map((part, index) =>
+    terms.some((term) => part.toLowerCase() === term.toLowerCase()) ? (
+      <mark
+        key={`${part}-${index}`}
+        className="rounded bg-amber-100 px-0.5 text-inherit"
+      >
+        {part}
+      </mark>
+    ) : (
+      <span key={`${part}-${index}`}>{part}</span>
+    ),
+  );
+}
+
 function SourceChunkCard({
   doc,
   index,
   expanded,
   onToggle,
+  highlightQuery,
+  compact = false,
 }: {
   doc: RetrievedDoc;
   index: number;
   expanded: boolean;
   onToggle: () => void;
+  highlightQuery?: string;
+  compact?: boolean;
 }) {
   const title = doc.metadata?.document_title?.trim() || `摘录片段 ${index + 1}`;
   const body = doc.content?.trim() || "";
   const previewLen = 220;
   const needsExpand = body.length > previewLen;
+  const displayBody = expanded || !needsExpand ? body : truncateText(body, previewLen);
 
   return (
-    <div className="rounded-xl border border-slate-200/90 bg-white/90 shadow-sm ring-1 ring-slate-900/[0.02] transition-shadow hover:shadow-md">
+    <div
+      className={cn(
+        "rounded-xl border border-slate-200/90 bg-white/90 shadow-sm ring-1 ring-slate-900/[0.02] transition-shadow hover:shadow-md",
+        compact && "bg-slate-50/80 shadow-none hover:shadow-sm",
+      )}
+    >
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-start gap-2.5 rounded-xl px-3.5 py-3 text-left transition-colors hover:bg-teal-50/40"
+        className={cn(
+          "flex w-full items-start gap-2.5 rounded-xl px-3.5 py-3 text-left transition-colors hover:bg-teal-50/40",
+          compact && "gap-2 px-3 py-2.5",
+        )}
       >
         {expanded ? (
           <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-teal-600" />
@@ -60,7 +114,7 @@ function SourceChunkCard({
             )}
           </div>
           <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
-            {expanded || !needsExpand ? body : truncateText(body, previewLen)}
+            {renderHighlightedText(displayBody, highlightQuery)}
           </p>
           {doc.metadata?.source_path ? (
             <p className="mt-1 text-[11px] text-slate-400">{doc.metadata.source_path}</p>
@@ -72,6 +126,102 @@ function SourceChunkCard({
           )}
         </div>
       </button>
+    </div>
+  );
+}
+
+export interface AnswerSourcesSectionProps {
+  turn: KbChatTurn;
+  open: boolean;
+  expandedChunks: Set<string>;
+  onToggleSection: () => void;
+  onToggleChunk: (key: string) => void;
+  onExpandTurn: () => void;
+  onCollapseTurn: () => void;
+}
+
+export function AnswerSourcesSection({
+  turn,
+  open,
+  expandedChunks,
+  onToggleSection,
+  onToggleChunk,
+  onExpandTurn,
+  onCollapseTurn,
+}: AnswerSourcesSectionProps) {
+  if (turn.retrievedDocs.length === 0) return null;
+
+  const uniqueDocCount = new Set(
+    turn.retrievedDocs
+      .map((doc) => doc.metadata?.document_id)
+      .filter((id): id is number => id != null),
+  ).size;
+  const allExpanded = turn.retrievedDocs.every((_, index) =>
+    expandedChunks.has(buildChunkKey(turn.id, index)),
+  );
+
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-3">
+      <button
+        type="button"
+        onClick={onToggleSection}
+        className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-slate-50/70 px-3.5 py-3 text-left transition-colors hover:border-teal-200 hover:bg-teal-50/40"
+      >
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-slate-800">参考来源</span>
+            <Badge
+              variant="secondary"
+              className="h-5 min-w-5 px-1.5 text-[10px] tabular-nums"
+            >
+              {turn.retrievedDocs.length} 条片段
+            </Badge>
+            {uniqueDocCount > 0 ? (
+              <span className="text-[11px] text-slate-500">{uniqueDocCount} 篇文档</span>
+            ) : null}
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            展示本轮回答命中的原始文档片段，方便核对答案依据。
+          </p>
+        </div>
+        {open ? (
+          <ChevronDown className="h-4 w-4 shrink-0 text-teal-600" />
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+        )}
+      </button>
+
+      {open ? (
+        <div className="mt-3 space-y-2.5">
+          <div className="flex items-center justify-between gap-3 px-1">
+            <p className="text-[11px] text-slate-500">
+              片段中会高亮与当前问题相关的关键词。
+            </p>
+            <button
+              type="button"
+              onClick={allExpanded ? onCollapseTurn : onExpandTurn}
+              className="text-[11px] font-medium text-teal-700 transition-colors hover:text-teal-800"
+            >
+              {allExpanded ? "全部收起" : "全部展开"}
+            </button>
+          </div>
+
+          {turn.retrievedDocs.map((doc, index) => {
+            const key = buildChunkKey(turn.id, index);
+            return (
+              <SourceChunkCard
+                key={key}
+                doc={doc}
+                index={index}
+                expanded={expandedChunks.has(key)}
+                onToggle={() => onToggleChunk(key)}
+                highlightQuery={turn.query}
+                compact
+              />
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -107,7 +257,7 @@ export function SourcesPanel({
   const canExpandOps = Boolean(lastTurn && sourceDocs.length > 0);
   const allExpanded =
     sourceDocs.length > 0 &&
-    sourceDocs.every((_, i) => expandedChunks.has(`${lastTurn?.id}-${i}`));
+    sourceDocs.every((_, i) => expandedChunks.has(buildChunkKey(lastTurn?.id ?? "", i)));
 
   return (
     <div
@@ -170,7 +320,7 @@ export function SourcesPanel({
           </div>
         ) : (
           sourceDocs.map((doc, index) => {
-            const key = `${lastTurn.id}-${index}`;
+            const key = buildChunkKey(lastTurn.id, index);
             return (
               <SourceChunkCard
                 key={key}
@@ -178,6 +328,7 @@ export function SourcesPanel({
                 index={index}
                 expanded={expandedChunks.has(key)}
                 onToggle={() => onToggleChunk(key)}
+                highlightQuery={lastTurn.query}
               />
             );
           })

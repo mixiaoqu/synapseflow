@@ -32,6 +32,7 @@ async def run_state_kb_retrieval(
 
     return await run_kb_retrieval(
         query=query,
+        team_id=state.get("team_id"),
         knowledge_base_id=state.get("knowledge_base_id"),
         category_id=state.get("category_id"),
         iteration=iteration,

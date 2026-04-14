@@ -32,6 +32,14 @@ from app.services.document_index_state import (
     compute_content_hash,
     is_indexed_status,
 )
+from app.services.document_lifecycle import (
+    DOC_STATUS_APPROVED,
+    DOC_STATUS_DRAFT,
+    DOC_STATUS_INDEXED,
+    DOC_STATUS_PENDING_REVIEW,
+    DOC_STATUS_PUBLISHED,
+)
+from app.services.sensitive_word_service import get_sensitive_word_service
 from app.utils.file_parser import MAX_FILE_SIZE, SUPPORTED_EXTENSIONS, extract_text_from_file
 
 MAX_BATCH_UPLOAD_FILES = 100
@@ -39,6 +47,91 @@ MAX_BATCH_UPLOAD_FILES = 100
 
 class DocumentService:
     """Coordinates document CRUD and delegates indexing orchestration."""
+
+    @staticmethod
+    def _is_current_latest_document(doc: Document) -> bool:
+        return bool(getattr(doc, "is_current", True) and getattr(doc, "is_latest", True))
+
+    @classmethod
+    def _assert_current_latest_document(cls, doc: Document) -> None:
+        if not cls._is_current_latest_document(doc):
+            raise HTTPException(
+                status_code=400,
+                detail="Only the current latest version can enter the review and publish flow",
+            )
+
+    @classmethod
+    def _assert_can_submit_for_review(cls, doc: Document) -> None:
+        cls._assert_current_latest_document(doc)
+        if not is_indexed_status(getattr(doc, "index_status", None)):
+            raise HTTPException(
+                status_code=400,
+                detail="Document must finish indexing before it can be submitted for review",
+            )
+        if getattr(doc, "status", DOC_STATUS_DRAFT) not in {DOC_STATUS_DRAFT, DOC_STATUS_INDEXED}:
+            raise HTTPException(
+                status_code=400,
+                detail="Only draft documents can be submitted for review",
+            )
+
+    @classmethod
+    def _assert_can_approve(cls, doc: Document) -> None:
+        cls._assert_current_latest_document(doc)
+        if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_PENDING_REVIEW:
+            raise HTTPException(
+                status_code=400,
+                detail="Only pending-review documents can be approved",
+            )
+
+    @classmethod
+    def _assert_can_reject(cls, doc: Document) -> None:
+        cls._assert_current_latest_document(doc)
+        if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_PENDING_REVIEW:
+            raise HTTPException(
+                status_code=400,
+                detail="Only pending-review documents can be rejected",
+            )
+
+    @classmethod
+    def _assert_can_publish(cls, doc: Document) -> None:
+        cls._assert_current_latest_document(doc)
+        if not is_indexed_status(getattr(doc, "index_status", None)):
+            raise HTTPException(
+                status_code=400,
+                detail="Document must finish indexing before publish",
+            )
+        if getattr(doc, "status", DOC_STATUS_DRAFT) not in {
+            DOC_STATUS_APPROVED,
+            DOC_STATUS_INDEXED,
+        }:
+            raise HTTPException(
+                status_code=400,
+                detail="Document must be approved before publish",
+            )
+
+    @classmethod
+    def _assert_can_unpublish(cls, doc: Document) -> None:
+        cls._assert_current_latest_document(doc)
+        if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_PUBLISHED:
+            raise HTTPException(
+                status_code=400,
+                detail="Only published documents can be unpublished",
+            )
+
+    @staticmethod
+    async def _resolve_document_team_id(
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc: Document,
+    ) -> int | None:
+        knowledge_base_id = getattr(doc, "knowledge_base_id", None)
+        if knowledge_base_id is None:
+            return None
+        knowledge_base = await KnowledgeBaseRepository(db, user_id=user_id).get_by_id(knowledge_base_id)
+        if knowledge_base is None:
+            return None
+        return getattr(knowledge_base, "team_id", None)
 
     @staticmethod
     def _get_title_and_type(filename: str) -> tuple[str, str]:
@@ -144,6 +237,11 @@ class DocumentService:
             category_id=getattr(doc, "category_id", None),
             category_name=category_name,
             source_path=getattr(doc, "source_path", None),
+            status=getattr(doc, "status", DOC_STATUS_DRAFT),
+            published_at=getattr(doc, "published_at", None),
+            published_by=getattr(doc, "published_by", None),
+            reviewed_at=getattr(doc, "reviewed_at", None),
+            reviewed_by=getattr(doc, "reviewed_by", None),
             index_status=getattr(doc, "index_status", INDEX_STATUS_QUEUED),
             index_error=getattr(doc, "index_error", None),
             indexed_at=getattr(doc, "indexed_at", None),
@@ -187,6 +285,7 @@ class DocumentService:
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             source_path=source_path,
+            status=DOC_STATUS_DRAFT,
             commit=True,
         )
         await indexing_service.enqueue_document_job(
@@ -268,6 +367,7 @@ class DocumentService:
                     knowledge_base_id=resolved_knowledge_base_id,
                     category_id=resolved_category_id,
                     source_path=normalized_source_path,
+                    status=DOC_STATUS_DRAFT,
                 )
                 await repo.add_for_batch(doc)
                 created.append(doc)
@@ -329,6 +429,7 @@ class DocumentService:
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             source_path=source_path,
+            status=DOC_STATUS_DRAFT,
             commit=True,
         )
         await indexing_service.enqueue_document_job(
@@ -353,6 +454,7 @@ class DocumentService:
         team_id: int | None,
         knowledge_base_id: int | None,
         category_id: int | None,
+        status: str | None = None,
     ) -> DocumentListResponse:
         page = max(page, 1)
         page_size = 20 if page_size < 1 or page_size > 100 else page_size
@@ -365,6 +467,7 @@ class DocumentService:
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
+            status=status,
         )
         items = [
             DocumentListItem(
@@ -384,6 +487,11 @@ class DocumentService:
                 knowledge_base_name=knowledge_base_name,
                 category_name=category_name,
                 source_path=getattr(doc, "source_path", None),
+                status=getattr(doc, "status", DOC_STATUS_DRAFT),
+                published_at=getattr(doc, "published_at", None),
+                published_by=getattr(doc, "published_by", None),
+                reviewed_at=getattr(doc, "reviewed_at", None),
+                reviewed_by=getattr(doc, "reviewed_by", None),
             )
             for doc, knowledge_base_name, category_name in rows
         ]
@@ -618,6 +726,135 @@ class DocumentService:
         logger.info("Switched current document version id={}", target.id)
         category_name = await repo.get_category_name(getattr(target, "category_id", None))
         return self._to_response(target, category_name=category_name)
+
+    async def submit_document_for_review(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc_id: int,
+    ) -> DocumentResponse:
+        repo = DocumentRepository(db, user_id=user_id)
+        existing = await repo.get_by_id_for_user(doc_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Document not found")
+        self._assert_can_submit_for_review(existing)
+        doc = await repo.update_status(
+            doc_id,
+            status=DOC_STATUS_PENDING_REVIEW,
+        )
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        category_name = await repo.get_category_name(getattr(doc, "category_id", None))
+        return self._to_response(doc, category_name=category_name)
+
+    async def approve_document(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc_id: int,
+    ) -> DocumentResponse:
+        repo = DocumentRepository(db, user_id=user_id)
+        existing = await repo.get_by_id_for_user(doc_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Document not found")
+        self._assert_can_approve(existing)
+        doc = await repo.update_status(
+            doc_id,
+            status=DOC_STATUS_APPROVED,
+            reviewer_id=user_id,
+        )
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        category_name = await repo.get_category_name(getattr(doc, "category_id", None))
+        return self._to_response(doc, category_name=category_name)
+
+    async def reject_document(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc_id: int,
+    ) -> DocumentResponse:
+        repo = DocumentRepository(db, user_id=user_id)
+        existing = await repo.get_by_id_for_user(doc_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Document not found")
+        self._assert_can_reject(existing)
+        doc = await repo.update_status(
+            doc_id,
+            status=DOC_STATUS_DRAFT,
+            reviewer_id=user_id,
+        )
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        category_name = await repo.get_category_name(getattr(doc, "category_id", None))
+        return self._to_response(doc, category_name=category_name)
+
+    async def publish_document(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc_id: int,
+    ) -> DocumentResponse:
+        repo = DocumentRepository(db, user_id=user_id)
+        existing = await repo.get_by_id_for_user(doc_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Document not found")
+        self._assert_can_publish(existing)
+        team_id = await self._resolve_document_team_id(db=db, user_id=user_id, doc=existing)
+        sensitive_check = await get_sensitive_word_service().check_text(
+            scene="document_publish",
+            text=str(getattr(existing, "content", "") or ""),
+            team_id=team_id,
+            db=db,
+        )
+        if sensitive_check.blocked:
+            matched = "、".join(sensitive_check.matched_words[:5])
+            suffix = "等敏感词" if len(sensitive_check.matched_words) > 5 else "敏感词"
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Document contains {matched}{suffix} and cannot be published"
+                    if matched
+                    else "Document contains sensitive content and cannot be published"
+                ),
+            )
+        doc = await repo.update_status(
+            doc_id,
+            status=DOC_STATUS_PUBLISHED,
+            reviewer_id=user_id,
+            publisher_id=user_id,
+        )
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        category_name = await repo.get_category_name(getattr(doc, "category_id", None))
+        return self._to_response(doc, category_name=category_name)
+
+    async def unpublish_document(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc_id: int,
+    ) -> DocumentResponse:
+        repo = DocumentRepository(db, user_id=user_id)
+        existing = await repo.get_by_id_for_user(doc_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Document not found")
+        self._assert_can_unpublish(existing)
+        doc = await repo.update_status(
+            doc_id,
+            status=DOC_STATUS_APPROVED,
+            reviewer_id=user_id,
+            publisher_id=None,
+        )
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        category_name = await repo.get_category_name(getattr(doc, "category_id", None))
+        return self._to_response(doc, category_name=category_name)
 
     async def delete_documents_batch(
         self,

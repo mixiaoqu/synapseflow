@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, AsyncGenerator, Callable, Optional
 
+from loguru import logger
+
 from app.agents.prompts.kb_chat import build_kb_chat_answer_prompt
 from app.agents.states import KbChatState
 from app.services.chat_memory import format_chat_history
@@ -87,8 +89,25 @@ async def generate_kb_chat_answer_text(
 
     resolved_llm_factory = llm_factory or _get_default_llm_factory()
     llm = resolved_llm_factory()
-    response = await llm.ainvoke(_build_prompt(state))
-    return _coerce_text(getattr(response, "content", response))
+    prompt = _build_prompt(state)
+    try:
+        logger.info(
+            "[KB Answer] invoking LLM | query_len={} context_len={} retrieved_count={}",
+            len(state.get("query") or ""),
+            len(state.get("context") or ""),
+            len(state.get("retrieved_docs") or []),
+        )
+        response = await llm.ainvoke(prompt)
+        return _coerce_text(getattr(response, "content", response))
+    except Exception as exc:
+        logger.exception(
+            "[KB Answer] LLM invoke failed | query_len={} context_len={} retrieved_count={} error={}",
+            len(state.get("query") or ""),
+            len(state.get("context") or ""),
+            len(state.get("retrieved_docs") or []),
+            exc,
+        )
+        raise
 
 
 async def stream_kb_chat_answer_text(
@@ -106,12 +125,29 @@ async def stream_kb_chat_answer_text(
 
     resolved_llm_factory = llm_factory or _get_default_llm_factory()
     llm = resolved_llm_factory()
-    async for chunk in llm.astream(_build_prompt(state)):
-        text = _coerce_text(getattr(chunk, "content", None))
-        if text:
-            if stream_writer is not None:
-                stream_writer({"node_id": "answer", "text": text})
-            yield text
+    prompt = _build_prompt(state)
+    logger.info(
+        "[KB Answer] streaming LLM | query_len={} context_len={} retrieved_count={}",
+        len(state.get("query") or ""),
+        len(state.get("context") or ""),
+        len(state.get("retrieved_docs") or []),
+    )
+    try:
+        async for chunk in llm.astream(prompt):
+            text = _coerce_text(getattr(chunk, "content", None))
+            if text:
+                if stream_writer is not None:
+                    stream_writer({"node_id": "answer", "text": text})
+                yield text
+    except Exception as exc:
+        logger.exception(
+            "[KB Answer] LLM stream failed | query_len={} context_len={} retrieved_count={} error={}",
+            len(state.get("query") or ""),
+            len(state.get("context") or ""),
+            len(state.get("retrieved_docs") or []),
+            exc,
+        )
+        raise
 
 
 def build_user_kb_generate_answer_node(

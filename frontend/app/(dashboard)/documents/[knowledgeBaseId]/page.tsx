@@ -429,7 +429,7 @@ export default function KnowledgeBaseDetailPage() {
   useEffect(() => {
     if (!Number.isFinite(kbId) || kbId <= 0) {
       toast.error("知识库 ID 无效");
-      router.push("/documents");
+      router.push("/admin/documents");
     }
   }, [kbId, router]);
 
@@ -472,7 +472,7 @@ export default function KnowledgeBaseDetailPage() {
 
         if (!found) {
           toast.error("未找到该知识库，或当前账号无权限访问");
-          router.push("/documents");
+          router.push("/admin/documents");
           return;
         }
 
@@ -778,7 +778,7 @@ export default function KnowledgeBaseDetailPage() {
       title: "离开当前文档工作台？",
       description: "你还没有保存当前修改。现在返回知识库列表，会直接丢失这部分编辑内容。",
       confirmLabel: "放弃修改并返回",
-      onConfirm: () => router.push("/documents"),
+      onConfirm: () => router.push("/admin/documents"),
     });
   };
 
@@ -934,7 +934,7 @@ export default function KnowledgeBaseDetailPage() {
         try {
           await deleteKnowledgeBase(kb.id);
           toast.success("知识库已删除");
-          router.push("/documents");
+          router.push("/admin/documents");
         } catch (error) {
           toast.error(error instanceof Error ? error.message : "删除失败");
         } finally {

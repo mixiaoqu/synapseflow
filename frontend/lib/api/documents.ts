@@ -1,6 +1,13 @@
 import { apiClient } from "./client";
 
 export type DocumentIndexStatus = "queued" | "processing" | "indexed" | "failed";
+export type DocumentLifecycleStatus =
+  | "draft"
+  | "indexed"
+  | "pending_review"
+  | "approved"
+  | "published"
+  | "archived";
 
 export type DocumentListItem = {
   id: number;
@@ -17,6 +24,11 @@ export type DocumentListItem = {
   category_id: number | null;
   category_name: string | null;
   source_path: string | null;
+  status: DocumentLifecycleStatus;
+  published_at: string | null;
+  published_by: number | null;
+  reviewed_at: string | null;
+  reviewed_by: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -32,6 +44,11 @@ export type DocumentDetail = {
   category_id: number | null;
   category_name: string | null;
   source_path: string | null;
+  status: DocumentLifecycleStatus;
+  published_at: string | null;
+  published_by: number | null;
+  reviewed_at: string | null;
+  reviewed_by: number | null;
   index_status: DocumentIndexStatus;
   index_error: string | null;
   indexed_at: string | null;
@@ -100,6 +117,7 @@ export async function listDocuments(params: {
   team_id?: number | null;
   knowledge_base_id?: number | null;
   category_id?: number | null;
+  status?: DocumentLifecycleStatus | null;
 }): Promise<{
   items: DocumentListItem[];
   total: number;
@@ -118,6 +136,9 @@ export async function listDocuments(params: {
   }
   if (params.category_id !== undefined && params.category_id !== null) {
     sp.set("category_id", String(params.category_id));
+  }
+  if (params.status) {
+    sp.set("status", params.status);
   }
 
   const q = sp.toString();
@@ -241,4 +262,24 @@ export async function deleteDocumentsBatch(
   const sp = new URLSearchParams();
   for (const id of ids) sp.append("ids", String(id));
   return apiClient.delete(`/api/v1/documents/batch/delete?${sp.toString()}`);
+}
+
+export async function submitDocumentForReview(docId: number): Promise<DocumentDetail> {
+  return apiClient.post(`/api/v1/documents/${docId}/submit-for-review`, {});
+}
+
+export async function approveDocument(docId: number): Promise<DocumentDetail> {
+  return apiClient.post(`/api/v1/documents/${docId}/approve`, {});
+}
+
+export async function rejectDocument(docId: number): Promise<DocumentDetail> {
+  return apiClient.post(`/api/v1/documents/${docId}/reject`, {});
+}
+
+export async function publishDocument(docId: number): Promise<DocumentDetail> {
+  return apiClient.post(`/api/v1/documents/${docId}/publish`, {});
+}
+
+export async function unpublishDocument(docId: number): Promise<DocumentDetail> {
+  return apiClient.post(`/api/v1/documents/${docId}/unpublish`, {});
 }

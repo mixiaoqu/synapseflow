@@ -67,7 +67,11 @@ function JobCard({ job }: { job: ActiveIndexingJob }) {
   );
 }
 
-export function BackgroundTasksPanel() {
+export function BackgroundTasksPanel({
+  documentsHref = "/documents",
+}: {
+  documentsHref?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<IndexingPanelSummary | null>(null);
@@ -230,7 +234,7 @@ export function BackgroundTasksPanel() {
 
           <div className="border-t border-slate-200 bg-slate-50 px-5 py-3">
             <Link
-              href="/documents"
+              href={documentsHref}
               className="inline-flex items-center text-sm font-medium text-sky-700 transition hover:text-sky-900"
             >
               {t("\u524d\u5f80\u6587\u6863\u5e93\u67e5\u770b\u8be6\u60c5")}

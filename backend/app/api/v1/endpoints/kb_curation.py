@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import require_review_roles
 from app.application.kb_curation_service import kb_curation_service
 from app.db.models import User
 from app.models.schemas.qa import QARequest, QAResponse
@@ -14,7 +14,7 @@ router = APIRouter()
 @router.post("/invoke", response_model=QAResponse)
 async def kb_curation_invoke(
     request: QARequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_review_roles),
 ):
     """Synchronously run KB curation for the current user."""
     try:
@@ -26,7 +26,7 @@ async def kb_curation_invoke(
 @router.post("/stream")
 async def kb_curation_stream(
     request: QARequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_review_roles),
 ):
     """Stream KB curation output for the current user via SSE."""
     return StreamingResponse(

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable
+
+from loguru import logger
 
 from app.agents.runtime import AgentEventType
 from app.application.agent_service import BaseAgentService
@@ -16,11 +19,15 @@ from app.application.stream_events import (
     emit_start,
 )
 from app.application.workflow_meta import get_node_label
+from app.db.session import AsyncSessionLocal
+from app.repositories.kb_chat_log_repository import KbChatLogRepository
+from app.services.document_lifecycle import VISIBLE_ASK_DOCUMENT_STATUSES
 from app.services.chat_memory import (
     ChatMemoryContext,
     ChatMemoryStore,
     DatabaseChatMemoryStore,
 )
+from app.services.sensitive_word_service import SensitiveWordCheckResult, get_sensitive_word_service
 
 if TYPE_CHECKING:
     from app.models.schemas.kb_chat import (
@@ -39,6 +46,7 @@ class KbChatService(BaseAgentService):
         llm_factory: Callable[[], Any] | None = None,
         graph: Any | None = None,
         memory_store: ChatMemoryStore | None = None,
+        sensitive_word_service: Any | None = None,
     ):
         if llm_factory is None:
             from app.core.llm import get_llm_for_generation
@@ -48,6 +56,7 @@ class KbChatService(BaseAgentService):
         self._llm_factory = llm_factory
         self._graph = graph
         self._memory_store = memory_store or DatabaseChatMemoryStore()
+        self._sensitive_word_service = sensitive_word_service or get_sensitive_word_service()
 
     def build_initial_state(
         self,
@@ -64,6 +73,7 @@ class KbChatService(BaseAgentService):
         history = list(chat_history or [])
         context = self.build_context(
             user_id=user_id,
+            team_id=getattr(request, "team_id", None),
             knowledge_base_id=request.knowledge_base_id,
             category_id=getattr(request, "category_id", None),
             request_id=resolved_session_id,
@@ -78,6 +88,10 @@ class KbChatService(BaseAgentService):
                 "chat_history": history,
                 "memory_summary": memory_summary,
                 "retrieval_queries": [],
+                "allowed_document_statuses": list(
+                    getattr(request, "allowed_document_statuses", None)
+                    or VISIBLE_ASK_DOCUMENT_STATUSES
+                ),
                 "retrieved_docs": [],
                 "context": "",
                 "answer": "",
@@ -121,6 +135,9 @@ class KbChatService(BaseAgentService):
         *,
         state: dict[str, Any],
         answer: str,
+        answer_status: str | None = None,
+        log_id: int | None = None,
+        retrieved_docs: list[dict[str, Any]] | None = None,
     ) -> None:
         session_id = state.get("session_id")
         user_id = state.get("user_id")
@@ -129,10 +146,24 @@ class KbChatService(BaseAgentService):
         await self._memory_store.save_turn(
             user_id=int(user_id),
             session_id=session_id,
+            team_id=state.get("team_id"),
             knowledge_base_id=state.get("knowledge_base_id"),
             category_id=state.get("category_id"),
             user_message=state.get("query", ""),
             assistant_message=answer,
+            assistant_metadata={
+                "answer_status": answer_status,
+                "log_id": log_id,
+                "retrieval_status": state.get("kb_retrieval_status"),
+                "retrieval_queries": list(state.get("retrieval_queries") or []),
+                "retrieval_funnel": (
+                    dict(state.get("retrieval_funnel") or {})
+                    if isinstance(state.get("retrieval_funnel"), dict)
+                    else None
+                ),
+                "answer_context": state.get("context"),
+                "retrieved_docs": list(retrieved_docs or []),
+            },
         )
 
     @staticmethod
@@ -164,19 +195,155 @@ class KbChatService(BaseAgentService):
             return {"answer_length": len(state.get("answer", ""))}
         return {"keys": sorted(state.keys())}
 
+    @staticmethod
+    def _resolve_answer_status(result: dict[str, Any]) -> str:
+        retrieval_status = result.get("kb_retrieval_status")
+        if retrieval_status == "blocked_sensitive":
+            return "blocked"
+        if retrieval_status in {"empty_collection", "empty_knowledge_base", "no_hits"}:
+            return "insufficient"
+        if result.get("answer"):
+            return "answered"
+        return "partial"
+
+    @staticmethod
+    def _resolve_confidence(answer_status: str, retrieved_count: int) -> str | None:
+        if answer_status == "blocked":
+            return None
+        if answer_status != "answered":
+            return "low"
+        if retrieved_count >= 3:
+            return "high"
+        if retrieved_count >= 1:
+            return "medium"
+        return "low"
+
+    async def _record_log(
+        self,
+        *,
+        state: dict[str, Any],
+        result: dict[str, Any],
+        latency_ms: int | None,
+    ) -> int | None:
+        user_id = state.get("user_id")
+        if not user_id:
+            return None
+
+        try:
+            async with AsyncSessionLocal() as db:
+                repo = KbChatLogRepository(db)
+                row = await repo.create_log(
+                    user_id=int(user_id),
+                    session_id=state.get("session_id"),
+                    knowledge_base_id=state.get("knowledge_base_id"),
+                    category_id=state.get("category_id"),
+                    query=str(state.get("query") or ""),
+                    answer_text=str(result.get("answer") or ""),
+                    answer_status=self._resolve_answer_status(result),
+                    retrieval_status=result.get("kb_retrieval_status"),
+                    retrieved_count=len(result.get("retrieved_docs", []) or []),
+                    latency_ms=latency_ms,
+                )
+                return row.id
+        except Exception as exc:
+            logger.exception("[KB Chat] failed to persist log: {}", exc)
+            return None
+
+    @staticmethod
+    def _build_blocked_result(
+        state: dict[str, Any],
+        check_result: SensitiveWordCheckResult,
+    ) -> dict[str, Any]:
+        matched = "、".join(check_result.matched_words[:5])
+        suffix = "等敏感词" if len(check_result.matched_words) > 5 else "敏感词"
+        answer = (
+            f"输入包含{matched}{suffix}，当前请求已被拦截。"
+            if matched
+            else "输入包含敏感词，当前请求已被拦截。"
+        )
+        return {
+            **state,
+            "answer": answer,
+            "retrieved_docs": [],
+            "kb_retrieval_status": "blocked_sensitive",
+            "retrieval_queries": [],
+            "retrieval_funnel": None,
+            "context": "",
+            "matched_sensitive_words": list(check_result.matched_words),
+        }
+
+    async def _check_sensitive_query(
+        self,
+        *,
+        request: "KbChatRequest",
+    ) -> SensitiveWordCheckResult:
+        return await self._sensitive_word_service.check_text(
+            scene="query",
+            text=request.query,
+            team_id=getattr(request, "team_id", None),
+        )
+
     async def invoke(self, request: "KbChatRequest", *, user_id: int) -> "KbChatResponse":
         """Run the chat graph and map its result to the response schema."""
 
         from app.models.schemas.kb_chat import KbChatResponse
 
         state = await self._prepare_state(request, user_id=user_id)
+        sensitive_check = await self._check_sensitive_query(request=request)
+        if sensitive_check.blocked:
+            result = self._build_blocked_result(state, sensitive_check)
+            answer_status = self._resolve_answer_status(result)
+            log_id = await self._record_log(
+                state=state,
+                result=result,
+                latency_ms=0,
+            )
+            await self._save_turn(
+                state=result,
+                answer=result["answer"],
+                answer_status=answer_status,
+                log_id=log_id,
+                retrieved_docs=[],
+            )
+            return KbChatResponse(
+                answer=result["answer"],
+                answer_text=result["answer"],
+                answer_status=answer_status,
+                confidence_level=None,
+                backend_citations=[],
+                retrieved_docs=[],
+                session_id=state.get("session_id"),
+                log_id=log_id,
+            )
+
+        started_at = perf_counter()
         result = await self._get_graph().ainvoke(state)
         answer = result.get("answer", "")
-        await self._save_turn(state=state, answer=answer)
+        answer_status = self._resolve_answer_status(result)
+        log_id = await self._record_log(
+            state=state,
+            result=result,
+            latency_ms=int((perf_counter() - started_at) * 1000),
+        )
+        await self._save_turn(
+            state=result,
+            answer=answer,
+            answer_status=answer_status,
+            log_id=log_id,
+            retrieved_docs=list(result.get("retrieved_docs", []) or []),
+        )
         return KbChatResponse(
             answer=answer,
+            answer_text=answer,
+            answer_status=answer_status,
+            confidence_level=self._resolve_confidence(
+                answer_status,
+                len(result.get("retrieved_docs", []) or []),
+            ),
+            backend_citations=result.get("retrieved_docs", []),
             retrieved_docs=result.get("retrieved_docs", []),
             session_id=state.get("session_id"),
+            log_id=log_id,
         )
 
     async def list_sessions(
@@ -195,6 +362,7 @@ class KbChatService(BaseAgentService):
                 session_id=record.session_id,
                 title=record.title,
                 preview=record.preview,
+                team_id=record.team_id,
                 knowledge_base_id=record.knowledge_base_id,
                 knowledge_base_name=record.knowledge_base_name,
                 category_id=record.category_id,
@@ -227,6 +395,7 @@ class KbChatService(BaseAgentService):
             session_id=record.session_id,
             title=record.title,
             preview=record.preview,
+            team_id=record.team_id,
             knowledge_base_id=record.knowledge_base_id,
             knowledge_base_name=record.knowledge_base_name,
             category_id=record.category_id,
@@ -238,10 +407,36 @@ class KbChatService(BaseAgentService):
                 KbChatSessionMessage(
                     role=str(message.get("role") or ""),
                     content=str(message.get("content") or ""),
+                    retrieved_docs=list(
+                        ((message.get("metadata") or {}).get("retrieved_docs") or [])
+                    ),
+                    answer_status=(
+                        (message.get("metadata") or {}).get("answer_status")
+                        if isinstance((message.get("metadata") or {}).get("answer_status"), str)
+                        else None
+                    ),
+                    log_id=(
+                        (message.get("metadata") or {}).get("log_id")
+                        if isinstance((message.get("metadata") or {}).get("log_id"), int)
+                        else None
+                    ),
                     created_at=message["created_at"],
                 )
                 for message in record.messages
             ],
+        )
+
+    async def delete_session(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+    ) -> bool:
+        """Delete one persisted KB chat session for the current user."""
+
+        return await self._memory_store.delete_session(
+            user_id=user_id,
+            session_id=session_id,
         )
 
     async def stream(
@@ -257,9 +452,40 @@ class KbChatService(BaseAgentService):
         graph = self._get_graph()
         started_nodes: set[str] = set()
         final_state = dict(state)
+        started_at = perf_counter()
 
         try:
             yield emit_start(run_id, "Starting knowledge-base chat")
+            sensitive_check = await self._check_sensitive_query(request=request)
+            if sensitive_check.blocked:
+                blocked_state = self._build_blocked_result(state, sensitive_check)
+                answer_status = self._resolve_answer_status(blocked_state)
+                log_id = await self._record_log(
+                    state=state,
+                    result=blocked_state,
+                    latency_ms=0,
+                )
+                await self._save_turn(
+                    state=blocked_state,
+                    answer=blocked_state["answer"],
+                    answer_status=answer_status,
+                    log_id=log_id,
+                    retrieved_docs=[],
+                )
+                yield emit_complete(
+                    run_id,
+                    {
+                        "answer": blocked_state["answer"],
+                        "answer_text": blocked_state["answer"],
+                        "answer_status": answer_status,
+                        "confidence_level": None,
+                        "backend_citations": [],
+                        "retrieved_docs": [],
+                        "session_id": state.get("session_id"),
+                        "log_id": log_id,
+                    },
+                )
+                return
 
             async for chunk in graph.astream(
                 state,
@@ -323,18 +549,39 @@ class KbChatService(BaseAgentService):
                         )
 
             answer = final_state.get("answer", "")
-            await self._save_turn(state=state, answer=answer)
+            answer_status = self._resolve_answer_status(final_state)
+            log_id = await self._record_log(
+                state=state,
+                result=final_state,
+                latency_ms=int((perf_counter() - started_at) * 1000),
+            )
+            await self._save_turn(
+                state=final_state,
+                answer=answer,
+                answer_status=answer_status,
+                log_id=log_id,
+                retrieved_docs=list(final_state.get("retrieved_docs", []) or []),
+            )
             yield emit_complete(
                 run_id,
                 {
                     "answer": answer,
+                    "answer_text": answer,
+                    "answer_status": answer_status,
+                    "confidence_level": self._resolve_confidence(
+                        answer_status,
+                        len(final_state.get("retrieved_docs", []) or []),
+                    ),
+                    "backend_citations": final_state.get("retrieved_docs", []),
                     "retrieved_docs": final_state.get("retrieved_docs", []),
                     "session_id": state.get("session_id"),
+                    "log_id": log_id,
                 },
             )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            logger.exception("[KB Chat] stream failed after retrieval/answer stage: {}", exc)
             yield emit_error(run_id, str(exc))
 
 

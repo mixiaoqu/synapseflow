@@ -1,9 +1,9 @@
 """Team and team-member repository."""
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Team, TeamMember
+from app.db.models import KnowledgeBase, Team, TeamMember
 
 
 class TeamRepository:
@@ -14,13 +14,42 @@ class TeamRepository:
         self.user_id = user_id
 
     async def list_teams(self) -> list[Team]:
+        result = await self.db.execute(select(Team).order_by(Team.created_at.desc(), Team.id.desc()))
+        return list(result.scalars().all())
+
+    async def list_user_teams(self) -> list[Team]:
+        """List teams visible to the current user for scoped operations."""
         result = await self.db.execute(
             select(Team)
-            .join(TeamMember, TeamMember.team_id == Team.id)
-            .where(TeamMember.user_id == self.user_id)
-            .order_by(Team.created_at.desc())
+            .outerjoin(TeamMember, TeamMember.team_id == Team.id)
+            .outerjoin(KnowledgeBase, KnowledgeBase.team_id == Team.id)
+            .where(
+                or_(
+                    TeamMember.user_id == self.user_id,
+                    KnowledgeBase.user_id == self.user_id,
+                )
+            )
+            .group_by(Team.id)
+            .order_by(Team.created_at.desc(), Team.id.desc())
         )
         return list(result.scalars().all())
+
+    async def can_access_team(self, team_id: int) -> bool:
+        """Return whether the current user can access the given team."""
+        result = await self.db.execute(
+            select(Team.id)
+            .outerjoin(TeamMember, TeamMember.team_id == Team.id)
+            .outerjoin(KnowledgeBase, KnowledgeBase.team_id == Team.id)
+            .where(
+                Team.id == team_id,
+                or_(
+                    TeamMember.user_id == self.user_id,
+                    KnowledgeBase.user_id == self.user_id,
+                ),
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def create_team(
         self,
@@ -42,14 +71,7 @@ class TeamRepository:
         return team
 
     async def get_team(self, team_id: int) -> Team | None:
-        result = await self.db.execute(
-            select(Team)
-            .join(TeamMember, TeamMember.team_id == Team.id)
-            .where(
-                Team.id == team_id,
-                TeamMember.user_id == self.user_id,
-            )
-        )
+        result = await self.db.execute(select(Team).where(Team.id == team_id))
         return result.scalar_one_or_none()
 
     async def update_team(

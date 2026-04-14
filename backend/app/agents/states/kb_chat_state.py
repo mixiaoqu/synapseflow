@@ -15,6 +15,8 @@ class KbChatState(BaseAgentContext, total=False):
     chat_history: List[Dict[str, Any]]
     memory_summary: Optional[str]
     retrieval_queries: List[str]
+    retrieval_funnel: Dict[str, Any]
+    allowed_document_statuses: List[str]
     retrieved_docs: List[Dict[str, Any]]
     context: str
     answer: str

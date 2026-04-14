@@ -8,8 +8,9 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.config.registry import config_registry
-from app.db.models import Document
+from app.db.models import Document, KnowledgeBase
 from app.db.session import AsyncSessionLocal
+from app.repositories.access_scope import accessible_document_condition
 from app.services.embedding import embed_query
 from app.services.reranker import rerank
 from app.services.vector_store import reciprocal_rank_fusion_many, search, search_hybrid_rrf
@@ -69,19 +70,27 @@ def _apply_kb_context_budget(
 
 async def _knowledge_base_has_documents(
     *,
+    team_id: int | None,
     knowledge_base_id: int,
     category_id: int | None,
     user_id: int | None,
+    document_statuses: list[str] | None,
 ) -> bool:
     async with AsyncSessionLocal() as db:
         stmt = select(Document.id).where(
             Document.knowledge_base_id == knowledge_base_id,
             Document.is_current.is_(True),
         )
+        if team_id is not None:
+            stmt = stmt.join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id).where(
+                KnowledgeBase.team_id == team_id
+            )
         if category_id is not None:
             stmt = stmt.where(Document.category_id == category_id)
         if user_id is not None:
-            stmt = stmt.where(Document.user_id == user_id)
+            stmt = stmt.where(accessible_document_condition(user_id))
+        if document_statuses:
+            stmt = stmt.where(Document.status.in_(document_statuses))
         result = await db.execute(stmt.limit(1))
         return result.scalar_one_or_none() is not None
 
@@ -105,14 +114,71 @@ def _scaled_candidate_k(total_queries: int, base_k: int, floor: int) -> int:
     return max(floor, (base_k + total_queries - 1) // total_queries)
 
 
+def _build_retrieval_funnel(
+    *,
+    mode: str,
+    query_stats: list[dict[str, Any]],
+    recalled_count: int,
+    merged_count: int,
+    reranked_count: int,
+    context_count: int,
+) -> dict[str, Any]:
+    multi_query = len(query_stats) > 1
+    stages: list[dict[str, Any]] = [
+        {
+            "key": "recalled_candidates",
+            "label": "改写后总召回",
+            "chunk_count": recalled_count,
+            "note": (
+                "所有改写查询召回的候选片段总数（包含不同查询间的重复命中）"
+                if multi_query
+                else "当前查询初始召回的候选片段数"
+            ),
+        }
+    ]
+    if multi_query:
+        stages.append(
+            {
+                "key": "merged_candidates",
+                "label": "融合去重后",
+                "chunk_count": merged_count,
+                "note": "多条改写查询经 RRF 融合后的候选片段数",
+            }
+        )
+    stages.extend(
+        [
+            {
+                "key": "reranked_candidates",
+                "label": "重排过滤后",
+                "chunk_count": reranked_count,
+                "note": "经过 rerank 和阈值过滤后保留下来的片段数",
+            },
+            {
+                "key": "context_chunks",
+                "label": "进入回答上下文",
+                "chunk_count": context_count,
+                "note": "最终拼进回答上下文的片段数",
+            },
+        ]
+    )
+    return {
+        "mode": mode,
+        "query_count": len(query_stats),
+        "rewritten_queries": query_stats,
+        "stages": stages,
+    }
+
+
 async def _retrieve_candidate_rows(
     *,
     query: str,
+    team_id: Optional[int],
     knowledge_base_id: Optional[int],
     category_id: Optional[int],
     user_id: int | None,
     recall_k: int,
     lexical_k: int | None = None,
+    document_statuses: list[str] | None = None,
 ) -> tuple[List[dict], bool]:
     rag = config_registry.get_rag_config().retrieval
     query_embedding = await asyncio.to_thread(embed_query, query)
@@ -128,8 +194,10 @@ async def _retrieve_candidate_rows(
                 k_dense=recall_k,
                 k_lexical=lexical_limit,
                 user_id=user_id,
+                team_id=team_id,
                 knowledge_base_id=knowledge_base_id,
                 category_id=category_id,
+                document_statuses=document_statuses,
                 rrf_k=rag.rrf_k,
                 pool_limit=max(pool_limit, 1),
             )
@@ -139,16 +207,20 @@ async def _retrieve_candidate_rows(
                 query_embedding,
                 k=recall_k,
                 user_id=user_id,
+                team_id=team_id,
                 knowledge_base_id=knowledge_base_id,
                 category_id=category_id,
+                document_statuses=document_statuses,
             )
 
     has_documents = True
     if knowledge_base_id is not None and not results:
         has_documents = await _knowledge_base_has_documents(
+            team_id=team_id,
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             user_id=user_id,
+            document_statuses=document_statuses,
         )
 
     return results, has_documents
@@ -264,6 +336,7 @@ def _build_retrieval_output(
     llm_ref_k: int | None,
     query_count: int,
     context_budget: int | None,
+    retrieval_funnel: dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     rag = config_registry.get_rag_config().retrieval
 
@@ -310,6 +383,7 @@ def _build_retrieval_output(
                 "retrieved_docs": [],
                 "context": "(This knowledge base has no indexed documents yet.)",
                 "kb_retrieval_status": "empty_knowledge_base",
+                "retrieval_funnel": retrieval_funnel,
             }
 
         logger.warning(
@@ -322,6 +396,7 @@ def _build_retrieval_output(
             "retrieved_docs": [],
             "context": "(No relevant documents were found. Please confirm the KB has indexed content.)",
             "kb_retrieval_status": "no_hits",
+            "retrieval_funnel": retrieval_funnel,
         }
 
     retrieved_docs = []
@@ -353,12 +428,29 @@ def _build_retrieval_output(
         "retrieved_docs": kept,
         "context": context,
         "kb_retrieval_status": "ok",
+        "retrieval_funnel": (
+            {
+                **retrieval_funnel,
+                "stages": [
+                    *list((retrieval_funnel or {}).get("stages") or [])[:-1],
+                    {
+                        "key": "context_chunks",
+                        "label": "进入回答上下文",
+                        "chunk_count": len(kept),
+                        "note": "最终拼进回答上下文的片段数",
+                    },
+                ],
+            }
+            if isinstance(retrieval_funnel, dict)
+            else retrieval_funnel
+        ),
     }
 
 
 async def run_kb_retrieval(
     *,
     query: str,
+    team_id: Optional[int],
     knowledge_base_id: Optional[int],
     category_id: Optional[int] = None,
     iteration: int = 0,
@@ -366,6 +458,7 @@ async def run_kb_retrieval(
     user_id: int | None = None,
     result_limit: int | None = None,
     context_budget: int | None = None,
+    document_statuses: list[str] | None = None,
 ) -> Dict[str, Any]:
     """Retrieve KB chunks and return prompt-ready state."""
 
@@ -376,16 +469,28 @@ async def run_kb_retrieval(
 
     results, has_documents = await _retrieve_candidate_rows(
         query=query,
+        team_id=team_id,
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
         user_id=user_id,
         recall_k=recall_k,
+        document_statuses=document_statuses,
     )
+    raw_count = len(results)
     results = await _finalize_ranked_rows(
         query=query,
         results=results,
         final_top_k=final_top_k,
         iteration=iteration,
+    )
+    mode = "hybrid" if rag.hybrid_enabled else "vector"
+    retrieval_funnel = _build_retrieval_funnel(
+        mode=mode,
+        query_stats=[{"query": query, "chunk_count": raw_count}],
+        recalled_count=raw_count,
+        merged_count=raw_count,
+        reranked_count=len(results),
+        context_count=len(results),
     )
     return _build_retrieval_output(
         results=results,
@@ -399,6 +504,7 @@ async def run_kb_retrieval(
         llm_ref_k=llm_ref_k,
         query_count=1,
         context_budget=context_budget,
+        retrieval_funnel=retrieval_funnel,
     )
 
 
@@ -406,6 +512,7 @@ async def run_multi_query_kb_retrieval(
     *,
     query: str,
     retrieval_queries: list[str],
+    team_id: Optional[int],
     knowledge_base_id: Optional[int],
     category_id: Optional[int] = None,
     iteration: int = 0,
@@ -413,6 +520,7 @@ async def run_multi_query_kb_retrieval(
     user_id: int | None = None,
     result_limit: int | None = None,
     context_budget: int | None = None,
+    document_statuses: list[str] | None = None,
 ) -> Dict[str, Any]:
     """Retrieve KB chunks from multiple rewritten queries and fuse them with RRF."""
 
@@ -420,6 +528,7 @@ async def run_multi_query_kb_retrieval(
     if len(queries) <= 1:
         output = await run_kb_retrieval(
             query=queries[0] if queries else query,
+            team_id=team_id,
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             iteration=iteration,
@@ -427,6 +536,7 @@ async def run_multi_query_kb_retrieval(
             user_id=user_id,
             result_limit=result_limit,
             context_budget=context_budget,
+            document_statuses=document_statuses,
         )
         output["retrieval_queries"] = queries or [query]
         return output
@@ -443,17 +553,24 @@ async def run_multi_query_kb_retrieval(
         *[
             _retrieve_candidate_rows(
                 query=item,
+                team_id=team_id,
                 knowledge_base_id=knowledge_base_id,
                 category_id=category_id,
                 user_id=user_id,
                 recall_k=per_query_recall_k,
                 lexical_k=per_query_lexical_k,
+                document_statuses=document_statuses,
             )
             for item in queries
         ]
     )
 
     rankings = [rows for rows, _ in batches]
+    query_stats = [
+        {"query": item, "chunk_count": len(rows)}
+        for item, (rows, _) in zip(queries, batches, strict=False)
+    ]
+    recalled_count = sum(item["chunk_count"] for item in query_stats)
     has_documents = all(has_docs for _, has_docs in batches)
     fused_limit = min(rag.hybrid_pool_limit, max(final_top_k, final_top_k * len(queries)))
     fused_results = reciprocal_rank_fusion_many(
@@ -468,6 +585,14 @@ async def run_multi_query_kb_retrieval(
         final_top_k=final_top_k,
         iteration=iteration,
     )
+    retrieval_funnel = _build_retrieval_funnel(
+        mode="hybrid" if rag.hybrid_enabled else "vector",
+        query_stats=query_stats,
+        recalled_count=recalled_count,
+        merged_count=len(fused_results),
+        reranked_count=len(results),
+        context_count=len(results),
+    )
     output = _build_retrieval_output(
         results=results,
         has_documents=has_documents,
@@ -480,6 +605,7 @@ async def run_multi_query_kb_retrieval(
         llm_ref_k=llm_ref_k,
         query_count=len(queries),
         context_budget=context_budget,
+        retrieval_funnel=retrieval_funnel,
     )
     output["retrieval_queries"] = queries
     return output

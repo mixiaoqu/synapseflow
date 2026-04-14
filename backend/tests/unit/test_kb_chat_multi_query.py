@@ -84,6 +84,7 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
         "knowledge_base_id": 9,
         "category_id": 4,
         "user_id": 42,
+        "allowed_document_statuses": ["published"],
     }
     result = asyncio.run(user_kb_retrieve_node(state))
 
@@ -96,3 +97,4 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
     assert captured["query"] == "How do I configure the generation model?"
     assert captured["knowledge_base_id"] == 9
     assert captured["category_id"] == 4
+    assert captured["document_statuses"] == ["published"]

@@ -9,6 +9,8 @@ from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, DocumentCategory, KnowledgeBase
+from app.repositories.access_scope import accessible_document_condition, accessible_knowledge_base_condition
+from app.services.document_lifecycle import DOC_STATUS_DRAFT
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
     INDEX_STATUS_INDEXED,
@@ -16,6 +18,7 @@ from app.services.document_index_state import (
     INDEX_STATUS_QUEUED,
     compute_content_hash,
 )
+from app.utils.time import utc_now
 
 
 @dataclass(slots=True)
@@ -66,6 +69,7 @@ class DocumentRepository:
         knowledge_base_id: int | None = None,
         category_id: int | None = None,
         source_path: str | None = None,
+        status: str = DOC_STATUS_DRAFT,
         commit: bool = True,
     ) -> Document:
         """Create a document row and set its root_id in the same transaction."""
@@ -86,6 +90,7 @@ class DocumentRepository:
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             source_path=source_path,
+            status=status,
         )
         self.db.add(doc)
         await self.db.flush()
@@ -123,9 +128,10 @@ class DocumentRepository:
         team_id: int | None = None,
         knowledge_base_id: int | None = None,
         category_id: int | None = None,
+        status: str | None = None,
     ) -> tuple[list[tuple[Document, str | None, str | None]], int]:
         """Return paginated current documents plus knowledge-base/category names."""
-        base_filter = Document.user_id == self.user_id
+        base_filter = accessible_document_condition(self.user_id)
         base_filter = base_filter & Document.is_current.is_(True)
         if keyword and keyword.strip():
             base_filter = base_filter & Document.title.ilike(f"%{keyword.strip()}%")
@@ -139,6 +145,8 @@ class DocumentRepository:
                 base_filter = base_filter & Document.category_id.is_(None)
             else:
                 base_filter = base_filter & (Document.category_id == category_id)
+        if status:
+            base_filter = base_filter & (Document.status == status)
 
         count_query = (
             select(func.count())
@@ -189,7 +197,7 @@ class DocumentRepository:
             .join(KnowledgeBase, KnowledgeBase.id == DocumentCategory.knowledge_base_id)
             .where(
                 DocumentCategory.id == category_id,
-                KnowledgeBase.user_id == self.user_id,
+                accessible_knowledge_base_condition(self.user_id),
             )
         )
         return result.scalar_one_or_none()
@@ -204,7 +212,7 @@ class DocumentRepository:
         result = await self.db.execute(
             select(Document).where(
                 Document.id == doc_id,
-                Document.user_id == self.user_id,
+                accessible_document_condition(self.user_id),
             )
         )
         return result.scalar_one_or_none()
@@ -217,7 +225,7 @@ class DocumentRepository:
         root_id = getattr(doc, "root_id", None) or doc.id
         stmt = (
             select(Document)
-            .where(Document.root_id == root_id, Document.user_id == self.user_id)
+            .where(Document.root_id == root_id, accessible_document_condition(self.user_id))
             .order_by(Document.version.asc())
         )
         result = await self.db.execute(stmt)
@@ -235,6 +243,9 @@ class DocumentRepository:
         doc.index_error = None
         doc.indexed_at = None
         doc.version = (doc.version or 1) + 1
+        doc.status = DOC_STATUS_DRAFT
+        doc.published_at = None
+        doc.published_by = None
         await self.db.commit()
         await self.db.refresh(doc)
         return doc
@@ -245,7 +256,7 @@ class DocumentRepository:
             select(Document)
             .where(
                 Document.root_id == root_id,
-                Document.user_id == self.user_id,
+                accessible_document_condition(self.user_id),
                 Document.is_current.is_(True),
             )
             .order_by(
@@ -264,7 +275,7 @@ class DocumentRepository:
             update(Document)
             .where(
                 Document.root_id == root_id,
-                Document.user_id == self.user_id,
+                accessible_document_condition(self.user_id),
                 Document.is_current.is_(True),
             )
             .values(is_current=False)
@@ -275,7 +286,7 @@ class DocumentRepository:
         result = await self.db.execute(
             select(Document).where(
                 Document.root_id == root_id,
-                Document.user_id == self.user_id,
+                accessible_document_condition(self.user_id),
                 Document.is_latest.is_(True),
             )
         )
@@ -314,6 +325,11 @@ class DocumentRepository:
             knowledge_base_id=getattr(latest_doc or orig, "knowledge_base_id", None),
             category_id=getattr(latest_doc or orig, "category_id", None),
             source_path=getattr(latest_doc or orig, "source_path", None),
+            status=DOC_STATUS_DRAFT,
+            published_at=None,
+            published_by=None,
+            reviewed_at=None,
+            reviewed_by=None,
         )
         if latest_doc:
             latest_doc.is_latest = False
@@ -365,7 +381,7 @@ class DocumentRepository:
         result = await self.db.execute(
             select(Document).where(
                 Document.id.in_(ids),
-                Document.user_id == self.user_id,
+                accessible_document_condition(self.user_id),
             )
         )
         return list(result.scalars().all())
@@ -377,7 +393,7 @@ class DocumentRepository:
         result = await self.db.execute(
             select(Document).where(
                 Document.root_id.in_(root_ids),
-                Document.user_id == self.user_id,
+                accessible_document_condition(self.user_id),
             )
         )
         return list(result.scalars().all())
@@ -388,6 +404,35 @@ class DocumentRepository:
             await self.db.delete(doc)
         await self.db.commit()
         return len(docs)
+
+    async def update_status(
+        self,
+        doc_id: int,
+        *,
+        status: str,
+        reviewer_id: int | None = None,
+        publisher_id: int | None = None,
+        commit: bool = True,
+    ) -> Document | None:
+        doc = await self.get_by_id_for_user(doc_id)
+        if not doc:
+            return None
+        doc.status = status
+        if reviewer_id is not None:
+            doc.reviewed_by = reviewer_id
+            doc.reviewed_at = utc_now()
+        if publisher_id is not None:
+            doc.published_by = publisher_id
+            doc.published_at = utc_now()
+        elif status != "published":
+            doc.published_by = None
+            doc.published_at = None
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(doc)
+        else:
+            await self.db.flush()
+        return doc
 
     async def count_total(self) -> int:
         """Count all documents in the table."""
@@ -410,7 +455,7 @@ class DocumentRepository:
                 processing_count.label("processing"),
                 failed_count.label("failed"),
             ).where(
-                Document.user_id == self.user_id,
+                accessible_document_condition(self.user_id),
                 Document.is_current.is_(True),
             )
         )
@@ -440,7 +485,7 @@ class DocumentRepository:
             )
             .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
             .where(
-                Document.user_id == self.user_id,
+                accessible_document_condition(self.user_id),
                 Document.is_current.is_(True),
                 Document.index_status == INDEX_STATUS_FAILED,
             )
@@ -475,7 +520,7 @@ class DocumentRepository:
             )
             .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
             .where(
-                Document.user_id == self.user_id,
+                accessible_document_condition(self.user_id),
                 Document.is_current.is_(True),
                 Document.index_status.in_((INDEX_STATUS_QUEUED, INDEX_STATUS_PROCESSING)),
             )
@@ -514,7 +559,7 @@ class DocumentRepository:
             )
             .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
             .where(
-                Document.user_id == self.user_id,
+                accessible_document_condition(self.user_id),
                 Document.is_current.is_(True),
                 or_(*filters),
             )

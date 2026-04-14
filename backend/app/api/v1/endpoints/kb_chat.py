@@ -41,6 +41,22 @@ async def kb_chat_session_detail(
     return session
 
 
+@router.delete("/sessions/{session_id}", status_code=204)
+async def kb_chat_delete_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Delete one persisted KB chat session for the current user."""
+
+    deleted = await get_kb_chat_service().delete_session(
+        user_id=current_user.id,
+        session_id=session_id,
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    return None
+
+
 @router.post("/invoke", response_model=KbChatResponse)
 async def kb_chat_invoke(
     request: KbChatRequest,

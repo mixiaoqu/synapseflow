@@ -24,20 +24,24 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
         result = await run_multi_query_kb_retrieval(
             query=query,
             retrieval_queries=retrieval_queries,
+            team_id=state.get("team_id"),
             knowledge_base_id=state.get("knowledge_base_id"),
             category_id=state.get("category_id"),
             iteration=0,
             log_prefix="[User KB Retrieval]",
             user_id=state.get("user_id"),
+            document_statuses=state.get("allowed_document_statuses"),
         )
     else:
         result = await run_kb_retrieval(
             query=query,
+            team_id=state.get("team_id"),
             knowledge_base_id=state.get("knowledge_base_id"),
             category_id=state.get("category_id"),
             iteration=0,
             log_prefix="[User KB Retrieval]",
             user_id=state.get("user_id"),
+            document_statuses=state.get("allowed_document_statuses"),
         )
 
     result["retrieval_queries"] = retrieval_queries or [query]

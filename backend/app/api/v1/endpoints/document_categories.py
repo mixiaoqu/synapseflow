@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import require_content_roles
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.document_category import (
@@ -21,7 +21,7 @@ router = APIRouter()
 async def list_document_categories(
     knowledge_base_id: int = Query(..., description="Owning knowledge base id"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_content_roles),
 ):
     repo = DocumentCategoryRepository(db, user_id=current_user.id)
     rows = await repo.list_for_knowledge_base(knowledge_base_id)
@@ -42,7 +42,7 @@ async def list_document_categories(
 async def create_document_category(
     body: DocumentCategoryCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_content_roles),
 ):
     kb_repo = KnowledgeBaseRepository(db, user_id=current_user.id)
     knowledge_base = await kb_repo.get_by_id(body.knowledge_base_id)
@@ -73,7 +73,7 @@ async def update_document_category(
     category_id: int,
     body: DocumentCategoryUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_content_roles),
 ):
     repo = DocumentCategoryRepository(db, user_id=current_user.id)
     category = await repo.get_by_id(category_id)
@@ -104,7 +104,7 @@ async def update_document_category(
 async def delete_document_category(
     category_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_content_roles),
 ):
     repo = DocumentCategoryRepository(db, user_id=current_user.id)
     ok = await repo.delete(category_id)

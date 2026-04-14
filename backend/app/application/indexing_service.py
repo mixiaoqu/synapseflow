@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from loguru import logger
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.registry import config_registry
@@ -24,6 +24,7 @@ from app.services.document_index_state import (
     INDEX_STATUS_PROCESSING,
     INDEX_STATUS_QUEUED,
 )
+from app.services.document_lifecycle import DOC_STATUS_INDEXED, DOC_STATUS_PUBLISHED
 from app.services.document_indexer import (
     index_document,
     index_prepared_documents_batch,
@@ -464,6 +465,10 @@ class IndexingService:
                     index_status=INDEX_STATUS_INDEXED,
                     index_error=None,
                     indexed_at=indexed_at,
+                    status=case(
+                        (Document.status == DOC_STATUS_PUBLISHED, DOC_STATUS_PUBLISHED),
+                        else_=DOC_STATUS_INDEXED,
+                    ),
                 )
             )
             await db.commit()
@@ -710,6 +715,10 @@ class IndexingService:
                     index_status=INDEX_STATUS_INDEXED,
                     index_error=None,
                     indexed_at=indexed_at,
+                    status=case(
+                        (Document.status == DOC_STATUS_PUBLISHED, DOC_STATUS_PUBLISHED),
+                        else_=DOC_STATUS_INDEXED,
+                    ),
                 )
             )
             finalized_counts[document_id] = counts.get(document_id, 0)

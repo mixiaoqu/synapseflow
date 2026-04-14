@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import require_content_roles
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.knowledge_base import (
@@ -43,7 +43,7 @@ def _resolve_knowledge_base_status(
 async def list_knowledge_bases(
     team_id: int | None = Query(None, description="Filter by team id"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_content_roles),
 ):
     repo = KnowledgeBaseRepository(db, user_id=current_user.id)
     rows = await repo.list_with_count(team_id=team_id)
@@ -94,7 +94,7 @@ async def list_knowledge_bases(
 async def create_knowledge_base(
     body: KnowledgeBaseCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_content_roles),
 ):
     repo = KnowledgeBaseRepository(db, user_id=current_user.id)
     return await repo.create(
@@ -109,7 +109,7 @@ async def update_knowledge_base(
     knowledge_base_id: int,
     body: KnowledgeBaseUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_content_roles),
 ):
     repo = KnowledgeBaseRepository(db, user_id=current_user.id)
     knowledge_base = await repo.update(
@@ -126,7 +126,7 @@ async def update_knowledge_base(
 async def delete_knowledge_base(
     knowledge_base_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_content_roles),
 ):
     repo = KnowledgeBaseRepository(db, user_id=current_user.id)
     ok = await repo.delete(knowledge_base_id)
