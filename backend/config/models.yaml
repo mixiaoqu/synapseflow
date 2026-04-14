@@ -1,0 +1,112 @@
+# 大模型配置文件。
+# 这里主要定义：
+# 1. 不同 provider 对应的 API 地址
+# 2. provider 与环境变量中的 API Key 映射关系
+# 3. 不同业务角色使用哪一类模型
+
+# API Key 环境变量映射。
+# 左侧是 provider 标识，右侧是 .env / 环境变量中的字段名。
+api_keys:
+  deepseek: DEEPSEEK_API_KEY
+  kimi: KIMI_API_KEY
+  siliconflow: SILICONFLOW_API_KEY
+  modelscope: MODELSCOPE_API_KEY
+  aihubmix: AIHUBMIX_API_KEY
+  openrouter: OPENROUTER_API_KEY
+  dashscope: DASHSCOPE_API_KEY
+  moyu: MOYU_API_KEY
+
+# 模型服务提供方配置。
+providers:
+  deepseek:
+    # 该 provider 的 OpenAI 兼容 API 基础地址。
+    api_base: https://api.deepseek.com/v1
+    # 该 provider 的说明，主要用于配置可读性。
+    description: DeepSeek 官方 API，适合通用推理与生成任务。
+  kimi:
+    api_base: https://api.moonshot.cn/v1
+    description: Kimi 官方 API，适合长上下文场景。
+  siliconflow:
+    api_base: https://api.siliconflow.cn/v1
+    description: SiliconFlow 多模型代理平台。
+  modelscope:
+    api_base: https://api-inference.modelscope.cn/v1
+    description: ModelScope 推理服务平台。
+  aihubmix:
+    api_base: https://aihubmix.com/v1
+    description: AIHubMix 多模型代理平台。
+  openrouter:
+    api_base: https://openrouter.ai/api/v1
+    description: OpenRouter 多模型代理平台。
+  dashscope:
+    api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
+    description: 阿里云 DashScope OpenAI 兼容接口。
+  moyu:
+    api_base: https://www.moyu.info/v1
+    description: Moyu OpenAI 兼容代理服务。
+
+# 按业务角色划分的模型配置。
+models:
+  planner:
+    # 当前角色使用的 provider 标识。
+    provider: deepseek
+    # 实际调用的模型名称。
+    model: deepseek-chat
+    # 角色名称说明。
+    name: 规划任务模型
+    # 采样温度，越低越稳定，越高越发散。
+    temperature: 0.4
+    # 单次请求超时时间，单位秒。
+    request_timeout: 90
+    # 是否开启流式输出。
+    streaming: true
+    # 该角色的典型任务，仅用于说明用途。
+    tasks:
+      - 规划任务步骤
+      - 拆解问题结构
+      - 选择处理方案
+
+  analysis:
+    provider: deepseek
+    model: deepseek-chat
+    name: 分析理解模型
+    temperature: 0.3
+    request_timeout: 180
+    streaming: true
+    tasks:
+      - 理解复杂问题
+      - 提取文档结构和需求
+      - 评估回答质量
+      - 检查内容一致性
+
+  generation:
+    provider: deepseek
+    model: deepseek-chat
+    name: 内容生成模型
+    temperature: 0.5
+    request_timeout: 180
+    streaming: true
+    tasks:
+      - 生成详细回答
+      - 生成补全文档内容
+      - 生成 HTML、CSS、JS 代码
+
+  tool:
+    provider: deepseek
+    model: deepseek-chat
+    name: 工具调用模型
+    temperature: 0.2
+    request_timeout: 60
+    streaming: false
+    tasks:
+      - 选择函数或工具
+      - 决定 API 调用方式
+
+  rerank:
+    provider: siliconflow
+    model: BAAI/bge-reranker-base
+    name: 重排模型
+    # 该模型配置主要用于说明用途；实际重排调用还受 rerank.yaml 控制。
+    request_timeout: 30
+    tasks:
+      - 对检索结果进行精排

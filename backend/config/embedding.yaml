@@ -1,0 +1,71 @@
+# 向量模型、索引批处理与 RAG 检索相关配置。
+embedding:
+  # 向量模型名称，用于把 query / chunk 转成 embedding。
+  model: C:/Users/XiaoMai/.cache/huggingface/hub/models--BAAI--bge-m3/snapshots/5617a9f61b028005a4858fdac845db406aefb181
+  # 向量维度，必须与模型实际输出维度以及数据库向量字段维度一致。
+  dim: 1024
+  # 向量模型运行设备，可选 cpu / cuda 等。
+  device: cpu
+  # 单次调用 embedding 模型时内部 encode 的 batch 大小。
+  batch_size: 24
+  # 当前 embedding 模型说明，主要用于配置可读性。
+  description: Multilingual embedding model for semantic retrieval.
+
+# 多文档索引时的动态分批配置。
+indexing_batch:
+  # 单个索引批次最多允许包含多少篇文档。
+  max_docs: 4
+  # 单个索引批次最多允许累计多少个 chunk。
+  max_chunks: 128
+  # 单个索引批次最多允许累计多少正文字符，用于控制内存与单批耗时。
+  max_chars: 100000
+
+# 文档切块配置。
+chunk:
+  # 单个 chunk 的目标最大字符数。
+  size: 700
+  # 相邻 chunk 之间保留的重叠字符数，用于减少上下文断裂。
+  overlap: 100
+
+# 检索配置。
+retrieval:
+  # 首轮检索时 dense / hybrid 通道拉取的候选条数。
+  k_first: 32
+  # 迭代检索时拉取的候选条数。
+  k_iteration: 32
+  # 是否开启混合检索；开启后会融合向量检索与词法检索结果。
+  hybrid_enabled: true
+  # 词法检索通道最多拉取的候选条数。
+  lexical_k: 32
+  # RRF 融合时使用的平滑常数，影响不同排序列表的融合权重衰减。
+  rrf_k: 60
+  # 混合检索融合后，允许进入后续 rerank 的最大候选数。
+  hybrid_pool_limit: 64
+  # 向量距离阈值，当前主要作为兼容保留项。
+  distance_threshold: 0.5
+  # 迭代检索阶段的向量距离阈值，当前主要作为兼容保留项。
+  distance_threshold_iteration: 0.6
+  # 精排最低保留分数；适度提高阈值，减少弱相关片段进入最终上下文。
+  rerank_threshold: 0.45
+  # 当结果不足时的回退条数，当前主要作为兼容保留项。
+  fallback_top_n: 3
+  # 最终保留给应用层的检索结果上限；适度收紧，避免过多弱相关候选残留。
+  final_top_k: 8
+  # 最终真正送入大模型 prompt 的参考片段上限；优先保留更强证据，降低噪声。
+  llm_reference_top_k: 5
+  # 拼接知识库上下文时允许注入 prompt 的总字符上限。
+  kb_context_max_chars: 12000
+
+# 评估配置。
+evaluate:
+  # 评估阶段允许送入评估 prompt 的上下文最大字符数。
+  context_max_chars: 3000
+  # 评估通过阈值，低于该值时可进入下一轮优化与问答。
+  pass_threshold: 0.75
+  weights:
+    # 回答与问题的相关性权重。
+    relevance: 0.25
+    # 回答是否基于检索内容、是否有依据的权重。
+    groundedness: 0.45
+    # 回答覆盖问题要点完整程度的权重。
+    completeness: 0.30
