@@ -21,10 +21,40 @@ from app.db.session import AsyncSessionLocal
 
 LEGACY_ADMIN_PASSWORD = "ChangeMe123!"
 DEFAULT_BOOTSTRAP_PASSWORD = "12345678"
+INVALID_BOOTSTRAP_PASSWORDS = {
+    DEFAULT_BOOTSTRAP_PASSWORD,
+    "change-this-admin-password",
+    "change-this-user-password",
+}
 
 
 def _env(name: str, default: str) -> str:
     return (os.getenv(name) or default).strip()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ensure_safe_bootstrap_passwords(*, admin_password: str, user_password: str) -> None:
+    env = _env("ENV", "development").lower()
+    if env not in {"prod", "production", "release"}:
+        return
+
+    weak_names = []
+    if admin_password in INVALID_BOOTSTRAP_PASSWORDS:
+        weak_names.append("BOOTSTRAP_ADMIN_PASSWORD")
+    if user_password in INVALID_BOOTSTRAP_PASSWORDS:
+        weak_names.append("BOOTSTRAP_USER_PASSWORD")
+
+    if weak_names:
+        raise RuntimeError(
+            "Production bootstrap users require strong passwords. "
+            f"Please change: {', '.join(weak_names)}"
+        )
 
 
 def _run_migrations() -> int:
@@ -132,6 +162,10 @@ async def _seed_bootstrap_users() -> None:
     user_username = _env("BOOTSTRAP_USER_USERNAME", "user")
     user_email = _env("BOOTSTRAP_USER_EMAIL", "user@synapseflow.local")
     user_password = _env("BOOTSTRAP_USER_PASSWORD", DEFAULT_BOOTSTRAP_PASSWORD)
+    _ensure_safe_bootstrap_passwords(
+        admin_password=admin_password,
+        user_password=user_password,
+    )
 
     async with AsyncSessionLocal() as session:
         admin_user = await _ensure_user(
@@ -156,8 +190,8 @@ async def _seed_bootstrap_users() -> None:
         await _ensure_team_membership(session, user_id=normal_user.id, role="member")
 
         print(
-            f"Bootstrap users ready: admin={admin_user.username}/{admin_password}, "
-            f"user={normal_user.username}/{user_password}"
+            f"Bootstrap users ready: admin={admin_user.username}, "
+            f"user={normal_user.username}"
         )
 
 
@@ -165,6 +199,10 @@ def main() -> None:
     code = _run_migrations()
     if code != 0:
         raise SystemExit(code)
+
+    if not _env_bool("BOOTSTRAP_ENABLED", True):
+        print("Bootstrap user seeding skipped (BOOTSTRAP_ENABLED=false).")
+        return
 
     asyncio.run(_seed_bootstrap_users())
 

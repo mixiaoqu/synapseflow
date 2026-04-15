@@ -8,9 +8,14 @@ FROM python:3.11-slim-bookworm
 WORKDIR /app
 
 ARG UV_INDEX_URL=https://pypi.org/simple
+ARG UV_VERSION=0.7.13
 ENV UV_INDEX_URL=${UV_INDEX_URL}
 
-RUN python -m pip install --no-cache-dir --index-url "${UV_INDEX_URL}" "uv>=0.7,<1"
+RUN --mount=type=cache,target=/root/.cache/pip,id=synapseflow-pip-cache \
+    python -m pip install \
+    --disable-pip-version-check \
+    --index-url "${UV_INDEX_URL}" \
+    "uv==${UV_VERSION}"
 
 ENV UV_COMPILE_BYTECODE=0 \
     UV_LINK_MODE=copy \
@@ -19,11 +24,11 @@ ENV UV_COMPILE_BYTECODE=0 \
     UV_CONCURRENT_BUILDS=1
 
 COPY pyproject.toml uv.lock ./
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,target=/root/.cache/uv,id=synapseflow-uv-cache \
     uv sync --frozen --no-install-project --no-dev
 
 COPY . .
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,target=/root/.cache/uv,id=synapseflow-uv-cache \
     uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"

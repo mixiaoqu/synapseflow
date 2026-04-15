@@ -46,7 +46,7 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - DRAMATIQ_INDEXING_QUEUE=${DRAMATIQ_INDEXING_QUEUE:-indexing}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://47.107.55.65:3000,http://47.107.55.65}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
     ports:
       - "8000:8000"
     volumes:
@@ -91,10 +91,12 @@ services:
     build:
       context: ./frontend
       dockerfile: ../docker/frontend/Dockerfile
+      args:
+        NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmjs.org}
     container_name: synapseflow-frontend
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://47.107.55.65:8000}
-      - NEXT_ALLOWED_DEV_ORIGINS=${NEXT_ALLOWED_DEV_ORIGINS:-47.107.55.65}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - NEXT_ALLOWED_DEV_ORIGINS=${NEXT_ALLOWED_DEV_ORIGINS:-localhost,127.0.0.1}
     ports:
       - "3000:3000"
     volumes:

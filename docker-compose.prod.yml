@@ -96,7 +96,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       MOYU_API_KEY: ${MOYU_API_KEY:-}
-      RERANK_ENABLED: ${SF_RERANK_ENABLED:-true}
+      RERANK_ENABLED: ${SF_RERANK_ENABLED:-false}
       RERANK_PROVIDER: ${SF_RERANK_PROVIDER:-}
       RERANK_TOP_K: ${SF_RERANK_TOP_K:-}
       RERANK_API_URL: ${SF_RERANK_API_URL:-http://localhost:8012}
@@ -163,11 +163,12 @@ services:
       context: ./frontend
       dockerfile: ../docker/frontend/Dockerfile.prod
       args:
-        NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:?set SF_NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:-}
+        NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmjs.org}
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:?set SF_NEXT_PUBLIC_API_URL}
+      NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:-}
     ports:
       - ${SF_BIND_HOST:-127.0.0.1}:${SF_FRONTEND_PORT:-3000}:3000
     depends_on:

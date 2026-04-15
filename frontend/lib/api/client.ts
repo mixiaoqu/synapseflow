@@ -1,7 +1,15 @@
 import { clearAuthSession, getAccessToken } from "@/lib/auth/session";
 import { parseApiError } from "./errors";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+function normalizeApiBaseUrl(value: string | undefined): string {
+  if (value !== undefined) {
+    return value.replace(/\/$/, "");
+  }
+
+  return process.env.NODE_ENV === "development" ? "http://localhost:8000" : "";
+}
+
+const API_BASE_URL = normalizeApiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
 
 interface RequestOptions {
   auth?: boolean;
