@@ -153,6 +153,20 @@ function LoginForm({
 }
 
 export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-[#080c14] text-zinc-100">
+          <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
+        </main>
+      }
+    >
+      <LoginPageContent />
+    </Suspense>
+  );
+}
+
+function LoginPageContent() {
   const searchParams = useSearchParams();
   const nextPath = useMemo(() => searchParams.get("next") || "/ask", [searchParams]);
 
@@ -231,13 +245,7 @@ export default function LoginPage() {
                 </p>
 
                 <div className="mt-8">
-                  <Suspense fallback={
-                    <div className="flex items-center justify-center h-48">
-                      <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
-                    </div>
-                  }>
-                    <LoginForm nextPath={nextPath} />
-                  </Suspense>
+                  <LoginForm nextPath={nextPath} />
                 </div>
               </div>
             </div>

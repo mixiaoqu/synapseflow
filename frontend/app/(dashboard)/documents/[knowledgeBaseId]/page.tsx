@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -173,6 +173,20 @@ const documentIndexMeta: Record<
 };
 
 export default function KnowledgeBaseDetailPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-500">
+          <Loader2 className="h-6 w-6 animate-spin" />
+        </main>
+      }
+    >
+      <KnowledgeBaseDetailPageContent />
+    </Suspense>
+  );
+}
+
+function KnowledgeBaseDetailPageContent() {
   const params = useParams<{ knowledgeBaseId: string }>();
   const searchParams = useSearchParams();
   const router = useRouter();
