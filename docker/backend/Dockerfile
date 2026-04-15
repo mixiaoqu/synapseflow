@@ -1,9 +1,11 @@
+ARG UV_VERSION=0.10.9
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-bin
+
 FROM python:3.11-slim-bookworm AS builder
 
-ARG UV_VERSION=0.10.9
 ARG UV_INDEX_URL=https://pypi.org/simple
 
-COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /uvx /bin/
+COPY --from=uv-bin /uv /uvx /bin/
 
 WORKDIR /app
 
