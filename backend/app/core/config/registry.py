@@ -147,7 +147,11 @@ class ConfigRegistry:
                     else None
                 ),
                 fallback_top_n=int(retrieval.get("fallback_top_n", 3)),
-                final_top_k=int(retrieval.get("final_top_k", 6)),
+                final_top_k=(
+                    settings.RERANK_TOP_K
+                    if settings.RERANK_TOP_K is not None
+                    else int(retrieval.get("final_top_k", 6))
+                ),
                 llm_reference_top_k=(
                     int(retrieval["llm_reference_top_k"])
                     if retrieval.get("llm_reference_top_k") is not None
@@ -177,7 +181,7 @@ class ConfigRegistry:
         rerank = data.get("rerank", {}) or {}
         return RerankConfig(
             enabled=settings.RERANK_ENABLED,
-            provider=rerank.get("provider", "bailian"),
+            provider=(settings.RERANK_PROVIDER or rerank.get("provider", "bailian")),
             api_url=settings.RERANK_API_URL,
             model=rerank.get("model", "qwen3-rerank"),
             instruct=rerank.get(

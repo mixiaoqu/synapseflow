@@ -1,4 +1,35 @@
 services:
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    environment:
+      SF_NGINX_SERVER_NAME: ${SF_NGINX_SERVER_NAME:-_}
+      SF_CLIENT_MAX_BODY_SIZE: ${SF_CLIENT_MAX_BODY_SIZE:-50m}
+    ports:
+      - ${SF_NGINX_BIND_HOST:-0.0.0.0}:${SF_NGINX_PORT:-80}:80
+    volumes:
+      - ./deploy/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - synapseflow-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1/ || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
@@ -17,11 +48,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    logging: &default-logging
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
@@ -70,6 +97,8 @@ services:
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       MOYU_API_KEY: ${MOYU_API_KEY:-}
       RERANK_ENABLED: ${SF_RERANK_ENABLED:-true}
+      RERANK_PROVIDER: ${SF_RERANK_PROVIDER:-}
+      RERANK_TOP_K: ${SF_RERANK_TOP_K:-}
       RERANK_API_URL: ${SF_RERANK_API_URL:-http://localhost:8012}
       RERANK_API_KEY: ${SF_RERANK_API_KEY:-}
       PREVIEW_DIR: /app/previews
@@ -81,7 +110,7 @@ services:
       LOG_LEVEL: ${SF_LOG_LEVEL:-INFO}
       LOG_JSON: ${SF_LOG_JSON:-false}
     ports:
-      - 127.0.0.1:${SF_BACKEND_PORT:-8000}:8000
+      - ${SF_BIND_HOST:-127.0.0.1}:${SF_BACKEND_PORT:-8000}:8000
     volumes:
       - backend_previews:/app/previews
       - backend_uploads:/app/uploads
@@ -95,7 +124,7 @@ services:
     command:
       - sh
       - -c
-      - uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${SF_BACKEND_WORKERS:-4}
+      - uv run python scripts/init_db.py && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${SF_BACKEND_WORKERS:-4}
     healthcheck:
       test:
         - CMD
@@ -140,7 +169,7 @@ services:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:?set SF_NEXT_PUBLIC_API_URL}
     ports:
-      - 127.0.0.1:${SF_FRONTEND_PORT:-3000}:3000
+      - ${SF_BIND_HOST:-127.0.0.1}:${SF_FRONTEND_PORT:-3000}:3000
     depends_on:
       backend:
         condition: service_healthy

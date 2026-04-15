@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     MOYU_API_KEY: str = ""
 
     RERANK_ENABLED: bool = True
+    RERANK_PROVIDER: str = ""
+    RERANK_TOP_K: Optional[int] = None
     RERANK_API_URL: str = "http://localhost:8012"
     RERANK_API_KEY: str = ""
 
