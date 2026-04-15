@@ -16,19 +16,16 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=synapseflow-pip-cache \
 ENV UV_COMPILE_BYTECODE=0 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
-    UV_CONCURRENT_DOWNLOADS=2 \
-    UV_CONCURRENT_BUILDS=1 \
+    UV_CONCURRENT_DOWNLOADS=8 \
+    UV_CONCURRENT_BUILDS=4 \
     UV_HTTP_TIMEOUT=600
 
 COPY pyproject.toml uv.lock ./
 
 RUN --mount=type=cache,target=/root/.cache/uv,id=synapseflow-uv-cache \
-    uv sync --frozen --no-install-project --no-dev --index "${UV_INDEX_URL}"
-
-COPY . .
-
-RUN --mount=type=cache,target=/root/.cache/uv,id=synapseflow-uv-cache \
     uv sync --frozen --no-dev --index "${UV_INDEX_URL}"
+
+COPY . ./
 
 ENV PATH="/app/.venv/bin:$PATH"
 
