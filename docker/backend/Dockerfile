@@ -1,33 +1,37 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.11-slim-bookworm AS builder
+
+ARG UV_VERSION=0.10.9
+ARG UV_INDEX_URL=https://pypi.org/simple
+
+COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /uvx /bin/
 
 WORKDIR /app
 
-ARG UV_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple
-ARG UV_VERSION=0.7.13
-
-ENV UV_INDEX_URL=${UV_INDEX_URL}
-
-RUN --mount=type=cache,target=/root/.cache/pip,id=synapseflow-pip-cache \
-    python -m pip install \
-    --disable-pip-version-check \
-    --index-url "${UV_INDEX_URL}" \
-    "uv==${UV_VERSION}"
-
-ENV UV_COMPILE_BYTECODE=0 \
+ENV UV_INDEX_URL=${UV_INDEX_URL} \
+    UV_COMPILE_BYTECODE=0 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
-    UV_CONCURRENT_DOWNLOADS=8 \
-    UV_CONCURRENT_BUILDS=4 \
-    UV_HTTP_TIMEOUT=600
+    UV_HTTP_TIMEOUT=600 \
+    HF_HOME=/root/.cache/huggingface
 
 COPY pyproject.toml uv.lock ./
 
 RUN --mount=type=cache,target=/root/.cache/uv,id=synapseflow-uv-cache \
-    uv sync --frozen --no-dev --index "${UV_INDEX_URL}"
+    uv sync --frozen --no-install-project --no-dev --index "${UV_INDEX_URL}"
 
 COPY . ./
 
-ENV PATH="/app/.venv/bin:$PATH"
+RUN --mount=type=cache,target=/root/.cache/uv,id=synapseflow-uv-cache \
+    uv sync --frozen --no-dev --index "${UV_INDEX_URL}"
+
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+COPY --from=builder /app /app
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    HF_HOME=/app/.cache/huggingface
 
 EXPOSE 8000
 
