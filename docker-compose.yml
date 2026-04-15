@@ -39,7 +39,7 @@ services:
       context: ./backend
       dockerfile: ../docker/backend/Dockerfile
       args:
-        UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        UV_INDEX_URL: ${UV_INDEX_URL:-https://mirrors.ustc.edu.cn/pypi/simple}
     container_name: synapseflow-backend
     environment:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow

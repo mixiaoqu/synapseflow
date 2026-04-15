@@ -2,7 +2,7 @@ FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-ARG UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG UV_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple
 ARG UV_VERSION=0.7.13
 
 ENV UV_INDEX_URL=${UV_INDEX_URL}
@@ -18,7 +18,7 @@ ENV UV_COMPILE_BYTECODE=0 \
     UV_PYTHON_DOWNLOADS=never \
     UV_CONCURRENT_DOWNLOADS=2 \
     UV_CONCURRENT_BUILDS=1 \
-    UV_HTTP_TIMEOUT=180
+    UV_HTTP_TIMEOUT=600
 
 COPY pyproject.toml uv.lock ./
 

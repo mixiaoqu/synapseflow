@@ -77,7 +77,7 @@ services:
       context: ./backend
       dockerfile: ../docker/backend/Dockerfile
       args:
-        UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://mirrors.ustc.edu.cn/pypi/simple}
     restart: unless-stopped
     environment: &backend-env
       ENV: ${SF_ENV:-production}
