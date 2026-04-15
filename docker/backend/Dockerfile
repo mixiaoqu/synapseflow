@@ -1,12 +1,10 @@
-ARG UV_VERSION=0.10.9
-FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-bin
-
 FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-COPY --from=uv-bin /uv /uvx /bin/
+RUN python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple uv==0.10.9
 
+ENV UV_DEFAULT_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"
 ENV PATH="/app/.venv/bin:$PATH" \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
