@@ -39,7 +39,7 @@ services:
       context: ./backend
       dockerfile: ../docker/backend/Dockerfile
       args:
-        UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.org/simple}
+        UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
     container_name: synapseflow-backend
     environment:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
@@ -92,7 +92,7 @@ services:
       context: ./frontend
       dockerfile: ../docker/frontend/Dockerfile
       args:
-        NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmjs.org}
+        NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmmirror.com}
     container_name: synapseflow-frontend
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}

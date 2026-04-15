@@ -7,7 +7,7 @@ FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-ARG UV_INDEX_URL=https://pypi.org/simple
+ARG UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ARG UV_VERSION=0.7.13
 ENV UV_INDEX_URL=${UV_INDEX_URL}
 

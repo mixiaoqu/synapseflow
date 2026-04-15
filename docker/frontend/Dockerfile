@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 
 FROM node:20-alpine
 ARG NPM_REGISTRY

@@ -77,7 +77,7 @@ services:
       context: ./backend
       dockerfile: ../docker/backend/Dockerfile
       args:
-        UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://pypi.org/simple}
+        UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
     restart: unless-stopped
     environment: &backend-env
       ENV: ${SF_ENV:-production}
@@ -164,7 +164,7 @@ services:
       dockerfile: ../docker/frontend/Dockerfile.prod
       args:
         NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:-}
-        NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmjs.org}
+        NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmmirror.com}
     restart: unless-stopped
     environment:
       NODE_ENV: production

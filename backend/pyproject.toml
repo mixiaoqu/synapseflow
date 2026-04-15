@@ -50,6 +50,11 @@ dev = [
 
 # CPU 版 PyTorch，避免解析出 nvidia-cu12 等大体积 CUDA 依赖（Docker/无 GPU 服务器）
 [[tool.uv.index]]
+name = "pypi-cn"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
