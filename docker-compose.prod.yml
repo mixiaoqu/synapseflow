@@ -87,7 +87,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-synapseflow}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-synapseflow}
       REDIS_URL: redis://redis:6379/0
       DRAMATIQ_INDEXING_QUEUE: ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing}
-      EMBEDDING_MODEL: ${SF_EMBEDDING_MODEL:-}
+      EMBEDDING_MODEL: ${SF_EMBEDDING_MODEL:-BAAI/bge-m3}
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       KIMI_API_KEY: ${KIMI_API_KEY:-}
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
@@ -112,6 +113,7 @@ services:
     ports:
       - ${SF_BIND_HOST:-127.0.0.1}:${SF_BACKEND_PORT:-8000}:8000
     volumes:
+      - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
       - backend_uploads:/app/uploads
     depends_on:
@@ -142,6 +144,7 @@ services:
     restart: unless-stopped
     environment: *backend-env
     volumes:
+      - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
       - backend_uploads:/app/uploads
     depends_on:
@@ -191,6 +194,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  backend_hf_cache:
   backend_previews:
   backend_uploads:
 
