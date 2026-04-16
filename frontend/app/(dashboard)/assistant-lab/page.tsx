@@ -30,6 +30,7 @@ import {
 import { kbChatApi, type AskTeamOption, type RetrievedDoc } from "@/lib/api/endpoints/kbChat";
 import { consumeSseStream } from "@/lib/stream/sse";
 import { cn } from "@/lib/utils";
+import { v4 as uuidv4 } from "uuid";
 
 interface AssistantTurn {
   id: string;
@@ -545,7 +546,7 @@ function AssistantLabPageContent() {
     const nextQuery = (prefill ?? query).trim();
     if (!nextQuery) return;
 
-    const turnId = crypto.randomUUID();
+    const turnId = `assistant-lab-turn-${uuidv4()}`;
     activeRequestRef.current = { assistantId, turnId };
     setStreamingAssistantId(assistantId);
     setQuery("");

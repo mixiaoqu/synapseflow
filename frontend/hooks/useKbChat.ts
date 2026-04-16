@@ -22,6 +22,7 @@ import {
 } from "@/lib/api/endpoints/kbChat";
 import { getStoredUser } from "@/lib/auth/session";
 import { consumeSseStream } from "@/lib/stream/sse";
+import { v4 as uuidv4 } from "uuid";
 
 const SESSION_LIST_LIMIT = 30;
 const ACTIVE_SESSION_STORAGE_KEY = "synapseflow.kb-chat.active-session";
@@ -496,7 +497,7 @@ export function useKbChat(options?: { enableScopeFilters?: boolean }) {
         return false;
       }
 
-      const turnId = crypto.randomUUID();
+      const turnId = `kb-turn-${uuidv4()}`;
       let completed = false;
 
       activeTurnIdRef.current = turnId;

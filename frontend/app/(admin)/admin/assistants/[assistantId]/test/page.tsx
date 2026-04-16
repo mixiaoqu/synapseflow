@@ -22,6 +22,7 @@ import {
 } from "@/lib/api/assistants";
 import type { RetrievedDoc } from "@/lib/api/endpoints/kbChat";
 import { consumeSseStream } from "@/lib/stream/sse";
+import { v4 as uuidv4 } from "uuid";
 
 interface TestTurn {
   id: string;
@@ -103,7 +104,7 @@ export default function AssistantTestPage() {
     const nextQuery = (prefill ?? query).trim();
     if (!assistant || !nextQuery || submitLoading) return;
 
-    const turnId = crypto.randomUUID();
+    const turnId = `assistant-test-turn-${uuidv4()}`;
     activeTurnIdRef.current = turnId;
     setSubmitLoading(true);
     setQuery("");
