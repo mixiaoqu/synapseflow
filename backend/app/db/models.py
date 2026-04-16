@@ -143,6 +143,45 @@ class KnowledgeBaseMember(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class AssistantProfile(Base):
+    """Configurable assistant profile bound to one team/knowledge base scope."""
+
+    __tablename__ = "assistant_profiles"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    category_id = Column(
+        Integer,
+        ForeignKey("document_categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    name = Column(String(100), nullable=False)
+    slug = Column(String(120), nullable=False, unique=True, index=True)
+    created_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    description = Column(Text, nullable=True)
+    welcome_message = Column(Text, nullable=True)
+    placeholder_text = Column(String(255), nullable=True)
+    persona_prompt = Column(Text, nullable=True)
+    rule_template = Column(Text, nullable=True)
+    suggested_prompts = Column(JSON, nullable=False, default=list)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    sort_order = Column(Integer, nullable=False, default=0, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class DocumentCategory(Base):
     """Knowledge-base scoped document category."""
 
@@ -281,6 +320,12 @@ class ChatSession(Base):
         nullable=True,
         index=True,
     )
+    assistant_id = Column(
+        Integer,
+        ForeignKey("assistant_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     category_id = Column(
         Integer,
         ForeignKey("document_categories.id", ondelete="SET NULL"),
@@ -321,6 +366,12 @@ class KbChatLog(Base):
     knowledge_base_id = Column(
         Integer,
         ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    assistant_id = Column(
+        Integer,
+        ForeignKey("assistant_profiles.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

@@ -2,96 +2,103 @@
 
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  BookOpen,
+  Bot,
   ChevronDown,
   Copy,
-  History,
   Loader2,
+  Menu,
+  MessageCircleMore,
   MessageSquarePlus,
-  MoreHorizontal,
-  PanelLeft,
   Search,
   SendHorizontal,
   Sparkles,
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
 import { AnswerMarkdown } from "@/components/kb-chat/AnswerMarkdown";
 import { AnswerSourcesSection } from "@/components/kb-chat/SourcesPanel";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
-import { useKbChat } from "@/hooks/useKbChat";
+import { useAssistantChat } from "@/hooks/useAssistantChat";
 import { kbChatApi } from "@/lib/api/endpoints/kbChat";
+import { cn } from "@/lib/utils";
 
-/* ------------------------------------------------------------------ */
-/*  Constants                                                          */
-/* ------------------------------------------------------------------ */
+const INPUT_MIN_HEIGHT = 36;
+const INPUT_MAX_HEIGHT = 200;
+const SESSION_GROUP_ORDER = ["今天", "昨天", "本周早些时候", "更早"] as const;
 
-const INPUT_MIN_HEIGHT = 52;
-const INPUT_MAX_HEIGHT = 180;
+function getDayBucket(dateString?: string | null): string {
+  if (!dateString) return "更早";
+  const value = new Date(dateString);
+  if (Number.isNaN(value.getTime())) return "更早";
 
-function buildPromptTopic(name: string): string {
-  return name.replace(/\s+/g, " ").trim().slice(0, 24);
-}
-
-function buildKnowledgeBasePrompts(knowledgeBaseNames: string[]): string[] {
-  const templates = [
-    (topic: string) => `《${topic}》里有哪些核心内容？`,
-    (topic: string) => `基于《${topic}》，帮我梳理关键流程和注意事项`,
-    (topic: string) => `《${topic}》中最常见的问题有哪些？`,
-    (topic: string) => `如果我是新手，应该怎么快速了解《${topic}》？`,
-  ];
-
-  const topics = Array.from(
-    new Set(knowledgeBaseNames.map(buildPromptTopic).filter(Boolean)),
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfTarget = new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  const diffDays = Math.floor(
+    (startOfToday.getTime() - startOfTarget.getTime()) / (24 * 60 * 60 * 1000),
   );
 
-  if (topics.length === 0) return [];
-
-  return Array.from({ length: 4 }, (_, index) => {
-    const topic = topics[index % topics.length];
-    return templates[index % templates.length](topic);
-  });
+  if (diffDays <= 0) return "今天";
+  if (diffDays === 1) return "昨天";
+  if (diffDays <= 7) return "本周早些时候";
+  return "更早";
 }
 
-/* ------------------------------------------------------------------ */
-/*  Helper components                                                  */
-/* ------------------------------------------------------------------ */
+function formatRelativeTime(dateString?: string | null): string {
+  if (!dateString) return "";
+  const value = new Date(dateString);
+  if (Number.isNaN(value.getTime())) return "";
+
+  const diffMs = Date.now() - value.getTime();
+  const diffMinutes = Math.floor(diffMs / 60000);
+  if (diffMinutes < 1) return "刚刚";
+  if (diffMinutes < 60) return `${diffMinutes} 分钟前`;
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} 小时前`;
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(value);
+}
 
 function getAnswerStatusMeta(status?: string | null, retrievedCount: number = 0) {
-  const config: Record<string, { style: string; label: string; hint?: string }> = {
-    answered: {
-      style: "bg-emerald-50 text-emerald-700 border-emerald-200",
-      label: retrievedCount > 0 ? `基于 ${retrievedCount} 篇文档` : "已生成回答",
-      hint: retrievedCount > 0 ? "回答内容可结合下方来源继续核对。" : undefined,
-    },
-    partial: {
-      style: "bg-amber-50 text-amber-700 border-amber-200",
-      label: "部分内容有依据",
-      hint: `当前仅检索到 ${retrievedCount} 篇文档，部分回答可能是归纳结果。`,
-    },
-    no_answer: {
-      style: "bg-slate-50 text-slate-600 border-slate-200",
-      label: "未找到直接依据",
-      hint: "当前知识范围内没有足够匹配内容，建议换个问法或调整范围。",
-    },
-    error: {
-      style: "bg-red-50 text-red-700 border-red-200",
-      label: "回答生成异常",
-      hint: "这次回答没有完整生成，可以稍后重试。",
-    },
-  };
-
-  return config[status || ""] ?? {
-    style: "bg-slate-50 text-slate-600 border-slate-200",
-    label: "已生成回答",
-  };
+  switch (status) {
+    case "answered":
+      return {
+        label: retrievedCount > 0 ? `基于 ${retrievedCount} 篇文档` : "已生成回答",
+        className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      };
+    case "partial":
+      return {
+        label: "部分有依据",
+        className: "border-amber-200 bg-amber-50 text-amber-700",
+      };
+    case "no_answer":
+      return {
+        label: "未找到直接依据",
+        className: "border-slate-200 bg-slate-50 text-slate-600",
+      };
+    case "error":
+      return {
+        label: "回答生成异常",
+        className: "border-red-200 bg-red-50 text-red-700",
+      };
+    default:
+      return {
+        label: status ?? "已生成回答",
+        className: "border-slate-200 bg-slate-50 text-slate-600",
+      };
+  }
 }
 
 function AnswerStatusBadge({
@@ -103,198 +110,213 @@ function AnswerStatusBadge({
 }) {
   if (!status) return null;
   const meta = getAnswerStatusMeta(status, retrievedCount ?? 0);
+
   return (
-    <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] font-medium leading-none ${meta.style}`}>
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
+        meta.className,
+      )}
+    >
       {meta.label}
     </span>
   );
 }
 
-function StreamingDots() {
+function AssistantReplySkeleton() {
   return (
-    <span className="inline-flex items-center gap-1">
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-500 [animation-delay:0ms]" />
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-500 [animation-delay:150ms]" />
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-500 [animation-delay:300ms]" />
-    </span>
-  );
-}
-
-function formatRelativeTime(dateStr?: string | null): string {
-  if (!dateStr) return "";
-  const date = new Date(dateStr);
-  if (Number.isNaN(date.getTime())) return "";
-
-  const now = Date.now();
-  const diffMs = now - date.getTime();
-  const diffMin = Math.floor(diffMs / 60_000);
-  if (diffMin < 1) return "刚刚";
-  if (diffMin < 60) return `${diffMin} 分钟前`;
-
-  const diffHour = Math.floor(diffMin / 60);
-  if (diffHour < 24) return `${diffHour} 小时前`;
-
-  const diffDay = Math.floor(diffHour / 24);
-  if (diffDay < 7) return `${diffDay} 天前`;
-
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Scope select (native select, same visual style as design)         */
-/* ------------------------------------------------------------------ */
-
-function ScopeSelect({
-  label,
-  value,
-  options,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: { value: string; label: string }[];
-  disabled?: boolean;
-  onChange: (v: string) => void;
-}) {
-  const selected = options.find((o) => o.value === value);
-
-  return (
-    <div className="relative">
-      <span className="pointer-events-none absolute left-2.5 top-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">
-        {label}
-      </span>
-      <select
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-8 w-full cursor-pointer rounded-lg border border-slate-200 bg-white py-1 pl-[52px] pr-7 text-xs text-slate-700 outline-none transition-colors hover:border-slate-300 hover:bg-slate-50 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-400" />
+    <div className="space-y-2.5">
+      <div className="flex items-center gap-2 text-sm text-slate-400">
+        <Loader2 className="h-4 w-4 animate-spin text-emerald-500" />
+        <span>正在生成回答...</span>
+      </div>
+      <div className="space-y-2">
+        <div className="h-3.5 w-full animate-pulse rounded bg-slate-100" />
+        <div className="h-3.5 w-11/12 animate-pulse rounded bg-slate-100" />
+        <div className="h-3.5 w-8/12 animate-pulse rounded bg-slate-100" />
+      </div>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Page                                                               */
-/* ------------------------------------------------------------------ */
-
 export default function AskPage() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedAssistantId = useMemo(() => {
+    const rawValue = searchParams.get("assistantId");
+    if (!rawValue) return null;
+    const parsed = Number(rawValue);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [searchParams]);
+
   const {
-    query,
-    setQuery,
-    teamId,
-    setTeamId,
-    teams,
     teamsLoading,
     selectedTeam,
-    knowledgeBaseId,
-    setKnowledgeBaseId,
-    categoryId,
-    setCategoryId,
-    knowledgeBases,
-    categories,
+    assistants,
+    assistantsLoading,
+    assistantsReady,
+    selectedAssistantId,
+    selectedAssistant,
+    setSelectedAssistantId,
+    query,
+    setQuery,
     loading,
-    historyLoading,
     sessionLoading,
     deletingSessionId,
+    historyLoading,
     turns,
     sessions,
     activeSessionId,
     expandedChunks,
+    openSourceTurnIds,
     toggleChunk,
+    toggleSourceTurn,
     expandChunksForTurn,
     collapseChunksForTurn,
-    knowledgeBaseLabel,
     resetConversation,
     openSession,
     deleteSession,
     submit,
-  } = useKbChat({ enableScopeFilters: true });
+  } = useAssistantChat();
 
-  const messageScrollRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [feedbackState, setFeedbackState] = useState<Record<number, "up" | "down">>({});
   const [feedbackLoading, setFeedbackLoading] = useState<Record<number, boolean>>({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [assistantMenuOpen, setAssistantMenuOpen] = useState(false);
   const [sessionSearch, setSessionSearch] = useState("");
-  const [openSourceTurns, setOpenSourceTurns] = useState<Set<string>>(new Set());
-  const [activeMenuSession, setActiveMenuSession] = useState<string | null>(null);
-
-  const selectedKnowledgeBase = useMemo(
-    () => knowledgeBases.find((kb) => kb.id === knowledgeBaseId) ?? null,
-    [knowledgeBaseId, knowledgeBases],
-  );
-
-  const promptSourceKnowledgeBases = useMemo(() => {
-    const queryable = knowledgeBases.filter((kb) => kb.indexed_document_count > 0);
-    if (selectedKnowledgeBase) {
-      return selectedKnowledgeBase.indexed_document_count > 0 ? [selectedKnowledgeBase] : [];
-    }
-    return queryable.slice(0, 4);
-  }, [knowledgeBases, selectedKnowledgeBase]);
+  const invalidDeepLinkRef = useRef<number | null>(null);
+  const previousTeamIdRef = useRef<number | null>(null);
+  const suppressInvalidAssistantToastRef = useRef(false);
+  const messageScrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const suggestedPrompts = useMemo(
-    () => buildKnowledgeBasePrompts(promptSourceKnowledgeBases.map((kb) => kb.name)),
-    [promptSourceKnowledgeBases],
+    () => (selectedAssistant?.suggested_prompts ?? []).slice(0, 3),
+    [selectedAssistant?.suggested_prompts],
   );
 
-  const hasQueryableKnowledge = suggestedPrompts.length > 0;
-
   const filteredSessions = useMemo(() => {
-    const kw = sessionSearch.trim().toLowerCase();
-    if (!kw) return sessions;
+    const keyword = sessionSearch.trim().toLowerCase();
+    if (!keyword) return sessions;
     return sessions.filter(
-      (s) =>
-        s.title.toLowerCase().includes(kw) ||
-        (s.preview ?? "").toLowerCase().includes(kw),
+      (item) =>
+        item.title.toLowerCase().includes(keyword) ||
+        (item.preview ?? "").toLowerCase().includes(keyword),
     );
   }, [sessionSearch, sessions]);
 
-  useEffect(() => {
-    setOpenSourceTurns((prev) => {
-      const activeTurnIds = new Set(turns.map((t) => t.id));
-      const next = new Set(Array.from(prev).filter((id) => activeTurnIds.has(id)));
-      return next.size === prev.size ? prev : next;
+  const groupedSessions = useMemo(() => {
+    const buckets = new Map<string, typeof filteredSessions>();
+    filteredSessions.forEach((session) => {
+      const label = getDayBucket(session.updated_at);
+      buckets.set(label, [...(buckets.get(label) ?? []), session]);
     });
-  }, [turns]);
 
-  const toggleSourceSection = (turnId: string) => {
-    setOpenSourceTurns((prev) => {
-      const next = new Set(prev);
-      if (next.has(turnId)) next.delete(turnId);
-      else next.add(turnId);
-      return next;
-    });
-  };
+    return SESSION_GROUP_ORDER.map((label) => ({
+      label,
+      items: buckets.get(label) ?? [],
+    })).filter((group) => group.items.length > 0);
+  }, [filteredSessions]);
 
-  /* ---- auto-resize textarea ---- */
   useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    const next = Math.min(Math.max(el.scrollHeight, INPUT_MIN_HEIGHT), INPUT_MAX_HEIGHT);
-    el.style.height = `${next}px`;
-    el.style.overflowY = el.scrollHeight > INPUT_MAX_HEIGHT ? "auto" : "hidden";
+    const element = textareaRef.current;
+    if (!element) return;
+    element.style.height = "auto";
+    const nextHeight = Math.min(
+      Math.max(element.scrollHeight, INPUT_MIN_HEIGHT),
+      INPUT_MAX_HEIGHT,
+    );
+    element.style.height = `${nextHeight}px`;
+    element.style.overflowY = element.scrollHeight > INPUT_MAX_HEIGHT ? "auto" : "hidden";
   }, [query]);
 
-  /* ---- auto-scroll ---- */
   useEffect(() => {
-    const el = messageScrollRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: loading ? "auto" : "smooth" });
-  }, [loading, turns]);
+    const element = messageScrollRef.current;
+    if (!element) return;
+    element.scrollTo({
+      top: element.scrollHeight,
+      behavior: loading ? "auto" : "smooth",
+    });
+  }, [loading, turns, selectedAssistantId]);
+
+  useEffect(() => {
+    const nextTeamId = selectedTeam?.id ?? null;
+    if (previousTeamIdRef.current == null) {
+      previousTeamIdRef.current = nextTeamId;
+      return;
+    }
+
+    if (previousTeamIdRef.current !== nextTeamId) {
+      suppressInvalidAssistantToastRef.current = true;
+      previousTeamIdRef.current = nextTeamId;
+    }
+  }, [selectedTeam?.id]);
+
+  useEffect(() => {
+    if (teamsLoading || !assistantsReady || assistantsLoading) return;
+
+    if (requestedAssistantId == null) {
+      invalidDeepLinkRef.current = null;
+      suppressInvalidAssistantToastRef.current = false;
+      return;
+    }
+
+    if (assistants.some((item) => item.id === requestedAssistantId)) {
+      setSelectedAssistantId((current) =>
+        current === requestedAssistantId ? current : requestedAssistantId,
+      );
+      invalidDeepLinkRef.current = null;
+      suppressInvalidAssistantToastRef.current = false;
+      return;
+    }
+
+    if (invalidDeepLinkRef.current === requestedAssistantId) {
+      return;
+    }
+
+    invalidDeepLinkRef.current = requestedAssistantId;
+    if (suppressInvalidAssistantToastRef.current) {
+      suppressInvalidAssistantToastRef.current = false;
+    } else {
+      toast.error("???????????????????????????????");
+    }
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete("assistantId");
+    const nextHref = nextParams.size > 0 ? `${pathname}?${nextParams.toString()}` : pathname;
+    router.replace(nextHref, { scroll: false });
+  }, [
+    assistants,
+    assistantsLoading,
+    pathname,
+    requestedAssistantId,
+    router,
+    searchParams,
+    teamsLoading,
+    assistantsReady,
+    setSelectedAssistantId,
+  ]);
+
+  useEffect(() => {
+    if (teamsLoading || !assistantsReady || assistantsLoading) return;
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    const currentParam = nextParams.get("assistantId");
+    const targetValue = selectedAssistantId != null ? String(selectedAssistantId) : null;
+
+    if (targetValue == null) {
+      if (!currentParam) return;
+      nextParams.delete("assistantId");
+    } else if (currentParam === targetValue) {
+      return;
+    } else {
+      nextParams.set("assistantId", targetValue);
+    }
+
+    const nextHref = nextParams.size > 0 ? `${pathname}?${nextParams.toString()}` : pathname;
+    router.replace(nextHref, { scroll: false });
+  }, [assistantsLoading, assistantsReady, pathname, router, searchParams, selectedAssistantId, teamsLoading]);
 
   const focusInput = () => {
     requestAnimationFrame(() => textareaRef.current?.focus());
@@ -303,441 +325,418 @@ export default function AskPage() {
   const handleSubmit = async (event?: FormEvent) => {
     event?.preventDefault();
     const ok = await submit();
-    if (ok) focusInput();
+    if (ok) {
+      focusInput();
+    }
   };
 
-  const onTextareaKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter") return;
-    if (event.shiftKey) return;
-    if (event.nativeEvent.isComposing) return;
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
+      return;
+    }
     event.preventDefault();
     void handleSubmit();
   };
 
+  const handleDeleteSession = async (sessionId: string) => {
+    if (!window.confirm("确认删除这条历史会话吗？删除后无法恢复。")) {
+      return;
+    }
+
+    const ok = await deleteSession(sessionId);
+    if (ok) {
+      toast.success("历史会话已删除");
+    }
+  };
+
+  const handleCopyText = async (text: string, successText: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(successText);
+    } catch {
+      toast.error("复制失败，请稍后重试");
+    }
+  };
+
   const submitFeedback = async (logId: number, feedback: "up" | "down") => {
-    setFeedbackLoading((prev) => ({ ...prev, [logId]: true }));
+    setFeedbackLoading((current) => ({ ...current, [logId]: true }));
     try {
       await kbChatApi.submitFeedback(logId, {
         feedback_value: feedback === "up" ? "helpful" : "not_helpful",
       });
-      setFeedbackState((prev) => ({ ...prev, [logId]: feedback }));
-      toast.success(feedback === "up" ? "已记录「有帮助」" : "已记录「待改进」");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "反馈提交失败");
+      setFeedbackState((current) => ({ ...current, [logId]: feedback }));
+      toast.success(feedback === "up" ? "已记录“有帮助”" : "已记录“需改进”");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "反馈提交失败");
     } finally {
-      setFeedbackLoading((prev) => ({ ...prev, [logId]: false }));
+      setFeedbackLoading((current) => ({ ...current, [logId]: false }));
     }
   };
 
-  const handleDeleteSession = async (sessionId: string) => {
-    if (!window.confirm("确认删除这条历史会话吗？删除后无法恢复。")) return;
-    const ok = await deleteSession(sessionId);
-    if (ok) toast.success("历史会话已删除");
-    setActiveMenuSession(null);
-  };
-
-  /* ================================================================ */
-  /*  Sidebar                                                          */
-  /* ================================================================ */
-
   const sidebar = (
     <div className="flex h-full min-h-0 flex-col bg-[#111215] text-slate-200">
-      {/* New conversation */}
-      <div className="shrink-0 p-3 pb-2">
+      <div className="shrink-0 px-3 pb-2 pt-3">
+        <div className="text-xs font-medium text-slate-400">历史会话</div>
+        <div className="relative mt-2">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-500" />
+          <input
+            value={sessionSearch}
+            onChange={(event) => setSessionSearch(event.target.value)}
+            placeholder="搜索..."
+            className="h-8 w-full rounded-lg border border-white/10 bg-white/[0.05] pl-8 pr-2 text-[11px] text-slate-200 outline-none placeholder:text-slate-500 focus:border-white/20"
+          />
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/10 hover:[&::-webkit-scrollbar-thumb]:bg-white/20">
+        {historyLoading ? (
+          <div className="space-y-1.5">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div
+                key={index}
+                className="rounded-xl border border-white/5 bg-white/[0.03] px-2.5 py-2"
+              >
+                <div className="h-2.5 w-3/4 animate-pulse rounded-full bg-white/[0.08]" />
+                <div className="mt-1.5 h-2 w-full animate-pulse rounded-full bg-white/[0.05]" />
+              </div>
+            ))}
+          </div>
+        ) : selectedAssistantId == null ? (
+          <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] mx-1 px-3 py-4 text-center text-[11px] text-slate-500">
+            选择助手后展示历史会话
+          </div>
+        ) : groupedSessions.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] mx-1 px-3 py-4 text-center text-[11px] text-slate-500">
+            {sessionSearch ? "没有匹配的会话" : "暂无历史会话"}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {groupedSessions.map((group) => (
+              <div key={group.label} className="space-y-0.5">
+                <div className="px-2 text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                  {group.label}
+                </div>
+                {group.items.map((session) => {
+                  const active = session.session_id === activeSessionId;
+                  const deleting = deletingSessionId === session.session_id;
+                  return (
+                    <div
+                      key={session.session_id}
+                      className={cn(
+                        "group rounded-lg py-1.5 px-1.5 transition-all cursor-pointer",
+                        active
+                          ? "bg-white/[0.08]"
+                          : "hover:bg-white/[0.04]",
+                      )}
+                    >
+                      <div className="flex items-start gap-2">
+                        <button
+                          type="button"
+                          disabled={loading || deleting}
+                          onClick={() => {
+                            void openSession(session.session_id);
+                            setSidebarOpen(false);
+                          }}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div
+                              className={cn(
+                                "truncate text-[12px] font-medium leading-snug",
+                                active ? "text-white" : "text-slate-300",
+                              )}
+                            >
+                              {session.title}
+                            </div>
+                            <div className="line-clamp-1 text-[11px] text-slate-500 mt-0.5">
+                              {session.preview ?? "继续对话"}
+                            </div>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={loading || deleting}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleDeleteSession(session.session_id);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 shrink-0 p-1 rounded text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                          aria-label="删除会话"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="shrink-0 border-t border-white/5 px-3 py-2.5">
         <button
           type="button"
+          disabled={selectedAssistantId == null}
           onClick={() => {
             resetConversation();
             setSidebarOpen(false);
             focusInput();
           }}
-          className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] text-sm font-medium text-white transition-colors hover:bg-white/[0.1]"
+          className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <MessageSquarePlus className="h-4 w-4" />
+          <MessageSquarePlus className="h-3.5 w-3.5" />
           新建对话
         </button>
-      </div>
-
-      {/* Current scope summary */}
-      <div className="shrink-0 px-3 pb-2">
-        <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2.5">
-          <p className="text-[10px] font-medium uppercase tracking-widest text-slate-500">当前范围</p>
-          <p className="mt-1 truncate text-xs font-medium text-slate-200">
-            {selectedTeam?.name ?? (teamsLoading ? "加载中…" : "未选择团队")}
-          </p>
-          <p className="truncate text-[11px] text-slate-500">
-            {selectedKnowledgeBase?.name ?? "全部知识库"}
-          </p>
-        </div>
-      </div>
-
-      {/* Search */}
-      <div className="shrink-0 px-3 pb-2">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-          <input
-            value={sessionSearch}
-            onChange={(e) => setSessionSearch(e.target.value)}
-            placeholder="搜索历史会话…"
-            className="h-8 w-full rounded-lg border border-white/[0.06] bg-white/[0.04] pl-8 pr-3 text-xs text-slate-300 outline-none placeholder:text-slate-600 transition focus:border-white/10 focus:bg-white/[0.06]"
-          />
-        </div>
-      </div>
-
-      {/* History label */}
-      <div className="shrink-0 px-3 pb-1">
-        <p className="text-[10px] font-medium uppercase tracking-widest text-slate-500">历史会话</p>
-      </div>
-
-      {/* Session list */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        {historyLoading ? (
-          <div className="space-y-1.5 px-1 pt-1">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="rounded-xl bg-white/[0.03] p-3 space-y-2">
-                <Skeleton className="h-3.5 w-3/4 bg-white/[0.06]" />
-                <Skeleton className="h-3 w-full bg-white/[0.04]" />
-              </div>
-            ))}
-          </div>
-        ) : filteredSessions.length === 0 ? (
-          <div className="px-2 pt-2">
-            <div className="rounded-xl border border-dashed border-white/[0.06] bg-white/[0.02] px-3 py-4 text-center text-xs text-slate-500">
-              {sessionSearch ? "没有匹配的会话" : "暂无历史会话"}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-0.5 pt-0.5">
-            {filteredSessions.map((session) => {
-              const isActive = session.session_id === activeSessionId;
-              const isDeleting = deletingSessionId === session.session_id;
-              const isMenuOpen = activeMenuSession === session.session_id;
-              return (
-                <div key={session.session_id} className="group relative">
-                  <button
-                    type="button"
-                    disabled={loading || isDeleting}
-                    onClick={() => {
-                      void openSession(session.session_id);
-                      setSidebarOpen(false);
-                    }}
-                    className={`w-full rounded-xl px-3 py-2.5 pr-10 text-left transition-colors ${
-                      isActive
-                        ? "bg-white/[0.08] text-white"
-                        : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
-                    } ${isDeleting ? "opacity-60" : ""}`}
-                  >
-                    <p className="truncate text-[13px] font-medium leading-snug">
-                      {session.title}
-                    </p>
-                    <p className="mt-0.5 line-clamp-1 text-[11px] leading-relaxed text-slate-500">
-                      {session.preview ?? "继续提问"}
-                    </p>
-                    <p className="mt-0.5 text-[10px] text-slate-600">
-                      {formatRelativeTime(session.updated_at)}
-                    </p>
-                  </button>
-
-                  {/* More menu */}
-                  <button
-                    type="button"
-                    aria-label="会话操作"
-                    disabled={loading || isDeleting}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setActiveMenuSession(isMenuOpen ? null : session.session_id);
-                    }}
-                    className={`absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition ${
-                      isActive
-                        ? "bg-white/[0.06] text-slate-300 hover:bg-red-500/15 hover:text-red-300"
-                        : "opacity-0 group-hover:opacity-100 hover:bg-red-500/15 hover:text-red-300"
-                    } disabled:opacity-50`}
-                  >
-                    <MoreHorizontal className="h-4 w-4" />
-                  </button>
-
-                  {/* Dropdown menu */}
-                  {isMenuOpen && (
-                    <div className="absolute right-1.5 top-full z-20 mt-1 w-36 rounded-xl border border-white/10 bg-[#1a1a1f] py-1 shadow-xl">
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteSession(session.session_id)}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-xs text-red-400 transition hover:bg-red-500/10"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        删除会话
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
     </div>
   );
 
-  /* ================================================================ */
-  /*  Main render                                                      */
-  /* ================================================================ */
-
   return (
-    <div className="h-full min-h-0 overflow-hidden bg-slate-50">
+    <div className="h-full min-h-0 overflow-hidden bg-[#f8fafc]">
       <Toaster position="top-right" richColors />
 
-      <div className="mx-auto grid h-full min-h-0 max-w-[1440px] grid-cols-1 overflow-hidden lg:grid-cols-[260px_minmax(0,1fr)]">
+      <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <aside className="hidden min-h-0 border-r border-slate-200/70 lg:block">{sidebar}</aside>
 
-        {/* Desktop sidebar */}
-        <aside className="hidden min-h-0 border-r border-black/5 lg:block">
-          {sidebar}
-        </aside>
-
-        {/* Main content */}
-        <div className="grid min-h-0 overflow-hidden grid-rows-[auto_minmax(0,1fr)_auto]">
-
-          {/* ---- Header ---- */}
-          <header className="shrink-0 border-b border-slate-200/60 bg-white px-4 py-3 sm:px-5">
+        <main className="relative grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+          <div className="shrink-0 border-b border-slate-200/70 bg-white px-4 py-3 sm:px-6">
             <div className="flex items-center gap-2">
-              {/* Mobile sidebar toggle */}
               <button
                 type="button"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 lg:hidden"
                 onClick={() => setSidebarOpen(true)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 lg:hidden"
+                aria-label="打开历史会话"
               >
-                <PanelLeft className="h-4 w-4" />
+                <Menu className="h-4 w-4" />
               </button>
 
-              {/* Logo */}
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-600 to-teal-600 text-white shadow-sm">
-                <BookOpen className="h-4 w-4" />
-              </div>
+              <span className="text-xs text-slate-400">
+                {selectedTeam?.name ?? (teamsLoading ? "加载中..." : "未选择团队")}
+              </span>
 
-              {/* Scope selectors */}
-              <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pb-0.5">
-                <ScopeSelect
-                  label="团队"
-                  value={teamId != null ? String(teamId) : ""}
-                  disabled={teamsLoading || loading}
-                  onChange={(v) => {
-                    setTeamId(v ? Number(v) : null);
-                    setKnowledgeBaseId(null);
-                    setCategoryId(null);
-                  }}
-                  options={[
-                    { value: "", label: teamsLoading ? "加载中…" : teams.length > 0 ? "选择团队" : "暂无团队" },
-                    ...teams.map((t) => ({ value: String(t.id), label: t.name })),
-                  ]}
-                />
-
-                {teamId != null && (
-                  <>
-                    <span className="text-slate-300 shrink-0">/</span>
-                    <ScopeSelect
-                      label="知识库"
-                      value={knowledgeBaseId != null ? String(knowledgeBaseId) : ""}
-                      disabled={loading}
-                      onChange={(v) => {
-                        setKnowledgeBaseId(v ? Number(v) : null);
-                        setCategoryId(null);
-                      }}
-                      options={[
-                        { value: "", label: "全部知识库" },
-                        ...knowledgeBases.map((kb) => ({ value: String(kb.id), label: kb.name })),
-                      ]}
-                    />
-                  </>
-                )}
-
-                {knowledgeBaseId != null && categories.length > 0 && (
-                  <>
-                    <span className="text-slate-300 shrink-0">/</span>
-                    <ScopeSelect
-                      label="分类"
-                      value={categoryId != null ? String(categoryId) : ""}
-                      disabled={loading}
-                      onChange={(v) => setCategoryId(v ? Number(v) : null)}
-                      options={[
-                        { value: "", label: "全部分类" },
-                        ...categories.map((c) => ({ value: String(c.id), label: c.name })),
-                      ]}
-                    />
-                  </>
-                )}
-              </div>
-
-              {/* Session loading indicator */}
-              {sessionLoading && (
-                <span className="ml-auto flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-[11px] text-emerald-700">
-                  <Loader2 className="h-3 w-3 animate-spin" />
+              {sessionLoading ? (
+                <span className="ml-auto flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-600">
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
                   切换中
                 </span>
-              )}
+              ) : null}
             </div>
 
-            {!teamsLoading && teams.length === 0 && (
-              <p className="mt-2 text-xs text-amber-600">
-                当前账号还没有加入任何团队，暂时无法发起问答。
-              </p>
-            )}
-          </header>
+            <div className="mt-2 relative">
+              <button
+                type="button"
+                onClick={() => setAssistantMenuOpen((current) => !current)}
+                className="flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left transition-colors hover:border-slate-300 hover:bg-white"
+              >
+                {selectedAssistant ? (
+                  <>
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-500 text-white">
+                      <Bot className="h-3.5 w-3.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-slate-900">
+                        {selectedAssistant.name}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-400">
+                      <Bot className="h-3.5 w-3.5" />
+                    </div>
+                    <div className="text-sm text-slate-500">选择助手</div>
+                  </>
+                )}
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform",
+                    assistantMenuOpen && "rotate-180",
+                  )}
+                />
+              </button>
 
-          {/* ---- Chat messages ---- */}
-          <section ref={messageScrollRef} className="min-h-0 overflow-y-auto px-4 py-6 sm:px-6">
-
-            {turns.length === 0 ? (
-              /* Empty state */
-              <div className="mx-auto flex max-w-2xl flex-col items-center justify-center px-4 py-12 text-center sm:py-20">
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/20">
-                  <BookOpen className="h-6 w-6" />
-                </div>
-
-                <h1 className="mt-6 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
-                  想了解哪个业务功能？
-                </h1>
-                <p className="mt-3 max-w-lg text-sm leading-relaxed text-slate-500">
-                  选择团队和知识范围后，直接提问即可。系统会基于已发布的知识库内容回答你的问题。
-                </p>
-
-                <div className="mt-8 grid w-full gap-2.5 sm:grid-cols-2">
-                  {hasQueryableKnowledge ? (
-                    suggestedPrompts.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        disabled={loading || teamId == null}
-                        onClick={() => {
-                          setQuery(item);
-                          focusInput();
-                        }}
-                        className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3.5 text-left text-sm text-slate-700 shadow-sm transition-colors hover:border-emerald-200 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400 group-hover:text-emerald-500" />
-                        <span className="leading-relaxed">{item}</span>
-                      </button>
-                    ))
+              {assistantMenuOpen ? (
+                <div className="absolute left-0 right-0 top-[calc(100%+0.25rem)] z-20 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                  {assistantsLoading ? (
+                    <div className="flex items-center justify-center py-4 text-xs text-slate-500">
+                      <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                      加载中...
+                    </div>
+                  ) : assistants.length === 0 ? (
+                    <div className="py-4 text-center text-xs text-slate-500">
+                      暂无可用助手
+                    </div>
                   ) : (
-                    <div className="sm:col-span-2 rounded-2xl border border-dashed border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
-                      请先上传文档，并确保至少有一篇文档完成索引后，再使用智能示例提问。
+                    <div className="space-y-0.5">
+                      {assistants.map((assistant) => {
+                        const active = assistant.id === selectedAssistantId;
+                        return (
+                          <button
+                            key={assistant.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedAssistantId(assistant.id);
+                              setAssistantMenuOpen(false);
+                            }}
+                            className={cn(
+                              "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors",
+                              active
+                                ? "bg-emerald-50 text-emerald-700"
+                                : "text-slate-600 hover:bg-slate-50",
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                "flex h-6 w-6 shrink-0 items-center justify-center rounded text-[10px]",
+                                active
+                                  ? "bg-emerald-500 text-white"
+                                  : "bg-slate-100 text-slate-500",
+                              )}
+                            >
+                              <Bot className="h-3 w-3" />
+                            </div>
+                            <span className="truncate text-xs font-medium">
+                              {assistant.name}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
+              ) : null}
+            </div>
+          </div>
+
+          <section ref={messageScrollRef} className="min-h-0 overflow-y-auto px-4 pb-24 pt-3 sm:px-6 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-200 hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
+            {selectedAssistant == null ? (
+              <div className="flex h-full min-h-[420px] items-center justify-center">
+                <div className="max-w-xl text-center">
+                  <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-white text-slate-400 shadow-sm">
+                    <Sparkles className="h-8 w-8" />
+                  </div>
+                  <h2 className="mt-6 text-2xl font-semibold text-slate-900">
+                    请选择一个助手开始问答
+                  </h2>
+                  <p className="mt-3 text-sm leading-7 text-slate-500">
+                    这里不再要求你选择知识库或分类。只需要选择一个助手，就能进入对应的企业知识问答场景。
+                  </p>
+                </div>
+              </div>
+            ) : turns.length === 0 ? (
+              <div className="flex h-full min-h-[420px] items-center justify-center">
+                <div className="max-w-xl text-center">
+                  <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-white text-slate-400 shadow-sm">
+                    <MessageCircleMore className="h-8 w-8" />
+                  </div>
+                  <h2 className="mt-6 text-2xl font-semibold text-slate-900">
+                    开始与 {selectedAssistant.name} 对话
+                  </h2>
+                  <p className="mt-3 text-sm leading-7 text-slate-500">
+                    切换助手时会保留各自的会话历史，方便你分别验证不同助手的效果。
+                  </p>
+                </div>
               </div>
             ) : (
-              /* Conversation turns */
-              <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 pb-4">
+              <div className="mx-auto max-w-3xl space-y-4">
                 {turns.map((turn) => {
-                  const feedbackLogId = typeof turn.logId === "number" ? turn.logId : null;
-                  const isStreaming = !turn.error && !turn.answer && loading;
                   const uniqueDocCount = new Set(
-                    turn.retrievedDocs.map((doc) => doc.metadata?.document_id).filter((id): id is number => id != null),
+                    turn.retrievedDocs
+                      .map((doc) => doc.metadata?.document_id)
+                      .filter((id): id is number => id != null),
                   ).size;
-                  const retrievedDocCount = uniqueDocCount > 0 ? uniqueDocCount : turn.retrievedDocs.length;
-                  const answerMeta = getAnswerStatusMeta(turn.answerStatus, retrievedDocCount);
+                  const retrievedCount =
+                    uniqueDocCount > 0 ? uniqueDocCount : turn.retrievedDocs.length;
+                  const turnIsPending = loading && !turn.answer && !turn.error;
+                  const feedbackLogId = typeof turn.logId === "number" ? turn.logId : null;
 
                   return (
                     <div key={turn.id} className="space-y-3">
-                      {/* User message */}
-                      {turn.query && (
-                        <div className="flex justify-end">
-                          <div className="max-w-[82%] rounded-2xl rounded-br-md bg-slate-800 px-4 py-3 text-[15px] leading-relaxed text-white shadow-sm">
-                            {turn.query}
-                          </div>
+                      <div className="flex items-start justify-end gap-2">
+                        <div className="rounded-2xl bg-[#1e293b] px-4 py-2.5 text-[14px] leading-5 text-white">
+                          <p className="whitespace-pre-wrap">{turn.query}</p>
                         </div>
-                      )}
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-600">
+                          <UserRound className="h-5.5 w-5.5" />
+                        </div>
+                      </div>
 
-                      {/* Assistant response */}
-                      {(turn.answer || turn.error || isStreaming) && (
-                        <div className="flex justify-start">
-                          <div className="w-full max-w-[90%] rounded-2xl border border-slate-100 bg-white px-5 py-4 shadow-sm">
-                            {/* Header */}
-                            <div className="mb-3 flex items-center gap-2">
-                              <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-50">
-                                <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
-                              </div>
-                              <span className="text-xs font-medium text-slate-500">知识助手</span>
-                              <AnswerStatusBadge status={turn.answerStatus} retrievedCount={retrievedDocCount} />
-                            </div>
-
-                            {/* Hint */}
-                            {turn.answerStatus && answerMeta.hint && (
-                              <p className="mb-3 text-xs leading-relaxed text-slate-500">{answerMeta.hint}</p>
-                            )}
-
-                            {/* Error */}
-                            {turn.error && (
-                              <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-700">
-                                {turn.error}
-                              </div>
-                            )}
-
-                            {/* Streaming */}
-                            {isStreaming && (
-                              <div className="flex items-center gap-2.5 py-2 text-sm text-slate-500">
-                                <StreamingDots />
-                                <span>正在检索知识并生成回答…</span>
-                              </div>
-                            )}
-
-                            {/* Answer */}
-                            {turn.answer && <AnswerMarkdown text={turn.answer} />}
-
-                            {/* Sources */}
-                            <AnswerSourcesSection
-                              turn={turn}
-                              open={openSourceTurns.has(turn.id)}
-                              expandedChunks={expandedChunks}
-                              onToggleSection={() => toggleSourceSection(turn.id)}
-                              onToggleChunk={toggleChunk}
-                              onExpandTurn={() => expandChunksForTurn(turn.id, turn.retrievedDocs)}
-                              onCollapseTurn={() => collapseChunksForTurn(turn.id, turn.retrievedDocs)}
+                      <div className="flex items-start gap-2">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                          <Bot className="h-5.5 w-5.5" />
+                        </div>
+                        <div className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                          <div className="flex items-center justify-end mb-2">
+                            <AnswerStatusBadge
+                              status={turn.answerStatus}
+                              retrievedCount={retrievedCount}
                             />
-
-                            {/* Feedback + copy */}
-                            {turn.answer && feedbackLogId !== null && !isStreaming && (
-                              <div className="mt-4 flex items-center gap-3 border-t border-slate-50 pt-3">
-                                <span className="text-[11px] text-slate-400">这条回答有帮助吗？</span>
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    disabled={feedbackLoading[feedbackLogId] === true}
-                                    onClick={() => void submitFeedback(feedbackLogId, "up")}
-                                    className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[11px] transition-colors disabled:opacity-50 ${
-                                      feedbackState[feedbackLogId] === "up"
-                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                        : "border-slate-150 bg-white text-slate-500 hover:bg-slate-50"
-                                    }`}
-                                  >
-                                    <ThumbsUp className="h-3 w-3" />
-                                    有帮助
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={feedbackLoading[feedbackLogId] === true}
-                                    onClick={() => void submitFeedback(feedbackLogId, "down")}
-                                    className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[11px] transition-colors disabled:opacity-50 ${
-                                      feedbackState[feedbackLogId] === "down"
-                                        ? "border-amber-200 bg-amber-50 text-amber-700"
-                                        : "border-slate-150 bg-white text-slate-500 hover:bg-slate-50"
-                                    }`}
-                                  >
-                                    <ThumbsDown className="h-3 w-3" />
-                                    需改进
-                                  </button>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => void navigator.clipboard.writeText(turn.answer ?? "").then(() => toast.success("答案已复制"))}
-                                  className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-600"
-                                >
-                                  <Copy className="h-3 w-3" />
-                                  复制
-                                </button>
-                              </div>
-                            )}
                           </div>
+
+                          {turn.error ? (
+                            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                              {turn.error}
+                            </div>
+                          ) : turnIsPending ? (
+                            <AssistantReplySkeleton />
+                          ) : (
+                            <AnswerMarkdown text={turn.answer} />
+                          )}
+
+                          <AnswerSourcesSection
+                            turn={turn}
+                            open={openSourceTurnIds.has(turn.id)}
+                            expandedChunks={expandedChunks}
+                            onToggleSection={() => toggleSourceTurn(turn.id)}
+                            onToggleChunk={toggleChunk}
+                            onExpandTurn={() => expandChunksForTurn(turn.id, turn.retrievedDocs)}
+                            onCollapseTurn={() =>
+                              collapseChunksForTurn(turn.id, turn.retrievedDocs)
+                            }
+                          />
+                          {turn.answer && feedbackLogId != null && !turnIsPending ? (
+                            <div className="mt-2.5 flex items-center gap-2 border-t border-slate-100 pt-2">
+                              <span className="text-[11px] text-slate-400 mr-1">
+                                这条回答有帮助吗？
+                              </span>
+                              <button
+                                type="button"
+                                disabled={feedbackLoading[feedbackLogId] === true}
+                                onClick={() => void submitFeedback(feedbackLogId, "up")}
+                                className={cn(
+                                  "inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[11px] transition-colors disabled:opacity-50",
+                                  feedbackState[feedbackLogId] === "up"
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                    : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
+                                )}
+                              >
+                                <ThumbsUp className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={feedbackLoading[feedbackLogId] === true}
+                                onClick={() => void submitFeedback(feedbackLogId, "down")}
+                                className={cn(
+                                  "inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[11px] transition-colors disabled:opacity-50",
+                                  feedbackState[feedbackLogId] === "down"
+                                    ? "border-amber-200 bg-amber-50 text-amber-700"
+                                    : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
+                                )}
+                              >
+                                <ThumbsDown className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleCopyText(turn.answer, "答案已复制")}
+                                className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-600"
+                              >
+                                <Copy className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
-                      )}
+                      </div>
                     </div>
                   );
                 })}
@@ -745,64 +744,52 @@ export default function AskPage() {
             )}
           </section>
 
-          {/* ---- Input footer ---- */}
-          <footer className="shrink-0 border-t border-slate-200/60 bg-white px-4 pb-4 pt-3 sm:px-5">
+          <footer className="fixed bottom-3 left-1/2 w-[calc(100%-2rem)] max-w-3xl -translate-x-1/2 z-10 sm:w-[calc(100%-3rem)]">
             <form onSubmit={handleSubmit}>
-              <div className="mx-auto max-w-3xl">
-                <div className="flex items-end gap-2 rounded-2xl border border-slate-200 bg-white shadow-sm transition-all focus-within:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-100">
-                  <Textarea
-                    ref={textareaRef}
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={onTextareaKeyDown}
-                    disabled={loading || teamId == null}
-                    rows={1}
-                    placeholder={
-                      teamId == null
-                        ? "请先选择团队，再开始提问…"
-                        : "询问业务功能、操作步骤、审批规则或异常原因…"
-                    }
-                    className="min-h-[52px] max-h-[180px] resize-none border-0 bg-transparent px-4 py-3 text-[15px] leading-relaxed shadow-none placeholder:text-slate-400 focus-visible:ring-0"
-                  />
-                  <div className="shrink-0 px-3 pb-3">
-                    <Button
-                      type="submit"
-                      disabled={loading || !query.trim() || teamId == null}
-                      className="h-9 rounded-xl bg-emerald-600 px-4 text-sm font-medium text-white shadow-sm hover:bg-emerald-500 disabled:opacity-40"
-                    >
-                      {loading ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <SendHorizontal className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  </div>
-                </div>
-                <p className="mt-1.5 text-center text-xs text-slate-400">
-                  {knowledgeBaseLabel}
-                  <span className="mx-1.5 text-slate-200">·</span>
-                  Enter 发送，Shift+Enter 换行
-                </p>
+              <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-sm">
+                <textarea
+                  ref={textareaRef}
+                  rows={1}
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={handleKeyDown}
+                  disabled={selectedAssistant == null || loading}
+                  placeholder={
+                    selectedAssistant?.placeholder_text ||
+                    "输入您的问题"
+                  }
+                  className="flex-1 resize-none border-0 bg-transparent text-[15px] leading-7 text-slate-800 placeholder:text-slate-400 outline-none disabled:cursor-not-allowed"
+                />
+                <button
+                  type="submit"
+                  disabled={selectedAssistant == null || loading || !query.trim()}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500 transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                  ) : (
+                    <SendHorizontal className="h-4 w-4 text-white" />
+                  )}
+                </button>
               </div>
             </form>
           </footer>
-        </div>
+        </main>
       </div>
 
-      {/* Mobile sidebar overlay */}
-      {sidebarOpen && (
+      {sidebarOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => setSidebarOpen(false)}
           />
-          <div className="absolute inset-y-0 left-0 w-[85vw] max-w-[300px] shadow-2xl">
-            <div className="flex h-12 items-center justify-between border-b border-white/[0.06] bg-[#111215] px-3 text-white">
-              <span className="text-sm font-medium">会话列表</span>
+          <div className="absolute inset-y-0 left-0 w-[80vw] max-w-[320px] shadow-2xl">
+            <div className="flex h-12 items-center justify-between border-b border-white/5 bg-[#111215] px-3 text-white">
+              <span className="text-sm font-medium">历史会话</span>
               <button
                 type="button"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-white/[0.06] hover:text-white"
                 onClick={() => setSidebarOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-white/[0.06] hover:text-white"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -810,7 +797,7 @@ export default function AskPage() {
             {sidebar}
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

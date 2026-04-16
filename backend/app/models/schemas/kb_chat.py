@@ -13,6 +13,7 @@ class KbChatRequest(BaseModel):
     team_id: Optional[int] = Field(None, description="Limit retrieval to one team")
     knowledge_base_id: Optional[int] = Field(None, description="Limit retrieval to one KB")
     category_id: Optional[int] = Field(None, description="Limit retrieval to one category")
+    assistant_id: Optional[int] = Field(None, description="Assistant profile id")
     session_id: Optional[str] = Field(None, description="Optional session id")
 
 
@@ -31,6 +32,8 @@ class KbChatResponse(BaseModel):
         default_factory=list,
         description="Retrieved document chunks",
     )
+    assistant_id: Optional[int] = None
+    assistant_name: Optional[str] = None
     session_id: Optional[str] = None
     log_id: Optional[int] = None
 
@@ -58,6 +61,8 @@ class KbChatSessionSummary(BaseModel):
     team_id: Optional[int] = Field(None, description="Selected team id")
     knowledge_base_id: Optional[int] = Field(None, description="Selected knowledge base id")
     knowledge_base_name: Optional[str] = Field(None, description="Selected knowledge base name")
+    assistant_id: Optional[int] = Field(None, description="Selected assistant id")
+    assistant_name: Optional[str] = Field(None, description="Selected assistant name")
     category_id: Optional[int] = Field(None, description="Selected category id")
     category_name: Optional[str] = Field(None, description="Selected category name")
     message_count: int = Field(..., description="Persisted message count")
@@ -107,6 +112,8 @@ class KbChatLogItem(BaseModel):
     team_name: str | None = None
     knowledge_base_id: int | None = None
     knowledge_base_name: str | None = None
+    assistant_id: int | None = None
+    assistant_name: str | None = None
     category_id: int | None = None
     category_name: str | None = None
     query: str
@@ -172,6 +179,8 @@ class KbChatLogDetail(KbChatLogItem):
 
     team_id: int | None = None
     team_name: str | None = None
+    assistant_id: int | None = None
+    assistant_name: str | None = None
     category_name: str | None = None
     retrieval_status_reason: str | None = None
     retrieval_queries: List[str] = Field(default_factory=list)

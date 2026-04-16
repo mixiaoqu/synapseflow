@@ -85,6 +85,31 @@ class KbChatService(BaseAgentService):
             {
                 "session_id": resolved_session_id,
                 "query": request.query,
+                "assistant_id": getattr(request, "assistant_id", None),
+                "assistant_name": getattr(request, "assistant_name", None),
+                "assistant_welcome_message": getattr(
+                    request,
+                    "assistant_welcome_message",
+                    None,
+                ),
+                "assistant_placeholder_text": getattr(
+                    request,
+                    "assistant_placeholder_text",
+                    None,
+                ),
+                "assistant_persona_prompt": getattr(
+                    request,
+                    "assistant_persona_prompt",
+                    None,
+                ),
+                "assistant_rule_template": getattr(
+                    request,
+                    "assistant_rule_template",
+                    None,
+                ),
+                "assistant_suggested_prompts": list(
+                    getattr(request, "assistant_suggested_prompts", None) or []
+                ),
                 "chat_history": history,
                 "memory_summary": memory_summary,
                 "retrieval_queries": [],
@@ -148,6 +173,7 @@ class KbChatService(BaseAgentService):
             session_id=session_id,
             team_id=state.get("team_id"),
             knowledge_base_id=state.get("knowledge_base_id"),
+            assistant_id=state.get("assistant_id"),
             category_id=state.get("category_id"),
             user_message=state.get("query", ""),
             assistant_message=answer,
@@ -236,6 +262,7 @@ class KbChatService(BaseAgentService):
                     user_id=int(user_id),
                     session_id=state.get("session_id"),
                     knowledge_base_id=state.get("knowledge_base_id"),
+                    assistant_id=state.get("assistant_id"),
                     category_id=state.get("category_id"),
                     query=str(state.get("query") or ""),
                     answer_text=str(result.get("answer") or ""),
@@ -312,6 +339,8 @@ class KbChatService(BaseAgentService):
                 confidence_level=None,
                 backend_citations=[],
                 retrieved_docs=[],
+                assistant_id=state.get("assistant_id"),
+                assistant_name=state.get("assistant_name"),
                 session_id=state.get("session_id"),
                 log_id=log_id,
             )
@@ -342,8 +371,57 @@ class KbChatService(BaseAgentService):
             ),
             backend_citations=result.get("retrieved_docs", []),
             retrieved_docs=result.get("retrieved_docs", []),
+            assistant_id=state.get("assistant_id"),
+            assistant_name=state.get("assistant_name"),
             session_id=state.get("session_id"),
             log_id=log_id,
+        )
+
+    async def preview(self, request: "KbChatRequest", *, user_id: int) -> "KbChatResponse":
+        """Run a stateless preview without persisting chat memory or logs."""
+
+        from app.models.schemas.kb_chat import KbChatResponse
+
+        state = self.build_initial_state(
+            request,
+            user_id=user_id,
+            session_id=self._new_run_id(),
+            chat_history=[],
+            memory_summary=None,
+        )
+        sensitive_check = await self._check_sensitive_query(request=request)
+        if sensitive_check.blocked:
+            result = self._build_blocked_result(state, sensitive_check)
+            answer_status = self._resolve_answer_status(result)
+            return KbChatResponse(
+                answer=result["answer"],
+                answer_text=result["answer"],
+                answer_status=answer_status,
+                confidence_level=None,
+                backend_citations=[],
+                retrieved_docs=[],
+                assistant_id=state.get("assistant_id"),
+                assistant_name=state.get("assistant_name"),
+                session_id=None,
+                log_id=None,
+            )
+
+        result = await self._get_graph().ainvoke(state)
+        answer_status = self._resolve_answer_status(result)
+        return KbChatResponse(
+            answer=result.get("answer", ""),
+            answer_text=result.get("answer", ""),
+            answer_status=answer_status,
+            confidence_level=self._resolve_confidence(
+                answer_status,
+                len(result.get("retrieved_docs", []) or []),
+            ),
+            backend_citations=result.get("retrieved_docs", []),
+            retrieved_docs=result.get("retrieved_docs", []),
+            assistant_id=state.get("assistant_id"),
+            assistant_name=state.get("assistant_name"),
+            session_id=None,
+            log_id=None,
         )
 
     async def list_sessions(
@@ -365,6 +443,8 @@ class KbChatService(BaseAgentService):
                 team_id=record.team_id,
                 knowledge_base_id=record.knowledge_base_id,
                 knowledge_base_name=record.knowledge_base_name,
+                assistant_id=record.assistant_id,
+                assistant_name=record.assistant_name,
                 category_id=record.category_id,
                 category_name=record.category_name,
                 message_count=record.message_count,
@@ -398,6 +478,8 @@ class KbChatService(BaseAgentService):
             team_id=record.team_id,
             knowledge_base_id=record.knowledge_base_id,
             knowledge_base_name=record.knowledge_base_name,
+            assistant_id=record.assistant_id,
+            assistant_name=record.assistant_name,
             category_id=record.category_id,
             category_name=record.category_name,
             message_count=record.message_count,
@@ -481,6 +563,8 @@ class KbChatService(BaseAgentService):
                         "confidence_level": None,
                         "backend_citations": [],
                         "retrieved_docs": [],
+                        "assistant_id": state.get("assistant_id"),
+                        "assistant_name": state.get("assistant_name"),
                         "session_id": state.get("session_id"),
                         "log_id": log_id,
                     },
@@ -574,6 +658,8 @@ class KbChatService(BaseAgentService):
                     ),
                     "backend_citations": final_state.get("retrieved_docs", []),
                     "retrieved_docs": final_state.get("retrieved_docs", []),
+                    "assistant_id": state.get("assistant_id"),
+                    "assistant_name": state.get("assistant_name"),
                     "session_id": state.get("session_id"),
                     "log_id": log_id,
                 },

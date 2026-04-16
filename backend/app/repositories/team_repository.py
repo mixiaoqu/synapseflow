@@ -1,9 +1,9 @@
 """Team and team-member repository."""
 
-from sqlalchemy import or_, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import KnowledgeBase, Team, TeamMember
+from app.db.models import KnowledgeBase, KnowledgeBaseMember, Team, TeamMember
 
 
 class TeamRepository:
@@ -27,6 +27,16 @@ class TeamRepository:
                 or_(
                     TeamMember.user_id == self.user_id,
                     KnowledgeBase.user_id == self.user_id,
+                    exists(
+                        select(1)
+                        .select_from(KnowledgeBaseMember)
+                        .join(KnowledgeBase, KnowledgeBaseMember.knowledge_base_id == KnowledgeBase.id)
+                        .where(
+                            KnowledgeBase.team_id == Team.id,
+                            KnowledgeBaseMember.user_id == self.user_id,
+                        )
+                        .correlate(Team)
+                    ),
                 )
             )
             .group_by(Team.id)
@@ -45,6 +55,16 @@ class TeamRepository:
                 or_(
                     TeamMember.user_id == self.user_id,
                     KnowledgeBase.user_id == self.user_id,
+                    exists(
+                        select(1)
+                        .select_from(KnowledgeBaseMember)
+                        .join(KnowledgeBase, KnowledgeBaseMember.knowledge_base_id == KnowledgeBase.id)
+                        .where(
+                            KnowledgeBase.team_id == Team.id,
+                            KnowledgeBaseMember.user_id == self.user_id,
+                        )
+                        .correlate(Team)
+                    ),
                 ),
             )
             .limit(1)

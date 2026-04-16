@@ -9,7 +9,7 @@ from typing import Any, Protocol
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ChatMessage, ChatSession, DocumentCategory, KnowledgeBase
+from app.db.models import AssistantProfile, ChatMessage, ChatSession, DocumentCategory, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 from app.utils.time import utc_now
 
@@ -38,6 +38,8 @@ class ChatSessionSummaryRecord:
     team_id: int | None
     knowledge_base_id: int | None
     knowledge_base_name: str | None
+    assistant_id: int | None
+    assistant_name: str | None
     category_id: int | None
     category_name: str | None
     message_count: int
@@ -69,6 +71,7 @@ class ChatMemoryStore(Protocol):
         session_id: str,
         team_id: int | None,
         knowledge_base_id: int | None,
+        assistant_id: int | None,
         category_id: int | None,
         user_message: str,
         assistant_message: str,
@@ -155,6 +158,7 @@ class DatabaseChatMemoryStore:
         session_id: str,
         team_id: int | None,
         knowledge_base_id: int | None,
+        assistant_id: int | None,
         category_id: int | None,
         user_message: str,
         assistant_message: str,
@@ -173,6 +177,7 @@ class DatabaseChatMemoryStore:
             )
             session.team_id = team_id
             session.knowledge_base_id = knowledge_base_id
+            session.assistant_id = assistant_id
             session.category_id = category_id
             session.updated_at = utc_now()
 
@@ -205,8 +210,14 @@ class DatabaseChatMemoryStore:
         normalized_limit = max(1, min(limit, 100))
         async with AsyncSessionLocal() as db:
             rows = await db.execute(
-                select(ChatSession, KnowledgeBase.name, DocumentCategory.name)
+                select(
+                    ChatSession,
+                    KnowledgeBase.name,
+                    AssistantProfile.name,
+                    DocumentCategory.name,
+                )
                 .outerjoin(KnowledgeBase, KnowledgeBase.id == ChatSession.knowledge_base_id)
+                .outerjoin(AssistantProfile, AssistantProfile.id == ChatSession.assistant_id)
                 .outerjoin(DocumentCategory, DocumentCategory.id == ChatSession.category_id)
                 .where(ChatSession.user_id == user_id)
                 .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
@@ -218,16 +229,17 @@ class DatabaseChatMemoryStore:
 
             messages_by_session = await self._load_messages_for_sessions(
                 db,
-                [session.id for session, _, _ in sessions],
+                [session.id for session, _, _, _ in sessions],
             )
             return [
                 self._build_session_summary(
                     session,
                     kb_name=knowledge_base_name,
+                    assistant_name=assistant_name,
                     category_name=category_name,
                     messages=messages_by_session.get(session.id, []),
                 )
-                for session, knowledge_base_name, category_name in sessions
+                for session, knowledge_base_name, assistant_name, category_name in sessions
             ]
 
     async def get_session_detail(
@@ -238,8 +250,14 @@ class DatabaseChatMemoryStore:
     ) -> ChatSessionDetailRecord | None:
         async with AsyncSessionLocal() as db:
             row = await db.execute(
-                select(ChatSession, KnowledgeBase.name, DocumentCategory.name)
+                select(
+                    ChatSession,
+                    KnowledgeBase.name,
+                    AssistantProfile.name,
+                    DocumentCategory.name,
+                )
                 .outerjoin(KnowledgeBase, KnowledgeBase.id == ChatSession.knowledge_base_id)
+                .outerjoin(AssistantProfile, AssistantProfile.id == ChatSession.assistant_id)
                 .outerjoin(DocumentCategory, DocumentCategory.id == ChatSession.category_id)
                 .where(
                     ChatSession.user_id == user_id,
@@ -250,12 +268,13 @@ class DatabaseChatMemoryStore:
             if result is None:
                 return None
 
-            session, knowledge_base_name, category_name = result
+            session, knowledge_base_name, assistant_name, category_name = result
             messages_by_session = await self._load_messages_for_sessions(db, [session.id])
             messages = messages_by_session.get(session.id, [])
             summary = self._build_session_summary(
                 session,
                 kb_name=knowledge_base_name,
+                assistant_name=assistant_name,
                 category_name=category_name,
                 messages=messages,
             )
@@ -266,6 +285,8 @@ class DatabaseChatMemoryStore:
                 team_id=summary.team_id,
                 knowledge_base_id=summary.knowledge_base_id,
                 knowledge_base_name=summary.knowledge_base_name,
+                assistant_id=summary.assistant_id,
+                assistant_name=summary.assistant_name,
                 category_id=summary.category_id,
                 category_name=summary.category_name,
                 message_count=summary.message_count,
@@ -372,6 +393,7 @@ class DatabaseChatMemoryStore:
         session: ChatSession,
         *,
         kb_name: str | None,
+        assistant_name: str | None,
         category_name: str | None,
         messages: list[dict[str, Any]],
     ) -> ChatSessionSummaryRecord:
@@ -402,6 +424,8 @@ class DatabaseChatMemoryStore:
             team_id=session.team_id,
             knowledge_base_id=session.knowledge_base_id,
             knowledge_base_name=kb_name,
+            assistant_id=session.assistant_id,
+            assistant_name=assistant_name,
             category_id=session.category_id,
             category_name=category_name,
             message_count=len(messages),

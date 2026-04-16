@@ -133,6 +133,8 @@ function mergeSessionSummary(
     team_id: detail.team_id ?? current?.team_id ?? null,
     knowledge_base_id: detail.knowledge_base_id ?? current?.knowledge_base_id ?? null,
     knowledge_base_name: detail.knowledge_base_name ?? current?.knowledge_base_name ?? null,
+    assistant_id: detail.assistant_id ?? current?.assistant_id ?? null,
+    assistant_name: detail.assistant_name ?? current?.assistant_name ?? null,
     category_id: detail.category_id ?? current?.category_id ?? null,
     category_name: detail.category_name ?? current?.category_name ?? null,
     message_count: detail.message_count,

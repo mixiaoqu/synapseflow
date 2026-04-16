@@ -10,6 +10,13 @@ class KbChatState(BaseAgentContext, total=False):
 
     session_id: Optional[str]
     query: str
+    assistant_id: Optional[int]
+    assistant_name: Optional[str]
+    assistant_welcome_message: Optional[str]
+    assistant_placeholder_text: Optional[str]
+    assistant_persona_prompt: Optional[str]
+    assistant_rule_template: Optional[str]
+    assistant_suggested_prompts: List[str]
     knowledge_base_id: Optional[int]
     category_id: Optional[int]
     chat_history: List[Dict[str, Any]]

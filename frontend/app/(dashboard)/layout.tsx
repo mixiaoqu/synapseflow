@@ -23,6 +23,7 @@ const navItems = [
   { href: "/revision", icon: "📝", title: "文档修订", desc: "基于建议生成修订内容" },
   { href: "/documents", icon: "🗂️", title: "文档库", desc: "上传、检索与管理文档" },
   { href: "/prototype", icon: "🧩", title: "原型生成", desc: "从需求自动生成界面原型" },
+  { href: "/assistant-lab", icon: "🤖", title: "项目助手", desc: "按项目与端模拟不同助手的回答" },
 ];
 
 function SessionLoadingScreen() {

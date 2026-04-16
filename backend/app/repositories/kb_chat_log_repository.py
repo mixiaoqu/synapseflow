@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
+    AssistantProfile,
     ChatMessage,
     ChatSession,
     DocumentCategory,
@@ -29,6 +30,8 @@ class KbChatLogRecord:
     team_name: str | None
     knowledge_base_id: int | None
     knowledge_base_name: str | None
+    assistant_id: int | None
+    assistant_name: str | None
     category_id: int | None
     category_name: str | None
     query: str
@@ -90,6 +93,7 @@ class KbChatLogRepository:
         user_id: int,
         session_id: str | None,
         knowledge_base_id: int | None,
+        assistant_id: int | None,
         category_id: int | None,
         query: str,
         answer_text: str,
@@ -102,6 +106,7 @@ class KbChatLogRepository:
             user_id=user_id,
             session_id=session_id,
             knowledge_base_id=knowledge_base_id,
+            assistant_id=assistant_id,
             category_id=category_id,
             query=query,
             answer_text=answer_text,
@@ -137,10 +142,12 @@ class KbChatLogRepository:
             select(
                 KbChatLog,
                 KnowledgeBase,
+                AssistantProfile.name.label("assistant_name"),
                 Team.name.label("team_name"),
                 DocumentCategory.name.label("category_name"),
             )
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
             .outerjoin(DocumentCategory, KbChatLog.category_id == DocumentCategory.id)
         )
@@ -168,6 +175,7 @@ class KbChatLogRepository:
             select(func.count())
             .select_from(KbChatLog)
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
             .outerjoin(DocumentCategory, KbChatLog.category_id == DocumentCategory.id)
         )
@@ -198,6 +206,8 @@ class KbChatLogRepository:
                     team_name=team_name,
                     knowledge_base_id=item.knowledge_base_id,
                     knowledge_base_name=knowledge_base.name if knowledge_base else None,
+                    assistant_id=item.assistant_id,
+                    assistant_name=assistant_name,
                     category_id=item.category_id,
                     category_name=category_name,
                     query=item.query,
@@ -215,7 +225,7 @@ class KbChatLogRepository:
                     reviewed_by_user_id=item.reviewed_by_user_id,
                     created_at=item.created_at,
                 )
-                for item, knowledge_base, team_name, category_name in rows
+                for item, knowledge_base, assistant_name, team_name, category_name in rows
             ],
             int(total),
         )
@@ -272,10 +282,12 @@ class KbChatLogRepository:
                 KbChatLog,
                 KnowledgeBase.name.label("knowledge_base_name"),
                 KnowledgeBase.team_id.label("knowledge_base_team_id"),
+                AssistantProfile.name.label("assistant_name"),
                 Team.name.label("team_name"),
                 DocumentCategory.name.label("category_name"),
             )
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
             .outerjoin(DocumentCategory, KbChatLog.category_id == DocumentCategory.id)
             .where(KbChatLog.id == log_id)
@@ -284,7 +296,7 @@ class KbChatLogRepository:
         if row is None:
             return None
 
-        item, knowledge_base_name, knowledge_base_team_id, team_name, category_name = row
+        item, knowledge_base_name, knowledge_base_team_id, assistant_name, team_name, category_name = row
         session = None
         if item.session_id:
             session = await self._get_chat_session(
@@ -299,6 +311,7 @@ class KbChatLogRepository:
         detail = self._build_detail_record(
             item=item,
             knowledge_base_name=knowledge_base_name,
+            assistant_name=assistant_name,
             category_name=category_name,
             team_id=(session.team_id if session is not None else knowledge_base_team_id),
             team_name=team_name,
@@ -407,6 +420,7 @@ class KbChatLogRepository:
         *,
         item: KbChatLog,
         knowledge_base_name: str | None,
+        assistant_name: str | None,
         category_name: str | None,
         team_id: int | None,
         team_name: str | None,
@@ -493,6 +507,8 @@ class KbChatLogRepository:
             session_id=item.session_id,
             knowledge_base_id=item.knowledge_base_id,
             knowledge_base_name=knowledge_base_name,
+            assistant_id=item.assistant_id,
+            assistant_name=assistant_name,
             category_id=item.category_id,
             category_name=category_name,
             query=item.query,

@@ -12,9 +12,9 @@ import {
 
 import { kbChatApi, type AskTeamOption } from "@/lib/api/endpoints/kbChat";
 
-const LAST_TEAM_STORAGE_KEY = "synapseflow.kb-chat.last-team";
+const LAST_TEAM_STORAGE_KEY = "synapseflow.current-team";
 
-interface AskTeamScopeContextValue {
+interface TeamScopeContextValue {
   teamId: number | null;
   setTeamId: (teamId: number | null) => void;
   teams: AskTeamOption[];
@@ -22,7 +22,7 @@ interface AskTeamScopeContextValue {
   selectedTeam: AskTeamOption | null;
 }
 
-const AskTeamScopeContext = createContext<AskTeamScopeContextValue | null>(null);
+const TeamScopeContext = createContext<TeamScopeContextValue | null>(null);
 
 function buildStorageKey(userId: number): string {
   return `${LAST_TEAM_STORAGE_KEY}.${userId}`;
@@ -45,7 +45,7 @@ function writeStoredTeamId(storageKey: string, teamId: number | null) {
   window.localStorage.setItem(storageKey, String(teamId));
 }
 
-export function AskTeamScopeProvider({
+export function TeamScopeProvider({
   userId,
   children,
 }: {
@@ -103,7 +103,7 @@ export function AskTeamScopeProvider({
     };
   }, [storageKey]);
 
-  const value = useMemo<AskTeamScopeContextValue>(
+  const value = useMemo<TeamScopeContextValue>(
     () => ({
       teamId: teamIdState,
       setTeamId,
@@ -114,13 +114,17 @@ export function AskTeamScopeProvider({
     [setTeamId, teamIdState, teams, teamsLoading],
   );
 
-  return <AskTeamScopeContext.Provider value={value}>{children}</AskTeamScopeContext.Provider>;
+  return <TeamScopeContext.Provider value={value}>{children}</TeamScopeContext.Provider>;
 }
 
-export function useAskTeamScope() {
-  const context = useContext(AskTeamScopeContext);
+export function useTeamScope() {
+  const context = useContext(TeamScopeContext);
   if (!context) {
-    throw new Error("useAskTeamScope must be used within AskTeamScopeProvider");
+    throw new Error("useTeamScope must be used within TeamScopeProvider");
   }
   return context;
 }
+
+// Backward-compatible aliases for existing imports during migration.
+export const AskTeamScopeProvider = TeamScopeProvider;
+export const useAskTeamScope = useTeamScope;

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Bot,
   BookOpen,
   Copy,
   History,
@@ -23,13 +24,15 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { useKbChat } from "@/hooks/useKbChat";
+import { useAssistantChat } from "@/hooks/useAssistantChat";
 
-const SUGGESTED_PROMPTS = [
-  "请根据知识库内容概括产品的核心能力或目标。",
-  "和当前主题相关的流程、步骤或规范有哪些要点？",
-  "有哪些需要特别注意的限制、风险或边界条件？",
-];
+function buildFallbackPrompts(assistantName: string): string[] {
+  return [
+    `${assistantName} 可以帮我解答哪些问题？`,
+    `请告诉我最常见的操作流程。`,
+    `如果我是新用户，应该从哪里开始？`,
+  ];
+}
 
 function StreamingSkeleton() {
   return (
@@ -43,24 +46,27 @@ function StreamingSkeleton() {
 
 export default function KbChatPage() {
   const {
+    teamId,
+    setTeamId,
+    teams,
+    teamsLoading,
+    selectedTeam,
+    assistants,
+    assistantsLoading,
+    selectedAssistant,
+    setSelectedAssistantId,
     query,
     setQuery,
-    knowledgeBaseId,
-    setKnowledgeBaseId,
-    categoryId,
-    setCategoryId,
-    knowledgeBases,
-    categories,
     loading,
-    historyLoading,
+    submitLoading,
     sessionLoading,
+    historyLoading,
     turns,
     sessions,
     activeSessionId,
     expandedChunks,
     mobileTab,
     setMobileTab,
-    knowledgeBaseLabel,
     lastTurn,
     sourceDocs,
     toggleChunk,
@@ -69,7 +75,7 @@ export default function KbChatPage() {
     resetConversation,
     openSession,
     submit,
-  } = useKbChat();
+  } = useAssistantChat();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -100,6 +106,63 @@ export default function KbChatPage() {
     }
   };
 
+  const suggestedPrompts = selectedAssistant?.suggested_prompts ?? [];
+  const effectivePrompts =
+    suggestedPrompts.length > 0
+      ? suggestedPrompts
+      : selectedAssistant
+        ? buildFallbackPrompts(selectedAssistant.name)
+        : [];
+
+  const assistantHeader = selectedAssistant ? (
+    <div className="mb-4 rounded-2xl border border-teal-200/80 bg-gradient-to-r from-teal-50/80 to-emerald-50/40 px-4 py-3 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-emerald-600 text-white shadow-md">
+          <Bot className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-slate-900">{selectedAssistant.name}</span>
+            <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[11px] text-teal-700 font-medium">
+              {selectedAssistant.slug}
+            </span>
+          </div>
+          {selectedAssistant.description && (
+            <p className="mt-0.5 text-xs text-slate-500 line-clamp-1">
+              {selectedAssistant.description}
+            </p>
+          )}
+        </div>
+      </div>
+      {selectedAssistant.welcome_message && (
+        <div className="mt-2 flex items-start gap-2">
+          <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-teal-600" />
+          <p className="text-xs text-teal-800 leading-relaxed">
+            {selectedAssistant.welcome_message}
+          </p>
+        </div>
+      )}
+      {effectivePrompts.length > 0 && (
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          {effectivePrompts.slice(0, 3).map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              disabled={loading}
+              onClick={() => {
+                setQuery(prompt);
+                requestAnimationFrame(() => textareaRef.current?.focus());
+              }}
+              className="rounded-full border border-teal-200/80 bg-white px-2.5 py-1 text-[11px] text-slate-600 shadow-sm transition-all hover:border-teal-400 hover:bg-teal-50 disabled:opacity-50"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : null;
+
   const chatColumn = (
     <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-2xl border border-slate-200/90 bg-white shadow-sm ring-1 ring-slate-900/[0.04]">
       <div
@@ -116,47 +179,69 @@ export default function KbChatPage() {
                   <p className="mt-1 text-xs text-slate-500">稍等一下，旧消息马上回来。</p>
                 </div>
               </div>
+            ) : !selectedAssistant ? (
+              <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-700 text-white shadow-lg shadow-teal-600/25">
+                  <Bot className="h-7 w-7" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-slate-700">
+                    {assistantsLoading ? "加载助手列表中..." : "当前项目下没有可用助手"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {assistantsLoading
+                      ? "请稍候"
+                      : "请联系管理员配置助手后再来使用。"}
+                  </p>
+                </div>
+              </div>
             ) : (
               <>
-            <div
-              className="pointer-events-none absolute inset-0 -z-10 opacity-[0.35]"
-              style={{
-                backgroundImage:
-                  "radial-gradient(circle at 1px 1px, rgb(148 163 184 / 0.45) 1px, transparent 0)",
-                backgroundSize: "20px 20px",
-              }}
-            />
-            <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-700 text-white shadow-lg shadow-teal-600/25">
-              <Sparkles className="h-8 w-8" />
-            </div>
-            <h2 className="text-lg font-semibold text-slate-800">开始提问</h2>
-            <p className="mt-2 max-w-sm text-sm leading-relaxed text-slate-500">
-              选择检索范围并输入问题，系统会基于知识库内容检索资料并流式生成回答。
-            </p>
-            <p className="mt-8 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-              你可以这样问
-            </p>
-            <div className="mt-3 flex w-full max-w-md flex-col gap-2">
-              {SUGGESTED_PROMPTS.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  disabled={loading}
-                  onClick={() => {
-                    setQuery(item);
-                    requestAnimationFrame(() => textareaRef.current?.focus());
+                <div
+                  className="pointer-events-none absolute inset-0 -z-10 opacity-[0.35]"
+                  style={{
+                    backgroundImage:
+                      "radial-gradient(circle at 1px 1px, rgb(148 163 184 / 0.45) 1px, transparent 0)",
+                    backgroundSize: "20px 20px",
                   }}
-                  className="rounded-xl border border-slate-200/90 bg-white px-4 py-3 text-left text-sm text-slate-700 shadow-sm transition-all hover:border-teal-300 hover:bg-teal-50/40 hover:shadow-md disabled:opacity-50 active:scale-[0.99]"
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
+                />
+                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-700 text-white shadow-lg shadow-teal-600/25">
+                  <Sparkles className="h-8 w-8" />
+                </div>
+                <h2 className="text-lg font-semibold text-slate-800">开始提问</h2>
+                <p className="mt-2 max-w-sm text-sm leading-relaxed text-slate-500">
+                  选择下方助手后，输入你想咨询的问题，系统会基于该助手绑定的知识库检索资料并生成回答。
+                </p>
+                {effectivePrompts.length > 0 && (
+                  <>
+                    <p className="mt-8 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+                      推荐问题
+                    </p>
+                    <div className="mt-3 flex w-full max-w-md flex-col gap-2">
+                      {effectivePrompts.slice(0, 3).map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          disabled={loading}
+                          onClick={() => {
+                            setQuery(item);
+                            requestAnimationFrame(() => textareaRef.current?.focus());
+                          }}
+                          className="rounded-xl border border-slate-200/90 bg-white px-4 py-3 text-left text-sm text-slate-700 shadow-sm transition-all hover:border-teal-300 hover:bg-teal-50/40 hover:shadow-md disabled:opacity-50 active:scale-[0.99]"
+                        >
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>
         ) : (
           <div className="mx-auto max-w-3xl space-y-10">
+            {assistantHeader}
+
             {sessionLoading ? (
               <div className="flex items-center gap-2 rounded-xl border border-teal-100 bg-teal-50/80 px-4 py-3 text-sm text-teal-700">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -188,7 +273,7 @@ export default function KbChatPage() {
                           <span className="flex h-6 w-6 items-center justify-center rounded-md bg-teal-100 text-teal-700">
                             <Library className="h-3.5 w-3.5" />
                           </span>
-                          知识库回答
+                          {selectedAssistant?.name ?? "助手"}回答
                         </span>
                         {turn.answer ? (
                           <Button
@@ -257,8 +342,12 @@ export default function KbChatPage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onTextareaKeyDown}
-              placeholder="输入你想从知识库了解的内容..."
-              disabled={loading}
+              placeholder={
+                selectedAssistant?.placeholder_text
+                  ? selectedAssistant.placeholder_text
+                  : "输入你想咨询的问题..."
+              }
+              disabled={loading || selectedAssistant == null}
               rows={2}
               className="!min-h-[44px] max-h-[min(200px,32vh)] resize-y rounded-lg border-slate-200 bg-white py-2 text-sm leading-snug focus-visible:ring-2 focus-visible:ring-teal-600/40 md:text-[15px]"
             />
@@ -267,26 +356,26 @@ export default function KbChatPage() {
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
               <label
-                htmlFor="kb-collection"
+                htmlFor="kb-team"
                 className="shrink-0 whitespace-nowrap text-xs text-slate-500"
               >
-                检索范围
+                项目
               </label>
               <select
-                id="kb-collection"
-                value={knowledgeBaseId ?? ""}
+                id="kb-team"
+                value={teamId ?? ""}
                 onChange={(e) => {
                   const nextValue = e.target.value ? Number(e.target.value) : null;
-                  setKnowledgeBaseId(nextValue);
-                  setCategoryId(null);
+                  setTeamId(nextValue);
+                  setSelectedAssistantId(null);
                 }}
-                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-600/30 sm:min-w-[180px] sm:w-auto"
-                disabled={loading}
+                disabled={loading || teamsLoading}
+                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-600/30 sm:min-w-[160px] sm:w-auto"
               >
-                <option value="">全部知识库</option>
-                {knowledgeBases.map((collection) => (
-                  <option key={collection.id} value={collection.id}>
-                    {collection.name}（{collection.document_count} 篇）
+                <option value="">全部项目</option>
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name}
                   </option>
                 ))}
               </select>
@@ -294,22 +383,31 @@ export default function KbChatPage() {
 
             <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
               <label
-                htmlFor="kb-category"
+                htmlFor="assistant-select"
                 className="shrink-0 whitespace-nowrap text-xs text-slate-500"
               >
-                分类
+                助手
               </label>
               <select
-                id="kb-category"
-                value={categoryId ?? ""}
-                onChange={(e) => setCategoryId(e.target.value ? Number(e.target.value) : null)}
-                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-600/30 sm:min-w-[180px] sm:w-auto"
-                disabled={loading || !knowledgeBaseId}
+                id="assistant-select"
+                value={selectedAssistant?.id ?? ""}
+                onChange={(e) => {
+                  const nextValue = e.target.value ? Number(e.target.value) : null;
+                  setSelectedAssistantId(nextValue);
+                }}
+                disabled={loading || assistantsLoading || teamId == null}
+                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-600/30 sm:min-w-[180px] sm:w-auto disabled:bg-slate-50 disabled:text-slate-400"
               >
-                <option value="">{knowledgeBaseId ? "全部分类" : "先选择知识库"}</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}（{category.document_count}）
+                {assistants.length === 0 && teamId != null ? (
+                  <option value="">当前项目无助手</option>
+                ) : (
+                  <option value="">
+                    {assistantsLoading ? "加载中..." : "请选择助手"}
+                  </option>
+                )}
+                {assistants.map((assistant) => (
+                  <option key={assistant.id} value={assistant.id}>
+                    {assistant.name}
                   </option>
                 ))}
               </select>
@@ -317,7 +415,7 @@ export default function KbChatPage() {
 
             <Button
               type="submit"
-              disabled={loading || !query.trim()}
+              disabled={loading || !query.trim() || selectedAssistant == null}
               className="h-9 gap-1.5 rounded-lg bg-gradient-to-r from-teal-600 to-emerald-600 px-4 text-sm shadow-md shadow-teal-600/20 hover:from-teal-700 hover:to-emerald-700"
             >
               {loading ? (
@@ -334,9 +432,9 @@ export default function KbChatPage() {
             </Button>
           </div>
 
-          {knowledgeBases.length === 0 ? (
+          {selectedTeam && assistants.length === 0 && !assistantsLoading ? (
             <p className="text-[11px] text-amber-700/90">
-              当前还没有可用的文档集合，请先到“文档库”创建并上传文档。
+              当前项目下还没有配置助手，请联系管理员添加。
             </p>
           ) : null}
         </form>
@@ -347,7 +445,7 @@ export default function KbChatPage() {
   const sourcesAside = (
     <aside className="flex h-full min-h-0 overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm ring-1 ring-slate-900/[0.04] lg:w-[min(100%,400px)] lg:shrink-0">
       <SourcesPanel
-        knowledgeBaseLabel={knowledgeBaseLabel}
+        knowledgeBaseLabel={selectedAssistant?.name ?? "助手"}
         sourceDocs={sourceDocs}
         lastTurn={lastTurn}
         loading={loading}
@@ -374,7 +472,7 @@ export default function KbChatPage() {
                 知识库问答
               </h1>
               <p className="mt-0.5 max-w-xl text-xs leading-snug text-slate-500 sm:text-sm">
-                基于已索引文档进行问答，支持流式输出，并展示命中的资料摘录。
+                基于助手配置的知识库进行问答，支持流式输出，并展示命中的资料摘录。
               </p>
             </div>
           </div>
@@ -401,7 +499,9 @@ export default function KbChatPage() {
                   </option>
                 ))}
               </select>
-              {sessionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-teal-600" /> : null}
+              {sessionLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-teal-600" />
+              ) : null}
             </div>
 
             <Button

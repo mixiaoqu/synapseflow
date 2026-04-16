@@ -9,35 +9,74 @@ def build_kb_chat_answer_prompt(
     *,
     chat_history_text: str = "",
     memory_summary: str = "",
+    assistant_name: str = "",
+    assistant_welcome_message: str = "",
+    assistant_placeholder_text: str = "",
+    assistant_persona_prompt: str = "",
+    assistant_rule_template: str = "",
+    assistant_suggested_prompts: list[str] | None = None,
+    retrieval_status: str = "",
 ) -> str:
     """Build the prompt for the end-user knowledge-base chat flow."""
 
     clean_context = sanitize_user_kb_context(context)
     summary_block = memory_summary.strip() or "(none)"
     history_block = chat_history_text.strip() or "(none)"
+    assistant_name_block = assistant_name.strip() or "Knowledge Assistant"
+    welcome_block = assistant_welcome_message.strip() or "(none)"
+    placeholder_block = assistant_placeholder_text.strip() or "(none)"
+    persona_block = assistant_persona_prompt.strip() or "(none)"
+    rule_block = assistant_rule_template.strip() or "(none)"
+    retrieval_status_block = retrieval_status.strip() or "ok"
+    suggested_prompt_lines = [
+        f"- {item.strip()}"
+        for item in (assistant_suggested_prompts or [])
+        if str(item).strip()
+    ]
+    suggested_prompts_block = "\n".join(suggested_prompt_lines) or "(none)"
 
     return f"""
-你是面向终端用户的知识库问答助手。
-请优先依据知识库内容回答，会话记忆只用于理解“它”“那个”“上一步”“这个方案”之类的上下文指代，不要把历史猜测当成事实。
+You are a knowledge-base assistant for end users.
+Current assistant name: {assistant_name_block}
 
-[会话摘要]
+Base constraints:
+1. Answer from the knowledge-base context first. Do not fabricate facts that are not supported.
+2. Chat history and memory are only for resolving references like "that step" or "the previous page". They are not a source of truth.
+3. If the available material is insufficient, explicitly say the资料中没有提到 or 根据现有资料无法确定.
+4. Do not reveal internal implementation details such as API routes, field names, variable names, or database tables.
+5. If the answer is procedural, organize it into clear, user-facing steps.
+6. Always preserve the configured assistant persona and response rules, even when the knowledge base is insufficient.
+7. If retrieval status is not "ok", do not invent facts. Give a helpful answer in Chinese that clearly states the limitation while still following the configured assistant style.
+
+[Assistant persona]
+{persona_block}
+
+[Configured welcome message]
+{welcome_block}
+
+[Configured input placeholder]
+{placeholder_block}
+
+[Assistant-specific response rules]
+{rule_block}
+
+[Configured suggested prompts]
+{suggested_prompts_block}
+
+[Conversation summary]
 {summary_block}
 
-[最近对话]
+[Recent chat history]
 {history_block}
 
-[知识库上下文]
+[Retrieval status]
+{retrieval_status_block}
+
+[Knowledge-base context]
 {clean_context.strip()}
 
-[当前用户问题]
+[Current user question]
 {query.strip()}
 
-请遵守：
-1. 优先依据知识库上下文回答，不要编造其中没有的信息。
-2. 如果上下文不足以支撑结论，请明确说明“资料里没有提到”或“根据现有资料无法确定”。
-3. 语气自然、简洁、友好，优先先给结论，再补充步骤或说明。
-4. 不要暴露接口路径、字段名、变量名、数据库名等内部实现细节。
-5. 如果内容属于操作说明，请整理成用户容易照着执行的步骤。
-
-直接输出最终给用户看的答案，不要写系统说明或额外前言。
+Return only the final user-facing answer in Chinese.
 """.strip()

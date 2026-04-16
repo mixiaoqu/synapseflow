@@ -65,6 +65,8 @@ def _build_log_detail_response(record) -> KbChatLogDetail:
         created_at=record.created_at,
         team_id=record.team_id,
         team_name=record.team_name,
+        assistant_id=record.assistant_id,
+        assistant_name=record.assistant_name,
         retrieval_status_reason=record.retrieval_status_reason,
         retrieval_queries=list(record.retrieval_queries or []),
         retrieval_funnel=(
@@ -297,6 +299,8 @@ async def list_ask_logs(
                 team_name=item.team_name,
                 knowledge_base_id=item.knowledge_base_id,
                 knowledge_base_name=item.knowledge_base_name,
+                assistant_id=item.assistant_id,
+                assistant_name=item.assistant_name,
                 category_id=item.category_id,
                 category_name=item.category_name,
                 query=item.query,

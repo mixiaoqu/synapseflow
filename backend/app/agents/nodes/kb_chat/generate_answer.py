@@ -29,14 +29,24 @@ def _get_default_llm_factory() -> Callable[[], Any]:
 def should_skip_kb_llm(state: dict[str, Any]) -> Optional[str]:
     """Return a fixed reply when retrieval yields nothing useful."""
 
+    return should_skip_kb_llm_with_options(state, include_retrieval_fallback=True)
+
+
+def should_skip_kb_llm_with_options(
+    state: dict[str, Any],
+    *,
+    include_retrieval_fallback: bool,
+) -> Optional[str]:
+    """Optionally short-circuit when retrieval yields nothing useful."""
+
     status = state.get("kb_retrieval_status")
-    if status in {"empty_collection", "empty_knowledge_base"}:
+    if include_retrieval_fallback and status in {"empty_collection", "empty_knowledge_base"}:
         return KB_EMPTY_COLLECTION_REPLY
-    if status == "no_hits":
+    if include_retrieval_fallback and status == "no_hits":
         return KB_NO_HITS_REPLY
     if status == "ok":
         return None
-    if not (state.get("retrieved_docs") or []):
+    if include_retrieval_fallback and not (state.get("retrieved_docs") or []):
         return KB_NO_HITS_REPLY
     return None
 
@@ -47,6 +57,13 @@ def _build_prompt(state: dict[str, Any]) -> str:
         state.get("context", ""),
         chat_history_text=format_chat_history(state.get("chat_history") or [], max_messages=6),
         memory_summary=state.get("memory_summary") or "",
+        assistant_name=state.get("assistant_name") or "",
+        assistant_welcome_message=state.get("assistant_welcome_message") or "",
+        assistant_placeholder_text=state.get("assistant_placeholder_text") or "",
+        assistant_persona_prompt=state.get("assistant_persona_prompt") or "",
+        assistant_rule_template=state.get("assistant_rule_template") or "",
+        assistant_suggested_prompts=list(state.get("assistant_suggested_prompts") or []),
+        retrieval_status=state.get("kb_retrieval_status") or "ok",
     )
 
 
@@ -83,7 +100,7 @@ async def generate_kb_chat_answer_text(
     *,
     llm_factory: Callable[[], Any] | None = None,
 ) -> str:
-    fixed = should_skip_kb_llm(state)
+    fixed = should_skip_kb_llm_with_options(state, include_retrieval_fallback=False)
     if fixed:
         return fixed
 
@@ -116,7 +133,7 @@ async def stream_kb_chat_answer_text(
     llm_factory: Callable[[], Any] | None = None,
     stream_writer: Callable[[dict[str, Any]], None] | None = None,
 ) -> AsyncGenerator[str, None]:
-    fixed = should_skip_kb_llm(state)
+    fixed = should_skip_kb_llm_with_options(state, include_retrieval_fallback=False)
     if fixed:
         if stream_writer is not None:
             stream_writer({"node_id": "answer", "text": fixed})

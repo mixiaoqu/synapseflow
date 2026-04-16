@@ -136,6 +136,8 @@ class FakeChatMemoryStore:
                 team_id=2,
                 knowledge_base_id=9,
                 knowledge_base_name="Product Docs",
+                assistant_id=5,
+                assistant_name="Project Assistant",
                 category_id=4,
                 category_name="Guides",
                 message_count=2,
@@ -150,6 +152,8 @@ class FakeChatMemoryStore:
             team_id=2,
             knowledge_base_id=9,
             knowledge_base_name="Product Docs",
+            assistant_id=5,
+            assistant_name="Project Assistant",
             category_id=4,
             category_name="Guides",
             message_count=2,
@@ -180,6 +184,7 @@ class FakeChatMemoryStore:
         session_id: str,
         team_id: int | None,
         knowledge_base_id: int | None,
+        assistant_id: int | None,
         category_id: int | None,
         user_message: str,
         assistant_message: str,
@@ -191,6 +196,7 @@ class FakeChatMemoryStore:
                 "session_id": session_id,
                 "team_id": team_id,
                 "knowledge_base_id": knowledge_base_id,
+                "assistant_id": assistant_id,
                 "category_id": category_id,
                 "user_message": user_message,
                 "assistant_message": assistant_message,
@@ -261,6 +267,7 @@ def test_kb_chat_invoke_uses_graph_result():
     assert response.answer == "LangGraph helps compose flows."
     assert response.answer_text == "LangGraph helps compose flows."
     assert response.answer_status == "answered"
+    assert response.assistant_id is None
     assert response.retrieved_docs[0]["metadata"]["document_title"] == "LangGraph Intro"
     assert response.session_id == "session-1"
     assert graph.last_state["chat_history"][0]["role"] == "user"
@@ -411,6 +418,37 @@ def test_kb_chat_build_initial_state_keeps_category_id():
     assert state["allowed_document_statuses"] == [DOC_STATUS_PUBLISHED]
 
 
+def test_kb_chat_build_initial_state_keeps_assistant_context():
+    service = KbChatService(
+        llm_factory=lambda: None,
+        graph=FakeKbChatGraph(),
+        memory_store=FakeChatMemoryStore(),
+    )
+    request = SimpleNamespace(
+        query="How should the assistant respond?",
+        knowledge_base_id=3,
+        category_id=7,
+        assistant_id=5,
+        assistant_name="Project Assistant",
+        assistant_welcome_message="Hello",
+        assistant_placeholder_text="Ask a setup question",
+        assistant_persona_prompt="Be concise.",
+        assistant_rule_template="Prefer step-by-step instructions.",
+        assistant_suggested_prompts=["How do I get started?"],
+        session_id="session-2",
+    )
+
+    state = service.build_initial_state(request, user_id=99)
+
+    assert state["assistant_id"] == 5
+    assert state["assistant_name"] == "Project Assistant"
+    assert state["assistant_welcome_message"] == "Hello"
+    assert state["assistant_placeholder_text"] == "Ask a setup question"
+    assert state["assistant_persona_prompt"] == "Be concise."
+    assert state["assistant_rule_template"] == "Prefer step-by-step instructions."
+    assert state["assistant_suggested_prompts"] == ["How do I get started?"]
+
+
 def test_kb_chat_build_initial_state_allows_admin_preview_status_override():
     service = KbChatService(
         llm_factory=lambda: None,
@@ -434,6 +472,48 @@ def test_kb_chat_build_initial_state_allows_admin_preview_status_override():
     ]
 
 
+def test_kb_chat_preview_runs_without_persistence():
+    graph = FakeKbChatGraph()
+    memory_store = FakeChatMemoryStore()
+    service = KbChatService(
+        llm_factory=lambda: None,
+        graph=graph,
+        memory_store=memory_store,
+        sensitive_word_service=FakeSensitiveWordService(blocked=False),
+    )
+    request = SimpleNamespace(
+        query="Preview this assistant",
+        team_id=2,
+        knowledge_base_id=9,
+        category_id=4,
+        assistant_name="Preview Assistant",
+        assistant_welcome_message="Hello there",
+        assistant_placeholder_text="Ask about setup",
+        assistant_persona_prompt="Be concise.",
+        assistant_rule_template="Use bullets when needed.",
+        assistant_suggested_prompts=["How do I start?"],
+        allowed_document_statuses=[DOC_STATUS_DRAFT, DOC_STATUS_INDEXED, DOC_STATUS_PUBLISHED],
+    )
+
+    response = asyncio.run(service.preview(request, user_id=42))
+
+    assert response.answer == "LangGraph helps compose flows."
+    assert response.assistant_name == "Preview Assistant"
+    assert response.session_id is None
+    assert response.log_id is None
+    assert memory_store.load_calls == []
+    assert memory_store.save_calls == []
+    assert graph.last_state["assistant_welcome_message"] == "Hello there"
+    assert graph.last_state["assistant_placeholder_text"] == "Ask about setup"
+    assert graph.last_state["assistant_persona_prompt"] == "Be concise."
+    assert graph.last_state["assistant_suggested_prompts"] == ["How do I start?"]
+    assert graph.last_state["allowed_document_statuses"] == [
+        DOC_STATUS_DRAFT,
+        DOC_STATUS_INDEXED,
+        DOC_STATUS_PUBLISHED,
+    ]
+
+
 def test_kb_chat_list_sessions_returns_history_for_user():
     memory_store = FakeChatMemoryStore()
     service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store)
@@ -443,6 +523,7 @@ def test_kb_chat_list_sessions_returns_history_for_user():
     assert len(sessions) == 1
     assert sessions[0].session_id == "session-1"
     assert sessions[0].knowledge_base_name == "Product Docs"
+    assert sessions[0].assistant_name == "Project Assistant"
     assert memory_store.list_calls == [{"user_id": 42, "limit": 10}]
 
 
@@ -454,6 +535,7 @@ def test_kb_chat_get_session_returns_persisted_messages():
 
     assert session is not None
     assert session.session_id == "session-1"
+    assert session.assistant_id == 5
     assert session.messages[0].role == "user"
     assert session.messages[1].content == "LangGraph helps compose flows."
     assert memory_store.detail_calls == [{"user_id": 42, "session_id": "session-1"}]
@@ -477,6 +559,8 @@ def test_build_log_detail_response_serializes_nested_records():
         session_id="session-1",
         knowledge_base_id=9,
         knowledge_base_name="Product Docs",
+        assistant_id=5,
+        assistant_name="Project Assistant",
         category_id=4,
         category_name="Guides",
         query="What is LangGraph?",

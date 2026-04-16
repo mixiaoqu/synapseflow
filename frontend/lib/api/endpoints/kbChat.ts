@@ -38,6 +38,8 @@ export interface KbChatResponse {
   confidence_level?: string | null;
   backend_citations: RetrievedDoc[];
   retrieved_docs: RetrievedDoc[];
+  assistant_id?: number | null;
+  assistant_name?: string | null;
   session_id?: string | null;
   log_id?: number | null;
 }
@@ -58,6 +60,8 @@ export interface KbChatSessionSummary {
   team_id?: number | null;
   knowledge_base_id?: number | null;
   knowledge_base_name?: string | null;
+  assistant_id?: number | null;
+  assistant_name?: string | null;
   category_id?: number | null;
   category_name?: string | null;
   message_count: number;
@@ -77,6 +81,8 @@ export interface KbChatLogItem {
   team_name?: string | null;
   knowledge_base_id?: number | null;
   knowledge_base_name?: string | null;
+  assistant_id?: number | null;
+  assistant_name?: string | null;
   category_id?: number | null;
   category_name?: string | null;
   query: string;
@@ -139,6 +145,8 @@ export interface KbChatRetrievalFunnel {
 export interface KbChatLogDetail extends KbChatLogItem {
   team_id?: number | null;
   team_name?: string | null;
+  assistant_id?: number | null;
+  assistant_name?: string | null;
   category_name?: string | null;
   retrieval_status_reason?: string | null;
   retrieval_queries: string[];

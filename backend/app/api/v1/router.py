@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
+    assistants,
     ask,
     auth,
     document_categories,
@@ -24,6 +25,7 @@ api_router.include_router(health.router, tags=["health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(ask.router, prefix="/ask", tags=["ask"])
 api_router.include_router(ask.admin_router, prefix="/admin/qa", tags=["admin-qa"])
+api_router.include_router(assistants.router, prefix="/assistants", tags=["assistants"])
 api_router.include_router(kb_curation.router, prefix="/kb-curation", tags=["kb-curation"])
 api_router.include_router(kb_chat.router, prefix="/kb-chat", tags=["kb-chat"])
 api_router.include_router(revision.router, prefix="/revision", tags=["revision"])
