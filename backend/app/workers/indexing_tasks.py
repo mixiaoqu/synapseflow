@@ -7,12 +7,14 @@ from typing import Any
 
 from app.application.indexing_service import indexing_service
 from app.core.config.settings import settings
+from app.services.embedding import warmup_embedding_model
 from app.workers.broker import configure_broker, dramatiq_is_available
 
 if dramatiq_is_available():
     import dramatiq
 
     configure_broker()
+    warmup_embedding_model()
 else:  # pragma: no cover - local environments without dramatiq installed
     dramatiq = None  # type: ignore[assignment]
 

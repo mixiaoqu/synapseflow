@@ -5,6 +5,7 @@ import threading
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
+from loguru import logger
 from sentence_transformers import SentenceTransformer
 
 from app.core.config import config_registry
@@ -33,6 +34,11 @@ def _get_embedder() -> SentenceTransformer:
         with _embedder_lock:
             if _embedder is None:
                 embedding_cfg = config_registry.get_embedding_config()
+                logger.info(
+                    "Loading embedding model model={} device={}",
+                    embedding_cfg.model,
+                    embedding_cfg.device,
+                )
                 embedder = SentenceTransformer(
                     embedding_cfg.model,
                     device=embedding_cfg.device,
@@ -40,6 +46,18 @@ def _get_embedder() -> SentenceTransformer:
                 _validate_embedding_dim(embedder)
                 _embedder = embedder
     return _embedder
+
+
+def warmup_embedding_model() -> None:
+    """Load the shared embedder eagerly during process startup."""
+    embedding_cfg = config_registry.get_embedding_config()
+    logger.info(
+        "Warming up embedding model model={} device={}",
+        embedding_cfg.model,
+        embedding_cfg.device,
+    )
+    _get_embedder()
+    logger.info("Embedding model warmup complete model={}", embedding_cfg.model)
 
 
 def embed_query(text: str) -> list[float]:
