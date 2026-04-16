@@ -689,11 +689,12 @@ export default function AdminTeamsPage() {
   /* ================================================================ */
 
   return (
-    <div className="flex h-full">
+    <div className="h-full px-6 py-8 sm:px-8">
+      <div className="mx-auto flex h-full max-w-7xl gap-6">
       {/* Main content */}
-      <div className="flex h-full flex-1 flex-col overflow-hidden">
+      <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         {/* Page header */}
-        <div className="shrink-0 border-b border-slate-100 bg-white px-6 py-5">
+        <div className="shrink-0 border-b border-slate-100 bg-white px-6 py-5 sm:px-8">
           <div className="flex items-start justify-between">
             <div>
               <h1 className="text-2xl font-semibold text-slate-900">团队管理</h1>
@@ -710,7 +711,7 @@ export default function AdminTeamsPage() {
 
         {/* Table area */}
         <div className="min-h-0 flex-1 overflow-auto">
-          <div className="px-6 py-5">
+          <div className="px-6 py-5 sm:px-8">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-slate-400" />
@@ -835,7 +836,7 @@ export default function AdminTeamsPage() {
 
       {/* Member panel */}
       {memberPanelOpen && activeTeam && (
-        <div className="w-96 shrink-0 border-l border-slate-200 bg-white shadow-sm">
+        <div className="w-96 shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <MemberPanel
             team={activeTeam}
             members={members}
@@ -889,6 +890,7 @@ export default function AdminTeamsPage() {
         onConfirm={handleRemoveMember}
         onCancel={() => setRemoveMemberTarget(null)}
       />
+      </div>
     </div>
   );
 }
