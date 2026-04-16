@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -227,7 +228,7 @@ function ReferenceDocsSection({
   );
 }
 
-export default function AssistantLabPage() {
+function AssistantLabPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1041,5 +1042,21 @@ export default function AssistantLabPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+function AssistantLabPageFallback() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-500">
+      <Loader2 className="h-6 w-6 animate-spin" />
+    </main>
+  );
+}
+
+export default function AssistantLabPage() {
+  return (
+    <Suspense fallback={<AssistantLabPageFallback />}>
+      <AssistantLabPageContent />
+    </Suspense>
   );
 }

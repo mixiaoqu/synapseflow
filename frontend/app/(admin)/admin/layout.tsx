@@ -1,8 +1,7 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
 import Link from "next/link";
+import { Suspense } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   BarChart3,
@@ -91,7 +90,7 @@ function SessionLoadingScreen() {
   );
 }
 
-export default function AdminLayout({
+function AdminLayoutContent({
   children,
 }: {
   children: React.ReactNode;
@@ -203,5 +202,17 @@ export default function AdminLayout({
         </main>
       </div>
     </TeamScopeProvider>
+  );
+}
+
+export default function AdminLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <Suspense fallback={<SessionLoadingScreen />}>
+      <AdminLayoutContent>{children}</AdminLayoutContent>
+    </Suspense>
   );
 }

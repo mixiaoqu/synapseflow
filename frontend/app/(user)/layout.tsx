@@ -1,8 +1,7 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
 import Link from "next/link";
+import { Suspense } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ChevronDown, LogOut, Shield } from "lucide-react";
 
@@ -22,7 +21,7 @@ function SessionLoadingScreen() {
   );
 }
 
-export default function UserLayout({
+function UserLayoutContent({
   children,
 }: {
   children: React.ReactNode;
@@ -109,5 +108,17 @@ export default function UserLayout({
         <main className="h-0 min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>
     </TeamScopeProvider>
+  );
+}
+
+export default function UserLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <Suspense fallback={<SessionLoadingScreen />}>
+      <UserLayoutContent>{children}</UserLayoutContent>
+    </Suspense>
   );
 }

@@ -1,9 +1,7 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Bot,
@@ -141,7 +139,7 @@ function AssistantReplySkeleton() {
   );
 }
 
-export default function AskPage() {
+function AskPageContent() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -801,5 +799,23 @@ export default function AskPage() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function AskPageFallback() {
+  return (
+    <div className="flex h-full min-h-0 items-center justify-center bg-[#f8fafc] px-4">
+      <div className="rounded-2xl border border-slate-200 bg-white px-6 py-4 text-sm text-slate-500 shadow-sm">
+        正在加载问答工作台...
+      </div>
+    </div>
+  );
+}
+
+export default function AskPage() {
+  return (
+    <Suspense fallback={<AskPageFallback />}>
+      <AskPageContent />
+    </Suspense>
   );
 }
