@@ -31,6 +31,7 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
             log_prefix="[User KB Retrieval]",
             user_id=state.get("user_id"),
             document_statuses=state.get("allowed_document_statuses"),
+            retrieval_version_mode=state.get("retrieval_version_mode"),
         )
     else:
         result = await run_kb_retrieval(
@@ -42,6 +43,7 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
             log_prefix="[User KB Retrieval]",
             user_id=state.get("user_id"),
             document_statuses=state.get("allowed_document_statuses"),
+            retrieval_version_mode=state.get("retrieval_version_mode"),
         )
 
     result["retrieval_queries"] = retrieval_queries or [query]

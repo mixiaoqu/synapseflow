@@ -13,10 +13,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config.registry import config_registry
 from app.db.models import Document, DocumentCategory, Embedding, KnowledgeBase
 from app.repositories.access_scope import accessible_document_condition
+from app.services.document_index_state import INDEX_STATUS_INDEXED
+from app.services.document_lifecycle import RETRIEVAL_VERSION_LIVE
 from app.services.semantic_chunk import VectorIndexChunk
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _SQL_SPACE_CLASS = "[[:space:]]+"
+
+
+def _is_live_retrieval(retrieval_version_mode: str | None) -> bool:
+    return retrieval_version_mode == RETRIEVAL_VERSION_LIVE
+
+
+def _document_version_sql_condition(retrieval_version_mode: str | None) -> str:
+    return "d.is_live IS TRUE" if _is_live_retrieval(retrieval_version_mode) else "d.is_current IS TRUE"
 
 
 async def add_document_chunks(
@@ -121,6 +131,7 @@ async def search(
     knowledge_base_id: int | None = None,
     category_id: int | None = None,
     document_statuses: Sequence[str] | None = None,
+    retrieval_version_mode: str | None = None,
 ) -> List[dict]:
     """
     Vector search across embeddings joined with the current document rows.
@@ -145,7 +156,12 @@ async def search(
         .join(Document, Document.id == Embedding.document_id)
         .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
         .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
-        .where(Document.is_current.is_(True))
+        .where(
+            Document.is_live.is_(True)
+            if _is_live_retrieval(retrieval_version_mode)
+            else Document.is_current.is_(True)
+        )
+        .where(Document.index_status == INDEX_STATUS_INDEXED)
     )
     if user_id is not None:
         stmt = stmt.where(accessible_document_condition(user_id))
@@ -314,6 +330,7 @@ async def _search_lexical_fts(
     knowledge_base_id: int | None = None,
     category_id: int | None = None,
     document_statuses: Sequence[str] | None = None,
+    retrieval_version_mode: str | None = None,
 ) -> List[dict]:
     """PostgreSQL full-text retrieval joined with document metadata."""
 
@@ -329,7 +346,8 @@ async def _search_lexical_fts(
         "JOIN documents d ON d.id = e.document_id",
         "LEFT JOIN document_categories dc ON dc.id = d.category_id",
         "WHERE e.chunk_tsv @@ websearch_to_tsquery('simple', :q)",
-        "  AND d.is_current IS TRUE",
+        f"  AND {_document_version_sql_condition(retrieval_version_mode)}",
+        "  AND d.index_status = 'indexed'",
     ]
     params: dict[str, object] = {"q": query, "lim": k}
 
@@ -426,6 +444,7 @@ async def _search_lexical_trgm(
     knowledge_base_id: int | None = None,
     category_id: int | None = None,
     document_statuses: Sequence[str] | None = None,
+    retrieval_version_mode: str | None = None,
 ) -> List[dict]:
     """Chinese-friendly phrase and trigram retrieval on ``search_text``."""
 
@@ -455,7 +474,8 @@ async def _search_lexical_trgm(
         "FROM embeddings e",
         "JOIN documents d ON d.id = e.document_id",
         "LEFT JOIN document_categories dc ON dc.id = d.category_id",
-        "WHERE d.is_current IS TRUE",
+        f"WHERE {_document_version_sql_condition(retrieval_version_mode)}",
+        "  AND d.index_status = 'indexed'",
         "  AND (",
         "    lower(e.search_text) LIKE :phrase_like",
         f"    OR {compact_expr} LIKE :compact_like",
@@ -567,6 +587,7 @@ async def search_lexical(
     knowledge_base_id: int | None = None,
     category_id: int | None = None,
     document_statuses: Sequence[str] | None = None,
+    retrieval_version_mode: str | None = None,
 ) -> List[dict]:
     """Chinese-aware lexical retrieval fused from FTS and trigram/phrase channels."""
 
@@ -586,6 +607,7 @@ async def search_lexical(
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
         document_statuses=document_statuses,
+        retrieval_version_mode=retrieval_version_mode,
     )
     trgm_rows = await _search_lexical_trgm(
         db,
@@ -596,6 +618,7 @@ async def search_lexical(
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
         document_statuses=document_statuses,
+        retrieval_version_mode=retrieval_version_mode,
     )
     weights = [1.0, 1.2 if _contains_cjk(query) else 0.8]
     return reciprocal_rank_fusion_many(
@@ -613,13 +636,14 @@ async def search_hybrid_rrf(
     query_embedding: List[float],
     k_dense: int,
     k_lexical: int,
-    user_id: int | None,
-    team_id: int | None,
-    knowledge_base_id: int | None,
-    category_id: int | None,
-    document_statuses: Sequence[str] | None,
-    rrf_k: int,
-    pool_limit: int,
+    user_id: int | None = None,
+    team_id: int | None = None,
+    knowledge_base_id: int | None = None,
+    category_id: int | None = None,
+    document_statuses: Sequence[str] | None = None,
+    retrieval_version_mode: str | None = None,
+    rrf_k: int = 60,
+    pool_limit: int = 20,
 ) -> List[dict]:
     """Dense vector retrieval plus lexical retrieval fused with RRF."""
 
@@ -632,6 +656,7 @@ async def search_hybrid_rrf(
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
         document_statuses=document_statuses,
+        retrieval_version_mode=retrieval_version_mode,
     )
     lexical = await search_lexical(
         db,
@@ -642,5 +667,6 @@ async def search_hybrid_rrf(
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
         document_statuses=document_statuses,
+        retrieval_version_mode=retrieval_version_mode,
     )
     return reciprocal_rank_fusion(dense, lexical, rrf_k=rrf_k, limit=pool_limit)

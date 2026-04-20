@@ -22,10 +22,10 @@ import {
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
-import { AnswerMarkdown } from "@/components/kb-chat/AnswerMarkdown";
-import { AnswerSourcesSection } from "@/components/kb-chat/SourcesPanel";
+import { AnswerMarkdown } from "@/components/ask/AnswerMarkdown";
+import { AnswerSourcesSection } from "@/components/ask/SourcesPanel";
 import { useAssistantChat } from "@/hooks/useAssistantChat";
-import { kbChatApi } from "@/lib/api/endpoints/kbChat";
+import { askApi } from "@/lib/api/endpoints/ask";
 import { cn } from "@/lib/utils";
 
 const INPUT_MIN_HEIGHT = 36;
@@ -322,6 +322,11 @@ function AskPageContent() {
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
+  const handleSuggestedPrompt = (promptText: string) => {
+    setQuery(promptText);
+    focusInput();
+  };
+
   const handleSubmit = async (event?: FormEvent) => {
     event?.preventDefault();
     const ok = await submit();
@@ -361,7 +366,7 @@ function AskPageContent() {
   const submitFeedback = async (logId: number, feedback: "up" | "down") => {
     setFeedbackLoading((current) => ({ ...current, [logId]: true }));
     try {
-      await kbChatApi.submitFeedback(logId, {
+      await askApi.submitFeedback(logId, {
         feedback_value: feedback === "up" ? "helpful" : "not_helpful",
       });
       setFeedbackState((current) => ({ ...current, [logId]: feedback }));
@@ -499,7 +504,7 @@ function AskPageContent() {
       <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)]">
         <aside className="hidden min-h-0 border-r border-slate-200/70 lg:block">{sidebar}</aside>
 
-        <main className="relative grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+        <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f8fafc]">
           <div className="shrink-0 border-b border-slate-200/70 bg-white px-4 py-3 sm:px-6">
             <div className="flex items-center gap-2">
               <button
@@ -609,7 +614,7 @@ function AskPageContent() {
             </div>
           </div>
 
-          <section ref={messageScrollRef} className="min-h-0 overflow-y-auto px-4 pb-24 pt-3 sm:px-6 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-200 hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
+          <section ref={messageScrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 pb-6 pt-3 sm:px-6 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-200 hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
             {selectedAssistant == null ? (
               <div className="flex h-full min-h-[420px] items-center justify-center">
                 <div className="max-w-xl text-center">
@@ -636,6 +641,24 @@ function AskPageContent() {
                   <p className="mt-3 text-sm leading-7 text-slate-500">
                     切换助手时会保留各自的会话历史，方便你分别验证不同助手的效果。
                   </p>
+
+                  {suggestedPrompts.length > 0 && (
+                    <div className="mt-8 flex flex-col gap-2">
+                      <div className="text-sm font-medium text-slate-400 mb-2">您可以尝试这样提问：</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {suggestedPrompts.map((prompt, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => handleSuggestedPrompt(prompt)}
+                            className="flex h-full flex-col items-start rounded-xl border border-slate-200 bg-white p-4 text-left transition-all hover:border-emerald-300 hover:bg-emerald-50/50 hover:shadow-sm"
+                          >
+                            <span className="text-sm text-slate-700 line-clamp-3">{prompt}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -654,20 +677,20 @@ function AskPageContent() {
                   return (
                     <div key={turn.id} className="space-y-3">
                       <div className="flex items-start justify-end gap-2">
-                        <div className="rounded-2xl bg-[#1e293b] px-4 py-2.5 text-[14px] leading-5 text-white">
+                        <div className="max-w-[85%] lg:max-w-[75%] w-fit rounded-2xl bg-emerald-600 px-5 py-3 text-[14px] leading-6 text-white shadow-sm">
                           <p className="whitespace-pre-wrap">{turn.query}</p>
                         </div>
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-600">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
                           <UserRound className="h-5.5 w-5.5" />
                         </div>
                       </div>
 
                       <div className="flex items-start gap-2">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-700">
                           <Bot className="h-5.5 w-5.5" />
                         </div>
-                        <div className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-                          <div className="flex items-center justify-end mb-2">
+                        <div className="min-w-0 flex-1 max-w-[95%] lg:max-w-[90%] rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+                          <div className="flex items-center justify-end mb-3">
                             <AnswerStatusBadge
                               status={turn.answerStatus}
                               retrievedCount={retrievedCount}
@@ -744,35 +767,42 @@ function AskPageContent() {
             )}
           </section>
 
-          <footer className="fixed bottom-3 left-1/2 w-[calc(100%-2rem)] max-w-3xl -translate-x-1/2 z-10 sm:w-[calc(100%-3rem)]">
-            <form onSubmit={handleSubmit}>
-              <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-sm">
-                <textarea
-                  ref={textareaRef}
-                  rows={1}
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  onKeyDown={handleKeyDown}
-                  disabled={selectedAssistant == null || loading}
-                  placeholder={
-                    selectedAssistant?.placeholder_text ||
-                    "输入您的问题"
-                  }
-                  className="flex-1 resize-none border-0 bg-transparent text-[15px] leading-7 text-slate-800 placeholder:text-slate-400 outline-none disabled:cursor-not-allowed"
-                />
-                <button
-                  type="submit"
-                  disabled={selectedAssistant == null || loading || !query.trim()}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500 transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {loading ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-white" />
-                  ) : (
-                    <SendHorizontal className="h-4 w-4 text-white" />
-                  )}
-                </button>
-              </div>
-            </form>
+          <footer className="shrink-0 border-t border-slate-200/50 bg-white/80 p-4 backdrop-blur-md">
+            <div className="mx-auto max-w-3xl">
+              <form onSubmit={handleSubmit}>
+                <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-sm focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20 transition-all">
+                  <textarea
+                    ref={textareaRef}
+                    rows={1}
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={handleKeyDown}
+                    disabled={selectedAssistant == null || loading}
+                    placeholder={
+                      selectedAssistant?.placeholder_text ||
+                      "输入您的问题..."
+                    }
+                    className="flex-1 resize-none border-0 bg-transparent text-[15px] leading-7 text-slate-800 placeholder:text-slate-400 outline-none disabled:cursor-not-allowed py-1"
+                  />
+                  <button
+                    type="submit"
+                    disabled={selectedAssistant == null || loading || !query.trim()}
+                    className={cn(
+                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all duration-200",
+                      query.trim() && !loading && selectedAssistant
+                        ? "bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md hover:-translate-y-0.5"
+                        : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                    )}
+                  >
+                    {loading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <SendHorizontal className="h-4 w-4 relative right-[1px]" />
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
           </footer>
         </main>
       </div>

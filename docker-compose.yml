@@ -51,6 +51,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - backend_venv:/app/.venv
       - backend_previews:/app/previews
     depends_on:
       postgres:
@@ -66,6 +67,11 @@ services:
 
   backend-worker:
     image: synapseflow-backend:latest
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+      args:
+        UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.org/simple}
     container_name: synapseflow-backend-worker
     environment:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
@@ -74,6 +80,7 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
     volumes:
       - ./backend:/app
+      - backend_venv:/app/.venv
       - backend_previews:/app/previews
     depends_on:
       postgres:
@@ -109,6 +116,7 @@ services:
 
 volumes:
   postgres_data:
+  backend_venv:
   backend_previews:
   redis_data:
 

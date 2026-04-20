@@ -10,7 +10,12 @@ from app.repositories.kb_chat_log_repository import (
     KbChatDiagnosticMessageRecord,
     KbChatLogDetailRecord,
 )
-from app.services.document_lifecycle import DOC_STATUS_DRAFT, DOC_STATUS_INDEXED, DOC_STATUS_PUBLISHED
+from app.services.document_lifecycle import (
+    PREVIEW_ASK_DOCUMENT_STATUSES,
+    RETRIEVAL_VERSION_CURRENT,
+    RETRIEVAL_VERSION_LIVE,
+    VISIBLE_ASK_DOCUMENT_STATUSES,
+)
 from app.services.chat_memory import (
     ChatMemoryContext,
     ChatSessionDetailRecord,
@@ -415,7 +420,8 @@ def test_kb_chat_build_initial_state_keeps_category_id():
     assert state["query"] == "What is the refund policy?"
     assert state["session_id"] == "session-1"
     assert state["chat_history"] == []
-    assert state["allowed_document_statuses"] == [DOC_STATUS_PUBLISHED]
+    assert state["allowed_document_statuses"] == list(VISIBLE_ASK_DOCUMENT_STATUSES)
+    assert state["retrieval_version_mode"] == RETRIEVAL_VERSION_LIVE
 
 
 def test_kb_chat_build_initial_state_keeps_assistant_context():
@@ -460,16 +466,16 @@ def test_kb_chat_build_initial_state_allows_admin_preview_status_override():
         knowledge_base_id=3,
         category_id=7,
         session_id="session-1",
-        allowed_document_statuses=[DOC_STATUS_DRAFT, DOC_STATUS_INDEXED, DOC_STATUS_PUBLISHED],
+        allowed_document_statuses=list(PREVIEW_ASK_DOCUMENT_STATUSES),
+        retrieval_version_mode=RETRIEVAL_VERSION_CURRENT,
     )
 
     state = service.build_initial_state(request, user_id=99)
 
     assert state["allowed_document_statuses"] == [
-        DOC_STATUS_DRAFT,
-        DOC_STATUS_INDEXED,
-        DOC_STATUS_PUBLISHED,
+        *PREVIEW_ASK_DOCUMENT_STATUSES,
     ]
+    assert state["retrieval_version_mode"] == RETRIEVAL_VERSION_CURRENT
 
 
 def test_kb_chat_preview_runs_without_persistence():
@@ -492,7 +498,8 @@ def test_kb_chat_preview_runs_without_persistence():
         assistant_persona_prompt="Be concise.",
         assistant_rule_template="Use bullets when needed.",
         assistant_suggested_prompts=["How do I start?"],
-        allowed_document_statuses=[DOC_STATUS_DRAFT, DOC_STATUS_INDEXED, DOC_STATUS_PUBLISHED],
+        allowed_document_statuses=list(PREVIEW_ASK_DOCUMENT_STATUSES),
+        retrieval_version_mode=RETRIEVAL_VERSION_CURRENT,
     )
 
     response = asyncio.run(service.preview(request, user_id=42))
@@ -508,10 +515,9 @@ def test_kb_chat_preview_runs_without_persistence():
     assert graph.last_state["assistant_persona_prompt"] == "Be concise."
     assert graph.last_state["assistant_suggested_prompts"] == ["How do I start?"]
     assert graph.last_state["allowed_document_statuses"] == [
-        DOC_STATUS_DRAFT,
-        DOC_STATUS_INDEXED,
-        DOC_STATUS_PUBLISHED,
+        *PREVIEW_ASK_DOCUMENT_STATUSES,
     ]
+    assert graph.last_state["retrieval_version_mode"] == RETRIEVAL_VERSION_CURRENT
 
 
 def test_kb_chat_list_sessions_returns_history_for_user():

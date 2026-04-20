@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from loguru import logger
-from sqlalchemy import case, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.registry import config_registry
@@ -24,7 +24,6 @@ from app.services.document_index_state import (
     INDEX_STATUS_PROCESSING,
     INDEX_STATUS_QUEUED,
 )
-from app.services.document_lifecycle import DOC_STATUS_INDEXED, DOC_STATUS_PUBLISHED
 from app.services.document_indexer import (
     index_document,
     index_prepared_documents_batch,
@@ -465,10 +464,6 @@ class IndexingService:
                     index_status=INDEX_STATUS_INDEXED,
                     index_error=None,
                     indexed_at=indexed_at,
-                    status=case(
-                        (Document.status == DOC_STATUS_PUBLISHED, DOC_STATUS_PUBLISHED),
-                        else_=DOC_STATUS_INDEXED,
-                    ),
                 )
             )
             await db.commit()
@@ -715,10 +710,6 @@ class IndexingService:
                     index_status=INDEX_STATUS_INDEXED,
                     index_error=None,
                     indexed_at=indexed_at,
-                    status=case(
-                        (Document.status == DOC_STATUS_PUBLISHED, DOC_STATUS_PUBLISHED),
-                        else_=DOC_STATUS_INDEXED,
-                    ),
                 )
             )
             finalized_counts[document_id] = counts.get(document_id, 0)
@@ -812,17 +803,19 @@ class IndexingService:
         async with AsyncSessionLocal() as db:
             try:
                 if previous_document_id and previous_document_id != target_document_id:
-                    await db.execute(
-                        update(Document)
-                        .where(Document.id == previous_document_id)
-                        .values(
-                            index_status=INDEX_STATUS_QUEUED,
-                            index_error=None,
-                            indexed_at=None,
+                    previous = await self._get_document(db, previous_document_id)
+                    if previous and not getattr(previous, "is_live", False):
+                        await db.execute(
+                            update(Document)
+                            .where(Document.id == previous_document_id)
+                            .values(
+                                index_status=INDEX_STATUS_QUEUED,
+                                index_error=None,
+                                indexed_at=None,
+                            )
                         )
-                    )
-                    await delete_by_document_id(db, previous_document_id, commit=False)
-                    await db.commit()
+                        await delete_by_document_id(db, previous_document_id, commit=False)
+                        await db.commit()
                 await self._run_document_index(
                     db,
                     document_id=target_document_id,

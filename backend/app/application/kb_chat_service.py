@@ -21,7 +21,7 @@ from app.application.stream_events import (
 from app.application.workflow_meta import get_node_label
 from app.db.session import AsyncSessionLocal
 from app.repositories.kb_chat_log_repository import KbChatLogRepository
-from app.services.document_lifecycle import VISIBLE_ASK_DOCUMENT_STATUSES
+from app.services.document_lifecycle import RETRIEVAL_VERSION_LIVE, VISIBLE_ASK_DOCUMENT_STATUSES
 from app.services.chat_memory import (
     ChatMemoryContext,
     ChatMemoryStore,
@@ -116,6 +116,10 @@ class KbChatService(BaseAgentService):
                 "allowed_document_statuses": list(
                     getattr(request, "allowed_document_statuses", None)
                     or VISIBLE_ASK_DOCUMENT_STATUSES
+                ),
+                "retrieval_version_mode": (
+                    getattr(request, "retrieval_version_mode", None)
+                    or RETRIEVAL_VERSION_LIVE
                 ),
                 "retrieved_docs": [],
                 "context": "",

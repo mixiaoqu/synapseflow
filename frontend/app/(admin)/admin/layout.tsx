@@ -18,7 +18,7 @@ import {
   Users,
 } from "lucide-react";
 
-import { TeamScopeProvider } from "@/components/kb-chat/AskTeamScopeProvider";
+import { TeamScopeProvider } from "@/components/team-scope/TeamScopeProvider";
 import { BackgroundTasksPanel } from "@/components/tasks/BackgroundTasksPanel";
 import { TeamScopeSwitcher } from "@/components/teams/TeamScopeSwitcher";
 import { useAuthSession } from "@/hooks/useAuthSession";
@@ -35,6 +35,25 @@ const AVATAR_PALETTES = [
   "bg-teal-100 text-teal-700",
 ];
 
+const navItems = [
+  { href: "/admin", title: "后台首页", icon: Home },
+  { href: "/admin/documents", title: "文档管理", icon: Database },
+  { href: "/admin/knowledge-bases", title: "知识库管理", icon: BookOpen },
+  { href: "/admin/assistants", title: "助手管理", icon: Bot },
+  { href: "/admin/review", title: "审核发布", icon: CheckSquare },
+  { href: "/admin/qa-quality", title: "问答质检", icon: BarChart3 },
+  { href: "/admin/sensitive-words", title: "敏感词管理", icon: ShieldAlert },
+  { href: "/admin/teams", title: "团队管理", icon: Building2 },
+  { href: "/admin/users", title: "用户管理", icon: Users },
+];
+
+const ROLE_COLORS: Record<string, { bg: string; text: string }> = {
+  kb_admin: { bg: "bg-violet-50", text: "text-violet-700" },
+  kb_reviewer: { bg: "bg-amber-50", text: "text-amber-700" },
+  kb_editor: { bg: "bg-blue-50", text: "text-blue-700" },
+  end_user: { bg: "bg-slate-100", text: "text-slate-600" },
+};
+
 function avatarPalette(id: number) {
   return AVATAR_PALETTES[id % AVATAR_PALETTES.length];
 }
@@ -50,13 +69,6 @@ function getInitials(name?: string | null, username?: string): string {
     .slice(0, 2);
 }
 
-const ROLE_COLORS: Record<string, { bg: string; text: string }> = {
-  kb_admin: { bg: "bg-violet-50", text: "text-violet-700" },
-  kb_reviewer: { bg: "bg-amber-50", text: "text-amber-700" },
-  kb_editor: { bg: "bg-blue-50", text: "text-blue-700" },
-  end_user: { bg: "bg-slate-100", text: "text-slate-600" },
-};
-
 function roleBadge(role: string) {
   const labels: Record<string, string> = {
     kb_admin: "管理员",
@@ -67,18 +79,6 @@ function roleBadge(role: string) {
   const color = ROLE_COLORS[role] ?? ROLE_COLORS.end_user;
   return { label: labels[role] ?? role, ...color };
 }
-
-const navItems = [
-  { href: "/admin", title: "后台首页", icon: Home },
-  { href: "/admin/documents", title: "文档管理", icon: Database },
-  { href: "/admin/knowledge-bases", title: "知识库管理", icon: BookOpen },
-  { href: "/admin/assistants", title: "助手管理", icon: Bot },
-  { href: "/admin/review", title: "审核发布", icon: CheckSquare },
-  { href: "/admin/qa-quality", title: "问答质检", icon: BarChart3 },
-  { href: "/admin/sensitive-words", title: "敏感词管理", icon: ShieldAlert },
-  { href: "/admin/teams", title: "团队管理", icon: Building2 },
-  { href: "/admin/users", title: "用户管理", icon: Users },
-];
 
 function SessionLoadingScreen() {
   return (
@@ -118,7 +118,7 @@ function AdminLayoutContent({
                 <Settings className="h-4.5 w-4.5 text-white" />
               </div>
               <div>
-                <p className="text-base font-semibold leading-tight text-white">知识库管理后台</p>
+                <p className="text-base font-semibold leading-tight text-white">知识运营后台</p>
                 <p className="mt-0.5 text-[11px] text-gray-500">Knowledge Ops Console</p>
               </div>
             </div>

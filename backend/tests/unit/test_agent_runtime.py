@@ -68,18 +68,6 @@ def test_graph_registry_exposes_known_workflows():
         return
 
     assert get_graph_definition("kb_chat").node_ids == ("retrieve", "answer")
-    assert get_graph_definition("kb_curation").node_ids == (
-        "query_optimizer",
-        "retrieve",
-        "answer",
-        "evaluate",
-    )
-    assert get_graph_definition("suggest_revision").node_ids == (
-        "parse_suggestions",
-        "analyze_document",
-        "locate_edits",
-        "revise",
-    )
 
     compiled = build_graph("kb_chat")
     assert compiled is not None

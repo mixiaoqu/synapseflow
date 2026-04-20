@@ -35,11 +35,11 @@ from app.services.document_index_state import (
 from app.services.document_lifecycle import (
     DOC_STATUS_APPROVED,
     DOC_STATUS_DRAFT,
-    DOC_STATUS_INDEXED,
     DOC_STATUS_PENDING_REVIEW,
     DOC_STATUS_PUBLISHED,
 )
 from app.services.sensitive_word_service import get_sensitive_word_service
+from app.services.vector_store import delete_by_document_id
 from app.utils.file_parser import MAX_FILE_SIZE, SUPPORTED_EXTENSIONS, extract_text_from_file
 
 MAX_BATCH_UPLOAD_FILES = 100
@@ -49,26 +49,26 @@ class DocumentService:
     """Coordinates document CRUD and delegates indexing orchestration."""
 
     @staticmethod
-    def _is_current_latest_document(doc: Document) -> bool:
-        return bool(getattr(doc, "is_current", True) and getattr(doc, "is_latest", True))
+    def _is_current_document(doc: Document) -> bool:
+        return bool(getattr(doc, "is_current", True))
 
     @classmethod
-    def _assert_current_latest_document(cls, doc: Document) -> None:
-        if not cls._is_current_latest_document(doc):
+    def _assert_current_document(cls, doc: Document) -> None:
+        if not cls._is_current_document(doc):
             raise HTTPException(
                 status_code=400,
-                detail="Only the current latest version can enter the review and publish flow",
+                detail="Only the current working version can enter the review and publish flow",
             )
 
     @classmethod
     def _assert_can_submit_for_review(cls, doc: Document) -> None:
-        cls._assert_current_latest_document(doc)
+        cls._assert_current_document(doc)
         if not is_indexed_status(getattr(doc, "index_status", None)):
             raise HTTPException(
                 status_code=400,
                 detail="Document must finish indexing before it can be submitted for review",
             )
-        if getattr(doc, "status", DOC_STATUS_DRAFT) not in {DOC_STATUS_DRAFT, DOC_STATUS_INDEXED}:
+        if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_DRAFT:
             raise HTTPException(
                 status_code=400,
                 detail="Only draft documents can be submitted for review",
@@ -76,7 +76,7 @@ class DocumentService:
 
     @classmethod
     def _assert_can_approve(cls, doc: Document) -> None:
-        cls._assert_current_latest_document(doc)
+        cls._assert_current_document(doc)
         if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_PENDING_REVIEW:
             raise HTTPException(
                 status_code=400,
@@ -85,7 +85,7 @@ class DocumentService:
 
     @classmethod
     def _assert_can_reject(cls, doc: Document) -> None:
-        cls._assert_current_latest_document(doc)
+        cls._assert_current_document(doc)
         if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_PENDING_REVIEW:
             raise HTTPException(
                 status_code=400,
@@ -94,16 +94,13 @@ class DocumentService:
 
     @classmethod
     def _assert_can_publish(cls, doc: Document) -> None:
-        cls._assert_current_latest_document(doc)
+        cls._assert_current_document(doc)
         if not is_indexed_status(getattr(doc, "index_status", None)):
             raise HTTPException(
                 status_code=400,
                 detail="Document must finish indexing before publish",
             )
-        if getattr(doc, "status", DOC_STATUS_DRAFT) not in {
-            DOC_STATUS_APPROVED,
-            DOC_STATUS_INDEXED,
-        }:
+        if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_APPROVED:
             raise HTTPException(
                 status_code=400,
                 detail="Document must be approved before publish",
@@ -111,11 +108,10 @@ class DocumentService:
 
     @classmethod
     def _assert_can_unpublish(cls, doc: Document) -> None:
-        cls._assert_current_latest_document(doc)
-        if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_PUBLISHED:
+        if not getattr(doc, "is_live", False):
             raise HTTPException(
                 status_code=400,
-                detail="Only published documents can be unpublished",
+                detail="Only the live published version can be unpublished",
             )
 
     @staticmethod
@@ -233,6 +229,9 @@ class DocumentService:
             document_type=doc.document_type,
             size=self._document_size(doc),
             version=getattr(doc, "version", 1),
+            is_current=getattr(doc, "is_current", True),
+            is_latest=getattr(doc, "is_latest", True),
+            is_live=getattr(doc, "is_live", False),
             knowledge_base_id=getattr(doc, "knowledge_base_id", None),
             category_id=getattr(doc, "category_id", None),
             category_name=category_name,
@@ -364,6 +363,7 @@ class DocumentService:
                     parent_id=None,
                     is_latest=True,
                     is_current=True,
+                    is_live=False,
                     knowledge_base_id=resolved_knowledge_base_id,
                     category_id=resolved_category_id,
                     source_path=normalized_source_path,
@@ -476,6 +476,9 @@ class DocumentService:
                 document_type=doc.document_type,
                 size=self._document_size(doc),
                 version=getattr(doc, "version", 1),
+                is_current=getattr(doc, "is_current", True),
+                is_latest=getattr(doc, "is_latest", True),
+                is_live=getattr(doc, "is_live", False),
                 created_at=doc.created_at,
                 updated_at=doc.updated_at,
                 indexed=is_indexed_status(getattr(doc, "index_status", None)),
@@ -586,6 +589,7 @@ class DocumentService:
                 version=getattr(version_doc, "version", 1),
                 is_latest=getattr(version_doc, "is_latest", True),
                 is_current=getattr(version_doc, "is_current", True),
+                is_live=getattr(version_doc, "is_live", False),
                 created_at=version_doc.created_at,
             )
             for version_doc in version_docs
@@ -646,6 +650,11 @@ class DocumentService:
         existing = await repo.get_by_id_for_user(doc_id)
         if not existing:
             raise HTTPException(status_code=404, detail="Document not found")
+        if getattr(existing, "is_live", False):
+            raise HTTPException(
+                status_code=400,
+                detail="Published live versions cannot be overwritten; create a new version instead",
+            )
         if not getattr(existing, "is_latest", True) or not getattr(existing, "is_current", True):
             raise HTTPException(
                 status_code=400,
@@ -822,14 +831,27 @@ class DocumentService:
                     else "Document contains sensitive content and cannot be published"
                 ),
             )
+        root_id = getattr(existing, "root_id", None) or existing.id
+        previous_live = await repo.get_live_by_root_id(root_id)
+        await repo.clear_live_flags_for_root_id(root_id, exclude_doc_id=existing.id)
         doc = await repo.update_status(
             doc_id,
             status=DOC_STATUS_PUBLISHED,
             reviewer_id=user_id,
             publisher_id=user_id,
+            is_live=True,
+            commit=False,
         )
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
+        if (
+            previous_live
+            and previous_live.id != doc.id
+            and not getattr(previous_live, "is_current", False)
+        ):
+            await delete_by_document_id(db, previous_live.id, commit=False)
+        await db.commit()
+        await db.refresh(doc)
         category_name = await repo.get_category_name(getattr(doc, "category_id", None))
         return self._to_response(doc, category_name=category_name)
 
@@ -850,6 +872,7 @@ class DocumentService:
             status=DOC_STATUS_APPROVED,
             reviewer_id=user_id,
             publisher_id=None,
+            is_live=False,
         )
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")

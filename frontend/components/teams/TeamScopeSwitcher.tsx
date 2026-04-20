@@ -2,7 +2,7 @@
 
 import { ChevronDown, Users } from "lucide-react";
 
-import { useTeamScope } from "@/components/kb-chat/AskTeamScopeProvider";
+import { useTeamScope } from "@/components/team-scope/TeamScopeProvider";
 import { cn } from "@/lib/utils";
 
 export function TeamScopeSwitcher({

@@ -24,6 +24,7 @@ class KbChatState(BaseAgentContext, total=False):
     retrieval_queries: List[str]
     retrieval_funnel: Dict[str, Any]
     allowed_document_statuses: List[str]
+    retrieval_version_mode: str
     retrieved_docs: List[Dict[str, Any]]
     context: str
     answer: str

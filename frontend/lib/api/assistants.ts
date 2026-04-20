@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import type { KbChatResponse } from "./endpoints/kbChat";
+import type { AskResponse } from "./endpoints/ask";
 
 export interface AssistantSummary {
   id: number;
@@ -126,7 +126,7 @@ export const assistantsApi = {
     apiClient.post<AssistantSummary[]>("/api/v1/assistants/reorder", { assistant_ids }),
 
   preview: (payload: AssistantPreviewRequest) =>
-    apiClient.post<KbChatResponse>("/api/v1/assistants/preview", payload),
+    apiClient.post<AskResponse>("/api/v1/assistants/preview", payload),
 
   update: (assistantId: number, payload: AssistantUpsertPayload) =>
     apiClient.put<AssistantProfile>(`/api/v1/assistants/${assistantId}`, payload),
@@ -151,7 +151,7 @@ export const assistantsApi = {
     ),
 
   invoke: (assistantId: number, payload: AssistantChatRequest) =>
-    apiClient.post<KbChatResponse>(`/api/v1/assistants/${assistantId}/invoke`, payload),
+    apiClient.post<AskResponse>(`/api/v1/assistants/${assistantId}/invoke`, payload),
 
   stream: (assistantId: number, payload: AssistantChatRequest) =>
     apiClient.postStream(`/api/v1/assistants/${assistantId}/stream`, payload),

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Bot, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useTeamScope } from "@/components/kb-chat/AskTeamScopeProvider";
+import { useTeamScope } from "@/components/team-scope/TeamScopeProvider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -36,6 +36,86 @@ interface FormState {
   category_id: number | null;
   sort_order: number;
 }
+
+const ASSISTANT_TEMPLATE_PRESETS: Record<
+  string,
+  Pick<
+    FormState,
+    | "name"
+    | "slug"
+    | "description"
+    | "welcome_message"
+    | "placeholder_text"
+    | "persona_prompt"
+    | "rule_template"
+    | "suggested_prompts_text"
+  >
+> = {
+  "it-helpdesk": {
+    name: "企业 IT 帮助台助手",
+    slug: "it-helpdesk",
+    description: "解答员工常见的 IT 设备、网络、账号和软件问题。",
+    welcome_message: "你好，我可以协助你排查办公设备、网络、账号和常用软件问题。",
+    placeholder_text: "描述你遇到的 IT 问题...",
+    persona_prompt:
+      "你是一名企业 IT 帮助台数字员工，回答要清晰、分步骤，并在信息不足时先询问设备、系统、网络环境和错误提示。",
+    rule_template:
+      "优先基于知识库回答。涉及账号权限、数据安全或设备维修时，提示用户联系 IT 工单渠道并补充必要信息。",
+    suggested_prompts_text: [
+      "VPN 连不上应该怎么排查？",
+      "公司邮箱无法登录怎么办？",
+      "新电脑需要安装哪些基础软件？",
+    ].join("\n"),
+  },
+  "legal-review": {
+    name: "法务合同审查助手",
+    slug: "legal-review",
+    description: "辅助审查标准合同条款，提示常见风险和补充材料。",
+    welcome_message: "你好，我可以帮你初步梳理合同条款风险和需要法务确认的问题。",
+    placeholder_text: "输入合同条款或审查问题...",
+    persona_prompt:
+      "你是一名法务合同审查数字员工，回答要谨慎、结构化，区分事实、风险提示和需要人工法务确认的事项。",
+    rule_template:
+      "不得给出最终法律结论。遇到高风险条款、金额、期限、违约责任、知识产权和数据合规时，提示升级给法务负责人。",
+    suggested_prompts_text: [
+      "这个保密条款有哪些风险？",
+      "供应商合同付款条款需要注意什么？",
+      "违约责任条款如何审查？",
+    ].join("\n"),
+  },
+  onboarding: {
+    name: "新员工入职向导",
+    slug: "onboarding-guide",
+    description: "引导新员工了解报到流程、福利政策和企业文化。",
+    welcome_message: "欢迎加入团队，我可以帮你了解入职流程、福利和常见行政事项。",
+    placeholder_text: "询问入职流程、福利或行政问题...",
+    persona_prompt:
+      "你是一名新员工入职向导，语气友好、准确，优先给出可执行步骤和相关材料位置。",
+    rule_template:
+      "优先基于知识库回答。涉及个人薪酬、合同、社保等敏感问题时，引导用户联系 HR 专员。",
+    suggested_prompts_text: [
+      "入职第一天需要完成哪些事项？",
+      "如何申请办公设备？",
+      "公司有哪些常用福利？",
+    ].join("\n"),
+  },
+  "general-qa": {
+    name: "通用知识问答助手",
+    slug: "general-qa",
+    description: "面向团队知识库做统一检索、总结和问答。",
+    welcome_message: "你好，我可以根据团队知识库回答问题并整理关键信息。",
+    placeholder_text: "输入你想查询的知识问题...",
+    persona_prompt:
+      "你是一名通用知识问答数字员工，回答要简洁、准确，并在需要时引用知识库中的关键信息。",
+    rule_template:
+      "无法从知识库确认的信息要明确说明不确定，不要编造。可给出下一步查询建议。",
+    suggested_prompts_text: [
+      "这个流程的关键步骤是什么？",
+      "请总结这份制度的重点。",
+      "这个问题应该参考哪些资料？",
+    ].join("\n"),
+  },
+};
 
 function createEmptyForm(): FormState {
   return {
@@ -91,11 +171,27 @@ export default function NewAssistantPage() {
   const { teamId, selectedTeam } = useTeamScope();
 
   const [form, setForm] = useState<FormState>(createEmptyForm());
+  const [templateApplied, setTemplateApplied] = useState(false);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseWithCount[]>([]);
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [kbsLoading, setKbsLoading] = useState(false);
+
+  useEffect(() => {
+    if (templateApplied) return;
+    const templateId = new URLSearchParams(window.location.search).get("template");
+    if (!templateId) return;
+
+    const preset = ASSISTANT_TEMPLATE_PRESETS[templateId];
+    if (!preset) return;
+
+    setForm((current) => ({
+      ...current,
+      ...preset,
+    }));
+    setTemplateApplied(true);
+  }, [templateApplied]);
 
   useEffect(() => {
     if (teamId == null) {

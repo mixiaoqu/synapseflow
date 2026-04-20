@@ -29,7 +29,6 @@ const actionLabels: Record<ReviewAction, string> = {
 
 const statusLabels: Record<DocumentLifecycleStatus, string> = {
   draft: "草稿",
-  indexed: "已索引",
   pending_review: "待审核",
   approved: "已通过",
   published: "已发布",
@@ -59,8 +58,6 @@ function statusBadgeClass(status: DocumentLifecycleStatus): string {
       return "bg-blue-50 text-blue-700 ring-1 ring-blue-200";
     case "published":
       return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
-    case "indexed":
-      return "bg-violet-50 text-violet-700 ring-1 ring-violet-200";
     case "archived":
       return "bg-slate-100 text-slate-500 ring-1 ring-slate-200";
     default:
@@ -105,7 +102,7 @@ function availableActions(item: DocumentListItem): ReviewAction[] {
   if (item.status === "pending_review") {
     return ["approve", "reject"];
   }
-  if ((item.status === "approved" || item.status === "indexed") && indexedReady) {
+  if (item.status === "approved" && indexedReady) {
     return ["publish"];
   }
   if (item.status === "published") {
@@ -140,7 +137,7 @@ export default function AdminReviewPage() {
   const summary = useMemo(
     () => ({
       pendingReview: items.filter((item) => item.status === "pending_review").length,
-      approved: items.filter((item) => item.status === "approved" || item.status === "indexed").length,
+      approved: items.filter((item) => item.status === "approved").length,
       published: items.filter((item) => item.status === "published").length,
       draft: items.filter((item) => item.status === "draft").length,
     }),
@@ -152,7 +149,7 @@ export default function AdminReviewPage() {
       return items;
     }
     if (activeFilter === "approved") {
-      return items.filter((item) => item.status === "approved" || item.status === "indexed");
+      return items.filter((item) => item.status === "approved");
     }
     return items.filter((item) => item.status === activeFilter);
   }, [activeFilter, items]);

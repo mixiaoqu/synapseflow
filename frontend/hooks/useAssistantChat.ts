@@ -3,19 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { useAskTeamScope } from "@/components/kb-chat/AskTeamScopeProvider";
+import { useTeamScope } from "@/components/team-scope/TeamScopeProvider";
 import {
   assistantsApi,
   type AssistantChatRequest,
   type AssistantSummary,
 } from "@/lib/api/assistants";
 import {
-  kbChatApi,
-  type KbChatSessionDetail,
-  type KbChatSessionMessage,
-  type KbChatSessionSummary,
-  type RetrievedDoc,
-} from "@/lib/api/endpoints/kbChat";
+  askApi,
+  type AskRetrievedDoc,
+  type AskSessionDetail,
+  type AskSessionMessage,
+  type AskSessionSummary,
+} from "@/lib/api/endpoints/ask";
 import { getStoredUser } from "@/lib/auth/session";
 import { consumeSseStream } from "@/lib/stream/sse";
 import { v4 as uuidv4 } from "uuid";
@@ -29,7 +29,7 @@ export interface AssistantChatTurn {
   answer: string;
   answerStatus?: string | null;
   logId?: number | null;
-  retrievedDocs: RetrievedDoc[];
+  retrievedDocs: AskRetrievedDoc[];
   error: string | null;
 }
 
@@ -92,7 +92,7 @@ function buildChunkKey(turnId: string, index: number): string {
   return `${turnId}-${index}`;
 }
 
-function toTurns(sessionId: string, messages: KbChatSessionMessage[]): AssistantChatTurn[] {
+function toTurns(sessionId: string, messages: AskSessionMessage[]): AssistantChatTurn[] {
   const turns: AssistantChatTurn[] = [];
   let currentTurn: AssistantChatTurn | null = null;
 
@@ -152,9 +152,9 @@ function toTurns(sessionId: string, messages: KbChatSessionMessage[]): Assistant
 }
 
 function mergeSessionSummary(
-  current: KbChatSessionSummary | null,
-  detail: KbChatSessionDetail,
-): KbChatSessionSummary {
+  current: AskSessionSummary | null,
+  detail: AskSessionDetail,
+): AskSessionSummary {
   return {
     session_id: detail.session_id,
     title: detail.title,
@@ -173,7 +173,7 @@ function mergeSessionSummary(
 }
 
 export function useAssistantChat() {
-  const { teamId, setTeamId, teams, teamsLoading, selectedTeam } = useAskTeamScope();
+  const { teamId, setTeamId, teams, teamsLoading, selectedTeam } = useTeamScope();
 
   const [assistants, setAssistants] = useState<AssistantSummary[]>([]);
   const [assistantsLoading, setAssistantsLoading] = useState(false);
@@ -184,7 +184,7 @@ export function useAssistantChat() {
   const [sessionLoading, setSessionLoading] = useState(false);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(true);
-  const [sessions, setSessions] = useState<KbChatSessionSummary[]>([]);
+  const [sessions, setSessions] = useState<AskSessionSummary[]>([]);
   const [conversationByAssistant, setConversationByAssistant] = useState<
     Record<number, AssistantConversationState>
   >({});
@@ -270,7 +270,7 @@ export function useAssistantChat() {
     }
 
     try {
-      setSessions(await kbChatApi.listSessions(SESSION_LIST_LIMIT));
+      setSessions(await askApi.listSessions(SESSION_LIST_LIMIT));
     } catch (error) {
       if (!options?.silent) {
         toast.error(error instanceof Error ? error.message : "加载历史会话失败");
@@ -301,7 +301,7 @@ export function useAssistantChat() {
       setMobileTab("chat");
 
       try {
-        const detail = await kbChatApi.getSession(sessionId);
+        const detail = await askApi.getSession(sessionId);
         if (teamId != null && detail.team_id != null && detail.team_id !== teamId) {
           toast.error("该会话不属于当前团队");
           return false;
@@ -352,7 +352,7 @@ export function useAssistantChat() {
 
       setDeletingSessionId(sessionId);
       try {
-        await kbChatApi.deleteSession(sessionId);
+        await askApi.deleteSession(sessionId);
         const remainingSessions = sessions.filter((item) => item.session_id !== sessionId);
         const remainingVisibleSessions = remainingSessions.filter(
           (item) =>
@@ -513,7 +513,7 @@ export function useAssistantChat() {
   );
 
   const expandChunksForTurn = useCallback(
-    (turnId: string, docs: RetrievedDoc[]) => {
+    (turnId: string, docs: AskRetrievedDoc[]) => {
       if (selectedAssistantId == null || docs.length === 0) return;
       updateConversation(selectedAssistantId, (current) => {
         const next = new Set(current.expandedChunkKeys);
@@ -525,7 +525,7 @@ export function useAssistantChat() {
   );
 
   const collapseChunksForTurn = useCallback(
-    (turnId: string, docs: RetrievedDoc[]) => {
+    (turnId: string, docs: AskRetrievedDoc[]) => {
       if (selectedAssistantId == null || docs.length === 0) return;
       updateConversation(selectedAssistantId, (current) => {
         const next = new Set(current.expandedChunkKeys);
@@ -614,7 +614,7 @@ export function useAssistantChat() {
                 ...current,
                 turns: current.turns.map((turn) =>
                   turn.id === activeTurnId
-                    ? { ...turn, retrievedDocs: docs as RetrievedDoc[] }
+                    ? { ...turn, retrievedDocs: docs as AskRetrievedDoc[] }
                     : turn,
                 ),
               }));
@@ -659,7 +659,7 @@ export function useAssistantChat() {
                         answerStatus: answerStatus ?? turn.answerStatus,
                         logId: logId ?? turn.logId,
                         retrievedDocs: Array.isArray(docs)
-                          ? (docs as RetrievedDoc[])
+                          ? (docs as AskRetrievedDoc[])
                           : turn.retrievedDocs,
                       }
                     : turn,

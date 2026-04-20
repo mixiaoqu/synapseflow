@@ -1,3 +1,3 @@
 export const dynamic = "force-dynamic";
 
-export { default } from "@/app/(dashboard)/documents/page";
+export { default } from "@/features/documents/pages/DocumentsPage";

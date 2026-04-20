@@ -9,7 +9,6 @@ from app.utils.time import serialize_utc_datetime
 DocumentIndexStatus = Literal["queued", "processing", "indexed", "failed"]
 DocumentLifecycleStatus = Literal[
     "draft",
-    "indexed",
     "pending_review",
     "approved",
     "published",
@@ -43,6 +42,9 @@ class DocumentResponse(BaseModel):
     document_type: str | None = None
     size: int = 0
     version: int = 1
+    is_current: bool = True
+    is_latest: bool = True
+    is_live: bool = False
     knowledge_base_id: int | None = Field(None, description="Owning knowledge base id")
     category_id: int | None = Field(None, description="Owning category id")
     category_name: str | None = Field(None, description="Owning category name")
@@ -69,6 +71,9 @@ class DocumentListItem(BaseModel):
     document_type: str | None = None
     size: int = 0
     version: int = 1
+    is_current: bool = True
+    is_latest: bool = True
+    is_live: bool = False
     indexed: bool = False
     index_status: DocumentIndexStatus = "queued"
     index_error: str | None = None
@@ -128,6 +133,7 @@ class DocumentVersionItem(BaseModel):
     version: int
     is_latest: bool
     is_current: bool
+    is_live: bool
     created_at: datetime
 
 

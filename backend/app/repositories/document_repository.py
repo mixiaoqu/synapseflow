@@ -87,6 +87,7 @@ class DocumentRepository:
             parent_id=None,
             is_latest=True,
             is_current=True,
+            is_live=False,
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             source_path=source_path,
@@ -244,6 +245,7 @@ class DocumentRepository:
         doc.indexed_at = None
         doc.version = (doc.version or 1) + 1
         doc.status = DOC_STATUS_DRAFT
+        doc.is_live = False
         doc.published_at = None
         doc.published_by = None
         await self.db.commit()
@@ -280,6 +282,36 @@ class DocumentRepository:
             )
             .values(is_current=False)
         )
+
+    async def clear_live_flags_for_root_id(
+        self,
+        root_id: int,
+        *,
+        exclude_doc_id: int | None = None,
+    ) -> None:
+        """Clear live flags for every other version in a chain."""
+        conditions = [
+            Document.root_id == root_id,
+            accessible_document_condition(self.user_id),
+            Document.is_live.is_(True),
+        ]
+        if exclude_doc_id is not None:
+            conditions.append(Document.id != exclude_doc_id)
+        await self.db.execute(update(Document).where(*conditions).values(is_live=False))
+
+    async def get_live_by_root_id(self, root_id: int) -> Document | None:
+        """Fetch the live version for a version chain."""
+        result = await self.db.execute(
+            select(Document)
+            .where(
+                Document.root_id == root_id,
+                accessible_document_condition(self.user_id),
+                Document.is_live.is_(True),
+            )
+            .order_by(Document.version.desc(), Document.updated_at.desc(), Document.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def get_latest_by_root_id(self, root_id: int) -> Document | None:
         """Fetch the latest version for a version chain."""
@@ -322,6 +354,7 @@ class DocumentRepository:
             root_id=root_id,
             is_latest=True,
             is_current=True,
+            is_live=False,
             knowledge_base_id=getattr(latest_doc or orig, "knowledge_base_id", None),
             category_id=getattr(latest_doc or orig, "category_id", None),
             source_path=getattr(latest_doc or orig, "source_path", None),
@@ -412,12 +445,15 @@ class DocumentRepository:
         status: str,
         reviewer_id: int | None = None,
         publisher_id: int | None = None,
+        is_live: bool | None = None,
         commit: bool = True,
     ) -> Document | None:
         doc = await self.get_by_id_for_user(doc_id)
         if not doc:
             return None
         doc.status = status
+        if is_live is not None:
+            doc.is_live = is_live
         if reviewer_id is not None:
             doc.reviewed_by = reviewer_id
             doc.reviewed_at = utc_now()

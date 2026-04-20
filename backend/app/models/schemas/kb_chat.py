@@ -84,7 +84,7 @@ class KbChatPreviewRequest(KbChatRequest):
 
     include_unpublished: bool = Field(
         default=True,
-        description="Whether to include draft/indexed content in retrieval",
+        description="Whether to include current working content before publish",
     )
 
 

@@ -17,7 +17,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 def normalize_requirements_plaintext(text: str) -> str:
     """
     图外规范化：统一换行与首尾空白。
-    文件解析成功后在 parse_uploaded_document 内调用；JSON 直传需求在调用 prototype_state 前应调用本函数。
+    文件解析成功后在 parse_uploaded_document 内调用；非文件直传的原始文本也应先调用本函数再进入后续处理。
     """
     if not text:
         return ""

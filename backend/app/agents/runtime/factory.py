@@ -21,36 +21,13 @@ class GraphDefinition:
 
 
 def _build_registry() -> dict[str, GraphDefinition]:
-    from app.agents.graphs import (
-        create_doc_to_prototype_graph,
-        create_kb_chat_graph,
-        create_kb_curation_graph,
-        create_suggest_revision_graph,
-        get_doc_to_prototype_pipeline_node_ids,
-    )
-
-    prototype_node_ids = get_doc_to_prototype_pipeline_node_ids()
+    from app.agents.graphs import create_kb_chat_graph
 
     return {
         "kb_chat": GraphDefinition(
             graph_id="kb_chat",
             factory=create_kb_chat_graph,
             node_ids=("retrieve", "answer"),
-        ),
-        "kb_curation": GraphDefinition(
-            graph_id="kb_curation",
-            factory=create_kb_curation_graph,
-            node_ids=("query_optimizer", "retrieve", "answer", "evaluate"),
-        ),
-        "suggest_revision": GraphDefinition(
-            graph_id="suggest_revision",
-            factory=create_suggest_revision_graph,
-            node_ids=("parse_suggestions", "analyze_document", "locate_edits", "revise"),
-        ),
-        "doc_to_prototype": GraphDefinition(
-            graph_id="doc_to_prototype",
-            factory=create_doc_to_prototype_graph,
-            node_ids=prototype_node_ids,
         ),
     }
 

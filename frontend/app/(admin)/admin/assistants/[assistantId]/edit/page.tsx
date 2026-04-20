@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { Bot, Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
-import { useTeamScope } from "@/components/kb-chat/AskTeamScopeProvider";
+import { useTeamScope } from "@/components/team-scope/TeamScopeProvider";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";

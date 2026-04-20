@@ -3,7 +3,6 @@ import { apiClient } from "./client";
 export type DocumentIndexStatus = "queued" | "processing" | "indexed" | "failed";
 export type DocumentLifecycleStatus =
   | "draft"
-  | "indexed"
   | "pending_review"
   | "approved"
   | "published"
@@ -15,6 +14,9 @@ export type DocumentListItem = {
   document_type: string | null;
   size: number;
   version: number;
+  is_current: boolean;
+  is_latest: boolean;
+  is_live: boolean;
   indexed: boolean;
   index_status: DocumentIndexStatus;
   index_error: string | null;
@@ -40,6 +42,9 @@ export type DocumentDetail = {
   document_type: string | null;
   size: number;
   version: number;
+  is_current: boolean;
+  is_latest: boolean;
+  is_live: boolean;
   knowledge_base_id: number | null;
   category_id: number | null;
   category_name: string | null;
@@ -62,6 +67,7 @@ export type DocumentVersionItem = {
   version: number;
   is_latest: boolean;
   is_current: boolean;
+  is_live: boolean;
   created_at: string;
 };
 

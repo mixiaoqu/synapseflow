@@ -1,1 +1,1 @@
-export { default } from "@/app/(dashboard)/documents/[knowledgeBaseId]/page";
+export { default } from "@/features/documents/pages/[knowledgeBaseId]/KnowledgeBaseDetailPage";

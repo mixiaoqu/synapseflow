@@ -9,11 +9,7 @@ from app.api.v1.endpoints import (
     document_categories,
     documents,
     health,
-    kb_chat,
-    kb_curation,
     knowledge_bases,
-    prototype_stream,
-    revision,
     sensitive_words,
     teams,
     users,
@@ -26,10 +22,6 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(ask.router, prefix="/ask", tags=["ask"])
 api_router.include_router(ask.admin_router, prefix="/admin/qa", tags=["admin-qa"])
 api_router.include_router(assistants.router, prefix="/assistants", tags=["assistants"])
-api_router.include_router(kb_curation.router, prefix="/kb-curation", tags=["kb-curation"])
-api_router.include_router(kb_chat.router, prefix="/kb-chat", tags=["kb-chat"])
-api_router.include_router(revision.router, prefix="/revision", tags=["revision"])
-api_router.include_router(prototype_stream.router, prefix="/prototype", tags=["prototype"])
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
 api_router.include_router(
     document_categories.router,

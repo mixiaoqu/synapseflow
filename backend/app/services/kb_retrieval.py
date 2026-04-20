@@ -11,6 +11,8 @@ from app.core.config.registry import config_registry
 from app.db.models import Document, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 from app.repositories.access_scope import accessible_document_condition
+from app.services.document_index_state import INDEX_STATUS_INDEXED
+from app.services.document_lifecycle import RETRIEVAL_VERSION_LIVE
 from app.services.embedding import embed_query
 from app.services.reranker import rerank
 from app.services.vector_store import reciprocal_rank_fusion_many, search, search_hybrid_rrf
@@ -75,11 +77,17 @@ async def _knowledge_base_has_documents(
     category_id: int | None,
     user_id: int | None,
     document_statuses: list[str] | None,
+    retrieval_version_mode: str | None,
 ) -> bool:
     async with AsyncSessionLocal() as db:
         stmt = select(Document.id).where(
             Document.knowledge_base_id == knowledge_base_id,
-            Document.is_current.is_(True),
+            (
+                Document.is_live.is_(True)
+                if retrieval_version_mode == RETRIEVAL_VERSION_LIVE
+                else Document.is_current.is_(True)
+            ),
+            Document.index_status == INDEX_STATUS_INDEXED,
         )
         if team_id is not None:
             stmt = stmt.join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id).where(
@@ -179,6 +187,7 @@ async def _retrieve_candidate_rows(
     recall_k: int,
     lexical_k: int | None = None,
     document_statuses: list[str] | None = None,
+    retrieval_version_mode: str | None = None,
 ) -> tuple[List[dict], bool]:
     rag = config_registry.get_rag_config().retrieval
     query_embedding = await asyncio.to_thread(embed_query, query)
@@ -198,6 +207,7 @@ async def _retrieve_candidate_rows(
                 knowledge_base_id=knowledge_base_id,
                 category_id=category_id,
                 document_statuses=document_statuses,
+                retrieval_version_mode=retrieval_version_mode,
                 rrf_k=rag.rrf_k,
                 pool_limit=max(pool_limit, 1),
             )
@@ -211,6 +221,7 @@ async def _retrieve_candidate_rows(
                 knowledge_base_id=knowledge_base_id,
                 category_id=category_id,
                 document_statuses=document_statuses,
+                retrieval_version_mode=retrieval_version_mode,
             )
 
     has_documents = True
@@ -221,6 +232,7 @@ async def _retrieve_candidate_rows(
             category_id=category_id,
             user_id=user_id,
             document_statuses=document_statuses,
+            retrieval_version_mode=retrieval_version_mode,
         )
 
     return results, has_documents
@@ -459,6 +471,7 @@ async def run_kb_retrieval(
     result_limit: int | None = None,
     context_budget: int | None = None,
     document_statuses: list[str] | None = None,
+    retrieval_version_mode: str | None = None,
 ) -> Dict[str, Any]:
     """Retrieve KB chunks and return prompt-ready state."""
 
@@ -475,6 +488,7 @@ async def run_kb_retrieval(
         user_id=user_id,
         recall_k=recall_k,
         document_statuses=document_statuses,
+        retrieval_version_mode=retrieval_version_mode,
     )
     raw_count = len(results)
     results = await _finalize_ranked_rows(
@@ -521,6 +535,7 @@ async def run_multi_query_kb_retrieval(
     result_limit: int | None = None,
     context_budget: int | None = None,
     document_statuses: list[str] | None = None,
+    retrieval_version_mode: str | None = None,
 ) -> Dict[str, Any]:
     """Retrieve KB chunks from multiple rewritten queries and fuse them with RRF."""
 
@@ -537,6 +552,7 @@ async def run_multi_query_kb_retrieval(
             result_limit=result_limit,
             context_budget=context_budget,
             document_statuses=document_statuses,
+            retrieval_version_mode=retrieval_version_mode,
         )
         output["retrieval_queries"] = queries or [query]
         return output
@@ -560,6 +576,7 @@ async def run_multi_query_kb_retrieval(
                 recall_k=per_query_recall_k,
                 lexical_k=per_query_lexical_k,
                 document_statuses=document_statuses,
+                retrieval_version_mode=retrieval_version_mode,
             )
             for item in queries
         ]

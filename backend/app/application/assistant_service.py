@@ -29,7 +29,12 @@ from app.repositories.assistant_profile_repository import (
 from app.repositories.document_category_repository import DocumentCategoryRepository
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 from app.repositories.team_repository import TeamRepository
-from app.services.document_lifecycle import DOC_STATUS_DRAFT, DOC_STATUS_INDEXED, DOC_STATUS_PUBLISHED
+from app.services.document_lifecycle import (
+    PREVIEW_ASK_DOCUMENT_STATUSES,
+    RETRIEVAL_VERSION_CURRENT,
+    RETRIEVAL_VERSION_LIVE,
+    VISIBLE_ASK_DOCUMENT_STATUSES,
+)
 
 
 class AssistantService:
@@ -278,9 +283,9 @@ class AssistantService:
             category_id=payload.category_id,
         )
         allowed_statuses = (
-            [DOC_STATUS_DRAFT, DOC_STATUS_INDEXED, DOC_STATUS_PUBLISHED]
+            list(PREVIEW_ASK_DOCUMENT_STATUSES)
             if payload.include_unpublished
-            else [DOC_STATUS_PUBLISHED]
+            else list(VISIBLE_ASK_DOCUMENT_STATUSES)
         )
         runtime_request = SimpleNamespace(
             query=payload.query.strip(),
@@ -295,6 +300,11 @@ class AssistantService:
             assistant_rule_template=self._normalize_optional_text(payload.rule_template),
             assistant_suggested_prompts=self._normalize_prompt_list(payload.suggested_prompts),
             allowed_document_statuses=allowed_statuses,
+            retrieval_version_mode=(
+                RETRIEVAL_VERSION_CURRENT
+                if payload.include_unpublished
+                else RETRIEVAL_VERSION_LIVE
+            ),
             session_id=None,
         )
         return await get_kb_chat_service().preview(runtime_request, user_id=self.user_id)

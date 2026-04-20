@@ -7,8 +7,6 @@ from typing import Any
 __all__ = [
     "sanitize_user_kb_context",
     "build_kb_chat_answer_prompt",
-    "build_kb_curation_answer_prompt",
-    "build_kb_curation_evaluation_prompt",
 ]
 
 
@@ -21,14 +19,4 @@ def __getattr__(name: str) -> Any:
         from app.agents.prompts.kb_chat import build_kb_chat_answer_prompt
 
         return build_kb_chat_answer_prompt
-    if name in {"build_kb_curation_answer_prompt", "build_kb_curation_evaluation_prompt"}:
-        from app.agents.prompts.kb_curation import (
-            build_kb_curation_answer_prompt,
-            build_kb_curation_evaluation_prompt,
-        )
-
-        return {
-            "build_kb_curation_answer_prompt": build_kb_curation_answer_prompt,
-            "build_kb_curation_evaluation_prompt": build_kb_curation_evaluation_prompt,
-        }[name]
     raise AttributeError(name)

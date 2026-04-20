@@ -22,13 +22,13 @@ import {
 
 import { Button } from "@/components/ui/button";
 import {
-  kbChatApi,
-  type KbChatDiagnosticDoc,
-  type KbChatLogDetail,
-  type KbChatLogListFilters,
-  type KbChatLogItem,
-  type KbChatRetrievalFunnel,
-} from "@/lib/api/endpoints/kbChat";
+  askApi,
+  type AskDiagnosticDoc,
+  type AskLogDetail,
+  type AskLogItem,
+  type AskLogListFilters,
+  type AskRetrievalFunnel,
+} from "@/lib/api/endpoints/ask";
 
 const DEFAULT_LATENCY_THRESHOLD_MS = 5000;
 const QA_REVIEW_LABELS = [
@@ -132,7 +132,7 @@ function getRetrievalConfig(s?: string | null) {
 }
 
 /* ---- Conclusion ---- */
-function deriveConclusion(detail: KbChatLogDetail) {
+function deriveConclusion(detail: AskLogDetail) {
   if (detail.retrieval_status === "empty_knowledge_base" || detail.retrieval_status === "empty_collection")
     return { tone: "neutral" as const, title: "当前范围暂无可用知识", summary: "这次回答缺少可检索的已索引内容，优先检查知识库或分类下是否有可用文档。", nextAction: "先补充文档并完成索引，再回到这条记录复测。" };
   if (detail.retrieval_status === "no_hits")
@@ -179,7 +179,7 @@ function InfoGrid({ items }: { items: Array<{ label: string; value: string | num
 }
 
 /* ---- FunnelCard: horizontal bar chart ---- */
-function FunnelCard({ funnel }: { funnel: KbChatRetrievalFunnel | null | undefined }) {
+function FunnelCard({ funnel }: { funnel: AskRetrievalFunnel | null | undefined }) {
   if (!funnel || funnel.stages.length === 0) {
     return <p className="text-xs text-slate-400">暂无漏斗数据</p>;
   }
@@ -215,7 +215,7 @@ function FunnelCard({ funnel }: { funnel: KbChatRetrievalFunnel | null | undefin
 }
 
 /* ---- DocCard: expandable with similarity bar ---- */
-function DocCard({ doc, expanded, onToggle }: { doc: KbChatDiagnosticDoc; expanded: boolean; onToggle: () => void }) {
+function DocCard({ doc, expanded, onToggle }: { doc: AskDiagnosticDoc; expanded: boolean; onToggle: () => void }) {
   const score = typeof doc.metadata.score === "number" ? doc.metadata.score : null;
   const rerank = typeof doc.metadata.rerank_score === "number" ? doc.metadata.rerank_score : null;
   const barPct = score != null ? Math.round(Math.min(score, 1) * 100) : null;
@@ -260,7 +260,7 @@ function DocCard({ doc, expanded, onToggle }: { doc: KbChatDiagnosticDoc; expand
   );
 }
 
-function toLogListFilters(f: QaPanelFilters): KbChatLogListFilters {
+function toLogListFilters(f: QaPanelFilters): AskLogListFilters {
   return {
     limit: f.limit,
     team_id:              f.teamId              ? Number(f.teamId)            : null,
@@ -278,7 +278,7 @@ function toLogListFilters(f: QaPanelFilters): KbChatLogListFilters {
   };
 }
 
-function buildFilterOptions(items: KbChatLogItem[]) {
+function buildFilterOptions(items: AskLogItem[]) {
   const teams = new Map<number, string>();
   const kbs   = new Map<number, string>();
   const cats  = new Map<number, string>();
@@ -296,12 +296,12 @@ function buildFilterOptions(items: KbChatLogItem[]) {
 }
 
 export default function AdminQaQualityPage() {
-  const [items, setItems] = useState<KbChatLogItem[]>([]);
+  const [items, setItems] = useState<AskLogItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [seed, setSeed] = useState<KbChatLogItem[]>([]);
+  const [seed, setSeed] = useState<AskLogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedLogId, setSelectedLogId] = useState<number | null>(null);
-  const [detail, setDetail] = useState<KbChatLogDetail | null>(null);
+  const [detail, setDetail] = useState<AskLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [reviewLabelDraft, setReviewLabelDraft] = useState("");
@@ -312,11 +312,11 @@ export default function AdminQaQualityPage() {
   const [searchInput, setSearchInput] = useState("");
 
   const loadSeed = async () => {
-    try { const r = await kbChatApi.listLogs({ limit: 200 }); setSeed(r.items); } catch { setSeed([]); }
+    try { const r = await askApi.listLogs({ limit: 200 }); setSeed(r.items); } catch { setSeed([]); }
   };
   const loadLogs = async (f: QaPanelFilters) => {
     setLoading(true);
-    try { const r = await kbChatApi.listLogs(toLogListFilters(f)); setItems(r.items); setTotal(r.total); } finally { setLoading(false); }
+    try { const r = await askApi.listLogs(toLogListFilters(f)); setItems(r.items); setTotal(r.total); } finally { setLoading(false); }
   };
   useEffect(() => { void loadSeed(); }, []);
   useEffect(() => { void loadLogs(filters); }, [filters]);
@@ -327,7 +327,7 @@ export default function AdminQaQualityPage() {
     setDetail(null);
     setReviewLabelDraft(""); setReviewNoteDraft("");
     setExpandedAnswers({});
-    kbChatApi.getLogDetail(logId).then((d) => {
+    askApi.getLogDetail(logId).then((d) => {
       setDetail(d);
       setReviewLabelDraft(d.review_label || "");
       setReviewNoteDraft(d.review_note || "");
@@ -366,8 +366,8 @@ export default function AdminQaQualityPage() {
     if (!detail) return;
     setReviewSaving(true);
     try {
-      await kbChatApi.reviewLog(detail.id, { review_label: reviewLabelDraft || null, review_note: reviewNoteDraft.trim() || null });
-      const d = await kbChatApi.getLogDetail(detail.id);
+      await askApi.reviewLog(detail.id, { review_label: reviewLabelDraft || null, review_note: reviewNoteDraft.trim() || null });
+      const d = await askApi.getLogDetail(detail.id);
       setDetail(d);
       setReviewLabelDraft(d.review_label || ""); setReviewNoteDraft(d.review_note || "");
       void loadLogs(filters); void loadSeed();

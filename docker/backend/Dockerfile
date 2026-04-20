@@ -2,9 +2,10 @@ FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-RUN python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple uv==0.10.9
+ARG UV_INDEX_URL=https://pypi.org/simple
+RUN python -m pip install -i ${UV_INDEX_URL} uv==0.10.9
 
-ENV UV_DEFAULT_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"
+ENV UV_DEFAULT_INDEX=${UV_INDEX_URL}
 ENV PATH="/app/.venv/bin:$PATH" \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \

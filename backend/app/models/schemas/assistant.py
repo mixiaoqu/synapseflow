@@ -56,7 +56,7 @@ class AssistantPreviewRequest(AssistantPromptConfigMixin):
     name: str | None = Field(default=None, max_length=100)
     include_unpublished: bool = Field(
         default=True,
-        description="Whether preview can retrieve draft/indexed content",
+        description="Whether preview can retrieve current working content before publish",
     )
 
 

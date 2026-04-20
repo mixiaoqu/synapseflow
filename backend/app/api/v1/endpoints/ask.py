@@ -34,7 +34,12 @@ from app.models.schemas.kb_chat import (
 from app.models.schemas.team import TeamResponse
 from app.repositories.kb_chat_log_repository import KbChatLogRepository
 from app.repositories.team_repository import TeamRepository
-from app.services.document_lifecycle import DOC_STATUS_DRAFT, DOC_STATUS_INDEXED, DOC_STATUS_PUBLISHED
+from app.services.document_lifecycle import (
+    PREVIEW_ASK_DOCUMENT_STATUSES,
+    RETRIEVAL_VERSION_CURRENT,
+    RETRIEVAL_VERSION_LIVE,
+    VISIBLE_ASK_DOCUMENT_STATUSES,
+)
 
 router = APIRouter()
 admin_router = APIRouter()
@@ -239,9 +244,9 @@ async def admin_ask_preview(
 ):
     await _require_team_scope(request=request, db=db, current_user=current_user)
     allowed_statuses = (
-        [DOC_STATUS_DRAFT, DOC_STATUS_INDEXED, DOC_STATUS_PUBLISHED]
+        list(PREVIEW_ASK_DOCUMENT_STATUSES)
         if request.include_unpublished
-        else [DOC_STATUS_PUBLISHED]
+        else list(VISIBLE_ASK_DOCUMENT_STATUSES)
     )
     runtime_request = SimpleNamespace(
         query=request.query,
@@ -250,6 +255,11 @@ async def admin_ask_preview(
         category_id=request.category_id,
         session_id=request.session_id,
         allowed_document_statuses=allowed_statuses,
+        retrieval_version_mode=(
+            RETRIEVAL_VERSION_CURRENT
+            if request.include_unpublished
+            else RETRIEVAL_VERSION_LIVE
+        ),
     )
     return await get_kb_chat_service().invoke(runtime_request, user_id=current_user.id)
 

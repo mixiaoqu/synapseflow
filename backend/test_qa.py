@@ -1,34 +1,56 @@
-"""临时测试脚本：调用知识库治理问答 API。"""
+﻿"""Temporary smoke script for the active `/api/v1/ask/invoke` endpoint."""
+
+from __future__ import annotations
 
 import asyncio
+import os
 
 import httpx
 
 
-async def test_qa_invoke():
+API_BASE_URL = os.getenv("SYNAPSEFLOW_API_BASE_URL", "http://127.0.0.1:8000")
+API_TOKEN = os.getenv("SYNAPSEFLOW_API_TOKEN", "")
+TEAM_ID = int(os.getenv("SYNAPSEFLOW_TEAM_ID", "0"))
+KNOWLEDGE_BASE_ID = int(os.getenv("SYNAPSEFLOW_KB_ID", "0"))
+
+
+async def test_ask_invoke() -> None:
+    if not API_TOKEN:
+        raise RuntimeError("Set SYNAPSEFLOW_API_TOKEN before running this script.")
+    if TEAM_ID <= 0:
+        raise RuntimeError("Set SYNAPSEFLOW_TEAM_ID before running this script.")
+
+    payload = {
+        "query": "什么是 LangGraph？",
+        "team_id": TEAM_ID,
+    }
+    if KNOWLEDGE_BASE_ID > 0:
+        payload["knowledge_base_id"] = KNOWLEDGE_BASE_ID
+
+    headers = {
+        "Authorization": f"Bearer {API_TOKEN}",
+    }
+
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            "http://127.0.0.1:8000/api/v1/kb-curation/invoke",
-            json={"query": "什么是 LangGraph？", "max_iterations": 3},
+        response = await client.post(
+            f"{API_BASE_URL}/api/v1/ask/invoke",
+            json=payload,
+            headers=headers,
         )
-        print("Status:", resp.status_code)
-        if resp.status_code == 200:
-            data = resp.json()
-            print("Response keys:", list(data.keys()))
-            print("Answer:", (data.get("answer") or "")[:200], "...")
-            print("Confidence:", data.get("confidence_score"))
-            print("Iteration:", data.get("iteration"))
-            hist = data.get("iteration_history") or data.get("iterationHistory") or []
-            print("Iteration History:", len(hist), "rounds")
-            for i, record in enumerate(hist, 1):
-                print(
-                    f"  Round {i}: score={record.get('score')}, "
-                    f"passed={record.get('passed')}, "
-                    f"q={record.get('question', '')[:50]}..."
-                )
-        else:
-            print("Error:", resp.text[:500])
+
+    print("Status:", response.status_code)
+    if response.status_code != 200:
+        print("Error:", response.text[:1000])
+        return
+
+    data = response.json()
+    print("Response keys:", list(data.keys()))
+    print("Session ID:", data.get("session_id"))
+    print("Log ID:", data.get("log_id"))
+    print("Answer preview:", (data.get("answer_text") or "")[:300], "...")
+    print("Answer status:", data.get("answer_status"))
+    print("Citations:", len(data.get("backend_citations") or []))
 
 
 if __name__ == "__main__":
-    asyncio.run(test_qa_invoke())
+    asyncio.run(test_ask_invoke())

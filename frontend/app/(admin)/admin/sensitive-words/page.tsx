@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -350,7 +350,7 @@ export default function AdminSensitiveWordsPage() {
             <h1 className="text-3xl font-semibold tracking-tight text-slate-900">敏感词管理</h1>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-500">
               管理全局和团队级敏感词词库，控制问答输入拦截策略。当前规则会统一作用于
-              `/ask`、`/kb-chat` 和后台问答预览入口。
+              `/ask` 和后台问答预览入口。
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">

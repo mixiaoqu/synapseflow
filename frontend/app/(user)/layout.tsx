@@ -5,7 +5,7 @@ import { Suspense } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ChevronDown, LogOut, Shield } from "lucide-react";
 
-import { TeamScopeProvider } from "@/components/kb-chat/AskTeamScopeProvider";
+import { TeamScopeProvider } from "@/components/team-scope/TeamScopeProvider";
 import { TeamScopeSwitcher } from "@/components/teams/TeamScopeSwitcher";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { canAccessAdmin } from "@/lib/auth/roles";

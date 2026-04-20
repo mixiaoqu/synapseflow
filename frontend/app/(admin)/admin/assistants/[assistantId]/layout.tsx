@@ -48,11 +48,6 @@ export default function AssistantDetailLayout({
         label: "配置",
         active: pathname.includes(`/admin/assistants/${assistantId}/edit`),
       },
-      {
-        href: `/admin/assistants/${assistantId}/test`,
-        label: "测试",
-        active: pathname.includes(`/admin/assistants/${assistantId}/test`),
-      },
     ],
     [assistantId, pathname],
   );

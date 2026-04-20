@@ -1,173 +1,102 @@
-# SynapseFlow
+﻿# SynapseFlow
 
-基于LangGraph 0.6.0的智能体协同系统
+当前仓库已经收口为两个实际产品入口：
 
-## 🚀 项目简介
+- `/ask`：用户问答界面
+- `/admin`：后台管理界面
 
-SynapseFlow是一个智能体协作平台，实现三大核心场景：
+旧的实验性页面与路由（`kb-chat`、`kb-curation`、`revision`、`prototype`、`assistant-lab` 等）已从前端入口和后端公开路由中移除，不再作为当前产品范围的一部分。
 
-1. **迭代问答**：多轮知识库问答，自动优化答案质量
-2. **递归修订**：自动检测文档遗漏，智能补充完善
-3. **文档转原型**：需求文档自动生成可交互的HTML原型
+## 技术栈
 
-## 🛠️ 技术栈
+### Backend
+- Python 3.11
+- FastAPI
+- LangGraph
+- PostgreSQL + pgvector
+- uv
 
-### 后端
-- **框架**：Python 3.11 + FastAPI
-- **智能体**：LangGraph 0.6.0
-- **LLM**：Deepseek + Kimi
-- **数据库**：PostgreSQL + pgvector
-- **包管理**：uv
+### Frontend
+- Next.js 15 App Router
+- React 19
+- TypeScript
+- Tailwind CSS + shadcn/ui
 
-### 前端
-- **框架**：Next.js 15 + React 19
-- **样式**：Tailwind CSS + shadcn/ui
-- **语言**：TypeScript
+## 仓库结构
 
-## 📦 快速开始
-
-### 前置要求
-
-- Python 3.11+
-- Node.js 20+
-- Docker & Docker Compose
-- uv（Python包管理器）
-
-### 1. 克隆项目
-
-```bash
-cd d:\SynapseFlow
+```text
+synapseflow/
+├─ backend/    FastAPI + LangGraph 服务
+├─ frontend/   Next.js 前端
+├─ docker/     Docker 构建配置
+└─ README.md
 ```
 
-### 2. 配置环境变量
+## 当前模块边界
 
-**后端：**
-```bash
-cd backend
-cp .env.example .env
-# 编辑.env文件，填入API密钥
-```
+### 前端保留模块
+- 问答工作台：`frontend/app/page.tsx`、`frontend/app/(user)/ask/*`
+- 后台管理：`frontend/app/(admin)/admin/*`
+- 文档与知识库管理：`frontend/features/documents/*`
+- API 封装：`frontend/lib/api/*`
 
-**前端：**
-```bash
-cd frontend
-cp .env.local.example .env.local
-```
+### 后端保留能力
+- 鉴权与用户体系：`/api/v1/auth`
+- 问答接口：`/api/v1/ask`
+- 后台问答质检：`/api/v1/admin/qa`
+- 文档管理：`/api/v1/documents`
+- 文档分类：`/api/v1/document-categories`
+- 知识库管理：`/api/v1/knowledge-bases`
+- 助手配置：`/api/v1/assistants`
+- 团队、用户、敏感词：`/api/v1/teams`、`/api/v1/users`、`/api/v1/sensitive-words`
 
-### 3. 启动数据库
+## 快速开始
+
+### 1. 启动基础依赖
 
 ```bash
 docker-compose up -d postgres
 ```
 
-### 4. 安装后端依赖
+### 2. 启动后端
 
 ```bash
 cd backend
-
-# 安装uv（如果还没安装）
-# Windows PowerShell:
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# 安装依赖
-uv sync
-
-# 运行数据库迁移
+uv sync --all-extras
 uv run alembic upgrade head
-```
-
-### 5. 启动后端服务
-
-```bash
-cd backend
 uv run uvicorn app.main:app --reload
 ```
 
-后端将在 http://localhost:8000 启动
+后端默认地址：`http://localhost:8000`
 
-API文档：http://localhost:8000/api/v1/docs
-
-### 6. 安装前端依赖
+### 3. 启动前端
 
 ```bash
 cd frontend
 pnpm install
-```
-
-### 7. 启动前端服务
-
-```bash
-cd frontend
 pnpm dev
 ```
 
-前端将在 http://localhost:3000 启动
+前端默认地址：`http://localhost:3000`
 
-## 🐳 使用Docker（推荐）
+## 当前公开 API 组
 
-```bash
-# 一键启动所有服务
-docker-compose up -d
+- `POST /api/v1/ask/invoke`
+- `POST /api/v1/ask/stream`
+- `GET /api/v1/ask/sessions`
+- `GET /api/v1/ask/sessions/{session_id}`
+- `DELETE /api/v1/ask/sessions/{session_id}`
+- `POST /api/v1/admin/qa/preview`
+- `GET /api/v1/admin/qa/logs`
+- `GET /api/v1/admin/qa/logs/{log_id}`
+- `POST /api/v1/admin/qa/logs/{log_id}/review`
+- `POST /api/v1/documents/*`
+- `GET|POST|PATCH|DELETE /api/v1/knowledge-bases/*`
 
-# 查看日志
-docker-compose logs -f
+完整接口以 `http://localhost:8000/api/v1/docs` 为准。
 
-# 停止服务
-docker-compose down
-```
+## 开发建议
 
-## 📚 项目结构
-
-```
-SynapseFlow/
-├── backend/              # Python后端
-│   ├── app/
-│   │   ├── agents/      # LangGraph智能体
-│   │   ├── api/         # FastAPI路由
-│   │   ├── core/        # 核心配置
-│   │   └── models/      # 数据模型
-│   └── pyproject.toml
-├── frontend/            # Next.js前端
-│   ├── app/            # App Router
-│   └── components/     # React组件
-├── docker/             # Docker配置
-└── docker-compose.yml
-```
-
-## 🎯 API端点
-
-### 迭代问答
-- `POST /api/v1/kb-curation/invoke` - 同步知识库治理问答
-- `POST /api/v1/kb-curation/stream` - 流式知识库治理问答
-- `POST /api/v1/kb-chat/invoke` - 同步知识库问答
-- `POST /api/v1/kb-chat/stream` - 流式知识库问答
-
-### 文档修订
-- `POST /api/v1/revision/suggest` - 用户建议驱动修订（文档 + 建议 → 修订稿 + 遗漏提示）
-
-### 文档转原型
-- `POST /api/v1/prototype/generate` - 生成原型
-- `POST /api/v1/prototype/generate/stream` - 流式生成
-
-## 🧪 运行测试
-
-```bash
-cd backend
-uv run pytest
-```
-
-## 📖 文档
-
-详细文档请查看 `docs/` 目录：
-
-- [架构设计](docs/architecture.md)
-- [智能体文档](docs/agents/)
-- [API文档](docs/api/)
-
-## 🤝 贡献
-
-欢迎提交Issue和Pull Request！
-
-## 📄 许可证
-
-MIT License
+- 页面入口只围绕 `/ask` 与 `/admin` 组织，避免再次回到多实验页并存的结构。
+- 业务实现优先放在特性目录或服务层，不再依赖 `app/(dashboard)` 这类历史路由容器。
+- 若后续恢复实验功能，建议先在 feature 层重建，再决定是否公开为正式路由。

@@ -9,7 +9,7 @@ class SensitiveWordSettingsUpdate(BaseModel):
     """Update one scoped sensitive-word settings row."""
 
     enabled: bool = Field(default=True, description="Whether sensitive-word blocking is enabled")
-    block_query: bool = Field(default=True, description="Whether to block ask/kb-chat queries")
+    block_query: bool = Field(default=True, description="Whether to block ask queries")
     block_document_publish: bool = Field(
         default=False,
         description="Whether to block document publish when sensitive content is detected",

@@ -9,42 +9,6 @@ WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
         "retrieve": {"label": "Retrieve"},
         "answer": {"label": "Answer"},
     },
-    "kb_curation": {
-        "query_optimizer": {"label": "Query Optimizer"},
-        "retrieve": {"label": "Retrieve"},
-        "answer": {"label": "Answer"},
-        "evaluate": {"label": "Evaluate"},
-    },
-    "doc_to_prototype": {
-        "prepare_requirement_chunks": {
-            "label": "Prepare Chunks",
-            "model": "local-splitter",
-        },
-        "chunk_understanding": {
-            "label": "Chunk Understanding",
-            "model": "Qwen3.5-Plus-analysis",
-        },
-        "structure_extraction": {
-            "label": "Structure Extraction",
-            "model": "Qwen3.5-Plus-analysis",
-        },
-        "normalize_spec": {
-            "label": "Normalize Spec",
-            "model": "Qwen3.5-Plus-analysis",
-        },
-        "product_design": {
-            "label": "Product Design",
-            "model": "Qwen3.5-Plus-planning",
-        },
-        "interaction_design": {
-            "label": "Interaction Design",
-            "model": "Qwen3.5-Plus-planning",
-        },
-        "generate_prototype_from_spec": {
-            "label": "Generate Prototype",
-            "model": "Qwen3.5-Plus-generation",
-        },
-    },
 }
 
 
