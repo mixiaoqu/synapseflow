@@ -438,6 +438,7 @@ def test_kb_chat_build_initial_state_keeps_assistant_context():
         assistant_name="Project Assistant",
         assistant_welcome_message="Hello",
         assistant_placeholder_text="Ask a setup question",
+        assistant_llm_model_key="qwen-max",
         assistant_persona_prompt="Be concise.",
         assistant_rule_template="Prefer step-by-step instructions.",
         assistant_suggested_prompts=["How do I get started?"],
@@ -450,6 +451,7 @@ def test_kb_chat_build_initial_state_keeps_assistant_context():
     assert state["assistant_name"] == "Project Assistant"
     assert state["assistant_welcome_message"] == "Hello"
     assert state["assistant_placeholder_text"] == "Ask a setup question"
+    assert state["assistant_llm_model_key"] == "qwen-max"
     assert state["assistant_persona_prompt"] == "Be concise."
     assert state["assistant_rule_template"] == "Prefer step-by-step instructions."
     assert state["assistant_suggested_prompts"] == ["How do I get started?"]
@@ -495,6 +497,7 @@ def test_kb_chat_preview_runs_without_persistence():
         assistant_name="Preview Assistant",
         assistant_welcome_message="Hello there",
         assistant_placeholder_text="Ask about setup",
+        assistant_llm_model_key="qwen-plus",
         assistant_persona_prompt="Be concise.",
         assistant_rule_template="Use bullets when needed.",
         assistant_suggested_prompts=["How do I start?"],
@@ -512,6 +515,7 @@ def test_kb_chat_preview_runs_without_persistence():
     assert memory_store.save_calls == []
     assert graph.last_state["assistant_welcome_message"] == "Hello there"
     assert graph.last_state["assistant_placeholder_text"] == "Ask about setup"
+    assert graph.last_state["assistant_llm_model_key"] == "qwen-plus"
     assert graph.last_state["assistant_persona_prompt"] == "Be concise."
     assert graph.last_state["assistant_suggested_prompts"] == ["How do I start?"]
     assert graph.last_state["allowed_document_statuses"] == [

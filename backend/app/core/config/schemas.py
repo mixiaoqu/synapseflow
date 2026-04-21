@@ -11,11 +11,13 @@ class AppConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
+    key: str
     model: str
     name: str
+    provider: str
     api_key: str
     api_base: str
-    temperature: float
+    temperature: float | None
     request_timeout: int
     streaming: bool
     max_tokens: int | None = None

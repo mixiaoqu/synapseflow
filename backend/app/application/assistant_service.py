@@ -9,11 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AssistantProfile
 from app.application.kb_chat_service import get_kb_chat_service
+from app.core.config import config_registry
 from app.models.schemas.assistant import (
     AssistantBulkActionRequest,
     AssistantBulkActionResponse,
     AssistantAvailabilityResponse,
     AssistantDependencyUsageResponse,
+    AssistantModelOption,
+    AssistantModelOptionsResponse,
     AssistantProfileCreate,
     AssistantProfileResponse,
     AssistantReorderRequest,
@@ -70,6 +73,22 @@ class AssistantService:
         return normalized
 
     @staticmethod
+    def _normalize_model_key(value: str | None) -> str | None:
+        normalized = (value or "").strip()
+        return normalized or None
+
+    @staticmethod
+    def _validate_model_key(value: str | None) -> str | None:
+        normalized = AssistantService._normalize_model_key(value)
+        if normalized is None:
+            return None
+        try:
+            config_registry.get_model_asset(normalized)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return normalized
+
+    @staticmethod
     def _to_summary(record: AssistantProfileRecord) -> AssistantProfileSummary:
         assistant = record.assistant
         return AssistantProfileSummary(
@@ -87,6 +106,7 @@ class AssistantService:
             description=assistant.description,
             welcome_message=assistant.welcome_message,
             placeholder_text=assistant.placeholder_text,
+            llm_model_key=assistant.llm_model_key,
             suggested_prompts=list(assistant.suggested_prompts or []),
             is_active=assistant.is_active,
             sort_order=assistant.sort_order,
@@ -185,6 +205,18 @@ class AssistantService:
         )
         return AssistantAvailabilityResponse(items=items)
 
+    async def list_model_options(self) -> AssistantModelOptionsResponse:
+        items = [
+            AssistantModelOption(
+                key=item.key,
+                name=item.name,
+                provider=item.provider,
+                model=item.model,
+            )
+            for item in config_registry.list_model_assets()
+        ]
+        return AssistantModelOptionsResponse(items=items)
+
     async def get_profile(
         self,
         assistant_id: int,
@@ -217,6 +249,7 @@ class AssistantService:
             description=self._normalize_optional_text(payload.description),
             welcome_message=self._normalize_optional_text(payload.welcome_message),
             placeholder_text=self._normalize_optional_text(payload.placeholder_text),
+            llm_model_key=self._validate_model_key(payload.llm_model_key),
             persona_prompt=self._normalize_optional_text(payload.persona_prompt),
             rule_template=self._normalize_optional_text(payload.rule_template),
             suggested_prompts=self._normalize_prompt_list(payload.suggested_prompts),
@@ -257,6 +290,7 @@ class AssistantService:
         assistant.description = self._normalize_optional_text(payload.description)
         assistant.welcome_message = self._normalize_optional_text(payload.welcome_message)
         assistant.placeholder_text = self._normalize_optional_text(payload.placeholder_text)
+        assistant.llm_model_key = self._validate_model_key(payload.llm_model_key)
         assistant.persona_prompt = self._normalize_optional_text(payload.persona_prompt)
         assistant.rule_template = self._normalize_optional_text(payload.rule_template)
         assistant.suggested_prompts = self._normalize_prompt_list(payload.suggested_prompts)
@@ -296,6 +330,7 @@ class AssistantService:
             assistant_name=self._normalize_optional_text(payload.name) or "预览助手",
             assistant_welcome_message=self._normalize_optional_text(payload.welcome_message),
             assistant_placeholder_text=self._normalize_optional_text(payload.placeholder_text),
+            assistant_llm_model_key=self._validate_model_key(payload.llm_model_key),
             assistant_persona_prompt=self._normalize_optional_text(payload.persona_prompt),
             assistant_rule_template=self._normalize_optional_text(payload.rule_template),
             assistant_suggested_prompts=self._normalize_prompt_list(payload.suggested_prompts),

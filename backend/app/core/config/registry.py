@@ -35,6 +35,75 @@ from .settings import settings
 class ConfigRegistry:
     """Provides parsed, cached configuration objects."""
 
+    @staticmethod
+    def _get_provider_record(data: dict[str, Any], provider_id: str) -> dict[str, Any]:
+        providers_cfg = data.get("providers", {}) or {}
+        provider = providers_cfg.get(provider_id, {}) or {}
+        if not provider:
+            raise ValueError(f"Provider '{provider_id}' is not defined")
+        return provider
+
+    @staticmethod
+    def _get_provider_api_key(provider: dict[str, Any], provider_id: str) -> str:
+        api_key_env_name = str(provider.get("api_key_env") or "").strip()
+        if not api_key_env_name:
+            raise ValueError(f"Provider '{provider_id}' is missing api_key_env")
+        api_key = getattr(settings, api_key_env_name, "").strip()
+        if not api_key:
+            raise ValueError(
+                f"Provider '{provider_id}' API key is not configured "
+                f"(environment variable: {api_key_env_name})"
+            )
+        return api_key
+
+    @functools.lru_cache(maxsize=None)
+    def get_model_asset(self, asset_key: str) -> ModelConfig:
+        """Get one concrete chat model asset from `models.yaml`."""
+        data = load_models_raw()
+        assets_cfg = data.get("model_assets", {}) or {}
+        raw = assets_cfg.get(asset_key, {}) or {}
+        if not raw:
+            raise ValueError(f"Model asset '{asset_key}' is not defined")
+
+        if str(raw.get("type", "chat")) != "chat":
+            raise ValueError(f"Model asset '{asset_key}' is not a chat model")
+
+        provider_id = str(raw.get("provider") or "").strip()
+        if not provider_id:
+            raise ValueError(f"Model asset '{asset_key}' is missing provider")
+
+        provider = self._get_provider_record(data, provider_id)
+        api_key = self._get_provider_api_key(provider, provider_id)
+
+        return ModelConfig(
+            key=asset_key,
+            model=str(raw.get("model", "gpt-4")),
+            name=str(raw.get("name", asset_key)),
+            provider=provider_id,
+            api_key=api_key,
+            api_base=str(provider.get("api_base", "")),
+            temperature=(
+                float(raw["temperature"])
+                if raw.get("temperature") is not None
+                else None
+            ),
+            request_timeout=int(raw.get("request_timeout", 120)),
+            streaming=bool(raw.get("streaming", True)),
+            max_tokens=int(raw["max_tokens"]) if raw.get("max_tokens") is not None else None,
+        )
+
+    @functools.lru_cache(maxsize=1)
+    def list_model_assets(self) -> list[ModelConfig]:
+        """List all configured chat model assets."""
+        data = load_models_raw()
+        assets_cfg = data.get("model_assets", {}) or {}
+        items: list[ModelConfig] = []
+        for asset_key, raw in assets_cfg.items():
+            if str((raw or {}).get("type", "chat")) != "chat":
+                continue
+            items.append(self.get_model_asset(asset_key))
+        return items
+
     @functools.lru_cache(maxsize=1)
     def get_app_config(self) -> AppConfig:
         """Get application-level settings from `config/app.yaml`."""
@@ -43,55 +112,25 @@ class ConfigRegistry:
         return AppConfig(
             project_name=app.get("project_name", "SynapseFlow"),
             version=app.get("version", "0.1.0"),
-            description=app.get("description", "基于 LangGraph 的智能体协同系统"),
+            description=app.get("description", "Agent collaboration system built with LangGraph"),
             api_v1_str=app.get("api_v1_str", "/api/v1"),
         )
 
     @functools.lru_cache(maxsize=None)
     def get_model_config(self, model_type: str) -> ModelConfig:
-        """Get the model config for a given logical model type."""
+        """Get the default model asset for a given logical role."""
         data = load_models_raw()
-        models_cfg = data.get("models", {})
-        providers_cfg = data.get("providers", {})
-        api_keys_mapping = data.get("api_keys", {})
-
-        raw = models_cfg.get(model_type, {})
-        if not raw:
-            raise ValueError(f"模型类型 '{model_type}' 未在 models.yaml 中定义")
-
-        provider_id = raw.get("provider")
-        if not provider_id:
-            raise ValueError(f"模型 '{model_type}' 缺少 provider 配置")
-
-        provider = providers_cfg.get(provider_id, {})
-        if not provider:
-            raise ValueError(f"Provider '{provider_id}' 未在 providers 中定义")
-
-        api_key_env_name = api_keys_mapping.get(provider_id)
-        api_key = getattr(settings, api_key_env_name, "").strip() if api_key_env_name else ""
-
-        if not api_key:
-            raise ValueError(
-                f"Provider '{provider_id}' 的 API 密钥未配置"
-                f"（环境变量: {api_key_env_name}）"
-            )
-
-        return ModelConfig(
-            model=raw.get("model", "gpt-4"),
-            name=raw.get("name", model_type),
-            api_key=api_key,
-            api_base=provider.get("api_base", ""),
-            temperature=float(raw.get("temperature", 0.7)),
-            request_timeout=int(raw.get("request_timeout", 120)),
-            streaming=bool(raw.get("streaming", True)),
-            max_tokens=int(raw["max_tokens"]) if raw.get("max_tokens") is not None else None,
-        )
+        role_map = data.get("system_roles", {}) or {}
+        asset_key = str(role_map.get(model_type) or "").strip()
+        if not asset_key:
+            raise ValueError(f"System role '{model_type}' is not defined")
+        return self.get_model_asset(asset_key)
 
     @functools.lru_cache(maxsize=1)
     def get_embedding_config(self) -> EmbeddingConfig:
         """Get embedding config from `config/embedding.yaml`."""
         data = load_embedding_raw()
-        emb = data.get("embedding", {})
+        emb = data.get("embedding", {}) or {}
         model_override = (settings.EMBEDDING_MODEL or "").strip()
         return EmbeddingConfig(
             model=model_override or emb.get("model", "BAAI/bge-m3"),
@@ -231,8 +270,11 @@ class ConfigRegistry:
     def llm_configured(self) -> bool:
         """Return whether any configured LLM provider has an API key set."""
         data = load_models_raw()
-        api_keys_mapping = data.get("api_keys", {})
-        for env_var_name in api_keys_mapping.values():
+        providers_cfg = data.get("providers", {}) or {}
+        for provider in providers_cfg.values():
+            env_var_name = str((provider or {}).get("api_key_env") or "").strip()
+            if not env_var_name:
+                continue
             if getattr(settings, env_var_name, "").strip():
                 return True
         return False

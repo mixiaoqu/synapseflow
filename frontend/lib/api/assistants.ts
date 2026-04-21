@@ -16,6 +16,7 @@ export interface AssistantSummary {
   description?: string | null;
   welcome_message?: string | null;
   placeholder_text?: string | null;
+  llm_model_key?: string | null;
   suggested_prompts: string[];
   is_active: boolean;
   sort_order: number;
@@ -48,6 +49,7 @@ export interface AssistantUpsertPayload {
   description?: string | null;
   welcome_message?: string | null;
   placeholder_text?: string | null;
+  llm_model_key?: string | null;
   persona_prompt?: string | null;
   rule_template?: string | null;
   suggested_prompts: string[];
@@ -76,6 +78,7 @@ export interface AssistantPreviewRequest {
   category_id?: number | null;
   welcome_message?: string | null;
   placeholder_text?: string | null;
+  llm_model_key?: string | null;
   persona_prompt?: string | null;
   rule_template?: string | null;
   suggested_prompts?: string[];
@@ -83,6 +86,17 @@ export interface AssistantPreviewRequest {
   is_active?: boolean;
   sort_order?: number;
   include_unpublished?: boolean;
+}
+
+export interface AssistantModelOption {
+  key: string;
+  name: string;
+  provider: string;
+  model: string;
+}
+
+export interface AssistantModelOptionsResponse {
+  items: AssistantModelOption[];
 }
 
 export const assistantsApi = {
@@ -127,6 +141,9 @@ export const assistantsApi = {
 
   preview: (payload: AssistantPreviewRequest) =>
     apiClient.post<AskResponse>("/api/v1/assistants/preview", payload),
+
+  listModelOptions: () =>
+    apiClient.get<AssistantModelOptionsResponse>("/api/v1/assistants/model-options"),
 
   update: (assistantId: number, payload: AssistantUpsertPayload) =>
     apiClient.put<AssistantProfile>(`/api/v1/assistants/${assistantId}`, payload),

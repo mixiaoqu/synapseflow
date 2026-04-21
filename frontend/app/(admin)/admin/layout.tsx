@@ -10,7 +10,6 @@ import {
   Building2,
   CheckSquare,
   ChevronRight,
-  Database,
   Home,
   LogOut,
   Settings,
@@ -37,8 +36,7 @@ const AVATAR_PALETTES = [
 
 const navItems = [
   { href: "/admin", title: "后台首页", icon: Home },
-  { href: "/admin/documents", title: "文档管理", icon: Database },
-  { href: "/admin/knowledge-bases", title: "知识库管理", icon: BookOpen },
+  { href: "/admin/documents", title: "知识库管理", icon: BookOpen },
   { href: "/admin/assistants", title: "助手管理", icon: Bot },
   { href: "/admin/review", title: "审核发布", icon: CheckSquare },
   { href: "/admin/qa-quality", title: "问答质检", icon: BarChart3 },

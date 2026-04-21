@@ -1,9 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { FilterX, Loader2, RefreshCcw, Search } from "lucide-react";
+import { Toaster, toast } from "sonner";
 
+import { BatchActionBar } from "@/components/admin/review/BatchActionBar";
+import { ReviewDocumentSheet } from "@/components/admin/review/ReviewDocumentSheet";
+import { ReviewTable } from "@/components/admin/review/ReviewTable";
+import {
+  REVIEW_FILTER_ORDER,
+  applyDocumentDetailToListItem,
+  availableReviewActions,
+  reviewActionMeta,
+  reviewFilterLabels,
+  sortReviewDocuments,
+  type ReviewAction,
+  type ReviewFilter,
+} from "@/components/admin/review/review-utils";
+import { useTeamScope } from "@/components/team-scope/TeamScopeProvider";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   approveDocument,
   listDocuments,
@@ -12,374 +30,458 @@ import {
   submitDocumentForReview,
   unpublishDocument,
   type DocumentDetail,
-  type DocumentLifecycleStatus,
   type DocumentListItem,
 } from "@/lib/api/documents";
 
-type ReviewAction = "submit" | "approve" | "reject" | "publish" | "unpublish";
-type ReviewFilter = "all" | "pending_review" | "approved" | "published" | "draft";
+const FETCH_PAGE_SIZE = 100;
 
-const actionLabels: Record<ReviewAction, string> = {
-  submit: "提交审核",
-  approve: "审核通过",
-  reject: "退回草稿",
-  publish: "发布上线",
-  unpublish: "下线",
-};
-
-const statusLabels: Record<DocumentLifecycleStatus, string> = {
-  draft: "草稿",
-  pending_review: "待审核",
-  approved: "已通过",
-  published: "已发布",
-  archived: "已归档",
-};
-
-const indexStatusLabels: Record<string, string> = {
-  queued: "排队中",
-  processing: "处理中",
-  indexed: "已完成",
-  failed: "失败",
-};
-
-const filterLabels: Record<ReviewFilter, string> = {
-  all: "全部",
-  pending_review: "待审核",
-  approved: "已通过",
-  published: "已发布",
-  draft: "草稿",
-};
-
-function statusBadgeClass(status: DocumentLifecycleStatus): string {
-  switch (status) {
-    case "pending_review":
-      return "bg-amber-50 text-amber-700 ring-1 ring-amber-200";
-    case "approved":
-      return "bg-blue-50 text-blue-700 ring-1 ring-blue-200";
-    case "published":
-      return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
-    case "archived":
-      return "bg-slate-100 text-slate-500 ring-1 ring-slate-200";
-    default:
-      return "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
-  }
-}
-
-function indexBadgeClass(status: string): string {
-  switch (status) {
-    case "indexed":
-      return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
-    case "processing":
-      return "bg-sky-50 text-sky-700 ring-1 ring-sky-200";
-    case "failed":
-      return "bg-rose-50 text-rose-700 ring-1 ring-rose-200";
-    default:
-      return "bg-slate-100 text-slate-600 ring-1 ring-slate-200";
-  }
-}
-
-function actionButtonClass(action: ReviewAction): string {
+async function runReviewAction(
+  documentId: number,
+  action: ReviewAction,
+): Promise<DocumentDetail> {
   switch (action) {
-    case "publish":
-      return "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100";
-    case "unpublish":
-      return "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100";
+    case "submit":
+      return submitDocumentForReview(documentId);
     case "approve":
-      return "border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100";
+      return approveDocument(documentId);
     case "reject":
-      return "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100";
-    default:
-      return "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
+      return rejectDocument(documentId);
+    case "publish":
+      return publishDocument(documentId);
+    case "unpublish":
+      return unpublishDocument(documentId);
   }
 }
 
-function availableActions(item: DocumentListItem): ReviewAction[] {
-  const indexedReady = item.index_status === "indexed";
+function mergeUpdatedDocuments(
+  currentItems: DocumentListItem[],
+  updates: DocumentDetail[],
+): DocumentListItem[] {
+  if (updates.length === 0) return currentItems;
 
-  if (item.status === "draft" && indexedReady) {
-    return ["submit"];
-  }
-  if (item.status === "pending_review") {
-    return ["approve", "reject"];
-  }
-  if (item.status === "approved" && indexedReady) {
-    return ["publish"];
-  }
-  if (item.status === "published") {
-    return ["unpublish"];
-  }
-  return [];
-}
-
-function formatDateTime(value: string | null): string {
-  if (!value) {
-    return "暂无";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+  const detailMap = new Map(updates.map((detail) => [detail.id, detail]));
+  return sortReviewDocuments(
+    currentItems.map((item) => {
+      const updated = detailMap.get(item.id);
+      return updated ? applyDocumentDetailToListItem(item, updated) : item;
+    }),
+  );
 }
 
 export default function AdminReviewPage() {
+  const { teamId, selectedTeam, teamsLoading } = useTeamScope();
+
   const [items, setItems] = useState<DocumentListItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [actioningId, setActioningId] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<ReviewFilter>("pending_review");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [busyIds, setBusyIds] = useState<number[]>([]);
+  const [runningBatchAction, setRunningBatchAction] = useState<ReviewAction | null>(null);
+  const [previewDocumentId, setPreviewDocumentId] = useState<number | null>(null);
+
+  const loadDocuments = useCallback(
+    async (silent = false) => {
+      if (teamId == null) {
+        setItems([]);
+        setSelectedIds([]);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      try {
+        const loadedItems: DocumentListItem[] = [];
+        let page = 1;
+        let total = 0;
+
+        do {
+          const response = await listDocuments({
+            page,
+            page_size: FETCH_PAGE_SIZE,
+            team_id: teamId,
+          });
+
+          loadedItems.push(...response.items);
+          total = response.total;
+          page += 1;
+        } while (loadedItems.length < total);
+
+        setItems(sortReviewDocuments(loadedItems));
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "加载审核列表失败");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [teamId],
+  );
+
+  useEffect(() => {
+    if (teamsLoading) return;
+    void loadDocuments();
+  }, [loadDocuments, teamsLoading]);
+
+  useEffect(() => {
+    setSelectedIds((current) => current.filter((id) => items.some((item) => item.id === id)));
+  }, [items]);
 
   const summary = useMemo(
     () => ({
-      pendingReview: items.filter((item) => item.status === "pending_review").length,
+      all: items.length,
+      draft: items.filter((item) => item.status === "draft").length,
+      pending_review: items.filter((item) => item.status === "pending_review").length,
       approved: items.filter((item) => item.status === "approved").length,
       published: items.filter((item) => item.status === "published").length,
-      draft: items.filter((item) => item.status === "draft").length,
     }),
     [items],
   );
 
   const filteredItems = useMemo(() => {
-    if (activeFilter === "all") {
-      return items;
-    }
-    if (activeFilter === "approved") {
-      return items.filter((item) => item.status === "approved");
-    }
-    return items.filter((item) => item.status === activeFilter);
-  }, [activeFilter, items]);
+    const keyword = searchQuery.trim().toLowerCase();
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const response = await listDocuments({ page: 1, page_size: 100 });
-      setItems(response.items);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "加载审核列表失败");
-    } finally {
-      setLoading(false);
+    return items.filter((item) => {
+      const matchesFilter = activeFilter === "all" || item.status === activeFilter;
+      const matchesKeyword =
+        keyword.length === 0 ||
+        item.title.toLowerCase().includes(keyword) ||
+        (item.knowledge_base_name ?? "").toLowerCase().includes(keyword) ||
+        (item.category_name ?? "").toLowerCase().includes(keyword);
+
+      return matchesFilter && matchesKeyword;
+    });
+  }, [activeFilter, items, searchQuery]);
+
+  const selectedItems = useMemo(
+    () => items.filter((item) => selectedIds.includes(item.id)),
+    [items, selectedIds],
+  );
+
+  const visibleBatchActions = useMemo(() => {
+    const actionSet = new Set<ReviewAction>();
+    selectedItems.forEach((item) => {
+      availableReviewActions(item).forEach((action) => actionSet.add(action));
+    });
+    return Array.from(actionSet);
+  }, [selectedItems]);
+
+  const enabledBatchActions = useMemo(() => {
+    if (selectedItems.length === 0) return [];
+
+    let intersection = new Set(availableReviewActions(selectedItems[0]));
+    for (const item of selectedItems.slice(1)) {
+      const nextActions = new Set(availableReviewActions(item));
+      intersection = new Set(
+        Array.from(intersection).filter((action) => nextActions.has(action)),
+      );
     }
-  };
+    return Array.from(intersection);
+  }, [selectedItems]);
 
-  useEffect(() => {
-    void load();
-  }, []);
+  const batchDisableReason = useMemo(() => {
+    if (selectedItems.length === 0) return null;
+    if (visibleBatchActions.length > 0 && enabledBatchActions.length === 0) {
+      return "所选文档状态不一致，当前没有统一可执行的批量动作。";
+    }
+    return null;
+  }, [enabledBatchActions.length, selectedItems.length, visibleBatchActions.length]);
 
-  const applyAction = async (docId: number, action: ReviewAction) => {
-    setActioningId(docId);
-    try {
-      let updated: DocumentDetail;
-      switch (action) {
-        case "submit":
-          updated = await submitDocumentForReview(docId);
-          break;
-        case "approve":
-          updated = await approveDocument(docId);
-          break;
-        case "reject":
-          updated = await rejectDocument(docId);
-          break;
-        case "publish":
-          updated = await publishDocument(docId);
-          break;
-        case "unpublish":
-          updated = await unpublishDocument(docId);
-          break;
+  const previewItem = useMemo(
+    () => items.find((item) => item.id === previewDocumentId) ?? null,
+    [items, previewDocumentId],
+  );
+
+  const allVisibleSelected =
+    filteredItems.length > 0 &&
+    filteredItems.every((item) => selectedIds.includes(item.id));
+  const partiallySelected =
+    filteredItems.some((item) => selectedIds.includes(item.id)) && !allVisibleSelected;
+
+  const withBusyIds = useCallback(
+    async <T,>(documentIds: number[], work: () => Promise<T>): Promise<T> => {
+      setBusyIds((current) => Array.from(new Set([...current, ...documentIds])));
+      try {
+        return await work();
+      } finally {
+        setBusyIds((current) =>
+          current.filter((id) => !documentIds.includes(id)),
+        );
+      }
+    },
+    [],
+  );
+
+  const runSingleAction = useCallback(
+    async (documentId: number, action: ReviewAction): Promise<boolean> => {
+      return withBusyIds([documentId], async () => {
+        try {
+          const updated = await runReviewAction(documentId, action);
+          setItems((current) => mergeUpdatedDocuments(current, [updated]));
+          setSelectedIds((current) => current.filter((id) => id !== documentId));
+          toast.success(reviewActionMeta[action].successMessage);
+          return true;
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "操作失败");
+          return false;
+        }
+      });
+    },
+    [withBusyIds],
+  );
+
+  const runBatchAction = useCallback(
+    async (action: ReviewAction) => {
+      if (selectedItems.length === 0) return;
+
+      const actionableItems = selectedItems.filter((item) =>
+        availableReviewActions(item).includes(action),
+      );
+
+      if (actionableItems.length === 0) {
+        toast.error("当前选择没有可执行的批量动作");
+        return;
       }
 
-      setItems((prev) =>
-        prev.map((item) =>
-          item.id === docId
-            ? {
-                ...item,
-                status: updated.status,
-                published_at: updated.published_at,
-                published_by: updated.published_by,
-                reviewed_at: updated.reviewed_at,
-                reviewed_by: updated.reviewed_by,
-                updated_at: updated.updated_at,
-              }
-            : item,
-        ),
-      );
-      toast.success(`文档已${actionLabels[action]}`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "操作失败");
-    } finally {
-      setActioningId(null);
-    }
-  };
+      const actionableIds = actionableItems.map((item) => item.id);
+      setRunningBatchAction(action);
+
+      await withBusyIds(actionableIds, async () => {
+        const results = await Promise.allSettled(
+          actionableIds.map((documentId) => runReviewAction(documentId, action)),
+        );
+
+        const succeeded = results
+          .filter(
+            (result): result is PromiseFulfilledResult<DocumentDetail> =>
+              result.status === "fulfilled",
+          )
+          .map((result) => result.value);
+        const failed = results.filter((result) => result.status === "rejected");
+
+        if (succeeded.length > 0) {
+          setItems((current) => mergeUpdatedDocuments(current, succeeded));
+          setSelectedIds((current) =>
+            current.filter((id) => !succeeded.some((detail) => detail.id === id)),
+          );
+        }
+
+        if (failed.length === 0) {
+          toast.success(`已批量完成 ${succeeded.length} 篇文档的处理`);
+        } else if (succeeded.length > 0) {
+          toast.warning(
+            `批量处理部分完成，成功 ${succeeded.length} 篇，失败 ${failed.length} 篇`,
+          );
+        } else {
+          const firstReason = failed[0];
+          toast.error(
+            firstReason.status === "rejected" && firstReason.reason instanceof Error
+              ? firstReason.reason.message
+              : "批量处理失败",
+          );
+        }
+      });
+
+      setRunningBatchAction(null);
+    },
+    [selectedItems, withBusyIds],
+  );
 
   return (
-    <div className="px-6 py-8 sm:px-8">
-      <div className="mx-auto max-w-7xl">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold text-slate-900">审核发布</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              只有通过审核并正式发布的文档才会进入前台问答链路。这里会根据文档当前状态展示可执行动作，避免误操作。
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={loading}
-            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loading ? (
-              <span className="inline-flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                刷新中
-              </span>
-            ) : (
-              "刷新列表"
-            )}
-          </button>
-        </div>
+    <div className="min-h-full bg-slate-50 px-6 py-8 sm:px-8">
+      <Toaster position="top-right" richColors />
 
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5 shadow-sm">
-            <p className="text-xs text-amber-700">待审核</p>
-            <p className="mt-2 text-2xl font-semibold text-amber-900">{summary.pendingReview}</p>
-          </div>
-          <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-5 shadow-sm">
-            <p className="text-xs text-blue-700">已通过</p>
-            <p className="mt-2 text-2xl font-semibold text-blue-900">{summary.approved}</p>
-          </div>
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5 shadow-sm">
-            <p className="text-xs text-emerald-700">已发布</p>
-            <p className="mt-2 text-2xl font-semibold text-emerald-900">{summary.published}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-xs text-slate-500">草稿</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-900">{summary.draft}</p>
-          </div>
-        </div>
+      <div className="mx-auto max-w-[1600px] space-y-6">
+        <section className="overflow-hidden rounded-[32px] border border-slate-200/80 bg-white shadow-sm">
+          <div className="bg-[radial-gradient(circle_at_top_left,_rgba(245,158,11,0.12),_transparent_28%),linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] px-6 py-6 sm:px-7">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-[0.24em] text-amber-600">
+                  Review Ops
+                </div>
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+                  审核与发布中心
+                </h1>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-500">
+                  管理知识库文档的生命周期，已发布的文档才会进入问答上下文。
+                  当前视图已整合搜索、批量审批和侧栏预览，适合处理积压审核任务。
+                </p>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <Badge className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600">
+                    当前团队：{selectedTeam?.name ?? "未选择"}
+                  </Badge>
+                  {selectedIds.length > 0 ? (
+                    <Badge className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-amber-700">
+                      已选择 {selectedIds.length} 项
+                    </Badge>
+                  ) : null}
+                </div>
+              </div>
 
-        <div className="mt-6 flex flex-wrap gap-2">
-          {(["pending_review", "approved", "published", "draft", "all"] as ReviewFilter[]).map(
-            (filterKey) => (
-              <button
-                key={filterKey}
-                type="button"
-                onClick={() => setActiveFilter(filterKey)}
-                className={`rounded-full px-4 py-2 text-sm transition ${
-                  activeFilter === filterKey
-                    ? "bg-slate-900 text-white"
-                    : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-                }`}
-              >
-                {filterLabels[filterKey]}
-              </button>
-            ),
-          )}
-        </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {enabledBatchActions.slice(0, 2).map((action) => (
+                  <Button
+                    key={action}
+                    type="button"
+                    disabled={selectedIds.length === 0 || runningBatchAction != null}
+                    onClick={() => void runBatchAction(action)}
+                    className="h-11 rounded-xl bg-slate-900 px-4 text-white hover:bg-slate-800"
+                  >
+                    {runningBatchAction === action ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        处理中
+                      </>
+                    ) : (
+                      reviewActionMeta[action].label.replace("立即", "批量")
+                    )}
+                  </Button>
+                ))}
 
-        <div className="mt-6 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium text-slate-500">文档</th>
-                <th className="px-4 py-3 text-left font-medium text-slate-500">生命周期</th>
-                <th className="px-4 py-3 text-left font-medium text-slate-500">索引状态</th>
-                <th className="px-4 py-3 text-left font-medium text-slate-500">最近时间</th>
-                <th className="px-4 py-3 text-left font-medium text-slate-500">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {loading ? (
-                <tr>
-                  <td colSpan={5} className="px-4 py-8 text-slate-500">
-                    正在加载审核列表...
-                  </td>
-                </tr>
-              ) : filteredItems.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-4 py-8 text-slate-500">
-                    当前筛选下暂无文档
-                  </td>
-                </tr>
-              ) : (
-                filteredItems.map((item) => {
-                  const actions = availableActions(item);
-                  const latestTime = item.published_at || item.reviewed_at || item.updated_at;
-                  return (
-                    <tr key={item.id}>
-                      <td className="px-4 py-4 align-top">
-                        <div className="font-medium text-slate-800">{item.title}</div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          {item.knowledge_base_name || "未归档知识库"}
-                        </div>
-                        <div className="mt-1 text-xs text-slate-400">版本 v{item.version}</div>
-                      </td>
-                      <td className="px-4 py-4 align-top">
-                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs ${statusBadgeClass(item.status)}`}>
-                          {statusLabels[item.status] || item.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 align-top">
-                        <div className="flex flex-col gap-2">
-                          <span className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs ${indexBadgeClass(item.index_status)}`}>
-                            {indexStatusLabels[item.index_status] || item.index_status}
-                          </span>
-                          {item.index_error ? (
-                            <span className="max-w-xs text-xs text-rose-600">{item.index_error}</span>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-4 py-4 align-top text-slate-600">
-                        <div className="text-sm">{formatDateTime(latestTime)}</div>
-                        <div className="mt-1 text-xs text-slate-400">
-                          {item.published_at
-                            ? "最近发布"
-                            : item.reviewed_at
-                              ? "最近审核"
-                              : "最近更新"}
-                        </div>
-                      </td>
-                      <td className="px-4 py-4 align-top">
-                        {actions.length === 0 ? (
-                          <span className="text-xs text-slate-400">
-                            {item.index_status !== "indexed"
-                              ? "等待索引完成后才能进入审核流转"
-                              : "当前状态暂无可执行动作"}
-                          </span>
-                        ) : (
-                          <div className="flex flex-wrap gap-2">
-                            {actions.map((action) => (
-                              <button
-                                key={action}
-                                type="button"
-                                disabled={actioningId === item.id}
-                                onClick={() => void applyAction(item.id, action)}
-                                className={`rounded-lg px-2.5 py-1.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-50 ${actionButtonClass(action)}`}
-                              >
-                                {actioningId === item.id ? (
-                                  <span className="inline-flex items-center gap-1">
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    处理中
-                                  </span>
-                                ) : (
-                                  actionLabels[action]
-                                )}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={loading || refreshing || teamsLoading}
+                  onClick={() => void loadDocuments(true)}
+                  className="h-11 rounded-xl border-slate-200 bg-white px-4 text-slate-700 hover:bg-slate-50"
+                >
+                  {refreshing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      刷新中
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCcw className="h-4 w-4" />
+                      刷新
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-4 rounded-[32px] border border-slate-200/80 bg-white p-5 shadow-sm">
+          <div className="overflow-x-auto">
+            <Tabs
+              value={activeFilter}
+              onValueChange={(value) => setActiveFilter(value as ReviewFilter)}
+            >
+              <TabsList className="h-auto gap-2 rounded-2xl bg-slate-100/80 p-1.5">
+                {REVIEW_FILTER_ORDER.map((filter) => (
+                  <TabsTrigger
+                    key={filter}
+                    value={filter}
+                    className="rounded-xl px-4 py-2.5 text-sm data-[state=active]:bg-white data-[state=active]:text-slate-900"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span>{reviewFilterLabels[filter]}</span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                        {summary[filter]}
+                      </span>
+                    </span>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
+
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="relative w-full max-w-xl">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="按文档标题、知识库或分类搜索..."
+                className="h-11 rounded-2xl border-slate-200 bg-slate-50 pl-10 text-slate-800 placeholder:text-slate-400"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
+              <span>当前列表共 {filteredItems.length} 条</span>
+              {(searchQuery || selectedIds.length > 0) && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setSelectedIds([]);
+                  }}
+                  className="h-10 rounded-xl px-3 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                >
+                  <FilterX className="h-4 w-4" />
+                  清空筛选
+                </Button>
               )}
-            </tbody>
-          </table>
-        </div>
+            </div>
+          </div>
+
+          {selectedIds.length > 0 ? (
+            <BatchActionBar
+              selectedCount={selectedIds.length}
+              visibleActions={visibleBatchActions}
+              enabledActions={enabledBatchActions}
+              runningAction={runningBatchAction}
+              disableReason={batchDisableReason}
+              onRunAction={(action) => void runBatchAction(action)}
+              onClearSelection={() => setSelectedIds([])}
+            />
+          ) : null}
+
+          <ReviewTable
+            items={filteredItems}
+            loading={loading}
+            selectedIds={selectedIds}
+            allVisibleSelected={allVisibleSelected}
+            partiallySelected={partiallySelected}
+            onToggleSelect={(documentId, checked) => {
+              setSelectedIds((current) =>
+                checked
+                  ? Array.from(new Set([...current, documentId]))
+                  : current.filter((id) => id !== documentId),
+              );
+            }}
+            onToggleSelectAll={(checked) => {
+              if (!checked) {
+                setSelectedIds((current) =>
+                  current.filter((id) => !filteredItems.some((item) => item.id === id)),
+                );
+                return;
+              }
+
+              setSelectedIds((current) =>
+                Array.from(new Set([...current, ...filteredItems.map((item) => item.id)])),
+              );
+            }}
+            onOpenDocument={(item) => setPreviewDocumentId(item.id)}
+            onRunAction={(documentId, action) => {
+              void runSingleAction(documentId, action);
+            }}
+            busyIds={busyIds}
+          />
+        </section>
       </div>
+
+      <ReviewDocumentSheet
+        open={previewDocumentId != null}
+        documentId={previewDocumentId}
+        listItem={previewItem}
+        busy={previewDocumentId != null && busyIds.includes(previewDocumentId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPreviewDocumentId(null);
+          }
+        }}
+        onRunAction={runSingleAction}
+      />
     </div>
   );
 }

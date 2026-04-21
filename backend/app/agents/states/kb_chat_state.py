@@ -14,6 +14,7 @@ class KbChatState(BaseAgentContext, total=False):
     assistant_name: Optional[str]
     assistant_welcome_message: Optional[str]
     assistant_placeholder_text: Optional[str]
+    assistant_llm_model_key: Optional[str]
     assistant_persona_prompt: Optional[str]
     assistant_rule_template: Optional[str]
     assistant_suggested_prompts: List[str]

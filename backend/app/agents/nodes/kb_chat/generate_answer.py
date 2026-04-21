@@ -20,10 +20,11 @@ KB_NO_HITS_REPLY = (
 )
 
 
-def _get_default_llm_factory() -> Callable[[], Any]:
-    from app.core.llm import get_llm_for_generation
+def _get_default_llm(state: dict[str, Any]) -> Any:
+    from app.core.llm import get_llm
 
-    return get_llm_for_generation
+    model_key = str(state.get("assistant_llm_model_key") or "generation").strip() or "generation"
+    return get_llm(model_key)
 
 
 def should_skip_kb_llm(state: dict[str, Any]) -> Optional[str]:
@@ -104,8 +105,7 @@ async def generate_kb_chat_answer_text(
     if fixed:
         return fixed
 
-    resolved_llm_factory = llm_factory or _get_default_llm_factory()
-    llm = resolved_llm_factory()
+    llm = llm_factory() if llm_factory is not None else _get_default_llm(state)
     prompt = _build_prompt(state)
     try:
         logger.info(
@@ -140,8 +140,7 @@ async def stream_kb_chat_answer_text(
         yield fixed
         return
 
-    resolved_llm_factory = llm_factory or _get_default_llm_factory()
-    llm = resolved_llm_factory()
+    llm = llm_factory() if llm_factory is not None else _get_default_llm(state)
     prompt = _build_prompt(state)
     logger.info(
         "[KB Answer] streaming LLM | query_len={} context_len={} retrieved_count={}",

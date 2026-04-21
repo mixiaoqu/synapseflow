@@ -16,6 +16,7 @@ class AssistantPromptConfigMixin(BaseModel):
     description: str | None = Field(default=None, description="Assistant description")
     welcome_message: str | None = Field(default=None, description="Greeting shown in the UI")
     placeholder_text: str | None = Field(default=None, description="Input placeholder text")
+    llm_model_key: str | None = Field(default=None, max_length=80, description="Selected chat model asset key")
     persona_prompt: str | None = Field(default=None, description="Assistant persona instructions")
     rule_template: str | None = Field(default=None, description="Assistant-specific answer rules")
     suggested_prompts: list[str] = Field(
@@ -79,6 +80,7 @@ class AssistantProfileSummary(BaseModel):
     description: str | None = None
     welcome_message: str | None = None
     placeholder_text: str | None = None
+    llm_model_key: str | None = None
     suggested_prompts: list[str] = Field(default_factory=list)
     is_active: bool = True
     sort_order: int = 0
@@ -91,6 +93,21 @@ class AssistantProfileResponse(AssistantProfileSummary):
 
     persona_prompt: str | None = None
     rule_template: str | None = None
+
+
+class AssistantModelOption(BaseModel):
+    """One selectable assistant model asset."""
+
+    key: str
+    name: str
+    provider: str
+    model: str
+
+
+class AssistantModelOptionsResponse(BaseModel):
+    """Available assistant model assets."""
+
+    items: list[AssistantModelOption] = Field(default_factory=list)
 
 
 class AssistantAvailabilityResponse(BaseModel):

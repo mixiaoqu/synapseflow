@@ -48,11 +48,6 @@ class KbChatService(BaseAgentService):
         memory_store: ChatMemoryStore | None = None,
         sensitive_word_service: Any | None = None,
     ):
-        if llm_factory is None:
-            from app.core.llm import get_llm_for_generation
-
-            llm_factory = get_llm_for_generation
-
         self._llm_factory = llm_factory
         self._graph = graph
         self._memory_store = memory_store or DatabaseChatMemoryStore()
@@ -95,6 +90,11 @@ class KbChatService(BaseAgentService):
                 "assistant_placeholder_text": getattr(
                     request,
                     "assistant_placeholder_text",
+                    None,
+                ),
+                "assistant_llm_model_key": getattr(
+                    request,
+                    "assistant_llm_model_key",
                     None,
                 ),
                 "assistant_persona_prompt": getattr(

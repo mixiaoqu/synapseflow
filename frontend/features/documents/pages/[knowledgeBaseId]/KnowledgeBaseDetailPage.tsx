@@ -5,10 +5,12 @@ import { ChangeEvent, DragEvent, Suspense, useCallback, useEffect, useMemo, useR
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Eye,
   FileClock,
+  ListFilter,
   Loader2,
   MoreHorizontal,
   PencilLine,
@@ -22,10 +24,8 @@ import {
 import { Toaster, toast } from "sonner";
 
 import { AnswerMarkdown } from "@/components/ask/AnswerMarkdown";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
@@ -82,7 +82,13 @@ function formatDate(value: string) {
 }
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString("zh-CN");
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 function formatBytes(value: number) {
@@ -229,7 +235,6 @@ function KnowledgeBaseDetailPageContent() {
   });
   const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [status, setStatus] = useState<StatusValue>("all");
@@ -242,8 +247,10 @@ function KnowledgeBaseDetailPageContent() {
   const [dragOver, setDragOver] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
   const previewArticleRef = useRef<HTMLElement | null>(null);
+  const [activePreviewHeadingId, setActivePreviewHeadingId] = useState<string | null>(null);
 
   const activeTeam = teams.find((item) => item.id === teamId) ?? null;
   const activeCategory = categories.find((item) => item.id === selectedCategoryId) ?? null;
@@ -275,6 +282,12 @@ function KnowledgeBaseDetailPageContent() {
     status !== "all" ||
     docType !== "all" ||
     selectedCategoryId != null;
+  const activeFilterCount = [
+    Boolean(keyword),
+    status !== "all",
+    docType !== "all",
+    selectedCategoryId != null,
+  ].filter(Boolean).length;
 
   const { indexedDocsOnPage, processingDocsOnPage, failedDocsOnPage } = useMemo(() => {
     return {
@@ -312,6 +325,7 @@ function KnowledgeBaseDetailPageContent() {
     activeDoc?.document_type || selectedDocListItem?.document_type || "未知类型";
   const selectedDocSize = activeDoc?.size ?? selectedDocListItem?.size ?? 0;
   const selectedDocUpdatedAt = activeDoc?.updated_at ?? selectedDocListItem?.updated_at ?? null;
+  const selectedDocCreatedAt = activeDoc?.created_at ?? selectedDocUpdatedAt;
   const selectedDocIndexError =
     isViewingCurrentVersion
       ? (selectedDoc?.index_error ?? selectedDocListItem?.index_error ?? null)
@@ -347,6 +361,12 @@ function KnowledgeBaseDetailPageContent() {
     selectedDocType,
     formatBytes(selectedDocSize),
     selectedDocUpdatedAt ? `更新于 ${formatDateTime(selectedDocUpdatedAt)}` : null,
+  ]
+    .filter((item): item is string => Boolean(item))
+    .join(" · ");
+  const documentMetaLine = [
+    `分类: ${activeDoc?.category_name || selectedDocListItem?.category_name || "未分类"}`,
+    selectedDocCreatedAt ? `上传于 ${formatDateTime(selectedDocCreatedAt)}` : null,
   ]
     .filter((item): item is string => Boolean(item))
     .join(" · ");
@@ -773,6 +793,16 @@ function KnowledgeBaseDetailPageContent() {
   }, [isEditorDirty]);
 
   useEffect(() => {
+    if (detailTab !== "edit") return;
+
+    const textarea = editorTextareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "0px";
+    textarea.style.height = `${Math.max(textarea.scrollHeight, 640)}px`;
+  }, [detailTab, editorContent]);
+
+  useEffect(() => {
     const article = previewArticleRef.current;
     if (!article || previewHeadings.length === 0) return;
 
@@ -784,6 +814,35 @@ function KnowledgeBaseDetailPageContent() {
       (element as HTMLElement).style.scrollMarginTop = "104px";
     });
   }, [activeDoc?.content, previewHeadings]);
+
+  useEffect(() => {
+    const scrollContainer = previewScrollRef.current;
+    const article = previewArticleRef.current;
+    if (!scrollContainer || !article || previewHeadings.length === 0 || detailTab !== "preview") {
+      setActivePreviewHeadingId(previewHeadings[0]?.id ?? null);
+      return;
+    }
+
+    const syncActiveHeading = () => {
+      const headings = Array.from(article.querySelectorAll<HTMLElement>("h1, h2, h3"));
+      if (headings.length === 0) {
+        setActivePreviewHeadingId(previewHeadings[0]?.id ?? null);
+        return;
+      }
+
+      const containerTop = scrollContainer.getBoundingClientRect().top;
+      const current =
+        headings
+          .filter((heading) => heading.getBoundingClientRect().top - containerTop <= 120)
+          .at(-1) ?? headings[0];
+
+      setActivePreviewHeadingId(current.id || (previewHeadings[0]?.id ?? null));
+    };
+
+    syncActiveHeading();
+    scrollContainer.addEventListener("scroll", syncActiveHeading, { passive: true });
+    return () => scrollContainer.removeEventListener("scroll", syncActiveHeading);
+  }, [activeDoc?.content, detailTab, previewHeadings]);
 
   const reload = () => setReloadToken((value) => value + 1);
 
@@ -839,6 +898,28 @@ function KnowledgeBaseDetailPageContent() {
     previewScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const switchReadingTarget = useCallback(
+    (versionId: number | null) => {
+      const applyTarget = () => {
+        setSelectedVersionId(versionId);
+        setDetailTab("preview");
+      };
+
+      if (detailTab === "edit" && isEditorDirty) {
+        requestDiscardDraft({
+          title: "切换查看版本？",
+          description: "当前编辑内容还没有保存。切换版本后，这些本地修改会被放弃。",
+          confirmLabel: "放弃修改并切换",
+          onConfirm: applyTarget,
+        });
+        return;
+      }
+
+      applyTarget();
+    },
+    [detailTab, isEditorDirty],
+  );
+
   const onSelectPreviewHeading = (headingId: string) => {
     const target = Array.from(
       previewArticleRef.current?.querySelectorAll<HTMLElement>("h1, h2, h3") ?? [],
@@ -866,28 +947,6 @@ function KnowledgeBaseDetailPageContent() {
     setSelectedCategoryId(null);
     setDocPage(1);
   }, []);
-
-  useEffect(() => {
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
-
-    if (searchInput.trim()) {
-      searchTimeoutRef.current = setTimeout(() => {
-        setKeyword(searchInput.trim());
-        setDocPage(1);
-      }, 500);
-    } else if (keyword) {
-      setKeyword("");
-      setDocPage(1);
-    }
-
-    return () => {
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
-    };
-  }, [searchInput, keyword]);
 
   const onEditFromVersion = () => {
     if (!activeDoc) return;
@@ -1051,7 +1110,22 @@ function KnowledgeBaseDetailPageContent() {
   };
 
   const onCancelEdit = () => {
-    resetEditorState();
+    const exitEdit = () => {
+      resetEditorState();
+      setDetailTab("preview");
+    };
+
+    if (isEditorDirty) {
+      requestDiscardDraft({
+        title: "放弃当前编辑内容？",
+        description: "当前编辑内容还没有保存。离开编辑区后，这些本地修改会被放弃。",
+        confirmLabel: "放弃修改并返回",
+        onConfirm: exitEdit,
+      });
+      return;
+    }
+
+    exitEdit();
   };
 
   const onSaveReplace = async () => {
@@ -1095,31 +1169,31 @@ function KnowledgeBaseDetailPageContent() {
   };
 
   return (
-    <div className="flex min-h-full flex-col bg-gray-50 text-slate-900">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white text-slate-900">
       <Toaster position="top-right" richColors />
 
-      <header className="border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
+      <header className="shrink-0 border-b border-slate-100 bg-white/95 px-4 py-4 backdrop-blur-sm sm:px-6">
         <div className="mx-auto flex max-w-[1700px] flex-wrap items-end justify-between gap-3">
           <div>
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
-              className="mb-2 border-slate-200 text-slate-600"
+              className="mb-2 rounded-full px-3 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
               onClick={openDocumentsList}
             >
               <ArrowLeft className="mr-1 h-4 w-4" />
               返回
             </Button>
-            <h1 className="text-2xl font-semibold">{kb?.name || "知识库工作台"}</h1>
-            <p className="text-sm text-slate-500">
+            <h1 className="text-2xl font-semibold tracking-tight">{kb?.name || "知识库工作台"}</h1>
+            <p className="mt-1 text-sm text-slate-500">
               {activeTeam ? `所属团队：${activeTeam.name}` : "正在识别所属团队..."} |{" "}
               {loadingMeta ? "正在同步知识库信息..." : `共 ${kb?.document_count ?? docsTotal} 篇文档`}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
-              className="border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+              className="rounded-full border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
               disabled={deletingKnowledgeBase}
               onClick={onDeleteKnowledgeBase}
             >
@@ -1132,7 +1206,7 @@ function KnowledgeBaseDetailPageContent() {
             </Button>
             <Button
               variant="outline"
-              className="border-slate-200 text-slate-700"
+              className="rounded-full border-slate-200 text-slate-700"
               disabled={reindexingAll}
               onClick={() => void onReindexAll()}
             >
@@ -1144,7 +1218,7 @@ function KnowledgeBaseDetailPageContent() {
               全量重建索引
             </Button>
             <Button
-              className="bg-blue-600 text-white hover:bg-blue-700"
+              className="rounded-full bg-slate-900 text-white hover:bg-slate-800"
               onClick={() => {
                 setUploadCategoryId(activeCategory?.id ?? null);
                 setUploadModalOpen(true);
@@ -1157,750 +1231,615 @@ function KnowledgeBaseDetailPageContent() {
         </div>
       </header>
 
-      <main className="min-h-0 flex-1 p-4 sm:p-6">
-        <section className="mx-auto h-full max-w-[1700px] min-h-0">
-
-          <div
-              className={cn(
-                "grid min-h-0 items-start gap-4",
-                selectedDocListItem
-                  ? "xl:grid-cols-[minmax(320px,0.8fr)_minmax(0,1.7fr)]"
-                  : "xl:grid-cols-[minmax(0,1fr)]",
-              )}
-            >
-              <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-200 bg-white xl:flex xl:h-[calc(100vh-14rem)] xl:flex-col">
-                <div className="border-b border-slate-200 bg-gradient-to-br from-slate-50 to-white px-4 py-3.5">
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="relative min-w-[200px] flex-1">
-                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                        <Input
-                          value={searchInput}
-                          onChange={(e) => setSearchInput(e.target.value)}
-                          onKeyDown={(e) => e.key === "Enter" && onSearch()}
-                          placeholder="搜索文档标题"
-                          className="h-10 rounded-lg border-slate-200 bg-white pl-9 pr-3 text-sm shadow-sm placeholder:text-slate-400 focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
-                        />
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-10 rounded-lg border-slate-200 px-4 text-slate-700 hover:bg-slate-50"
-                        onClick={onSearch}
-                      >
-                        搜索
-                      </Button>
-                      {(keyword || searchInput) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-10 rounded-lg px-3 text-slate-500 hover:bg-slate-100"
-                          onClick={onClearSearch}
-                        >
-                          <X className="mr-1 h-3.5 w-3.5" />
-                          清空
-                        </Button>
-                      )}
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="flex-1 min-w-[140px]">
-                        <select
-                          value={status}
-                          onChange={(e) => setStatus(e.target.value as StatusValue)}
-                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-700 shadow-sm outline-none transition-colors hover:border-slate-300 focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
-                        >
-                          <option value="all">全部状态</option>
-                          <option value="queued">排队中</option>
-                          <option value="processing">索引中</option>
-                          <option value="indexed">已索引</option>
-                          <option value="failed">索引失败</option>
-                        </select>
-                      </div>
-
-                      <div className="flex-1 min-w-[140px]">
-                        <select
-                          value={docType}
-                          onChange={(e) => setDocType(e.target.value)}
-                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-700 shadow-sm outline-none transition-colors hover:border-slate-300 focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
-                        >
-                          <option value="all">全部类型</option>
-                          {typeOptions.map((item) => (
-                            <option key={item} value={item}>
-                              {item}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="flex-1 min-w-[160px]">
-                        <select
-                          value={selectedCategoryId ?? ""}
-                          onChange={(e) => {
-                            setSelectedCategoryId(e.target.value ? Number(e.target.value) : null);
-                            setDocPage(1);
-                          }}
-                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-700 shadow-sm outline-none transition-colors hover:border-slate-300 focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
-                        >
-                          <option value="">全部分类</option>
-                          {categories.map((category) => (
-                            <option key={category.id} value={category.id}>
-                              {category.name}（{category.document_count}）
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {hasActiveFilters && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-9 rounded-lg px-3 text-slate-500 hover:bg-slate-100"
-                          onClick={onResetFilters}
-                        >
-                          <RefreshCcw className="mr-1 h-3.5 w-3.5" />
-                          重置
-                        </Button>
-                      )}
-                    </div>
-
-                    {hasActiveFilters && (
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {keyword && (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-xs text-blue-700">
-                            关键词: {keyword}
-                          </span>
-                        )}
-                        {status !== "all" && (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                            {documentIndexMeta[status].label}
-                          </span>
-                        )}
-                        {docType !== "all" && (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                            {docType}
-                          </span>
-                        )}
-                        {activeCategory && (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                            {activeCategory.name}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
+      <main className="min-h-0 flex-1 overflow-hidden bg-white">
+        <section className="mx-auto flex h-full max-w-[1700px] min-h-0 flex-col xl:flex-row">
+          <section className="min-h-0 xl:flex xl:h-full xl:w-[360px] xl:shrink-0 xl:flex-col xl:border-r xl:border-slate-100 xl:bg-slate-50/60">
+            <div className="border-b border-slate-100 px-4 py-4">
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") onSearch();
+                    }}
+                    placeholder="搜索文档标题"
+                    className="h-9 rounded-full border-transparent bg-slate-100 pl-10 pr-4 text-sm shadow-none placeholder:text-slate-400 hover:bg-slate-200 focus-visible:bg-white focus-visible:ring-1 focus-visible:ring-slate-300"
+                  />
                 </div>
-
-                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/50 px-4 py-2.5">
-                  <div className="flex items-center gap-3 text-xs">
-                    {loadingDocs ? (
-                      <span className="text-slate-500">正在加载文档...</span>
-                    ) : docsTotal > 0 ? (
-                      <>
-                        <span className="font-medium text-slate-700">
-                          {pageStart}-{pageEnd} / {docsTotal}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        "relative h-9 rounded-full px-3 text-slate-500 hover:bg-slate-100 hover:text-slate-900",
+                        hasActiveFilters ? "text-blue-600" : "",
+                      )}
+                    >
+                      <ListFilter className="mr-1.5 h-4 w-4" />
+                      筛选
+                      {activeFilterCount > 0 ? (
+                        <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1.5 text-[10px] font-semibold text-white">
+                          {activeFilterCount}
                         </span>
-                        {hasActiveFilters && filteredDocs.length !== docsTotal && (
-                          <span className="rounded-md bg-blue-100 px-2 py-0.5 text-blue-700">
-                            筛选后 {filteredDocs.length} 篇
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      <span className="text-slate-500">暂无文档</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-slate-600">
-                    <span className="flex items-center gap-1">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-                      {indexedDocsOnPage}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
-                      {processingDocsOnPage}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
-                      {failedDocsOnPage}
-                    </span>
-                  </div>
-                </div>
-
-                {!selectedDocListItem ? (
-                  <div className="border-b border-slate-100 bg-blue-50/70 px-4 py-2 text-xs text-blue-700">
-                    点击任意文档后，右侧会展开阅读优先的工作台。
-                  </div>
-                ) : null}
-
-                <div className="max-h-[65vh] overflow-auto p-3 xl:min-h-0 xl:flex-1">
-                  {loadingMeta || loadingDocs ? (
-                    <div className="flex flex-col items-center justify-center py-12 text-slate-500">
-                      <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
-                      <p className="mt-3 text-sm">正在加载文档列表...</p>
-                    </div>
-                  ) : docs.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/50 py-12 text-center">
-                      <div className="rounded-full bg-slate-100 p-3">
-                        <UploadCloud className="h-6 w-6 text-slate-400" />
-                      </div>
-                      <p className="mt-3 text-sm font-medium text-slate-700">暂无文档</p>
-                      <p className="mt-1 text-xs text-slate-500">点击右上角"上传文档"开始添加内容</p>
-                    </div>
-                  ) : filteredDocs.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/50 py-12 text-center">
-                      <div className="rounded-full bg-slate-100 p-3">
-                        <Search className="h-6 w-6 text-slate-400" />
-                      </div>
-                      <p className="mt-3 text-sm font-medium text-slate-700">没有符合条件的文档</p>
-                      <p className="mt-1 text-xs text-slate-500">尝试调整筛选条件或清空搜索</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {filteredDocs.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => onSelectDocument(item.id)}
-                          className={cn(
-                            "group w-full rounded-lg border p-3 text-left transition-all",
-                            selectedDocId === item.id
-                              ? "border-blue-300 bg-blue-50 shadow-sm"
-                              : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm",
-                          )}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <h4 className={cn(
-                                "truncate text-sm font-medium transition-colors",
-                                selectedDocId === item.id ? "text-blue-900" : "text-slate-900 group-hover:text-slate-950"
-                              )}>
-                                {item.title}
-                              </h4>
-                              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-                                {item.category_name && (
-                                  <span className="inline-flex items-center gap-1">
-                                    <span className="h-1 w-1 rounded-full bg-slate-400"></span>
-                                    {item.category_name}
-                                  </span>
-                                )}
-                                <span>{item.document_type || "未知"}</span>
-                                <span>{formatBytes(item.size)}</span>
-                                <span>{formatDate(item.updated_at)}</span>
-                              </div>
-                            </div>
-                            <span
-                              className={cn(
-                                "shrink-0 rounded-md px-2 py-1 text-xs font-medium",
-                                item.index_status === "indexed"
-                                  ? "bg-emerald-100 text-emerald-700"
-                                  : item.index_status === "failed"
-                                    ? "bg-rose-100 text-rose-700"
-                                    : item.index_status === "processing"
-                                      ? "bg-amber-100 text-amber-700"
-                                      : "bg-slate-100 text-slate-600",
-                              )}
-                            >
-                              {documentIndexMeta[item.index_status].label}
-                            </span>
-                          </div>
-                          {item.index_error && (
-                            <p className="mt-2 rounded-md bg-rose-50 px-2 py-1 text-xs text-rose-700">
-                              {item.index_error}
-                            </p>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/30 px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-600">每页</span>
-                    <select
-                      value={docPageSize}
-                      onChange={(e) => {
-                        setDocPageSize(Number(e.target.value));
-                        setDocPage(1);
-                      }}
-                      className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none transition-colors hover:border-slate-300 focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
-                    >
-                      {PAGE_SIZE_OPTIONS.map((value) => (
-                        <option key={value} value={value}>
-                          {value}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="text-xs text-slate-600">条</span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 w-8 border-slate-200 p-0"
-                      disabled={docPage <= 1 || loadingDocs}
-                      onClick={() => setDocPage(1)}
-                      title="首页"
-                    >
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                      <ChevronLeft className="-ml-2.5 h-3.5 w-3.5" />
+                      ) : null}
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 w-8 border-slate-200 p-0"
-                      disabled={docPage <= 1 || loadingDocs}
-                      onClick={() => setDocPage((prev) => Math.max(1, prev - 1))}
-                      title="上一页"
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      align="end"
+                      sideOffset={8}
+                      className="z-50 w-72 rounded-2xl border border-slate-200 bg-white p-3 shadow-xl"
                     >
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                    </Button>
-                    <span className="min-w-[80px] text-center text-xs text-slate-600">
-                      {docPage} / {totalPages}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 w-8 border-slate-200 p-0"
-                      disabled={docPage >= totalPages || loadingDocs}
-                      onClick={() => setDocPage((prev) => Math.min(totalPages, prev + 1))}
-                      title="下一页"
-                    >
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 w-8 border-slate-200 p-0"
-                      disabled={docPage >= totalPages || loadingDocs}
-                      onClick={() => setDocPage(totalPages)}
-                      title="末页"
-                    >
-                      <ChevronRight className="h-3.5 w-3.5" />
-                      <ChevronRight className="-ml-2.5 h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              </section>
-
-              {selectedDocListItem ? (
-                <aside className="min-h-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm xl:sticky xl:top-6 xl:flex xl:h-[calc(100vh-14rem)] xl:flex-col">
-                  <Tabs
-                    value={detailTab}
-                    onValueChange={(value) => onDetailTabChange(value as DetailTabValue)}
-                    className="flex min-h-0 flex-1 flex-col"
-                  >
-                    <div className="border-b border-slate-200 bg-white">
-                      <div className="px-5 py-4">
-                        {filteredDocs.length === 0 && (
-                          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                            当前筛选条件下没有匹配的文档，显示的是之前选中的文档
-                          </div>
-                        )}
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="min-w-0 flex-1">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                              文档工作台
-                            </p>
-                            <h3 className="mt-1 line-clamp-2 text-xl font-semibold text-slate-900">
-                              {selectedDocListItem.title}
-                            </h3>
-                            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                              <Badge
-                                variant="outline"
-                                className="border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                              >
-                                {viewingVersionLabel}
-                              </Badge>
-                              <Badge
-                                variant="outline"
-                                className={cn("px-2 py-0.5 text-xs font-medium", retrievalStatus.className)}
-                              >
-                                {retrievalStatus.label}
-                              </Badge>
-                              {selectedDocSummary ? (
-                                <p className="min-w-0 truncate text-sm text-slate-500">
-                                  {selectedDocSummary}
-                                </p>
-                              ) : null}
-                            </div>
-                            {primaryWarning ? (
-                              <div
-                                className={cn(
-                                  "mt-3 rounded-xl px-3.5 py-2.5 text-sm",
-                                  primaryWarning.tone === "blue"
-                                    ? "border border-blue-200 bg-blue-50 text-blue-800"
-                                    : primaryWarning.tone === "rose"
-                                      ? "border border-rose-200 bg-rose-50 text-rose-800"
-                                      : primaryWarning.tone === "slate"
-                                        ? "border border-slate-200 bg-slate-50 text-slate-800"
-                                        : "border border-amber-200 bg-amber-50 text-amber-800",
-                                )}
-                              >
-                                {primaryWarning.message}
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className="flex shrink-0 items-start gap-2">
-                            <DropdownMenu.Root>
-                              <DropdownMenu.Trigger asChild>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="border-slate-200 text-slate-500 hover:text-slate-900"
-                                  aria-label="更多操作"
-                                >
-                                  更多操作
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenu.Trigger>
-                              <DropdownMenu.Portal>
-                                <DropdownMenu.Content
-                                  side="bottom"
-                                  align="end"
-                                  sideOffset={8}
-                                  className="z-50 min-w-[168px] rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
-                                >
-                                  <DropdownMenu.Item
-                                    onSelect={() => void onDeleteOne()}
-                                    disabled={!selectedDocListItem || deletingOne}
-                                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-600 outline-none transition-colors hover:bg-red-50 focus:bg-red-50 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
-                                  >
-                                    {deletingOne ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="h-4 w-4" />
-                                    )}
-                                    删除文档
-                                  </DropdownMenu.Item>
-                                </DropdownMenu.Content>
-                              </DropdownMenu.Portal>
-                            </DropdownMenu.Root>
-                          </div>
-                        </div>
-
-                        <TabsList className="mt-4 grid h-10 w-full grid-cols-3 rounded-xl bg-slate-100 p-1">
-                          <TabsTrigger value="preview" className="gap-1.5 rounded-lg">
-                            <Eye className="h-3.5 w-3.5" />
-                            预览
-                          </TabsTrigger>
-                          <TabsTrigger value="edit" className="gap-1.5 rounded-lg">
-                            <PencilLine className="h-3.5 w-3.5" />
-                            编辑
-                          </TabsTrigger>
-                          <TabsTrigger value="versions" className="gap-1.5 rounded-lg">
-                            <FileClock className="h-3.5 w-3.5" />
-                            版本
-                          </TabsTrigger>
-                        </TabsList>
-                      </div>
-                    </div>
-
-                    <TabsContent
-                      value="preview"
-                      ref={previewScrollRef}
-                      className="mt-0 min-h-0 flex-1 overflow-y-auto"
-                    >
-                      <div className="px-4 py-4 sm:px-5">
-                        {activeDocLoading ? (
-                          <div className="flex min-h-[320px] items-center justify-center text-sm text-slate-500">
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            正在加载正文...
-                          </div>
-                        ) : !activeDoc?.content ? (
-                          <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 text-sm text-slate-500">
-                            当前文档还没有可预览的正文内容。
-                          </div>
-                        ) : (
-                          <div
-                            className={cn(
-                              "grid gap-4",
-                              hasPreviewHeadings
-                                ? "xl:grid-cols-[240px_minmax(0,1fr)]"
-                                : "xl:grid-cols-[minmax(0,1fr)]",
-                            )}
-                          >
-                            {hasPreviewHeadings ? (
-                              <aside className="pr-1 xl:sticky xl:top-4 xl:self-start">
-                                <div className="rounded-2xl border border-slate-200 bg-white p-3.5">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                                      文档目录
-                                    </p>
-                                    <button
-                                      type="button"
-                                      onClick={scrollPreviewToTop}
-                                      className="text-xs text-slate-500 transition-colors hover:text-slate-900"
-                                    >
-                                      回到顶部
-                                    </button>
-                                  </div>
-                                  <div className="mt-2.5 space-y-1">
-                                    {previewHeadings.map((heading) => (
-                                      <button
-                                        key={heading.id}
-                                        type="button"
-                                        onClick={() => onSelectPreviewHeading(heading.id)}
-                                        className={cn(
-                                          "block w-full rounded-lg px-3 py-1.5 text-left text-sm transition-colors",
-                                          heading.depth === 1 ? "font-medium" : "text-slate-600",
-                                          heading.depth === 2 ? "pl-4" : "",
-                                          heading.depth === 3 ? "pl-6 text-[13px]" : "",
-                                          "text-slate-700 hover:bg-slate-50",
-                                        )}
-                                      >
-                                        {heading.text}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              </aside>
-                            ) : null}
-
-                            <article
-                              ref={previewArticleRef}
-                              className={cn(
-                                "w-full rounded-2xl border border-slate-200 bg-white px-5 py-5",
-                                hasPreviewHeadings ? "mx-auto max-w-4xl" : "max-w-none",
-                              )}
-                            >
-                              {previewSupportsMarkdown ? (
-                                <AnswerMarkdown text={activeDoc.content} />
-                              ) : (
-                                <pre className="whitespace-pre-wrap break-words font-sans text-[15px] leading-8 text-slate-700">
-                                  {activeDoc.content}
-                                </pre>
-                              )}
-                            </article>
-                          </div>
-                        )}
-                      </div>
-                    </TabsContent>
-
-                    <TabsContent value="edit" className="mt-0 min-h-0 flex-1">
-                      <div className="flex h-full min-h-0 flex-col bg-slate-50/50">
-                        <div className="border-b border-slate-200 bg-white px-5 py-3">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="space-y-1">
-                              <p className="text-sm font-medium text-slate-900">
-                                {isViewingCurrentVersion
-                                  ? `正在编辑当前版本 v${selectedDocVersion}`
-                                  : `正在基于历史版本 v${selectedDocVersion} 编辑`}
-                              </p>
-                              <p className="text-xs text-slate-500">
-                                {isEditorDirty
-                                  ? "有未保存修改"
-                                  : isViewingCurrentVersion
-                                    ? "当前内容与所选当前版本一致"
-                                    : "保存后会生成一个新的最新版本"}
-                              </p>
-                            </div>
-                            <p className="max-w-md text-xs leading-5 text-slate-500">
-                              {isViewingLatestVersion
-                                ? "推荐优先保存为新版本，覆盖当前版本会直接修改最新稿。"
-                                : isViewingCurrentVersion
-                                  ? "当前生效版本不是最新稿，因此不支持直接覆盖，请保存为新版本。"
-                                  : "历史版本不支持直接覆盖，请保存为新版本以保留版本链。"}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="min-h-0 flex-1 p-4">
-                          <Textarea
-                            value={editorContent}
-                            onChange={(e) => {
-                              setEditorContent(e.target.value);
-                              if (!editing) setEditing(true);
-                            }}
-                            className="h-full min-h-[420px] resize-none rounded-2xl border-slate-200 bg-white font-mono text-sm leading-7 shadow-sm"
-                            placeholder="在这里编辑文档内容"
-                          />
-                        </div>
-                      </div>
-                    </TabsContent>
-
-                    <TabsContent value="versions" className="mt-0 min-h-0 flex-1 overflow-y-auto">
-                      <div className="grid gap-4 p-4 xl:grid-cols-[minmax(220px,0.6fr)_minmax(0,1.4fr)]">
-                        <div className="rounded-xl border border-slate-200 bg-white shadow-sm xl:sticky xl:top-4 xl:self-start">
-                          <div className="border-b border-slate-100 bg-slate-50/50 px-4 py-2.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm font-medium text-slate-700">版本历史</span>
-                              {versions.length > 0 && (
-                                <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                                  {versions.length} 个版本
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="max-h-[500px] overflow-y-auto px-3 py-3">
-                            {loadingVersions ? (
-                              <div className="flex flex-col items-center py-8 text-slate-500">
-                                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-                                <p className="mt-2 text-xs">加载中...</p>
-                              </div>
-                            ) : versions.length === 0 ? (
-                              <div className="flex flex-col items-center py-8 text-center">
-                                <div className="rounded-full bg-slate-100 p-2">
-                                  <FileClock className="h-5 w-5 text-slate-400" />
-                                </div>
-                                <p className="mt-2 text-xs text-slate-600">暂无版本记录</p>
-                              </div>
-                            ) : (
-                              <div className="space-y-2">
-                                {versions.map((item) => (
-                                  <button
-                                    key={item.id}
-                                    type="button"
-                                    onClick={() => setSelectedVersionId(item.id)}
-                                    className={cn(
-                                      "group w-full rounded-lg border p-2.5 text-left transition-all",
-                                      selectedVersionId === item.id
-                                        ? "border-blue-300 bg-blue-50 shadow-sm"
-                                        : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm",
-                                    )}
-                                  >
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className={cn(
-                                        "text-sm font-semibold transition-colors",
-                                        selectedVersionId === item.id ? "text-blue-900" : "text-slate-900"
-                                      )}>
-                                        v{item.version}
-                                      </span>
-                                      <div className="flex flex-wrap items-center justify-end gap-1">
-                                        {item.is_current && (
-                                          <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
-                                            当前
-                                          </span>
-                                        )}
-                                        {item.is_latest && (
-                                          <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
-                                            最新
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <p className="mt-1.5 text-xs text-slate-500">
-                                      {formatDateTime(item.created_at)}
-                                    </p>
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-                          <div className="border-b border-slate-100 bg-slate-50/50 px-4 py-2.5">
-                            <p className="text-sm font-medium text-slate-800">
-                              {activeDoc
-                                ? `版本 v${activeDoc.version}${
-                                    isViewingCurrentVersion ? " · 当前版本" : ""
-                                  }${isViewingLatestVersion ? " · 最新版本" : ""}`
-                                : "版本预览"}
-                            </p>
-                            {activeDoc && (
-                              <p className="mt-0.5 text-xs text-slate-500">
-                                {formatDateTime(activeDoc.created_at)}
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="px-5 py-5">
-                            {activeDocLoading ? (
-                              <div className="flex min-h-[320px] flex-col items-center justify-center text-slate-500">
-                                <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
-                                <p className="mt-3 text-sm">正在加载版本内容...</p>
-                              </div>
-                            ) : !activeDoc ? (
-                              <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/50 text-center">
-                                <div className="rounded-full bg-slate-100 p-3">
-                                  <Eye className="h-6 w-6 text-slate-400" />
-                                </div>
-                                <p className="mt-3 text-sm font-medium text-slate-700">选择版本查看内容</p>
-                                <p className="mt-1 text-xs text-slate-500">点击左侧版本列表中的任意版本</p>
-                              </div>
-                            ) : (
-                              <article className="mx-auto max-w-4xl rounded-xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
-                                {looksLikeMarkdown(activeDoc.document_type, activeDoc.content) ? (
-                                  <AnswerMarkdown text={activeDoc.content} />
-                                ) : (
-                                  <pre className="whitespace-pre-wrap break-words font-sans text-[15px] leading-8 text-slate-700">
-                                    {activeDoc.content || "暂时没有内容。"}
-                                  </pre>
-                                )}
-                              </article>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </TabsContent>
-
-                    {detailTab === "preview" && isViewingCurrentVersion ? (
-                      <div className="border-t border-slate-200 bg-white px-5 py-4">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <p
-                            className={cn(
-                              "text-xs",
-                              selectedDocIndexStatus === "failed"
-                                ? "text-rose-700"
-                                : selectedDocIndexed
-                                  ? "text-slate-500"
-                                  : "text-amber-700",
-                            )}
-                          >
-                            {selectedDocIndexStatus === "indexed"
-                              ? "当前版本已建立索引，需要时仍可手动重新排队构建。"
-                              : selectedDocIndexStatus === "processing"
-                                ? "当前版本正在建立索引，完成前暂时不会参与知识库问答检索。"
-                                : selectedDocIndexStatus === "queued"
-                                  ? "当前版本已进入索引队列，完成前暂时不会参与知识库问答检索。"
-                                  : selectedDocIndexStatus === "failed"
-                                    ? `当前版本索引失败：${selectedDocIndexError || "请重新排队索引。"}`
-                                    : "当前版本尚未建立索引，暂时不会参与知识库问答检索。"}
-                          </p>
-                          <Button
-                            variant={selectedDocIndexed ? "outline" : "default"}
-                            className={
-                              selectedDocIndexed
-                                ? "border-slate-200"
-                                : selectedDocIndexStatus === "failed"
-                                  ? "bg-rose-600 text-white hover:bg-rose-700"
-                                  : "bg-amber-600 text-white hover:bg-amber-700"
-                            }
-                            onClick={() => void onReindexOne()}
-                            disabled={!selectedDocListItem || indexingOne}
-                          >
-                            {indexingOne ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <RefreshCcw className="mr-2 h-4 w-4" />
-                            )}
-                            重新排队索引
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {detailTab === "edit" ? (
-                      <div className="border-t border-slate-200 bg-white px-5 py-4">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div className="text-xs text-slate-500">
-                            {isEditorDirty ? "存在未保存修改" : "当前没有本地修改"}
-                          </div>
-                          <div className="flex flex-wrap gap-2">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-medium text-slate-900">筛选条件</p>
+                          {hasActiveFilters ? (
                             <Button
                               variant="ghost"
-                              className="text-slate-500"
-                              onClick={onCancelEdit}
-                              disabled={loadingDoc || (!editing && !isEditorDirty)}
+                              size="sm"
+                              className="h-7 rounded-full px-2.5 text-xs text-slate-500"
+                              onClick={onResetFilters}
                             >
-                              取消修改
+                              重置
+                            </Button>
+                          ) : null}
+                        </div>
+                        <div>
+                          <p className="mb-1.5 text-xs text-slate-500">状态</p>
+                          <select
+                            value={status}
+                            onChange={(e) => setStatus(e.target.value as StatusValue)}
+                            className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition-colors hover:border-slate-300 focus:border-slate-300"
+                          >
+                            <option value="all">全部状态</option>
+                            <option value="queued">排队中</option>
+                            <option value="processing">索引中</option>
+                            <option value="indexed">已索引</option>
+                            <option value="failed">索引失败</option>
+                          </select>
+                        </div>
+                        <div>
+                          <p className="mb-1.5 text-xs text-slate-500">类型</p>
+                          <select
+                            value={docType}
+                            onChange={(e) => setDocType(e.target.value)}
+                            className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition-colors hover:border-slate-300 focus:border-slate-300"
+                          >
+                            <option value="all">全部类型</option>
+                            {typeOptions.map((item) => (
+                              <option key={item} value={item}>
+                                {item}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <p className="mb-1.5 text-xs text-slate-500">分类</p>
+                          <select
+                            value={selectedCategoryId ?? ""}
+                            onChange={(e) => {
+                              setSelectedCategoryId(e.target.value ? Number(e.target.value) : null);
+                              setDocPage(1);
+                            }}
+                            className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition-colors hover:border-slate-300 focus:border-slate-300"
+                          >
+                            <option value="">全部分类</option>
+                            {categories.map((category) => (
+                              <option key={category.id} value={category.id}>
+                                {category.name}（{category.document_count}）
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+                {keyword || searchInput ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 rounded-full px-3 text-slate-500 hover:bg-slate-100"
+                    onClick={onClearSearch}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                ) : null}
+              </div>
+
+              {hasActiveFilters ? (
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                  {keyword ? (
+                    <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700">
+                      {keyword}
+                    </span>
+                  ) : null}
+                  {status !== "all" ? (
+                    <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs text-slate-600 ring-1 ring-slate-200">
+                      {documentIndexMeta[status].label}
+                    </span>
+                  ) : null}
+                  {docType !== "all" ? (
+                    <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs text-slate-600 ring-1 ring-slate-200">
+                      {docType}
+                    </span>
+                  ) : null}
+                  {activeCategory ? (
+                    <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs text-slate-600 ring-1 ring-slate-200">
+                      {activeCategory.name}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex items-center justify-between px-4 py-3 text-xs text-slate-500">
+              <div className="flex items-center gap-2">
+                {loadingDocs ? (
+                  <span>正在加载文档...</span>
+                ) : docsTotal > 0 ? (
+                  <>
+                    <span className="font-medium text-slate-700">
+                      {pageStart}-{pageEnd} / {docsTotal}
+                    </span>
+                    {hasActiveFilters && filteredDocs.length !== docsTotal ? (
+                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">
+                        筛选后 {filteredDocs.length}
+                      </span>
+                    ) : null}
+                  </>
+                ) : (
+                  <span>暂无文档</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                  {indexedDocsOnPage}
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                  {processingDocsOnPage}
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                  {failedDocsOnPage}
+                </span>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-auto px-3 pb-3 xl:pb-4">
+              {loadingMeta || loadingDocs ? (
+                <div className="flex flex-col items-center justify-center py-12 text-slate-500">
+                  <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+                  <p className="mt-3 text-sm">正在加载文档列表...</p>
+                </div>
+              ) : docs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center text-slate-500">
+                  <UploadCloud className="h-8 w-8 text-slate-300" />
+                  <p className="mt-4 text-sm font-medium text-slate-700">暂无文档</p>
+                  <p className="mt-1 text-xs">点击右上角“上传文档”开始添加内容</p>
+                </div>
+              ) : filteredDocs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center text-slate-500">
+                  <Search className="h-8 w-8 text-slate-300" />
+                  <p className="mt-4 text-sm font-medium text-slate-700">没有符合条件的文档</p>
+                  <p className="mt-1 text-xs">尝试调整筛选条件或清空搜索</p>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {filteredDocs.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onSelectDocument(item.id)}
+                      className={cn(
+                        "group flex w-full items-start gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left transition-colors",
+                        selectedDocId === item.id ? "bg-blue-50/60 text-blue-700" : "hover:bg-slate-50",
+                      )}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <h4
+                            className={cn(
+                              "truncate text-sm transition-colors",
+                              selectedDocId === item.id ? "font-medium text-blue-700" : "text-slate-900",
+                            )}
+                          >
+                            {item.title}
+                          </h4>
+                          <span
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                              item.index_status === "indexed"
+                                ? "text-emerald-700"
+                                : item.index_status === "failed"
+                                  ? "text-rose-700"
+                                  : item.index_status === "processing"
+                                    ? "text-amber-700"
+                                    : "text-slate-500",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "h-1.5 w-1.5 rounded-full",
+                                item.index_status === "indexed"
+                                  ? "bg-emerald-500"
+                                  : item.index_status === "failed"
+                                    ? "bg-rose-500"
+                                    : item.index_status === "processing"
+                                      ? "bg-amber-500"
+                                      : "bg-slate-400",
+                              )}
+                            />
+                            {documentIndexMeta[item.index_status].label}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+                          {item.category_name ? <span>{item.category_name}</span> : null}
+                          <span>{item.document_type || "未知类型"}</span>
+                          <span>{formatBytes(item.size)}</span>
+                          <span>{formatDate(item.updated_at)}</span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+              <div className="flex items-center gap-2">
+                <span>每页</span>
+                <select
+                  value={docPageSize}
+                  onChange={(e) => {
+                    setDocPageSize(Number(e.target.value));
+                    setDocPage(1);
+                  }}
+                  className="h-8 rounded-full border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none hover:border-slate-300"
+                >
+                  {PAGE_SIZE_OPTIONS.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 rounded-full p-0"
+                  disabled={docPage <= 1 || loadingDocs}
+                  onClick={() => setDocPage(1)}
+                  title="首页"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  <ChevronLeft className="-ml-2.5 h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 rounded-full p-0"
+                  disabled={docPage <= 1 || loadingDocs}
+                  onClick={() => setDocPage((prev) => Math.max(1, prev - 1))}
+                  title="上一页"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+                <span className="min-w-[80px] text-center">
+                  {docPage} / {totalPages}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 rounded-full p-0"
+                  disabled={docPage >= totalPages || loadingDocs}
+                  onClick={() => setDocPage((prev) => Math.min(totalPages, prev + 1))}
+                  title="下一页"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 rounded-full p-0"
+                  disabled={docPage >= totalPages || loadingDocs}
+                  onClick={() => setDocPage(totalPages)}
+                  title="末页"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                  <ChevronRight className="-ml-2.5 h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          </section>
+
+          <section className="min-h-0 flex-1 overflow-hidden bg-white">
+            {selectedDocListItem ? (
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="px-6 py-8 xl:px-12">
+                  <div className="mx-auto max-w-5xl border-b border-slate-100 pb-4">
+                    {filteredDocs.length === 0 ? (
+                      <div className="mb-4 rounded-full bg-amber-50 px-4 py-2 text-sm text-amber-700">
+                        当前筛选条件下没有匹配的文档，仍显示之前选中的内容。
+                      </div>
+                    ) : null}
+                    <div className="flex items-start justify-between gap-6">
+                      <div className="min-w-0 flex-1">
+                        <h2 className="text-3xl font-extrabold tracking-tight text-slate-900">
+                          {selectedDocListItem.title}
+                        </h2>
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+                          <span>{documentMetaLine}</span>
+                          <span>·</span>
+                          <DropdownMenu.Root>
+                            <DropdownMenu.Trigger asChild>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-sm text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                              >
+                                版本 v{selectedDocVersion}
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              </button>
+                            </DropdownMenu.Trigger>
+                            <DropdownMenu.Portal>
+                              <DropdownMenu.Content
+                                side="bottom"
+                                align="start"
+                                sideOffset={8}
+                                className="z-50 max-h-[360px] w-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl"
+                              >
+                                <div className="px-2 py-1 text-xs font-medium text-slate-500">版本历史</div>
+                                {loadingVersions ? (
+                                  <div className="flex items-center gap-2 px-3 py-3 text-sm text-slate-500">
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    正在加载版本...
+                                  </div>
+                                ) : versions.length === 0 ? (
+                                  <div className="px-3 py-3 text-sm text-slate-500">暂无版本记录</div>
+                                ) : (
+                                  versions.map((item) => (
+                                    <DropdownMenu.Item
+                                      key={item.id}
+                                      onSelect={() => switchReadingTarget(item.is_current ? null : item.id)}
+                                      className={cn(
+                                        "flex cursor-pointer select-none items-center justify-between rounded-xl px-3 py-2 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100",
+                                        selectedVersionId === item.id || (item.is_current && isViewingCurrentVersion)
+                                          ? "bg-slate-100"
+                                          : "",
+                                      )}
+                                    >
+                                      <div>
+                                        <p className="text-sm font-medium text-slate-900">v{item.version}</p>
+                                        <p className="text-xs text-slate-500">{formatDateTime(item.created_at)}</p>
+                                      </div>
+                                      <div className="flex flex-wrap gap-1">
+                                        {item.is_current ? (
+                                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                                            当前
+                                          </span>
+                                        ) : null}
+                                        {item.is_latest ? (
+                                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                                            最新
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </DropdownMenu.Item>
+                                  ))
+                                )}
+                              </DropdownMenu.Content>
+                            </DropdownMenu.Portal>
+                          </DropdownMenu.Root>
+                        </div>
+                        {primaryWarning ? (
+                          <div
+                            className={cn(
+                              "mt-4 rounded-2xl px-4 py-3 text-sm",
+                              primaryWarning.tone === "blue"
+                                ? "bg-blue-50 text-blue-800"
+                                : primaryWarning.tone === "rose"
+                                  ? "bg-rose-50 text-rose-800"
+                                  : primaryWarning.tone === "slate"
+                                    ? "bg-slate-100 text-slate-700"
+                                    : "bg-amber-50 text-amber-800",
+                            )}
+                          >
+                            {primaryWarning.message}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="flex shrink-0 items-start gap-2">
+                        {detailTab === "edit" ? (
+                          <Button
+                            variant="outline"
+                            className="h-9 rounded-full border-slate-200 px-4"
+                            onClick={onCancelEdit}
+                            disabled={loadingDoc}
+                          >
+                            返回阅读
+                          </Button>
+                        ) : (
+                          <Button
+                            className="h-9 rounded-full bg-slate-900 px-4 text-white hover:bg-slate-800"
+                            onClick={() => {
+                              if (isViewingCurrentVersion) {
+                                void onDetailTabChange("edit");
+                              } else {
+                                onEditFromVersion();
+                              }
+                            }}
+                            disabled={activeDocLoading}
+                          >
+                            <PencilLine className="mr-2 h-4 w-4" />
+                            编辑正文
+                          </Button>
+                        )}
+
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-9 w-9 rounded-full border-slate-200"
+                          onClick={() =>
+                            isViewingCurrentVersion ? void onReindexOne() : switchReadingTarget(null)
+                          }
+                          disabled={
+                            isViewingCurrentVersion
+                              ? !selectedDocListItem || indexingOne
+                              : currentVersion == null
+                          }
+                          title={isViewingCurrentVersion ? "重新索引" : "查看当前版本"}
+                        >
+                          {isViewingCurrentVersion ? (
+                            indexingOne ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCcw className="h-4 w-4" />
+                            )
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </Button>
+
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenu.Trigger>
+                          <DropdownMenu.Portal>
+                            <DropdownMenu.Content
+                              side="bottom"
+                              align="end"
+                              sideOffset={8}
+                              className="z-50 min-w-[180px] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl"
+                            >
+                              {!isViewingCurrentVersion ? (
+                                <DropdownMenu.Item
+                                  onSelect={() => switchReadingTarget(null)}
+                                  className="flex cursor-pointer select-none items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                  查看当前版本
+                                </DropdownMenu.Item>
+                              ) : null}
+                              {!isViewingCurrentVersion ? (
+                                <DropdownMenu.Item
+                                  onSelect={() => void onSwitchCurrentVersion()}
+                                  disabled={switchingCurrentVersion}
+                                  className="flex cursor-pointer select-none items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100 data-[disabled]:opacity-50"
+                                >
+                                  {switchingCurrentVersion ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <FileClock className="h-4 w-4" />
+                                  )}
+                                  切换为当前版本
+                                </DropdownMenu.Item>
+                              ) : null}
+                              {latestVersion && selectedVersionId !== latestVersion.id ? (
+                                <DropdownMenu.Item
+                                  onSelect={() =>
+                                    switchReadingTarget(latestVersion.is_current ? null : latestVersion.id)
+                                  }
+                                  className="flex cursor-pointer select-none items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100"
+                                >
+                                  <FileClock className="h-4 w-4" />
+                                  查看最新版本
+                                </DropdownMenu.Item>
+                              ) : null}
+                              <DropdownMenu.Item
+                                onSelect={() =>
+                                  void navigator.clipboard
+                                    .writeText(String(selectedDocListItem.id))
+                                    .then(() => toast.success("文档 ID 已复制"))
+                                    .catch(() => toast.error("复制失败"))
+                                }
+                                className="flex cursor-pointer select-none items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100"
+                              >
+                                <FileClock className="h-4 w-4" />
+                                复制文档 ID
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Separator className="my-1 h-px bg-slate-100" />
+                              <DropdownMenu.Item
+                                onSelect={() => void onDeleteOne()}
+                                disabled={!selectedDocListItem || deletingOne}
+                                className="flex cursor-pointer select-none items-center gap-2 rounded-xl px-3 py-2 text-sm text-rose-600 outline-none transition-colors hover:bg-rose-50 focus:bg-rose-50 data-[disabled]:opacity-50"
+                              >
+                                {deletingOne ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                                删除文档
+                              </DropdownMenu.Item>
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Portal>
+                        </DropdownMenu.Root>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {detailTab === "edit" ? (
+                  <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 xl:px-12">
+                    <div className="mx-auto flex w-full max-w-6xl flex-col">
+                      <div className="mb-4 rounded-3xl border border-slate-200 bg-slate-50/70 px-5 py-4">
+                        {isViewingCurrentVersion
+                          ? (
+                              <div className="text-sm text-slate-500">
+                                正在编辑版本 v{selectedDocVersion}。编辑区会按正文长度自动展开，便于一次看完整篇文档。
+                              </div>
+                            )
+                          : (
+                              <div className="text-sm text-slate-500">
+                                正在基于版本 v{selectedDocVersion} 编辑。保存后建议新建版本，避免直接覆盖历史版本。
+                              </div>
+                            )}
+                      </div>
+
+                      <div className="rounded-[32px] border border-slate-200 bg-white shadow-sm">
+                        <Textarea
+                          ref={editorTextareaRef}
+                          value={editorContent}
+                          onChange={(e) => {
+                            setEditorContent(e.target.value);
+                            if (!editing) setEditing(true);
+                          }}
+                          className="min-h-[calc(100vh-320px)] w-full resize-none overflow-hidden rounded-[32px] border-0 bg-transparent px-6 py-6 font-mono text-[15px] leading-8 text-slate-800 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                          placeholder="在这里编辑文档内容"
+                        />
+                      </div>
+
+                      <div className="sticky bottom-0 mt-4 border-t border-slate-200 bg-white/95 px-1 py-4 backdrop-blur">
+                        <div className="flex flex-col gap-3 rounded-3xl bg-slate-900 px-4 py-4 text-white shadow-2xl sm:flex-row sm:items-center sm:justify-between">
+                          <p className="text-sm text-slate-300">
+                            {isEditorDirty ? "有未保存修改" : "当前没有新的修改"}
+                          </p>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              className="rounded-full px-4 text-white hover:bg-white/10 hover:text-white"
+                              onClick={onCancelEdit}
+                              disabled={loadingDoc}
+                            >
+                              返回阅读
                             </Button>
                             <Button
                               variant="outline"
-                              className="border-slate-200"
+                              className="rounded-full border-white/20 bg-transparent text-white hover:bg-white/10 hover:text-white"
                               onClick={() => void onSaveReplace()}
                               disabled={
                                 activeDocLoading ||
@@ -1916,14 +1855,12 @@ function KnowledgeBaseDetailPageContent() {
                               ) : (
                                 <Save className="mr-2 h-4 w-4" />
                               )}
-                              覆盖当前版本
+                              保存并覆盖
                             </Button>
                             <Button
-                              className="bg-blue-600 text-white hover:bg-blue-700"
+                              className="rounded-full bg-white px-4 text-slate-900 hover:bg-slate-100"
                               onClick={() => void onSaveNewVersion()}
-                              disabled={
-                                loadingDoc || !selectedDoc || !isEditorDirty || savingNewVersion
-                              }
+                              disabled={loadingDoc || !selectedDoc || !isEditorDirty || savingNewVersion}
                             >
                               {savingNewVersion ? (
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1935,48 +1872,90 @@ function KnowledgeBaseDetailPageContent() {
                           </div>
                         </div>
                       </div>
-                    ) : null}
-
-                    {detailTab === "versions" ? (
-                      <div className="border-t border-slate-200 bg-white px-5 py-4">
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            className="bg-blue-600 text-white hover:bg-blue-700"
-                            onClick={onEditFromVersion}
-                            disabled={!activeDoc}
-                          >
-                            <PencilLine className="mr-2 h-4 w-4" />
-                            基于该版本继续编辑
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="border-slate-200"
-                            onClick={() => void onSwitchCurrentVersion()}
-                            disabled={!selectedVersionId || isViewingCurrentVersion || switchingCurrentVersion}
-                          >
-                            {switchingCurrentVersion ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <FileClock className="mr-2 h-4 w-4" />
-                            )}
-                            {isViewingCurrentVersion ? "当前生效版本" : "切换为当前版本"}
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="border-slate-200"
-                            onClick={() => setSelectedVersionId(latestVersion?.id ?? null)}
-                            disabled={!latestVersion || selectedVersionId === latestVersion.id}
-                          >
-                            <Eye className="mr-2 h-4 w-4" />
-                            查看最新版本
-                          </Button>
-                        </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div ref={previewScrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 pb-12 xl:px-12">
+                    {activeDocLoading ? (
+                      <div className="flex min-h-[320px] items-center justify-center text-sm text-slate-500">
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        正在加载正文...
                       </div>
-                    ) : null}
-                  </Tabs>
-                </aside>
-              ) : null}
-            </div>
+                    ) : !activeDoc ? (
+                      <div className="flex min-h-[320px] items-center justify-center text-sm text-slate-500">
+                        暂无可阅读内容。
+                      </div>
+                    ) : !activeDoc.content ? (
+                      <div className="flex min-h-[320px] items-center justify-center text-sm text-slate-500">
+                        当前文档还没有可预览的正文内容。
+                      </div>
+                    ) : (
+                      <div
+                        className={cn(
+                          "mx-auto w-full",
+                          hasPreviewHeadings ? "xl:flex xl:items-start xl:gap-8" : "",
+                        )}
+                      >
+                        <article ref={previewArticleRef} className="min-w-0 flex-1 pb-12">
+                          {previewSupportsMarkdown ? (
+                            <div className="text-base leading-relaxed text-slate-700">
+                              <AnswerMarkdown text={activeDoc.content} />
+                            </div>
+                          ) : (
+                            <pre className="whitespace-pre-wrap break-words font-sans text-base leading-relaxed text-slate-700">
+                              {activeDoc.content}
+                            </pre>
+                          )}
+                        </article>
+
+                        {hasPreviewHeadings ? (
+                          <aside className="hidden xl:block sticky top-6 w-64 shrink-0 border-l border-slate-200 pl-4">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm text-slate-500">目录</p>
+                              <button
+                                type="button"
+                                onClick={scrollPreviewToTop}
+                                className="text-xs text-slate-400 transition-colors hover:text-slate-700"
+                              >
+                                顶部
+                              </button>
+                            </div>
+                            <div className="mt-3 space-y-1">
+                              {previewHeadings.map((heading) => (
+                                <button
+                                  key={heading.id}
+                                  type="button"
+                                  onClick={() => onSelectPreviewHeading(heading.id)}
+                                  className={cn(
+                                    "block w-full border-l border-transparent py-1 pl-3 text-left text-sm transition-colors",
+                                    heading.depth === 2 ? "pl-5" : "",
+                                    heading.depth === 3 ? "pl-7 text-[13px]" : "",
+                                    activePreviewHeadingId === heading.id
+                                      ? "border-slate-900 font-semibold text-slate-900"
+                                      : "text-slate-500 hover:text-slate-900",
+                                  )}
+                                >
+                                  {heading.text}
+                                </button>
+                              ))}
+                            </div>
+                          </aside>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex h-full min-h-[360px] items-center justify-center px-6 py-16 xl:h-[calc(100vh-88px)]">
+                <div className="text-center">
+                  <Eye className="mx-auto h-10 w-10 text-slate-300" />
+                  <p className="mt-4 text-base font-medium text-slate-700">从左侧选择一篇文档开始阅读</p>
+                  <p className="mt-1 text-sm text-slate-500">右侧会切换成更适合阅读和编辑的工作台。</p>
+                </div>
+              </div>
+            )}
+          </section>
         </section>
       </main>
 

@@ -173,6 +173,7 @@ class AssistantProfile(Base):
     description = Column(Text, nullable=True)
     welcome_message = Column(Text, nullable=True)
     placeholder_text = Column(String(255), nullable=True)
+    llm_model_key = Column(String(80), nullable=True, index=True)
     persona_prompt = Column(Text, nullable=True)
     rule_template = Column(Text, nullable=True)
     suggested_prompts = Column(JSON, nullable=False, default=list)

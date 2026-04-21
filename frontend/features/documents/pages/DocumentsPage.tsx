@@ -28,7 +28,6 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   uploadDocument,
   uploadDocumentsBatch,
-  type DocumentIndexStatus,
 } from "@/lib/api/documents";
 import {
   createKnowledgeBase,
@@ -46,12 +45,12 @@ const SUPPORTED_EXTENSIONS = new Set([".txt", ".md", ".pdf", ".docx"]);
 const MAX_SIZE = 10 * 1024 * 1024;
 const MAX_BATCH = 100;
 const coverThemes = [
-  "from-emerald-200/90 via-cyan-200/80 to-sky-300/70",
-  "from-amber-200/90 via-orange-200/80 to-rose-300/70",
-  "from-violet-200/90 via-indigo-200/80 to-cyan-300/70",
-  "from-lime-200/90 via-emerald-200/80 to-teal-300/70",
-  "from-pink-200/90 via-fuchsia-200/80 to-blue-300/70",
-  "from-slate-200/90 via-zinc-200/80 to-stone-300/70",
+  "bg-gradient-to-br from-emerald-50 via-cyan-50 to-white",
+  "bg-gradient-to-br from-amber-50 via-orange-50 to-white",
+  "bg-gradient-to-br from-violet-50 via-indigo-50 to-white",
+  "bg-gradient-to-br from-lime-50 via-emerald-50 to-white",
+  "bg-gradient-to-br from-pink-50 via-fuchsia-50 to-white",
+  "bg-gradient-to-br from-slate-50 via-zinc-50 to-white",
 ];
 
 const statusMeta: Record<
@@ -87,40 +86,13 @@ const statusMeta: Record<
 function formatDateTime(value?: string | null) {
   if (!value) return "暂无";
   return new Date(value).toLocaleString("zh-CN", {
-    month: "numeric",
-    day: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   });
 }
-
-function formatBytes(size: number) {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-const documentIndexStatusMeta: Record<
-  DocumentIndexStatus,
-  { label: string; chip: string }
-> = {
-  queued: {
-    label: "排队中",
-    chip: "bg-slate-100 text-slate-700",
-  },
-  processing: {
-    label: "索引中",
-    chip: "bg-amber-50 text-amber-700",
-  },
-  indexed: {
-    label: "已索引",
-    chip: "bg-emerald-50 text-emerald-700",
-  },
-  failed: {
-    label: "失败",
-    chip: "bg-rose-50 text-rose-700",
-  },
-};
 
 type ConfirmDialogState = {
   open: boolean;
@@ -591,221 +563,182 @@ export default function DocumentsPage() {
                 const theme = coverThemes[(knowledgeBase.id + index) % coverThemes.length];
                 const meta = statusMeta[knowledgeBase.status];
                 const StatusIcon = meta.icon;
+                const hasError =
+                  knowledgeBase.status === "error" || knowledgeBase.failed_document_count > 0;
+
                 return (
                   <div
                     key={knowledgeBase.id}
                     className={cn(
-                      "overflow-hidden rounded-2xl border bg-white p-5 shadow-sm transition-all",
-                      active
-                        ? "border-blue-200 ring-2 ring-blue-100"
-                        : "border-slate-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md",
+                      "group flex h-full min-h-[228px] flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-md",
+                      active ? "ring-4 ring-blue-50" : "",
+                      hasError ? "border-rose-300" : "border-slate-200 hover:border-slate-300",
+                      active && !hasError ? "border-blue-400" : "",
+                      hasError ? "shadow-rose-100" : "",
                     )}
                   >
                     <button
                       type="button"
-                      onClick={() => setSelectedKnowledgeBaseId(knowledgeBase.id)}
-                      className="block w-full text-left"
+                      onClick={() => {
+                        setSelectedKnowledgeBaseId(knowledgeBase.id);
+                        openKnowledgeBase(knowledgeBase.id);
+                      }}
+                      className="flex flex-1 flex-col text-left outline-none"
                     >
-                      <div className={cn("rounded-2xl bg-gradient-to-br p-4", theme)}>
+                      <div className={cn("flex flex-col p-5", theme)}>
                         <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <span className="inline-flex rounded-md bg-white/70 px-2 py-1 text-xs font-medium text-slate-700">知识库</span>
-                            <h3 className="mt-4 line-clamp-2 text-xl font-semibold text-slate-900">{knowledgeBase.name}</h3>
+                          <div className="min-w-0 flex-1">
+                            <span className="inline-flex text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                              知识库
+                            </span>
+                            <h3 className="mt-2 truncate text-lg font-bold text-slate-900 transition-colors group-hover:text-blue-700">
+                              {knowledgeBase.name}
+                            </h3>
                           </div>
-                          <div className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium", meta.chip)}>
+                          <div
+                            className={cn(
+                              "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
+                              meta.chip,
+                            )}
+                          >
                             <span className={cn("h-2 w-2 rounded-full", meta.dot)} />
                             <StatusIcon className="h-3.5 w-3.5" />
                             {meta.label}
                           </div>
                         </div>
+                        <p className="mt-1.5 line-clamp-2 text-sm text-slate-500">
+                          {knowledgeBase.description || "围绕单个主题集中组织文档、检索与问答。"}
+                        </p>
                       </div>
 
-                      <p className="mt-4 line-clamp-2 min-h-[48px] text-sm leading-6 text-slate-500">
-                        {knowledgeBase.description || "围绕单个主题集中组织文档、检索与问答。"}
-                      </p>
+                      <div className="grid grid-cols-3 divide-x divide-slate-100 border-y border-slate-100 bg-slate-50/50 mt-auto">
+                        <div className="flex flex-col items-center justify-center px-2 py-2.5">
+                          <p className="text-[11px] font-medium text-slate-400">文档总数</p>
+                          <p className="mt-0.5 text-base font-semibold text-slate-700">
+                            {knowledgeBase.document_count}
+                          </p>
+                        </div>
+                        <div className="flex flex-col items-center justify-center px-2 py-2.5">
+                          <p className="text-[11px] font-medium text-slate-400">已就绪</p>
+                          <p className="mt-0.5 text-base font-semibold text-emerald-600">
+                            {knowledgeBase.indexed_document_count}
+                          </p>
+                        </div>
+                        <div className="flex flex-col items-center justify-center px-2 py-2.5">
+                          <p
+                            className={cn(
+                              "text-[11px] font-medium",
+                              hasError
+                                ? "text-rose-500"
+                                : knowledgeBase.processing_document_count > 0
+                                  ? "text-amber-500"
+                                  : "text-slate-400",
+                            )}
+                          >
+                            异常/处理中
+                          </p>
+                          <p
+                            className={cn(
+                              "mt-0.5 text-base font-semibold",
+                              hasError
+                                ? "text-rose-600"
+                                : knowledgeBase.processing_document_count > 0
+                                  ? "text-amber-600"
+                                  : "text-slate-700",
+                            )}
+                          >
+                            {knowledgeBase.failed_document_count || knowledgeBase.processing_document_count}
+                          </p>
+                        </div>
+                      </div>
                     </button>
 
-                    <div className="mt-4 rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
-                          <p className="text-xs text-slate-400">文档总数</p>
-                          <p className="mt-2 text-lg font-semibold text-slate-900">{knowledgeBase.document_count}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
-                          <p className="text-xs text-slate-400">已索引 / 处理中 / 失败</p>
-                          <p className="mt-2 text-lg font-semibold text-slate-900">
-                            {knowledgeBase.indexed_document_count} /{" "}
-                            {knowledgeBase.queued_document_count + knowledgeBase.processing_document_count} /{" "}
-                            {knowledgeBase.failed_document_count}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
-                          <p className="text-xs text-slate-400">最近更新时间</p>
-                          <p className="mt-2 text-sm font-medium text-slate-700">
-                            {formatDateTime(knowledgeBase.last_document_updated_at || knowledgeBase.updated_at)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
-                          <p className="text-xs text-slate-400">最近上传时间</p>
-                          <p className="mt-2 text-sm font-medium text-slate-700">
-                            {formatDateTime(knowledgeBase.last_uploaded_at)}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 border-t border-slate-200 pt-4">
-                        <div className="mb-3 flex items-center justify-between text-xs text-slate-400">
-                          <span>最近 3 篇文档</span>
-                          <span>{knowledgeBase.document_count} 篇文档</span>
-                        </div>
-                        {knowledgeBase.recent_documents.length > 0 ? (
-                          <div className="space-y-2">
-                            {knowledgeBase.recent_documents.map((item) => {
-                              const indexMeta = documentIndexStatusMeta[item.index_status];
-                              return (
-                                <div key={item.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm font-medium text-slate-800">{item.title}</p>
-                                      <p className="mt-1 text-xs text-slate-400">上传于 {formatDateTime(item.created_at)}</p>
-                                    </div>
-                                    <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium", indexMeta.chip)}>
-                                      {indexMeta.label}
-                                    </span>
-                                  </div>
-                                  <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
-                                    <span>{item.document_type || "未知类型"}</span>
-                                    <span>{formatBytes(item.size)}</span>
-                                  </div>
-                                  {item.index_error ? (
-                                    <p className="mt-2 text-xs text-rose-600">{item.index_error}</p>
-                                  ) : null}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white/80 px-3 py-8 text-center text-sm text-slate-400">
-                            当前知识库还没有文档，先上传几篇材料就能开始使用。
-                          </div>
+                    <div className="flex items-center justify-between bg-white px-4 py-3">
+                      <div className="flex items-center gap-2 text-xs text-slate-400">
+                        <span>更新于 {formatDateTime(knowledgeBase.updated_at)}</span>
+                        {knowledgeBase.processing_document_count > 0 && (
+                          <span className="flex items-center gap-1 text-amber-600">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            处理中...
+                          </span>
                         )}
                       </div>
-                    </div>
 
-                    <div className="mt-4 flex items-center gap-2 border-t border-slate-200 pt-3">
-                      <Button variant="outline" className="flex-1 rounded-xl border-slate-200" onClick={() => {
-                        setSelectedKnowledgeBaseId(knowledgeBase.id);
-                        openKnowledgeBase(knowledgeBase.id);
-                      }}>
-                        进入工作台
-                        <ArrowRight className="ml-2 h-4 w-4" />
-                      </Button>
-                      <Button variant="outline" className="flex-1 rounded-xl border-slate-200" onClick={() => {
-                        setSelectedKnowledgeBaseId(knowledgeBase.id);
-                        openUploadModal(knowledgeBase.id);
-                      }}>
-                        <UploadCloud className="mr-2 h-4 w-4" />
-                        上传文档
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="hidden rounded-xl border-rose-200 px-0 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
-                        onClick={() => void handleDeleteKnowledgeBase(knowledgeBase)}
-                        disabled={deletingKnowledgeBaseId === knowledgeBase.id}
-                        aria-label="删除知识库"
-                      >
-                        {deletingKnowledgeBaseId === knowledgeBase.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4" />
-                        )}
-                      </Button>
-                      <DropdownMenu.Root>
-                        <DropdownMenu.Trigger asChild>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="rounded-xl border-slate-200 px-0"
-                            aria-label="更多操作"
-                          >
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenu.Trigger>
-                        <DropdownMenu.Portal>
-                          <DropdownMenu.Content
-                            side="bottom"
-                            align="end"
-                            sideOffset={8}
-                            className="z-50 min-w-[180px] rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-xl"
-                          >
-                            <DropdownMenu.Item
-                              onSelect={() => openEditModal(knowledgeBase)}
-                              className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100"
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-lg border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedKnowledgeBaseId(knowledgeBase.id);
+                            openUploadModal(knowledgeBase.id);
+                          }}
+                        >
+                          <UploadCloud className="mr-1.5 h-4 w-4" />
+                          快捷上传
+                        </Button>
+
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 rounded-lg px-0 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label="更多操作"
                             >
-                              <PencilLine className="h-4 w-4" />
-                              编辑知识库
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Item
-                              onSelect={() =>
-                                void navigator.clipboard
-                                  .writeText(String(knowledgeBase.id))
-                                  .then(() => toast.success("知识库 ID 已复制"))
-                                  .catch(() => toast.error("复制失败"))
-                              }
-                              className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100"
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenu.Trigger>
+                          <DropdownMenu.Portal>
+                            <DropdownMenu.Content
+                              side="bottom"
+                              align="end"
+                              sideOffset={8}
+                              className="z-50 min-w-[160px] rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-xl"
                             >
-                              <FileText className="h-4 w-4" />
-                              复制知识库 ID
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Separator className="my-1 h-px bg-slate-200" />
-                            <DropdownMenu.Item
-                              onSelect={() => handleDeleteKnowledgeBase(knowledgeBase)}
-                              disabled={deletingKnowledgeBaseId === knowledgeBase.id}
-                              className={cn(
-                                "flex select-none items-center gap-2 rounded-lg px-3 py-2 outline-none transition-colors",
-                                deletingKnowledgeBaseId === knowledgeBase.id
-                                  ? "cursor-not-allowed text-rose-300"
-                                  : "cursor-pointer text-rose-600 hover:bg-rose-50 focus:bg-rose-50",
-                              )}
-                            >
-                              {deletingKnowledgeBaseId === knowledgeBase.id ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-4 w-4" />
-                              )}
-                              删除知识库
-                            </DropdownMenu.Item>
-                          </DropdownMenu.Content>
-                        </DropdownMenu.Portal>
-                      </DropdownMenu.Root>
-                      <DropdownMenu.Root>
-                        <DropdownMenu.Trigger asChild>
-                          <Button variant="outline" size="icon" className="hidden rounded-xl border-slate-200 px-0" aria-label="更多操作">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenu.Trigger>
-                        <DropdownMenu.Portal>
-                          <DropdownMenu.Content side="bottom" align="end" sideOffset={8} className="z-50 min-w-[160px] rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-xl">
-                            <DropdownMenu.Item onSelect={() => openKnowledgeBase(knowledgeBase.id)} className="hidden cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
-                              <ArrowRight className="h-4 w-4" />
-                              进入工作台
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Item onSelect={() => openUploadModal(knowledgeBase.id)} className="hidden cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
-                              <UploadCloud className="h-4 w-4" />
-                              上传文档
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Item onSelect={() => void navigator.clipboard.writeText(String(knowledgeBase.id)).then(() => toast.success("知识库 ID 已复制")).catch(() => toast.error("复制失败"))} className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
-                              <PencilLine className="h-4 w-4" />
-                              编辑知识库
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Item onSelect={() => void navigator.clipboard.writeText(String(knowledgeBase.id)).then(() => toast.success("知识库 ID 已复制")).catch(() => toast.error("复制失败"))} className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100">
-                              <FileText className="h-4 w-4" />
-                              复制知识库 ID
-                            </DropdownMenu.Item>
-                          </DropdownMenu.Content>
-                        </DropdownMenu.Portal>
-                      </DropdownMenu.Root>
+                              <DropdownMenu.Item
+                                onSelect={() => openEditModal(knowledgeBase)}
+                                className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100"
+                              >
+                                <PencilLine className="h-4 w-4" />
+                                编辑知识库
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                onSelect={() =>
+                                  void navigator.clipboard
+                                    .writeText(String(knowledgeBase.id))
+                                    .then(() => toast.success("知识库 ID 已复制"))
+                                    .catch(() => toast.error("复制失败"))
+                                }
+                                className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100"
+                              >
+                                <FileText className="h-4 w-4" />
+                                复制知识库 ID
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Separator className="my-1 h-px bg-slate-200" />
+                              <DropdownMenu.Item
+                                onSelect={() => handleDeleteKnowledgeBase(knowledgeBase)}
+                                disabled={deletingKnowledgeBaseId === knowledgeBase.id}
+                                className={cn(
+                                  "flex select-none items-center gap-2 rounded-lg px-3 py-2 outline-none transition-colors",
+                                  deletingKnowledgeBaseId === knowledgeBase.id
+                                    ? "cursor-not-allowed text-rose-300"
+                                    : "cursor-pointer text-rose-600 hover:bg-rose-50 focus:bg-rose-50",
+                                )}
+                              >
+                                {deletingKnowledgeBaseId === knowledgeBase.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                                删除知识库
+                              </DropdownMenu.Item>
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Portal>
+                        </DropdownMenu.Root>
+                      </div>
                     </div>
                   </div>
                 );

@@ -6,7 +6,6 @@ import {
   Bot,
   Building2,
   CheckSquare,
-  Database,
   ShieldAlert,
   Users,
 } from "lucide-react";
@@ -31,21 +30,14 @@ const sections: Section[] = [
   {
     step: "01",
     title: "构建知识资产",
-    desc: "先把文档、知识库和内容状态整理清楚，问答质量才有稳定输入。",
+    desc: "先把知识库和文档内容状态整理清楚，问答质量才有稳定输入。",
     items: [
       {
         href: "/admin/documents",
-        title: "文档管理",
-        desc: "上传资料、维护文档内容、查看解析与索引状态，并处理失败重试。",
-        icon: Database,
-        color: "bg-blue-50 text-blue-600",
-      },
-      {
-        href: "/admin/knowledge-bases",
         title: "知识库管理",
-        desc: "组织知识库边界，管理文档归属、覆盖范围和当前承载情况。",
+        desc: "创建和维护知识库，上传资料，查看最近文档、索引状态与异常处理情况。",
         icon: BookOpen,
-        color: "bg-violet-50 text-violet-600",
+        color: "bg-blue-50 text-blue-600",
       },
       {
         href: "/admin/review",
@@ -99,7 +91,7 @@ const sections: Section[] = [
       {
         href: "/admin/users",
         title: "用户管理",
-        desc: "创建账号、调整角色，并控制账号启停状态与后台访问权限。",
+        desc: "创建账号、调整角色，并控制账户启停状态与后台访问权限。",
         icon: Users,
         color: "bg-fuchsia-50 text-fuchsia-600",
       },
@@ -175,8 +167,7 @@ export default function AdminHomePage() {
             知识运营后台
           </h1>
           <p className="mt-4 text-sm leading-7 text-slate-600">
-            当前后台只保留问答运营主链路。页面按照“知识资产准备
-            → 问答配置 → 质量观察与权限治理”的顺序组织，避免再次回到实验页并存的结构。
+            当前后台聚焦问答运营主链路。页面按“知识资产准备 → 问答配置 → 质量观察与权限治理”的顺序组织，避免重复入口并降低操作歧义。
           </p>
         </div>
 

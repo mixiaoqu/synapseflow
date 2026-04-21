@@ -19,6 +19,7 @@ from app.models.schemas.assistant import (
     AssistantBulkActionResponse,
     AssistantAvailabilityResponse,
     AssistantDependencyUsageResponse,
+    AssistantModelOptionsResponse,
     AssistantProfileCreate,
     AssistantProfileResponse,
     AssistantProfileSummary,
@@ -47,6 +48,7 @@ def _build_runtime_request(
         assistant_name=assistant.name,
         assistant_welcome_message=assistant.welcome_message,
         assistant_placeholder_text=assistant.placeholder_text,
+        assistant_llm_model_key=assistant.llm_model_key,
         assistant_persona_prompt=assistant.persona_prompt,
         assistant_rule_template=assistant.rule_template,
         assistant_suggested_prompts=list(assistant.suggested_prompts or []),
@@ -121,6 +123,15 @@ async def preview_assistant(
 ):
     service = AssistantService(db, user_id=current_user.id)
     return await service.preview_profile(body)
+
+
+@router.get("/model-options", response_model=AssistantModelOptionsResponse)
+async def list_assistant_model_options(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    service = AssistantService(db, user_id=current_user.id)
+    return await service.list_model_options()
 
 
 @router.get("/{assistant_id}/usage", response_model=AssistantDependencyUsageResponse)
