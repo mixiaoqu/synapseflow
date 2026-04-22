@@ -33,19 +33,54 @@ services:
       timeout: 5s
       retries: 5
 
+  reranker:
+    image: synapseflow-reranker:latest
+    build:
+      context: ./docker/reranker
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+        PYTORCH_CPU_FIND_LINKS: ${PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
+        TORCH_VERSION: ${TORCH_VERSION:-2.11.0+cpu}
+    container_name: synapseflow-reranker
+    environment:
+      - RERANK_MODEL=${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+      - RERANK_USE_FP16=${RERANK_USE_FP16:-false}
+      - RERANK_MODEL_LOAD_RETRIES=${RERANK_MODEL_LOAD_RETRIES:-10}
+      - RERANK_MODEL_LOAD_RETRY_DELAY=${RERANK_MODEL_LOAD_RETRY_DELAY:-15}
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      - HF_HOME=/models/huggingface
+      - HF_HUB_DOWNLOAD_TIMEOUT=${HF_HUB_DOWNLOAD_TIMEOUT:-600}
+      - HF_HUB_ETAG_TIMEOUT=${HF_HUB_ETAG_TIMEOUT:-60}
+    ports:
+      - "8012:8012"
+    volumes:
+      - reranker_models:/models/huggingface
+    networks:
+      - synapseflow-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8012/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 20m
+
   backend:
     image: synapseflow-backend:latest
     build:
       context: ./backend
       dockerfile: ../docker/backend/Dockerfile
       args:
-        UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.org/simple}
+        UV_INDEX_URL: ${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
     container_name: synapseflow-backend
     environment:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - DRAMATIQ_INDEXING_QUEUE=${DRAMATIQ_INDEXING_QUEUE:-indexing}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - RERANK_ENABLED=${RERANK_ENABLED:-true}
+      - RERANK_PROVIDER=${RERANK_PROVIDER:-vllm}
+      - RERANK_API_URL=${RERANK_API_URL:-http://reranker:8012}
+      - RERANK_API_KEY=${RERANK_API_KEY:-}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
     ports:
       - "8000:8000"
@@ -57,6 +92,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      reranker:
         condition: service_healthy
     networks:
       - synapseflow-network
@@ -71,7 +108,7 @@ services:
       context: ./backend
       dockerfile: ../docker/backend/Dockerfile
       args:
-        UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.org/simple}
+        UV_INDEX_URL: ${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
     container_name: synapseflow-backend-worker
     environment:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
@@ -119,6 +156,7 @@ volumes:
   backend_venv:
   backend_previews:
   redis_data:
+  reranker_models:
 
 networks:
   synapseflow-network:

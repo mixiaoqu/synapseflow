@@ -2,7 +2,7 @@ FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-ARG UV_INDEX_URL=https://pypi.org/simple
+ARG UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 RUN python -m pip install -i ${UV_INDEX_URL} uv==0.10.9
 
 ENV UV_DEFAULT_INDEX=${UV_INDEX_URL}
