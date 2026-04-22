@@ -166,8 +166,11 @@ export default function AdminHomePage() {
           <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
             知识运营后台
           </h1>
-          <p className="mt-4 text-sm leading-7 text-slate-600">
+          <p className="hidden">
             当前后台聚焦问答运营主链路。页面按“知识资产准备 → 问答配置 → 质量观察与权限治理”的顺序组织，避免重复入口并降低操作歧义。
+          </p>
+          <p className="mt-4 text-sm leading-7 text-slate-600">
+            在这里查看知识库运营相关功能入口，并继续处理日常管理工作。
           </p>
         </div>
 

@@ -388,7 +388,7 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
   const dirty = createSignature(form) !== baseline;
   const selectedKnowledgeBase = knowledgeBases.find((item) => item.id === form.knowledge_base_id);
   const selectedModel =
-    modelOptions.find((item) => item.key === form.llm_model_key) ?? modelOptions[0] ?? null;
+    modelOptions.find((item) => item.key === form.llm_model_key) ?? null;
 
   const previewDraft = useMemo<AssistantTestDraft>(() => {
     return {

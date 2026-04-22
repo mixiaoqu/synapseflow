@@ -205,8 +205,11 @@ function LoginPageContent() {
             <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
               欢迎回来
             </h1>
-            <p className="mt-4 text-base leading-7 text-zinc-400">
+            <p className="hidden">
               同一账户体系，终端问答与后台管理一体化。登录后自动根据权限进入对应工作台。
+            </p>
+            <p className="mt-4 text-base leading-7 text-zinc-400">
+              使用你的账号登录，继续访问知识库与管理功能。
             </p>
 
             {/* Features */}

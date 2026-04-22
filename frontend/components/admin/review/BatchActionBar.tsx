@@ -40,7 +40,7 @@ export function BatchActionBar({
             已选择 {selectedCount} 项
           </div>
           <p className="mt-1 text-sm text-slate-500">
-            {disableReason || "根据所选文档状态，下面会自动启用可执行的批量操作。"}
+            {disableReason || "可执行的批量操作会显示在右侧。"}
           </p>
         </div>
 
@@ -69,7 +69,7 @@ export function BatchActionBar({
                       处理中
                     </>
                   ) : (
-                    reviewActionMeta[action].label.replace("立即", "批量")
+                    reviewActionMeta[action].batchLabel
                   )}
                 </Button>
               );

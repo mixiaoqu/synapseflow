@@ -10,7 +10,6 @@ DocumentIndexStatus = Literal["queued", "processing", "indexed", "failed"]
 DocumentLifecycleStatus = Literal[
     "draft",
     "pending_review",
-    "approved",
     "published",
     "archived",
 ]

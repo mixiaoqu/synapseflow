@@ -4,7 +4,6 @@ export type DocumentIndexStatus = "queued" | "processing" | "indexed" | "failed"
 export type DocumentLifecycleStatus =
   | "draft"
   | "pending_review"
-  | "approved"
   | "published"
   | "archived";
 
@@ -272,10 +271,6 @@ export async function deleteDocumentsBatch(
 
 export async function submitDocumentForReview(docId: number): Promise<DocumentDetail> {
   return apiClient.post(`/api/v1/documents/${docId}/submit-for-review`, {});
-}
-
-export async function approveDocument(docId: number): Promise<DocumentDetail> {
-  return apiClient.post(`/api/v1/documents/${docId}/approve`, {});
 }
 
 export async function rejectDocument(docId: number): Promise<DocumentDetail> {

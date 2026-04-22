@@ -624,7 +624,7 @@ function AskPageContent() {
                   <h2 className="mt-6 text-2xl font-semibold text-slate-900">
                     请选择一个助手开始问答
                   </h2>
-                  <p className="mt-3 text-sm leading-7 text-slate-500">
+                  <p className="hidden">
                     这里不再要求你选择知识库或分类。只需要选择一个助手，就能进入对应的企业知识问答场景。
                   </p>
                 </div>
@@ -640,6 +640,9 @@ function AskPageContent() {
                   </h2>
                   <p className="mt-3 text-sm leading-7 text-slate-500">
                     切换助手时会保留各自的会话历史，方便你分别验证不同助手的效果。
+                  </p>
+                  <p className="mt-3 text-sm leading-7 text-slate-500">
+                    你可以直接提问，或从下方示例问题开始。
                   </p>
 
                   {suggestedPrompts.length > 0 && (

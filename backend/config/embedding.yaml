@@ -52,7 +52,7 @@ retrieval:
   # 最终保留给应用层的检索结果上限；适度收紧，避免过多弱相关候选残留。
   final_top_k: 8
   # 最终真正送入大模型 prompt 的参考片段上限；优先保留更强证据，降低噪声。
-  llm_reference_top_k: 5
+  llm_reference_top_k: 8
   # 拼接知识库上下文时允许注入 prompt 的总字符上限。
   kb_context_max_chars: 12000
 

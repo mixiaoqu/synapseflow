@@ -759,8 +759,11 @@ export default function DocumentsPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-semibold text-slate-900">新建知识库</h3>
-                <p className="mt-2 text-sm leading-6 text-slate-500">
+                <p className="hidden">
                   为当前团队创建一个新的知识库，后续可以继续上传文档并进入详细工作区。
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  选择目标知识库后上传文件。
                 </p>
               </div>
               <Button

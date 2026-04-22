@@ -42,11 +42,11 @@ import {
 import { Input } from "@/components/ui/input";
 import {
   assistantsApi,
+  type AssistantModelOption,
   type AssistantProfile,
   type AssistantSummary,
   type AssistantUpsertPayload,
 } from "@/lib/api/assistants";
-import { listKnowledgeBases } from "@/lib/api/knowledgeBases";
 import { cn } from "@/lib/utils";
 
 interface AssistantFormState {
@@ -160,7 +160,6 @@ interface AssistantMockMetrics {
   weekCalls: number;
   hitRate: number;
   feedbackRate: number;
-  modelName: string;
 }
 
 const AVATAR_PRESETS = [
@@ -185,8 +184,6 @@ const AVATAR_PRESETS = [
     className: "from-sky-300 via-cyan-400 to-teal-500 text-slate-900",
   },
 ];
-
-const MODEL_OPTIONS = ["GPT-4o", "GPT-4.1 Mini", "Claude 3.5 Sonnet", "Qwen-Max"];
 
 const ASSISTANT_TEMPLATES = [
   {
@@ -230,7 +227,6 @@ function getMockMetrics(assistant: AssistantSummary): AssistantMockMetrics {
     weekCalls: 140 + (seed % 1280),
     hitRate: 72 + (seed % 24),
     feedbackRate: 68 + ((seed >> 3) % 28),
-    modelName: MODEL_OPTIONS[seed % MODEL_OPTIONS.length],
   };
 }
 
@@ -239,11 +235,40 @@ function getAvatarPreset(assistant: AssistantSummary) {
   return AVATAR_PRESETS[seed % AVATAR_PRESETS.length];
 }
 
+function getAssistantModelMeta(
+  assistant: AssistantSummary,
+  modelOptions: AssistantModelOption[],
+) {
+  if (!assistant.llm_model_key) {
+    return {
+      label: "系统默认",
+      className: "bg-slate-100 text-slate-600 hover:bg-slate-100",
+      title: "未单独指定模型，使用系统默认 generation 映射",
+    };
+  }
+
+  const matched = modelOptions.find((item) => item.key === assistant.llm_model_key);
+  if (matched) {
+    return {
+      label: matched.name,
+      className: "bg-violet-50 text-violet-700 hover:bg-violet-50",
+      title: `${matched.provider} / ${matched.model}`,
+    };
+  }
+
+  return {
+    label: assistant.llm_model_key,
+    className: "bg-amber-50 text-amber-700 hover:bg-amber-50",
+    title: "该模型配置当前未在可选列表中返回",
+  };
+}
+
 export default function AdminAssistantsPage() {
   const router = useRouter();
   const { teamId, selectedTeam } = useTeamScope();
 
   const [assistants, setAssistants] = useState<AssistantSummary[]>([]);
+  const [modelOptions, setModelOptions] = useState<AssistantModelOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [activeFilter, setActiveFilter] = useState<AssistantStatusFilter>("all");
@@ -336,11 +361,12 @@ export default function AdminAssistantsPage() {
     void (async () => {
       setLoading(true);
       try {
-        const [assistantItems] = await Promise.all([
+        const [assistantItems, modelOptionsResponse] = await Promise.all([
           assistantsApi.list({ team_id: teamId }),
-          listKnowledgeBases(teamId),
+          assistantsApi.listModelOptions(),
         ]);
         setAssistants(assistantItems);
+        setModelOptions(modelOptionsResponse.items);
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "加载助手列表失败",
@@ -653,6 +679,7 @@ export default function AdminAssistantsPage() {
                 const metrics = getMockMetrics(assistant);
                 const avatar = getAvatarPreset(assistant);
                 const AvatarIcon = avatar.icon;
+                const modelMeta = getAssistantModelMeta(assistant, modelOptions);
 
                 return (
                   <Card
@@ -743,10 +770,14 @@ export default function AdminAssistantsPage() {
                             </Badge>
                             <Badge
                               variant="secondary"
-                              className="gap-1 rounded-full bg-violet-50 text-xs text-violet-700 hover:bg-violet-50"
+                              className={cn(
+                                "gap-1 rounded-full text-xs",
+                                modelMeta.className,
+                              )}
+                              title={modelMeta.title}
                             >
                               <Sparkles className="h-3 w-3" />
-                              {metrics.modelName}
+                              {modelMeta.label}
                             </Badge>
                           </div>
                         </div>

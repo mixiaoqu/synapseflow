@@ -33,7 +33,6 @@ from app.services.document_index_state import (
     is_indexed_status,
 )
 from app.services.document_lifecycle import (
-    DOC_STATUS_APPROVED,
     DOC_STATUS_DRAFT,
     DOC_STATUS_PENDING_REVIEW,
     DOC_STATUS_PUBLISHED,
@@ -75,15 +74,6 @@ class DocumentService:
             )
 
     @classmethod
-    def _assert_can_approve(cls, doc: Document) -> None:
-        cls._assert_current_document(doc)
-        if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_PENDING_REVIEW:
-            raise HTTPException(
-                status_code=400,
-                detail="Only pending-review documents can be approved",
-            )
-
-    @classmethod
     def _assert_can_reject(cls, doc: Document) -> None:
         cls._assert_current_document(doc)
         if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_PENDING_REVIEW:
@@ -100,10 +90,10 @@ class DocumentService:
                 status_code=400,
                 detail="Document must finish indexing before publish",
             )
-        if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_APPROVED:
+        if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_PENDING_REVIEW:
             raise HTTPException(
                 status_code=400,
-                detail="Document must be approved before publish",
+                detail="Document must be pending review before publish",
             )
 
     @classmethod
@@ -757,28 +747,6 @@ class DocumentService:
         category_name = await repo.get_category_name(getattr(doc, "category_id", None))
         return self._to_response(doc, category_name=category_name)
 
-    async def approve_document(
-        self,
-        *,
-        db: AsyncSession,
-        user_id: int,
-        doc_id: int,
-    ) -> DocumentResponse:
-        repo = DocumentRepository(db, user_id=user_id)
-        existing = await repo.get_by_id_for_user(doc_id)
-        if not existing:
-            raise HTTPException(status_code=404, detail="Document not found")
-        self._assert_can_approve(existing)
-        doc = await repo.update_status(
-            doc_id,
-            status=DOC_STATUS_APPROVED,
-            reviewer_id=user_id,
-        )
-        if not doc:
-            raise HTTPException(status_code=404, detail="Document not found")
-        category_name = await repo.get_category_name(getattr(doc, "category_id", None))
-        return self._to_response(doc, category_name=category_name)
-
     async def reject_document(
         self,
         *,
@@ -869,7 +837,7 @@ class DocumentService:
         self._assert_can_unpublish(existing)
         doc = await repo.update_status(
             doc_id,
-            status=DOC_STATUS_APPROVED,
+            status=DOC_STATUS_DRAFT,
             reviewer_id=user_id,
             publisher_id=None,
             is_live=False,

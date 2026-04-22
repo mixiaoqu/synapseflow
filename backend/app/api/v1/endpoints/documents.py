@@ -248,19 +248,6 @@ async def submit_document_for_review(
     )
 
 
-@router.post("/{doc_id}/approve", response_model=DocumentResponse)
-async def approve_document(
-    doc_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_review_roles),
-):
-    return await document_service.approve_document(
-        db=db,
-        user_id=current_user.id,
-        doc_id=doc_id,
-    )
-
-
 @router.post("/{doc_id}/reject", response_model=DocumentResponse)
 async def reject_document(
     doc_id: int,

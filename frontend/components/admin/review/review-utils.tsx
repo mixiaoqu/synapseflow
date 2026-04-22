@@ -17,16 +17,14 @@ import type {
 
 export type ReviewAction =
   | "submit"
-  | "approve"
+  | "approve_publish"
   | "reject"
-  | "publish"
   | "unpublish";
 
 export type ReviewFilter =
   | "all"
   | "draft"
   | "pending_review"
-  | "approved"
   | "published";
 
 type StatusMeta = {
@@ -37,13 +35,13 @@ type StatusMeta = {
 
 type ActionMeta = {
   label: string;
+  batchLabel: string;
   successMessage: string;
 };
 
 export const REVIEW_FILTER_ORDER: ReviewFilter[] = [
   "draft",
   "pending_review",
-  "approved",
   "published",
   "all",
 ];
@@ -52,30 +50,29 @@ export const reviewFilterLabels: Record<ReviewFilter, string> = {
   all: "全部",
   draft: "草稿",
   pending_review: "待审核",
-  approved: "已通过",
   published: "已发布",
 };
 
 export const reviewActionMeta: Record<ReviewAction, ActionMeta> = {
   submit: {
     label: "提交审核",
+    batchLabel: "批量提交审核",
     successMessage: "文档已提交审核",
   },
-  approve: {
-    label: "通过",
-    successMessage: "文档已审核通过",
+  approve_publish: {
+    label: "审核并发布",
+    batchLabel: "批量审核并发布",
+    successMessage: "文档已审核并发布",
   },
   reject: {
     label: "退回",
+    batchLabel: "批量退回",
     successMessage: "文档已退回草稿",
-  },
-  publish: {
-    label: "立即发布",
-    successMessage: "文档已发布上线",
   },
   unpublish: {
     label: "下线",
-    successMessage: "文档已从问答上下文下线",
+    batchLabel: "批量下线",
+    successMessage: "文档已从问答上下文中下线",
   },
 };
 
@@ -89,11 +86,6 @@ export const lifecycleMeta: Record<DocumentLifecycleStatus, StatusMeta> = {
     label: "待审核",
     className: "border-amber-200/70 bg-amber-50 text-amber-700",
     icon: <Clock3 className="h-3.5 w-3.5" />,
-  },
-  approved: {
-    label: "已通过",
-    className: "border-blue-200/70 bg-blue-50 text-blue-700",
-    icon: <CheckCircle2 className="h-3.5 w-3.5" />,
   },
   published: {
     label: "已发布",
@@ -142,10 +134,7 @@ export function availableReviewActions(
     return ["submit"];
   }
   if (item.status === "pending_review") {
-    return ["approve", "reject"];
-  }
-  if (item.status === "approved" && indexedReady) {
-    return ["publish"];
+    return ["approve_publish", "reject"];
   }
   if (item.status === "published") {
     return ["unpublish"];
@@ -155,8 +144,7 @@ export function availableReviewActions(
 
 export function actionButtonClass(action: ReviewAction): string {
   switch (action) {
-    case "approve":
-    case "publish":
+    case "approve_publish":
       return "bg-slate-900 text-white hover:bg-slate-800";
     case "reject":
       return "border border-rose-200 bg-white text-rose-600 hover:bg-rose-50";

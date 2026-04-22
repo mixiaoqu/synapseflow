@@ -1233,8 +1233,8 @@ function KnowledgeBaseDetailPageContent() {
 
       <main className="min-h-0 flex-1 overflow-hidden bg-white">
         <section className="mx-auto flex h-full max-w-[1700px] min-h-0 flex-col xl:flex-row">
-          <section className="min-h-0 xl:flex xl:h-full xl:w-[360px] xl:shrink-0 xl:flex-col xl:border-r xl:border-slate-100 xl:bg-slate-50/60">
-            <div className="border-b border-slate-100 px-4 py-4">
+          <section className="flex min-h-0 flex-col border-b border-slate-100 bg-slate-50/70 xl:h-full xl:w-[360px] xl:shrink-0 xl:border-b-0 xl:border-r">
+            <div className="shrink-0 border-b border-slate-100 px-4 py-4">
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
                   <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -1376,42 +1376,52 @@ function KnowledgeBaseDetailPageContent() {
               ) : null}
             </div>
 
-            <div className="flex items-center justify-between px-4 py-3 text-xs text-slate-500">
-              <div className="flex items-center gap-2">
-                {loadingDocs ? (
-                  <span>正在加载文档...</span>
-                ) : docsTotal > 0 ? (
-                  <>
-                    <span className="font-medium text-slate-700">
-                      {pageStart}-{pageEnd} / {docsTotal}
-                    </span>
-                    {hasActiveFilters && filteredDocs.length !== docsTotal ? (
-                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">
-                        筛选后 {filteredDocs.length}
+            <div className="shrink-0 border-b border-slate-100/80 px-4 py-3 text-xs text-slate-500">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  {loadingDocs ? (
+                    <span>正在加载文档...</span>
+                  ) : docsTotal > 0 ? (
+                    <>
+                      <span className="font-medium text-slate-700">
+                        {pageStart}-{pageEnd} / {docsTotal}
                       </span>
-                    ) : null}
-                  </>
-                ) : (
-                  <span>暂无文档</span>
-                )}
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-                  {indexedDocsOnPage}
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
-                  {processingDocsOnPage}
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
-                  {failedDocsOnPage}
-                </span>
+                      {hasActiveFilters && filteredDocs.length !== docsTotal ? (
+                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">
+                          筛选后 {filteredDocs.length}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span>暂无文档</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                    {indexedDocsOnPage}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                    {processingDocsOnPage}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                    {failedDocsOnPage}
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-auto px-3 pb-3 xl:pb-4">
+            <div
+              className={cn(
+                "min-h-[240px] flex-1 overflow-y-auto overscroll-contain px-3 pb-3 pt-2 xl:min-h-0 xl:pb-4",
+                "[scrollbar-width:thin] [&::-webkit-scrollbar]:w-2",
+                "[&::-webkit-scrollbar-track]:bg-transparent",
+                "[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300",
+                "[&::-webkit-scrollbar-thumb:hover]:bg-slate-400",
+              )}
+            >
               {loadingMeta || loadingDocs ? (
                 <div className="flex flex-col items-center justify-center py-12 text-slate-500">
                   <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
@@ -1430,15 +1440,17 @@ function KnowledgeBaseDetailPageContent() {
                   <p className="mt-1 text-xs">尝试调整筛选条件或清空搜索</p>
                 </div>
               ) : (
-                <div className="space-y-1">
+                <div className="space-y-2">
                   {filteredDocs.map((item) => (
                     <button
                       key={item.id}
                       type="button"
                       onClick={() => onSelectDocument(item.id)}
                       className={cn(
-                        "group flex w-full items-start gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left transition-colors",
-                        selectedDocId === item.id ? "bg-blue-50/60 text-blue-700" : "hover:bg-slate-50",
+                        "group flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left shadow-sm transition-all",
+                        selectedDocId === item.id
+                          ? "border-blue-200 bg-blue-50/90 shadow-blue-100/70"
+                          : "border-slate-200/80 bg-white/90 hover:border-slate-300 hover:bg-white",
                       )}
                     >
                       <div className="min-w-0 flex-1">
@@ -1446,7 +1458,9 @@ function KnowledgeBaseDetailPageContent() {
                           <h4
                             className={cn(
                               "truncate text-sm transition-colors",
-                              selectedDocId === item.id ? "font-medium text-blue-700" : "text-slate-900",
+                              selectedDocId === item.id
+                                ? "font-semibold text-blue-900"
+                                : "text-slate-900",
                             )}
                           >
                             {item.title}
@@ -1491,71 +1505,73 @@ function KnowledgeBaseDetailPageContent() {
               )}
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-              <div className="flex items-center gap-2">
-                <span>每页</span>
-                <select
-                  value={docPageSize}
-                  onChange={(e) => {
-                    setDocPageSize(Number(e.target.value));
-                    setDocPage(1);
-                  }}
-                  className="h-8 rounded-full border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none hover:border-slate-300"
-                >
-                  {PAGE_SIZE_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className="shrink-0 border-t border-slate-100 bg-white/70 px-4 py-3 text-xs text-slate-500 backdrop-blur">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span>每页</span>
+                  <select
+                    value={docPageSize}
+                    onChange={(e) => {
+                      setDocPageSize(Number(e.target.value));
+                      setDocPage(1);
+                    }}
+                    className="h-8 rounded-full border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none hover:border-slate-300"
+                  >
+                    {PAGE_SIZE_OPTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div className="flex items-center gap-1.5">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 w-8 rounded-full p-0"
-                  disabled={docPage <= 1 || loadingDocs}
-                  onClick={() => setDocPage(1)}
-                  title="首页"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                  <ChevronLeft className="-ml-2.5 h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 w-8 rounded-full p-0"
-                  disabled={docPage <= 1 || loadingDocs}
-                  onClick={() => setDocPage((prev) => Math.max(1, prev - 1))}
-                  title="上一页"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </Button>
-                <span className="min-w-[80px] text-center">
-                  {docPage} / {totalPages}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 w-8 rounded-full p-0"
-                  disabled={docPage >= totalPages || loadingDocs}
-                  onClick={() => setDocPage((prev) => Math.min(totalPages, prev + 1))}
-                  title="下一页"
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 w-8 rounded-full p-0"
-                  disabled={docPage >= totalPages || loadingDocs}
-                  onClick={() => setDocPage(totalPages)}
-                  title="末页"
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                  <ChevronRight className="-ml-2.5 h-3.5 w-3.5" />
-                </Button>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 rounded-full p-0"
+                    disabled={docPage <= 1 || loadingDocs}
+                    onClick={() => setDocPage(1)}
+                    title="首页"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    <ChevronLeft className="-ml-2.5 h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 rounded-full p-0"
+                    disabled={docPage <= 1 || loadingDocs}
+                    onClick={() => setDocPage((prev) => Math.max(1, prev - 1))}
+                    title="上一页"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </Button>
+                  <span className="min-w-[80px] text-center">
+                    {docPage} / {totalPages}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 rounded-full p-0"
+                    disabled={docPage >= totalPages || loadingDocs}
+                    onClick={() => setDocPage((prev) => Math.min(totalPages, prev + 1))}
+                    title="下一页"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 rounded-full p-0"
+                    disabled={docPage >= totalPages || loadingDocs}
+                    onClick={() => setDocPage(totalPages)}
+                    title="末页"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                    <ChevronRight className="-ml-2.5 h-3.5 w-3.5" />
+                  </Button>
+                </div>
               </div>
             </div>
           </section>
@@ -1796,17 +1812,15 @@ function KnowledgeBaseDetailPageContent() {
                   <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 xl:px-12">
                     <div className="mx-auto flex w-full max-w-6xl flex-col">
                       <div className="mb-4 rounded-3xl border border-slate-200 bg-slate-50/70 px-5 py-4">
-                        {isViewingCurrentVersion
-                          ? (
-                              <div className="text-sm text-slate-500">
-                                正在编辑版本 v{selectedDocVersion}。编辑区会按正文长度自动展开，便于一次看完整篇文档。
-                              </div>
-                            )
-                          : (
-                              <div className="text-sm text-slate-500">
-                                正在基于版本 v{selectedDocVersion} 编辑。保存后建议新建版本，避免直接覆盖历史版本。
-                              </div>
-                            )}
+                        {isViewingCurrentVersion ? (
+                          <div className="text-sm text-slate-500">
+                            正在编辑版本 v{selectedDocVersion}。编辑区会按正文长度自动展开，便于一次看完整篇文档。
+                          </div>
+                        ) : (
+                          <div className="text-sm text-slate-500">
+                            正在基于版本 v{selectedDocVersion} 编辑。保存后建议新建版本，避免直接覆盖历史版本。
+                          </div>
+                        )}
                       </div>
 
                       <div className="rounded-[32px] border border-slate-200 bg-white shadow-sm">
@@ -1951,7 +1965,7 @@ function KnowledgeBaseDetailPageContent() {
                 <div className="text-center">
                   <Eye className="mx-auto h-10 w-10 text-slate-300" />
                   <p className="mt-4 text-base font-medium text-slate-700">从左侧选择一篇文档开始阅读</p>
-                  <p className="mt-1 text-sm text-slate-500">右侧会切换成更适合阅读和编辑的工作台。</p>
+                  <p className="mt-1 text-sm text-slate-500">选中文档后即可查看正文并进行编辑。</p>
                 </div>
               </div>
             )}
@@ -2012,7 +2026,7 @@ function KnowledgeBaseDetailPageContent() {
                 <div>
                   <p className="text-lg font-semibold">上传文档</p>
                   <p className="text-sm text-slate-500">
-                    上传后的文件会自动归入当前知识库并加入索引队列；选择文件夹时会按第一层目录自动分类。
+                    选择文件后即可上传到当前知识库。
                   </p>
                 </div>
               <Button
@@ -2041,7 +2055,7 @@ function KnowledgeBaseDetailPageContent() {
                   ))}
                 </select>
                 <p className="mt-2 text-xs text-slate-500">
-                  当前选择：{uploadCategory?.name || "未分类"}。如果上传文件夹，目录结构会优先用于自动建分类。
+                  当前选择：{uploadCategory?.name || "未分类"}。
                 </p>
               </div>
 

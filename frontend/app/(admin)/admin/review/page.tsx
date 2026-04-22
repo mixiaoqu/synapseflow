@@ -23,7 +23,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  approveDocument,
   listDocuments,
   publishDocument,
   rejectDocument,
@@ -38,18 +37,16 @@ const FETCH_PAGE_SIZE = 100;
 async function runReviewAction(
   documentId: number,
   action: ReviewAction,
-): Promise<DocumentDetail> {
+): Promise<DocumentDetail[]> {
   switch (action) {
     case "submit":
-      return submitDocumentForReview(documentId);
-    case "approve":
-      return approveDocument(documentId);
+      return [await submitDocumentForReview(documentId)];
+    case "approve_publish":
+      return [await publishDocument(documentId)];
     case "reject":
-      return rejectDocument(documentId);
-    case "publish":
-      return publishDocument(documentId);
+      return [await rejectDocument(documentId)];
     case "unpublish":
-      return unpublishDocument(documentId);
+      return [await unpublishDocument(documentId)];
   }
 }
 
@@ -139,7 +136,6 @@ export default function AdminReviewPage() {
       all: items.length,
       draft: items.filter((item) => item.status === "draft").length,
       pending_review: items.filter((item) => item.status === "pending_review").length,
-      approved: items.filter((item) => item.status === "approved").length,
       published: items.filter((item) => item.status === "published").length,
     }),
     [items],
@@ -211,9 +207,7 @@ export default function AdminReviewPage() {
       try {
         return await work();
       } finally {
-        setBusyIds((current) =>
-          current.filter((id) => !documentIds.includes(id)),
-        );
+        setBusyIds((current) => current.filter((id) => !documentIds.includes(id)));
       }
     },
     [],
@@ -223,8 +217,8 @@ export default function AdminReviewPage() {
     async (documentId: number, action: ReviewAction): Promise<boolean> => {
       return withBusyIds([documentId], async () => {
         try {
-          const updated = await runReviewAction(documentId, action);
-          setItems((current) => mergeUpdatedDocuments(current, [updated]));
+          const updates = await runReviewAction(documentId, action);
+          setItems((current) => mergeUpdatedDocuments(current, updates));
           setSelectedIds((current) => current.filter((id) => id !== documentId));
           toast.success(reviewActionMeta[action].successMessage);
           return true;
@@ -260,10 +254,11 @@ export default function AdminReviewPage() {
 
         const succeeded = results
           .filter(
-            (result): result is PromiseFulfilledResult<DocumentDetail> =>
+            (result): result is PromiseFulfilledResult<DocumentDetail[]> =>
               result.status === "fulfilled",
           )
-          .map((result) => result.value);
+          .flatMap((result) => result.value);
+
         const failed = results.filter((result) => result.status === "rejected");
 
         if (succeeded.length > 0) {
@@ -273,11 +268,15 @@ export default function AdminReviewPage() {
           );
         }
 
+        const fullySucceededCount = results.filter(
+          (result) => result.status === "fulfilled",
+        ).length;
+
         if (failed.length === 0) {
-          toast.success(`已批量完成 ${succeeded.length} 篇文档的处理`);
-        } else if (succeeded.length > 0) {
+          toast.success(`已批量完成 ${fullySucceededCount} 篇文档的处理`);
+        } else if (fullySucceededCount > 0) {
           toast.warning(
-            `批量处理部分完成，成功 ${succeeded.length} 篇，失败 ${failed.length} 篇`,
+            `批量处理部分完成，完成 ${fullySucceededCount} 篇，失败 ${failed.length} 篇。`,
           );
         } else {
           const firstReason = failed[0];
@@ -311,7 +310,6 @@ export default function AdminReviewPage() {
                 </h1>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-500">
                   管理知识库文档的生命周期，已发布的文档才会进入问答上下文。
-                  当前视图已整合搜索、批量审批和侧栏预览，适合处理积压审核任务。
                 </p>
                 <div className="mt-4 flex flex-wrap items-center gap-2">
                   <Badge className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600">
@@ -340,7 +338,7 @@ export default function AdminReviewPage() {
                         处理中
                       </>
                     ) : (
-                      reviewActionMeta[action].label.replace("立即", "批量")
+                      reviewActionMeta[action].batchLabel
                     )}
                   </Button>
                 ))}

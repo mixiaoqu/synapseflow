@@ -198,7 +198,7 @@ export function ReviewDocumentSheet({
                 <div className="border-b border-slate-200 px-6 py-4">
                   <div className="text-sm font-medium text-slate-900">正文预览</div>
                   <p className="mt-1 text-sm text-slate-500">
-                    审核动作不会离开当前页面，确认无误后可直接在底部完成流转。
+                    请先确认正文内容，再选择需要的操作。
                   </p>
                 </div>
 
@@ -212,7 +212,7 @@ export function ReviewDocumentSheet({
                         当前文档暂时没有可预览的正文
                       </p>
                       <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-                        如果这是扫描件或结构化解析失败的文档，可以先查看上方索引备注，再决定是否退回处理。
+                        你可以查看上方状态和索引备注，再决定后续操作。
                       </p>
                     </div>
                   ) : canRenderMarkdown ? (
@@ -233,7 +233,7 @@ export function ReviewDocumentSheet({
         <div className="border-t border-slate-200 bg-white/95 px-6 py-4 backdrop-blur">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-500">
-              只有已发布的文档才会进入问答上下文。
+              根据当前状态选择审核、退回或下线操作。
             </p>
 
             <div className="flex flex-wrap gap-2">
