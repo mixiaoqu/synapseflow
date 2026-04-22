@@ -286,19 +286,6 @@ def _make_chunk(
     )
 
 
-def _span_with_overlap(
-    doc: str,
-    *,
-    start: int,
-    end: int,
-    min_start: int,
-    overlap: int,
-) -> tuple[str, int, int]:
-    if overlap > 0 and start > min_start:
-        start = max(min_start, start - overlap)
-    return _trim_span(doc, start, end)
-
-
 def split_for_vector_index(
     text: str,
     max_chars: int,
@@ -344,25 +331,16 @@ def split_for_vector_index(
 
         paragraph_spans = _split_paragraph_spans(text, section.body_start, section.body_end)
         packed_spans = _pack_paragraphs(paragraph_spans, body_max)
-        for group_index, span_group in enumerate(packed_spans):
+        for span_group in packed_spans:
             body_text = _spans_text(text, span_group)
             if not body_text:
                 continue
 
             if len(body_text) <= body_max:
-                chunk_start = span_group[0][0]
-                chunk_end = span_group[-1][1]
-                chunk_text, chunk_start, chunk_end = _span_with_overlap(
-                    text,
-                    start=chunk_start,
-                    end=chunk_end,
-                    min_start=section.body_start,
-                    overlap=overlap if group_index > 0 else 0,
-                )
                 chunk = _make_chunk(
-                    body_text=chunk_text,
-                    body_start=chunk_start,
-                    body_end=chunk_end,
+                    body_text=body_text,
+                    body_start=span_group[0][0],
+                    body_end=span_group[-1][1],
                     doc_title=document_title,
                     section=section,
                 )

@@ -59,7 +59,7 @@ import { listTeams, type Team } from "@/lib/api/teams";
 const ACCEPT_FILES = ".txt,.md,.pdf,.docx";
 const SUPPORTED_EXTENSIONS = [".txt", ".md", ".pdf", ".docx"];
 const MAX_SIZE = 10 * 1024 * 1024;
-const MAX_BATCH = 100;
+const MAX_BATCH = 500;
 const PAGE_SIZE_OPTIONS = [20, 50, 100];
 
 type StatusValue = "all" | DocumentIndexStatus;
@@ -1056,11 +1056,15 @@ function KnowledgeBaseDetailPageContent() {
 
   const uploadFiles = async (files: File[] | FileList | null) => {
     if (!files || files.length === 0) return;
+    if (files.length > MAX_BATCH) {
+      toast.error(`单次最多上传 ${MAX_BATCH} 个文件，请减少文件数量后重试`);
+      return;
+    }
 
     const validFiles = Array.from(files).filter((file) => {
       const ext = "." + (file.name.split(".").pop()?.toLowerCase() || "");
       return SUPPORTED_EXTENSIONS.includes(ext) && file.size <= MAX_SIZE;
-    }).slice(0, MAX_BATCH);
+    });
 
     if (validFiles.length === 0) {
       toast.error("没有可上传的有效文件");
@@ -1083,11 +1087,7 @@ function KnowledgeBaseDetailPageContent() {
         });
       }
 
-      if (files.length > MAX_BATCH) {
-        toast.success(`已上传 ${validFiles.length} 个文件，超出部分已忽略，并加入索引队列`);
-      } else {
-        toast.success(`已上传 ${validFiles.length} 个文件，并加入索引队列`);
-      }
+      toast.success(`已上传 ${validFiles.length} 个文件，并加入索引队列`);
       setUploadModalOpen(false);
       setDocPage(1);
       reload();

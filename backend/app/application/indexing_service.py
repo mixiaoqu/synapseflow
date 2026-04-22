@@ -34,10 +34,11 @@ from app.services.index_job_state import (
     INDEX_JOB_DOCUMENT_STATUS_INDEXED,
     INDEX_JOB_DOCUMENT_STATUS_PROCESSING,
 )
-from app.utils.time import utc_now
 from app.services.vector_store import delete_by_document_id
+from app.utils.time import utc_now
 
 MAX_INDEX_ERROR_LENGTH = 1000
+MAX_INDEX_MESSAGE_DOCUMENTS = 20
 
 
 class IndexingService:
@@ -55,6 +56,18 @@ class IndexingService:
                 "expected_content_hash": str(expected_content_hash),
             }
             for document_id, expected_content_hash in documents
+        ]
+
+    @staticmethod
+    def _chunk_document_messages(
+        documents: Sequence[tuple[int, str]],
+        *,
+        size: int = MAX_INDEX_MESSAGE_DOCUMENTS,
+    ) -> list[list[tuple[int, str]]]:
+        chunk_size = max(1, size)
+        return [
+            list(documents[start : start + chunk_size])
+            for start in range(0, len(documents), chunk_size)
         ]
 
     @staticmethod
@@ -241,10 +254,11 @@ class IndexingService:
         if not documents:
             return
         actor_module = self._actor_module()
-        actor_module.index_documents_batch_actor.send(
-            documents=self._serialize_documents(documents),
-            job_id=job_id,
-        )
+        for chunk in self._chunk_document_messages(documents):
+            actor_module.index_documents_batch_actor.send(
+                documents=self._serialize_documents(chunk),
+                job_id=job_id,
+            )
 
     def enqueue_current_document_reindex(
         self,
@@ -555,9 +569,30 @@ class IndexingService:
     ) -> list[dict[str, Any]]:
         document_ids = [document_id for document_id, _ in documents]
         docs_by_id = await self._get_documents_for_ids(db, document_ids)
+        job_statuses = (
+            await IndexJobRepository(db).get_document_statuses(
+                job_id=job_id,
+                documents=list(documents),
+            )
+            if job_id is not None
+            else {}
+        )
         prepared: list[dict[str, Any]] = []
 
         for document_id, expected_content_hash in documents:
+            job_document_status = job_statuses.get((document_id, expected_content_hash))
+            if job_document_status in {
+                INDEX_JOB_DOCUMENT_STATUS_INDEXED,
+                INDEX_JOB_DOCUMENT_STATUS_FAILED,
+            }:
+                logger.info(
+                    "Skipped terminal indexing job document job_id={} doc_id={} status={}",
+                    job_id,
+                    document_id,
+                    job_document_status,
+                )
+                continue
+
             doc = docs_by_id.get(document_id)
             if not doc:
                 await self._mark_job_document_failed(
@@ -586,6 +621,23 @@ class IndexingService:
                     document_id,
                     expected_content_hash,
                     doc.content_hash,
+                )
+                continue
+
+            if getattr(doc, "index_status", None) == INDEX_STATUS_INDEXED:
+                indexed_at = getattr(doc, "indexed_at", None) or utc_now()
+                await self._set_job_document_status(
+                    db,
+                    job_id=job_id,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                    status=INDEX_JOB_DOCUMENT_STATUS_INDEXED,
+                    indexed_at=indexed_at,
+                )
+                logger.info(
+                    "Skipped already indexed document during batch retry job_id={} doc_id={}",
+                    job_id,
+                    document_id,
                 )
                 continue
 
@@ -749,6 +801,11 @@ class IndexingService:
     ) -> None:
         """Background entrypoint for one document."""
         async with AsyncSessionLocal() as db:
+            repo = IndexJobRepository(db)
+            await repo.refresh_job_state(job_id=job_id)
+            if not await repo.is_job_active(job_id=job_id):
+                logger.info("Skipped inactive indexing job job_id={}", job_id)
+                return
             await self._run_document_index(
                 db,
                 document_id=document_id,
@@ -764,10 +821,19 @@ class IndexingService:
     ) -> None:
         """Background entrypoint for multiple documents."""
         async with AsyncSessionLocal() as db:
+            repo = IndexJobRepository(db)
+            await repo.refresh_job_state(job_id=job_id)
+            if not await repo.is_job_active(job_id=job_id):
+                logger.info("Skipped inactive batch indexing job job_id={}", job_id)
+                return
             prepared = await self._prepare_batch_candidates(db, documents, job_id=job_id)
             batches = self._build_dynamic_batches(prepared)
 
             for batch in batches:
+                await repo.refresh_job_state(job_id=job_id)
+                if not await repo.is_job_active(job_id=job_id):
+                    logger.info("Stopped inactive batch indexing job job_id={}", job_id)
+                    return
                 try:
                     counts = await self._run_document_batch_index(db, batch=batch, job_id=job_id)
                     total_chunks = sum(counts.values())
@@ -801,6 +867,11 @@ class IndexingService:
     ) -> None:
         """Background entrypoint for current-version switches and new versions."""
         async with AsyncSessionLocal() as db:
+            repo = IndexJobRepository(db)
+            await repo.refresh_job_state(job_id=job_id)
+            if not await repo.is_job_active(job_id=job_id):
+                logger.info("Skipped inactive current-version reindex job job_id={}", job_id)
+                return
             try:
                 if previous_document_id and previous_document_id != target_document_id:
                     previous = await self._get_document(db, previous_document_id)

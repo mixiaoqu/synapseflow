@@ -54,36 +54,6 @@ def test_split_for_vector_index_returns_structured_chunk_payloads():
     assert doc[start:end] == child.display_text
 
 
-def test_split_for_vector_index_applies_overlap_to_paragraph_sized_chunks():
-    doc = (
-        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n\n"
-        "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\n\n"
-        "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
-    )
-
-    chunks = split_for_vector_index(
-        doc,
-        max_chars=60,
-        overlap=12,
-    )
-
-    assert len(chunks) == 3
-
-    second = chunks[1]
-    third = chunks[2]
-
-    assert second.display_text.startswith("AAAAAAAAAA\n\nBBBB")
-    assert third.display_text.startswith("BBBBBBBBBB\n\nCCCC")
-    assert second.metadata["start_offset"] < doc.index("B")
-    assert third.metadata["start_offset"] < doc.index("C")
-    assert doc[
-        second.metadata["start_offset"] : second.metadata["end_offset"]
-    ] == second.display_text
-    assert doc[
-        third.metadata["start_offset"] : third.metadata["end_offset"]
-    ] == third.display_text
-
-
 def test_add_document_chunks_stores_display_search_and_metadata():
     chunk = VectorIndexChunk(
         display_text="Rendered body",

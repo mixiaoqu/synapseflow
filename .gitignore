@@ -81,6 +81,7 @@ frontend/.pnpm-store/
 # 文件上传和预览（根目录）
 previews/
 uploads/
+docs/
 
 # 数据库
 *.db

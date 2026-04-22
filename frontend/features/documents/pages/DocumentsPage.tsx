@@ -43,7 +43,7 @@ import { cn } from "@/lib/utils";
 const ACCEPT_FILES = ".txt,.md,.pdf,.docx";
 const SUPPORTED_EXTENSIONS = new Set([".txt", ".md", ".pdf", ".docx"]);
 const MAX_SIZE = 10 * 1024 * 1024;
-const MAX_BATCH = 100;
+const MAX_BATCH = 500;
 const coverThemes = [
   "bg-gradient-to-br from-emerald-50 via-cyan-50 to-white",
   "bg-gradient-to-br from-amber-50 via-orange-50 to-white",
@@ -55,31 +55,35 @@ const coverThemes = [
 
 const statusMeta: Record<
   KnowledgeBaseStatus,
-  { label: string; icon: LucideIcon; chip: string; dot: string }
+  { label: string; icon: LucideIcon; chip: string; dot: string; border: string }
 > = {
   available: {
-    label: "可用",
+    label: "已就绪",
     icon: CheckCircle2,
-    chip: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    chip: "bg-emerald-50 text-emerald-700",
     dot: "bg-emerald-500",
+    border: "border-l-4 border-l-emerald-500",
   },
   indexing: {
     label: "索引中",
     icon: Clock3,
-    chip: "border-amber-200 bg-amber-50 text-amber-700",
+    chip: "bg-amber-50 text-amber-700",
     dot: "bg-amber-500",
+    border: "border-l-4 border-l-amber-500",
   },
   error: {
     label: "有异常",
     icon: AlertTriangle,
-    chip: "border-rose-200 bg-rose-50 text-rose-700",
+    chip: "bg-rose-50 text-rose-700",
     dot: "bg-rose-500",
+    border: "border-l-4 border-l-rose-500",
   },
   empty: {
     label: "空库",
     icon: FileText,
-    chip: "border-slate-200 bg-slate-100 text-slate-600",
+    chip: "bg-slate-100 text-slate-600",
     dot: "bg-slate-400",
+    border: "border-l-4 border-l-slate-300",
   },
 };
 
@@ -120,12 +124,10 @@ function validateFiles(files: File[] | FileList) {
     }
     acceptedBeforeCap.push(file);
   }
-  const accepted = acceptedBeforeCap.slice(0, MAX_BATCH);
   return {
-    accepted,
+    accepted: acceptedBeforeCap,
     invalidTypeCount,
     oversizeCount,
-    overflowCount: Math.max(acceptedBeforeCap.length - accepted.length, 0),
   };
 }
 
@@ -392,7 +394,12 @@ export default function DocumentsPage() {
 
   const uploadFiles = async (files: File[] | FileList | null) => {
     if (!files || files.length === 0) return;
-    const { accepted, invalidTypeCount, oversizeCount, overflowCount } = validateFiles(files);
+    if (files.length > MAX_BATCH) {
+      toast.error(`单次最多上传 ${MAX_BATCH} 个文件，请减少文件数量后重试`);
+      return;
+    }
+
+    const { accepted, invalidTypeCount, oversizeCount } = validateFiles(files);
     if (accepted.length === 0) return toast.error("没有符合要求的文件，请检查格式或大小限制");
 
     setUploading(true);
@@ -413,7 +420,6 @@ export default function DocumentsPage() {
       const notes: string[] = [];
       if (invalidTypeCount > 0) notes.push(`${invalidTypeCount} 个格式不支持`);
       if (oversizeCount > 0) notes.push(`${oversizeCount} 个超过 10MB`);
-      if (overflowCount > 0) notes.push(`${overflowCount} 个超出单次 20 个文件上限`);
       toast.success(
         notes.length
           ? `已上传 ${accepted.length} 个文件，并加入索引队列，${notes.join("，")}`
@@ -1023,7 +1029,7 @@ export default function DocumentsPage() {
                       拖拽文档到这里，或点击选择文件
                     </p>
                     <p className="mt-2 text-sm text-slate-500">
-                      支持 txt / md / pdf / docx，单文件最大 10MB，单次最多 20 个文件
+                      支持 txt / md / pdf / docx，单文件最大 10MB，单次最多 {MAX_BATCH} 个文件
                     </p>
                     <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
                       <Button

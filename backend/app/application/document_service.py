@@ -41,7 +41,7 @@ from app.services.sensitive_word_service import get_sensitive_word_service
 from app.services.vector_store import delete_by_document_id
 from app.utils.file_parser import MAX_FILE_SIZE, SUPPORTED_EXTENSIONS, extract_text_from_file
 
-MAX_BATCH_UPLOAD_FILES = 100
+MAX_BATCH_UPLOAD_FILES = 500
 
 
 class DocumentService:
@@ -497,6 +497,7 @@ class DocumentService:
         user_id: int,
     ) -> IndexingPanelSummaryResponse:
         repo = IndexJobRepository(db, user_id=user_id)
+        await repo.refresh_active_jobs_for_user()
         job_rows = await repo.list_active_jobs(limit=5)
         active_jobs: list[ActiveIndexingJob] = []
         queued = 0

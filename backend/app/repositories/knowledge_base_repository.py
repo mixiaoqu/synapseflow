@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, KnowledgeBase
 from app.repositories.access_scope import accessible_knowledge_base_condition
+from app.repositories.index_job_repository import IndexJobRepository
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
     INDEX_STATUS_INDEXED,
@@ -242,6 +243,10 @@ class KnowledgeBaseRepository:
         knowledge_base = await self.get_by_id(knowledge_base_id)
         if not knowledge_base:
             return False
+        await IndexJobRepository(self.db, user_id=self.user_id).cancel_active_jobs_for_knowledge_base(
+            knowledge_base_id=knowledge_base_id,
+            error_message="Knowledge base was deleted before indexing finished",
+        )
         await self.db.execute(
             delete(Document).where(
                 Document.knowledge_base_id == knowledge_base_id,
