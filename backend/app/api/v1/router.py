@@ -8,8 +8,10 @@ from app.api.v1.endpoints import (
     auth,
     document_categories,
     documents,
+    embed,
     health,
     knowledge_bases,
+    projects,
     sensitive_words,
     teams,
     users,
@@ -21,6 +23,7 @@ api_router.include_router(health.router, tags=["health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(ask.router, prefix="/ask", tags=["ask"])
 api_router.include_router(ask.admin_router, prefix="/admin/qa", tags=["admin-qa"])
+api_router.include_router(embed.router, prefix="/embed", tags=["embed"])
 api_router.include_router(assistants.router, prefix="/assistants", tags=["assistants"])
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
 api_router.include_router(
@@ -29,6 +32,7 @@ api_router.include_router(
     tags=["document-categories"],
 )
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
+api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(
     sensitive_words.router,

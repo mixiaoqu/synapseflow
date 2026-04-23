@@ -14,6 +14,7 @@ const API_BASE_URL = normalizeApiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
 interface RequestOptions {
   auth?: boolean;
   headers?: HeadersInit;
+  signal?: AbortSignal;
 }
 
 export class ApiClient {
@@ -56,6 +57,7 @@ export class ApiClient {
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       method: "GET",
       headers: this.buildHeaders(options?.headers, auth, false),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -71,6 +73,7 @@ export class ApiClient {
       method: "POST",
       headers: this.buildHeaders(options?.headers, auth, false),
       body: data === undefined ? undefined : JSON.stringify(data),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -86,6 +89,7 @@ export class ApiClient {
       method: "PUT",
       headers: this.buildHeaders(options?.headers, auth, false),
       body: data === undefined ? undefined : JSON.stringify(data),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -100,6 +104,7 @@ export class ApiClient {
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       method: "DELETE",
       headers: this.buildHeaders(options?.headers, auth, false),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -124,6 +129,7 @@ export class ApiClient {
       method: "POST",
       headers: this.buildHeaders(options?.headers, auth, true),
       body: formData,
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -143,6 +149,7 @@ export class ApiClient {
       method: "POST",
       headers: this.buildHeaders(options?.headers, auth, false),
       body: JSON.stringify(data),
+      signal: options?.signal,
     });
 
     if (!response.ok) {

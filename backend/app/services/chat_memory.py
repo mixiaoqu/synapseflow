@@ -35,6 +35,11 @@ class ChatSessionSummaryRecord:
     session_id: str
     title: str
     preview: str | None
+    project_id: int | None
+    project_app_id: int | None
+    external_user_id: str | None
+    external_user_name: str | None
+    source: str | None
     team_id: int | None
     knowledge_base_id: int | None
     knowledge_base_name: str | None
@@ -60,15 +65,22 @@ class ChatMemoryStore(Protocol):
     async def load_context(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatMemoryContext: ...
 
     async def save_turn(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_id: int | None = None,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+        external_user_name: str | None = None,
+        source: str | None = None,
         team_id: int | None,
         knowledge_base_id: int | None,
         assistant_id: int | None,
@@ -81,22 +93,28 @@ class ChatMemoryStore(Protocol):
     async def list_sessions(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         limit: int = 30,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> list[ChatSessionSummaryRecord]: ...
 
     async def get_session_detail(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatSessionDetailRecord | None: ...
 
     async def delete_session(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> bool: ...
 
 
@@ -130,11 +148,19 @@ class DatabaseChatMemoryStore:
     async def load_context(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatMemoryContext:
         async with AsyncSessionLocal() as db:
-            session = await self._get_session(db, user_id=user_id, session_id=session_id)
+            session = await self._get_session(
+                db,
+                user_id=user_id,
+                session_id=session_id,
+                project_app_id=project_app_id,
+                external_user_id=external_user_id,
+            )
             if not session:
                 return ChatMemoryContext(messages=[], summary=None)
 
@@ -154,8 +180,13 @@ class DatabaseChatMemoryStore:
     async def save_turn(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_id: int | None = None,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+        external_user_name: str | None = None,
+        source: str | None = None,
         team_id: int | None,
         knowledge_base_id: int | None,
         assistant_id: int | None,
@@ -174,7 +205,14 @@ class DatabaseChatMemoryStore:
                 db,
                 user_id=user_id,
                 session_id=session_id,
+                project_app_id=project_app_id,
+                external_user_id=external_user_id,
             )
+            session.project_id = project_id
+            session.project_app_id = project_app_id
+            session.external_user_id = external_user_id
+            session.external_user_name = external_user_name
+            session.source = source
             session.team_id = team_id
             session.knowledge_base_id = knowledge_base_id
             session.assistant_id = assistant_id
@@ -204,12 +242,14 @@ class DatabaseChatMemoryStore:
     async def list_sessions(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         limit: int = 30,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> list[ChatSessionSummaryRecord]:
         normalized_limit = max(1, min(limit, 100))
         async with AsyncSessionLocal() as db:
-            rows = await db.execute(
+            stmt = (
                 select(
                     ChatSession,
                     KnowledgeBase.name,
@@ -219,10 +259,17 @@ class DatabaseChatMemoryStore:
                 .outerjoin(KnowledgeBase, KnowledgeBase.id == ChatSession.knowledge_base_id)
                 .outerjoin(AssistantProfile, AssistantProfile.id == ChatSession.assistant_id)
                 .outerjoin(DocumentCategory, DocumentCategory.id == ChatSession.category_id)
-                .where(ChatSession.user_id == user_id)
                 .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
                 .limit(normalized_limit)
             )
+            if user_id is not None:
+                stmt = stmt.where(ChatSession.user_id == user_id)
+            else:
+                stmt = stmt.where(
+                    ChatSession.project_app_id == project_app_id,
+                    ChatSession.external_user_id == external_user_id,
+                )
+            rows = await db.execute(stmt)
             sessions = rows.all()
             if not sessions:
                 return []
@@ -245,11 +292,13 @@ class DatabaseChatMemoryStore:
     async def get_session_detail(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatSessionDetailRecord | None:
         async with AsyncSessionLocal() as db:
-            row = await db.execute(
+            stmt = (
                 select(
                     ChatSession,
                     KnowledgeBase.name,
@@ -259,11 +308,16 @@ class DatabaseChatMemoryStore:
                 .outerjoin(KnowledgeBase, KnowledgeBase.id == ChatSession.knowledge_base_id)
                 .outerjoin(AssistantProfile, AssistantProfile.id == ChatSession.assistant_id)
                 .outerjoin(DocumentCategory, DocumentCategory.id == ChatSession.category_id)
-                .where(
-                    ChatSession.user_id == user_id,
-                    ChatSession.session_id == session_id,
-                )
+                .where(ChatSession.session_id == session_id)
             )
+            if user_id is not None:
+                stmt = stmt.where(ChatSession.user_id == user_id)
+            else:
+                stmt = stmt.where(
+                    ChatSession.project_app_id == project_app_id,
+                    ChatSession.external_user_id == external_user_id,
+                )
+            row = await db.execute(stmt)
             result = row.one_or_none()
             if result is None:
                 return None
@@ -282,6 +336,11 @@ class DatabaseChatMemoryStore:
                 session_id=summary.session_id,
                 title=summary.title,
                 preview=summary.preview,
+                project_id=summary.project_id,
+                project_app_id=summary.project_app_id,
+                external_user_id=summary.external_user_id,
+                external_user_name=summary.external_user_name,
+                source=summary.source,
                 team_id=summary.team_id,
                 knowledge_base_id=summary.knowledge_base_id,
                 knowledge_base_name=summary.knowledge_base_name,
@@ -298,18 +357,21 @@ class DatabaseChatMemoryStore:
     async def delete_session(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> bool:
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                delete(ChatSession)
-                .where(
-                    ChatSession.user_id == user_id,
-                    ChatSession.session_id == session_id,
+            stmt = delete(ChatSession).where(ChatSession.session_id == session_id)
+            if user_id is not None:
+                stmt = stmt.where(ChatSession.user_id == user_id)
+            else:
+                stmt = stmt.where(
+                    ChatSession.project_app_id == project_app_id,
+                    ChatSession.external_user_id == external_user_id,
                 )
-                .returning(ChatSession.id)
-            )
+            result = await db.execute(stmt.returning(ChatSession.id))
             deleted_row = result.first()
             if deleted_row is None:
                 await db.rollback()
@@ -322,25 +384,38 @@ class DatabaseChatMemoryStore:
     async def _get_session(
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatSession | None:
-        result = await db.execute(
-            select(ChatSession).where(
-                ChatSession.user_id == user_id,
-                ChatSession.session_id == session_id,
+        stmt = select(ChatSession).where(ChatSession.session_id == session_id)
+        if user_id is not None:
+            stmt = stmt.where(ChatSession.user_id == user_id)
+        else:
+            stmt = stmt.where(
+                ChatSession.project_app_id == project_app_id,
+                ChatSession.external_user_id == external_user_id,
             )
-        )
+        result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def _get_or_create_session(
         self,
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatSession:
-        session = await self._get_session(db, user_id=user_id, session_id=session_id)
+        session = await self._get_session(
+            db,
+            user_id=user_id,
+            session_id=session_id,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
+        )
         if session:
             return session
 
@@ -421,6 +496,11 @@ class DatabaseChatMemoryStore:
             session_id=session.session_id,
             title=title,
             preview=preview,
+            project_id=session.project_id,
+            project_app_id=session.project_app_id,
+            external_user_id=session.external_user_id,
+            external_user_name=session.external_user_name,
+            source=session.source,
             team_id=session.team_id,
             knowledge_base_id=session.knowledge_base_id,
             knowledge_base_name=kb_name,

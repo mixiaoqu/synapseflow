@@ -44,6 +44,9 @@ const QA_REVIEW_LABELS = [
 type QaPanelFilters = {
   limit: number;
   teamId: string;
+  projectId: string;
+  appId: string;
+  externalUserId: string;
   knowledgeBaseId: string;
   categoryId: string;
   answerStatus: string;
@@ -60,6 +63,9 @@ type QaPanelFilters = {
 const DEFAULT_FILTERS: QaPanelFilters = {
   limit: 50,
   teamId: "",
+  projectId: "",
+  appId: "",
+  externalUserId: "",
   knowledgeBaseId: "",
   categoryId: "",
   answerStatus: "",
@@ -264,6 +270,9 @@ function toLogListFilters(f: QaPanelFilters): AskLogListFilters {
   return {
     limit: f.limit,
     team_id:              f.teamId              ? Number(f.teamId)            : null,
+    project_id:           f.projectId           ? Number(f.projectId)         : null,
+    project_app_id:       f.appId               ? Number(f.appId)             : null,
+    external_user_id:     f.externalUserId      || null,
     knowledge_base_id:     f.knowledgeBaseId     ? Number(f.knowledgeBaseId)  : null,
     category_id:          f.categoryId          ? Number(f.categoryId)       : null,
     answer_status:        f.answerStatus       || null,

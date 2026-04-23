@@ -57,7 +57,7 @@ class KbChatService(BaseAgentService):
         self,
         request: "KbChatRequest",
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str | None = None,
         chat_history: list[dict[str, Any]] | None = None,
         memory_summary: str | None = None,
@@ -80,6 +80,11 @@ class KbChatService(BaseAgentService):
             {
                 "session_id": resolved_session_id,
                 "query": request.query,
+                "project_id": getattr(request, "project_id", None),
+                "project_app_id": getattr(request, "project_app_id", None),
+                "external_user_id": getattr(request, "external_user_id", None),
+                "external_user_name": getattr(request, "external_user_name", None),
+                "source": getattr(request, "source", None),
                 "assistant_id": getattr(request, "assistant_id", None),
                 "assistant_name": getattr(request, "assistant_name", None),
                 "assistant_welcome_message": getattr(
@@ -138,19 +143,31 @@ class KbChatService(BaseAgentService):
     async def _load_memory_context(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatMemoryContext:
-        return await self._memory_store.load_context(user_id=user_id, session_id=session_id)
+        return await self._memory_store.load_context(
+            user_id=user_id,
+            session_id=session_id,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
+        )
 
     async def _prepare_state(
         self,
         request: "KbChatRequest",
         *,
-        user_id: int,
+        user_id: int | None,
     ) -> dict[str, Any]:
         resolved_session_id = request.session_id or self._new_run_id()
-        memory = await self._load_memory_context(user_id=user_id, session_id=resolved_session_id)
+        memory = await self._load_memory_context(
+            user_id=user_id,
+            session_id=resolved_session_id,
+            project_app_id=getattr(request, "project_app_id", None),
+            external_user_id=getattr(request, "external_user_id", None),
+        )
         return self.build_initial_state(
             request,
             user_id=user_id,
@@ -170,11 +187,16 @@ class KbChatService(BaseAgentService):
     ) -> None:
         session_id = state.get("session_id")
         user_id = state.get("user_id")
-        if not session_id or not user_id:
+        if not session_id:
             return
         await self._memory_store.save_turn(
-            user_id=int(user_id),
+            user_id=int(user_id) if user_id else None,
             session_id=session_id,
+            project_id=state.get("project_id"),
+            project_app_id=state.get("project_app_id"),
+            external_user_id=state.get("external_user_id"),
+            external_user_name=state.get("external_user_name"),
+            source=state.get("source"),
             team_id=state.get("team_id"),
             knowledge_base_id=state.get("knowledge_base_id"),
             assistant_id=state.get("assistant_id"),
@@ -256,15 +278,17 @@ class KbChatService(BaseAgentService):
         latency_ms: int | None,
     ) -> int | None:
         user_id = state.get("user_id")
-        if not user_id:
-            return None
-
         try:
             async with AsyncSessionLocal() as db:
                 repo = KbChatLogRepository(db)
                 row = await repo.create_log(
-                    user_id=int(user_id),
+                    user_id=int(user_id) if user_id else None,
                     session_id=state.get("session_id"),
+                    project_id=state.get("project_id"),
+                    project_app_id=state.get("project_app_id"),
+                    external_user_id=state.get("external_user_id"),
+                    external_user_name=state.get("external_user_name"),
+                    source=state.get("source"),
                     knowledge_base_id=state.get("knowledge_base_id"),
                     assistant_id=state.get("assistant_id"),
                     category_id=state.get("category_id"),
@@ -314,7 +338,7 @@ class KbChatService(BaseAgentService):
             team_id=getattr(request, "team_id", None),
         )
 
-    async def invoke(self, request: "KbChatRequest", *, user_id: int) -> "KbChatResponse":
+    async def invoke(self, request: "KbChatRequest", *, user_id: int | None) -> "KbChatResponse":
         """Run the chat graph and map its result to the response schema."""
 
         from app.models.schemas.kb_chat import KbChatResponse
@@ -381,7 +405,7 @@ class KbChatService(BaseAgentService):
             log_id=log_id,
         )
 
-    async def preview(self, request: "KbChatRequest", *, user_id: int) -> "KbChatResponse":
+    async def preview(self, request: "KbChatRequest", *, user_id: int | None) -> "KbChatResponse":
         """Run a stateless preview without persisting chat memory or logs."""
 
         from app.models.schemas.kb_chat import KbChatResponse
@@ -431,19 +455,31 @@ class KbChatService(BaseAgentService):
     async def list_sessions(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         limit: int = 30,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> list["KbChatSessionSummary"]:
         """List persisted KB chat sessions for the current user."""
 
         from app.models.schemas.kb_chat import KbChatSessionSummary
 
-        records = await self._memory_store.list_sessions(user_id=user_id, limit=limit)
+        records = await self._memory_store.list_sessions(
+            user_id=user_id,
+            limit=limit,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
+        )
         return [
             KbChatSessionSummary(
                 session_id=record.session_id,
                 title=record.title,
                 preview=record.preview,
+                project_id=record.project_id,
+                project_app_id=record.project_app_id,
+                external_user_id=record.external_user_id,
+                external_user_name=record.external_user_name,
+                source=record.source,
                 team_id=record.team_id,
                 knowledge_base_id=record.knowledge_base_id,
                 knowledge_base_name=record.knowledge_base_name,
@@ -461,8 +497,10 @@ class KbChatService(BaseAgentService):
     async def get_session(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> "KbChatSessionDetail | None":
         """Load one persisted KB chat session for the current user."""
 
@@ -471,6 +509,8 @@ class KbChatService(BaseAgentService):
         record = await self._memory_store.get_session_detail(
             user_id=user_id,
             session_id=session_id,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
         )
         if record is None:
             return None
@@ -479,6 +519,11 @@ class KbChatService(BaseAgentService):
             session_id=record.session_id,
             title=record.title,
             preview=record.preview,
+            project_id=record.project_id,
+            project_app_id=record.project_app_id,
+            external_user_id=record.external_user_id,
+            external_user_name=record.external_user_name,
+            source=record.source,
             team_id=record.team_id,
             knowledge_base_id=record.knowledge_base_id,
             knowledge_base_name=record.knowledge_base_name,
@@ -515,21 +560,25 @@ class KbChatService(BaseAgentService):
     async def delete_session(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> bool:
         """Delete one persisted KB chat session for the current user."""
 
         return await self._memory_store.delete_session(
             user_id=user_id,
             session_id=session_id,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
         )
 
     async def stream(
         self,
         request: "KbChatRequest",
         *,
-        user_id: int,
+        user_id: int | None,
     ) -> AsyncGenerator[str, None]:
         """Stream graph updates and answer tokens as standardized SSE messages."""
 

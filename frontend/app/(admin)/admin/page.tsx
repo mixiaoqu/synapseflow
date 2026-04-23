@@ -6,6 +6,7 @@ import {
   Bot,
   Building2,
   CheckSquare,
+  FolderKanban,
   ShieldAlert,
   Users,
 } from "lucide-react";
@@ -53,6 +54,13 @@ const sections: Section[] = [
     title: "配置问答运行",
     desc: "知识资产准备好之后，再配置助手和输入防线，决定前台问答如何工作。",
     items: [
+      {
+        href: "/admin/projects",
+        title: "项目管理",
+        desc: "管理项目与应用配置，维护嵌入式问答入口和项目级助手绑定。",
+        icon: FolderKanban,
+        color: "bg-sky-50 text-sky-600",
+      },
       {
         href: "/admin/assistants",
         title: "助手管理",

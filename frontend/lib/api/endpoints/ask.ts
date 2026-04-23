@@ -3,6 +3,9 @@ import { apiClient } from "../client";
 export interface AskRequest {
   query: string;
   team_id?: number | null;
+  project_id?: number | null;
+  project_app_id?: number | null;
+  external_user_id?: string | null;
   knowledge_base_id?: number | null;
   category_id?: number | null;
   session_id?: string | null;
@@ -57,6 +60,11 @@ export interface AskSessionSummary {
   session_id: string;
   title: string;
   preview?: string | null;
+  project_id?: number | null;
+  project_app_id?: number | null;
+  external_user_id?: string | null;
+  external_user_name?: string | null;
+  source?: string | null;
   team_id?: number | null;
   knowledge_base_id?: number | null;
   knowledge_base_name?: string | null;
@@ -75,8 +83,15 @@ export interface AskSessionDetail extends AskSessionSummary {
 
 export interface AskLogItem {
   id: number;
-  user_id: number;
+  user_id: number | null;
   session_id?: string | null;
+  project_id?: number | null;
+  project_name?: string | null;
+  project_app_id?: number | null;
+  project_app_name?: string | null;
+  external_user_id?: string | null;
+  external_user_name?: string | null;
+  source?: string | null;
   team_id?: number | null;
   team_name?: string | null;
   knowledge_base_id?: number | null;
@@ -162,6 +177,9 @@ export interface AskLogListResponse {
 }
 
 export interface AskLogListFilters {
+  project_id?: number | null;
+  project_app_id?: number | null;
+  external_user_id?: string | null;
   limit?: number;
   team_id?: number | null;
   knowledge_base_id?: number | null;
@@ -214,6 +232,9 @@ export const askApi = {
     const params = new URLSearchParams();
     params.set("limit", String(filters.limit ?? 50));
     if (filters.team_id != null) params.set("team_id", String(filters.team_id));
+    if (filters.project_id != null) params.set("project_id", String(filters.project_id));
+    if (filters.project_app_id != null) params.set("project_app_id", String(filters.project_app_id));
+    if (filters.external_user_id) params.set("external_user_id", filters.external_user_id);
     if (filters.knowledge_base_id != null) {
       params.set("knowledge_base_id", String(filters.knowledge_base_id));
     }

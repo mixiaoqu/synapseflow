@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-this-secret-key-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
+    ENTERPRISE_SERVICE_TOKEN: str = ""
+    EMBED_TOKEN_EXPIRE_MINUTES: int = 15
+    EMBED_FRONTEND_BASE_URL: str = ""
 
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 

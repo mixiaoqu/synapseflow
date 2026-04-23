@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   BarChart3,
@@ -9,7 +9,9 @@ import {
   Bot,
   Building2,
   CheckSquare,
+  ChevronDown,
   ChevronRight,
+  FolderKanban,
   Home,
   LogOut,
   Settings,
@@ -34,15 +36,36 @@ const AVATAR_PALETTES = [
   "bg-teal-100 text-teal-700",
 ];
 
-const navItems = [
-  { href: "/admin", title: "后台首页", icon: Home },
-  { href: "/admin/documents", title: "知识库管理", icon: BookOpen },
-  { href: "/admin/assistants", title: "助手管理", icon: Bot },
-  { href: "/admin/review", title: "审核发布", icon: CheckSquare },
-  { href: "/admin/qa-quality", title: "问答质检", icon: BarChart3 },
-  { href: "/admin/sensitive-words", title: "敏感词管理", icon: ShieldAlert },
-  { href: "/admin/teams", title: "团队管理", icon: Building2 },
-  { href: "/admin/users", title: "用户管理", icon: Users },
+const menuGroups = [
+  {
+    title: "概览",
+    items: [
+      { href: "/admin", title: "后台首页", icon: Home },
+    ],
+  },
+  {
+    title: "业务核心",
+    items: [
+      { href: "/admin/projects", title: "项目管理", icon: FolderKanban },
+      { href: "/admin/documents", title: "知识库管理", icon: BookOpen },
+      { href: "/admin/assistants", title: "助手管理", icon: Bot },
+    ],
+  },
+  {
+    title: "组织架构",
+    items: [
+      { href: "/admin/teams", title: "团队管理", icon: Building2 },
+      { href: "/admin/users", title: "用户管理", icon: Users },
+    ],
+  },
+  {
+    title: "合规与质检",
+    items: [
+      { href: "/admin/review", title: "审核发布", icon: CheckSquare },
+      { href: "/admin/qa-quality", title: "问答质检", icon: BarChart3 },
+      { href: "/admin/sensitive-words", title: "敏感词管理", icon: ShieldAlert },
+    ],
+  },
 ];
 
 const ROLE_COLORS: Record<string, { bg: string; text: string }> = {
@@ -99,6 +122,11 @@ function AdminLayoutContent({
   const loginHref = `/login?next=${encodeURIComponent(nextPath)}`;
   const { currentUser, authChecked } = useAuthSession(loginHref, { requireAdmin: true });
 
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<number, boolean>>({});
+  const toggleGroup = (idx: number) => {
+    setCollapsedGroups((prev) => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
   if (!authChecked || !currentUser) {
     return <SessionLoadingScreen />;
   }
@@ -126,31 +154,56 @@ function AdminLayoutContent({
           </div>
 
           <nav className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-            <div className="space-y-0.5">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const active =
-                  pathname === item.href ||
-                  (item.href !== "/admin" && pathname.startsWith(`${item.href}/`));
+            <div className="space-y-6">
+              {menuGroups.map((group, groupIdx) => {
+                const isCollapsed = collapsedGroups[groupIdx];
 
                 return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`group flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm transition-all ${
-                      active
-                        ? "bg-white text-gray-900 font-medium shadow-sm"
-                        : "text-gray-400 hover:bg-white/8 hover:text-white"
-                    }`}
-                  >
-                    <Icon
-                      className={`h-4 w-4 shrink-0 transition-colors ${
-                        active ? "text-gray-700" : "text-gray-500 group-hover:text-gray-300"
-                      }`}
-                    />
-                    <span>{item.title}</span>
-                    {active ? <ChevronRight className="ml-auto h-3.5 w-3.5 text-gray-400" /> : null}
-                  </Link>
+                  <div key={groupIdx}>
+                    <button
+                      onClick={() => toggleGroup(groupIdx)}
+                      className="mb-2 flex w-full items-center justify-between px-3 text-left text-xs font-medium text-gray-500 transition-colors hover:text-gray-300"
+                    >
+                      <span>{group.title}</span>
+                      {isCollapsed ? (
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                    {!isCollapsed && (
+                      <div className="space-y-0.5">
+                        {group.items.map((item) => {
+                          const Icon = item.icon;
+                          const active =
+                            pathname === item.href ||
+                            (item.href !== "/admin" && pathname.startsWith(`${item.href}/`));
+
+                          return (
+                            <Link
+                              key={item.href}
+                              href={item.href}
+                              className={`group flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm transition-all ${
+                                active
+                                  ? "bg-blue-500/10 text-blue-400 font-medium"
+                                  : "text-gray-400 hover:bg-white/8 hover:text-white"
+                              }`}
+                            >
+                              <Icon
+                                className={`h-4 w-4 shrink-0 transition-colors ${
+                                  active ? "text-blue-400" : "text-gray-500 group-hover:text-gray-300"
+                                }`}
+                              />
+                              <span>{item.title}</span>
+                              {active ? (
+                                <ChevronRight className="ml-auto h-3.5 w-3.5 text-blue-400/50" />
+                              ) : null}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>

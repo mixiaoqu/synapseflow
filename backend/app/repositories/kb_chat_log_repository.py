@@ -16,6 +16,8 @@ from app.db.models import (
     DocumentCategory,
     KbChatLog,
     KnowledgeBase,
+    Project,
+    ProjectApp,
     Team,
 )
 from app.utils.time import utc_now
@@ -24,8 +26,15 @@ from app.utils.time import utc_now
 @dataclass(slots=True)
 class KbChatLogRecord:
     id: int
-    user_id: int
+    user_id: int | None
     session_id: str | None
+    project_id: int | None
+    project_name: str | None
+    project_app_id: int | None
+    project_app_name: str | None
+    external_user_id: str | None
+    external_user_name: str | None
+    source: str | None
     team_id: int | None
     team_name: str | None
     knowledge_base_id: int | None
@@ -90,8 +99,13 @@ class KbChatLogRepository:
     async def create_log(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str | None,
+        project_id: int | None = None,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+        external_user_name: str | None = None,
+        source: str | None = None,
         knowledge_base_id: int | None,
         assistant_id: int | None,
         category_id: int | None,
@@ -105,6 +119,11 @@ class KbChatLogRepository:
         row = KbChatLog(
             user_id=user_id,
             session_id=session_id,
+            project_id=project_id,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
+            external_user_name=external_user_name,
+            source=source,
             knowledge_base_id=knowledge_base_id,
             assistant_id=assistant_id,
             category_id=category_id,
@@ -125,6 +144,9 @@ class KbChatLogRepository:
         *,
         limit: int = 50,
         team_id: int | None = None,
+        project_id: int | None = None,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
         knowledge_base_id: int | None = None,
         category_id: int | None = None,
         answer_status: str | None = None,
@@ -143,17 +165,24 @@ class KbChatLogRepository:
                 KbChatLog,
                 KnowledgeBase,
                 AssistantProfile.name.label("assistant_name"),
+                Project.name.label("project_name"),
+                ProjectApp.name.label("project_app_name"),
                 Team.name.label("team_name"),
                 DocumentCategory.name.label("category_name"),
             )
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
             .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
+            .outerjoin(Project, KbChatLog.project_id == Project.id)
+            .outerjoin(ProjectApp, KbChatLog.project_app_id == ProjectApp.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
             .outerjoin(DocumentCategory, KbChatLog.category_id == DocumentCategory.id)
         )
         stmt = self._apply_list_log_filters(
             stmt,
             team_id=team_id,
+            project_id=project_id,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             answer_status=answer_status,
@@ -176,12 +205,17 @@ class KbChatLogRepository:
             .select_from(KbChatLog)
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
             .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
+            .outerjoin(Project, KbChatLog.project_id == Project.id)
+            .outerjoin(ProjectApp, KbChatLog.project_app_id == ProjectApp.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
             .outerjoin(DocumentCategory, KbChatLog.category_id == DocumentCategory.id)
         )
         total_stmt = self._apply_list_log_filters(
             total_stmt,
             team_id=team_id,
+            project_id=project_id,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             answer_status=answer_status,
@@ -202,6 +236,13 @@ class KbChatLogRepository:
                     id=item.id,
                     user_id=item.user_id,
                     session_id=item.session_id,
+                    project_id=item.project_id,
+                    project_name=project_name,
+                    project_app_id=item.project_app_id,
+                    project_app_name=project_app_name,
+                    external_user_id=item.external_user_id,
+                    external_user_name=item.external_user_name,
+                    source=item.source,
                     team_id=knowledge_base.team_id if knowledge_base else None,
                     team_name=team_name,
                     knowledge_base_id=item.knowledge_base_id,
@@ -225,7 +266,15 @@ class KbChatLogRepository:
                     reviewed_by_user_id=item.reviewed_by_user_id,
                     created_at=item.created_at,
                 )
-                for item, knowledge_base, assistant_name, team_name, category_name in rows
+                for (
+                    item,
+                    knowledge_base,
+                    assistant_name,
+                    project_name,
+                    project_app_name,
+                    team_name,
+                    category_name,
+                ) in rows
             ],
             int(total),
         )
@@ -235,6 +284,9 @@ class KbChatLogRepository:
         stmt,
         *,
         team_id: int | None,
+        project_id: int | None,
+        project_app_id: int | None,
+        external_user_id: str | None,
         knowledge_base_id: int | None,
         category_id: int | None,
         answer_status: str | None,
@@ -249,6 +301,12 @@ class KbChatLogRepository:
     ):
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if project_id is not None:
+            stmt = stmt.where(KbChatLog.project_id == project_id)
+        if project_app_id is not None:
+            stmt = stmt.where(KbChatLog.project_app_id == project_app_id)
+        if external_user_id:
+            stmt = stmt.where(KbChatLog.external_user_id == external_user_id.strip())
         if knowledge_base_id is not None:
             stmt = stmt.where(KbChatLog.knowledge_base_id == knowledge_base_id)
         if category_id is not None:
@@ -283,11 +341,15 @@ class KbChatLogRepository:
                 KnowledgeBase.name.label("knowledge_base_name"),
                 KnowledgeBase.team_id.label("knowledge_base_team_id"),
                 AssistantProfile.name.label("assistant_name"),
+                Project.name.label("project_name"),
+                ProjectApp.name.label("project_app_name"),
                 Team.name.label("team_name"),
                 DocumentCategory.name.label("category_name"),
             )
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
             .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
+            .outerjoin(Project, KbChatLog.project_id == Project.id)
+            .outerjoin(ProjectApp, KbChatLog.project_app_id == ProjectApp.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
             .outerjoin(DocumentCategory, KbChatLog.category_id == DocumentCategory.id)
             .where(KbChatLog.id == log_id)
@@ -296,12 +358,23 @@ class KbChatLogRepository:
         if row is None:
             return None
 
-        item, knowledge_base_name, knowledge_base_team_id, assistant_name, team_name, category_name = row
+        (
+            item,
+            knowledge_base_name,
+            knowledge_base_team_id,
+            assistant_name,
+            project_name,
+            project_app_name,
+            team_name,
+            category_name,
+        ) = row
         session = None
         if item.session_id:
             session = await self._get_chat_session(
                 user_id=item.user_id,
                 session_id=item.session_id,
+                project_app_id=item.project_app_id,
+                external_user_id=item.external_user_id,
             )
 
         session_messages: list[tuple[str, str, dict[str, Any] | None, datetime]] = []
@@ -312,6 +385,8 @@ class KbChatLogRepository:
             item=item,
             knowledge_base_name=knowledge_base_name,
             assistant_name=assistant_name,
+            project_name=project_name,
+            project_app_name=project_app_name,
             category_name=category_name,
             team_id=(session.team_id if session is not None else knowledge_base_team_id),
             team_name=team_name,
@@ -364,13 +439,19 @@ class KbChatLogRepository:
     async def _get_chat_session(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatSession | None:
-        stmt = select(ChatSession).where(
-            ChatSession.user_id == user_id,
-            ChatSession.session_id == session_id,
-        )
+        stmt = select(ChatSession).where(ChatSession.session_id == session_id)
+        if user_id is not None:
+            stmt = stmt.where(ChatSession.user_id == user_id)
+        else:
+            stmt = stmt.where(
+                ChatSession.project_app_id == project_app_id,
+                ChatSession.external_user_id == external_user_id,
+            )
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
     async def _load_session_messages(
@@ -421,6 +502,8 @@ class KbChatLogRepository:
         item: KbChatLog,
         knowledge_base_name: str | None,
         assistant_name: str | None,
+        project_name: str | None,
+        project_app_name: str | None,
         category_name: str | None,
         team_id: int | None,
         team_name: str | None,
@@ -505,6 +588,13 @@ class KbChatLogRepository:
             id=item.id,
             user_id=item.user_id,
             session_id=item.session_id,
+            project_id=item.project_id,
+            project_name=project_name,
+            project_app_id=item.project_app_id,
+            project_app_name=project_app_name,
+            external_user_id=item.external_user_id,
+            external_user_name=item.external_user_name,
+            source=item.source,
             knowledge_base_id=item.knowledge_base_id,
             knowledge_base_name=knowledge_base_name,
             assistant_id=item.assistant_id,
