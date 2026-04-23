@@ -7,6 +7,7 @@ from typing import Any, Callable
 from langgraph.graph import END, StateGraph
 
 from app.agents.nodes.kb_chat import (
+    user_kb_plan_query_node,
     user_kb_retrieve_node,
 )
 from app.agents.nodes.kb_chat.generate_answer import build_user_kb_generate_answer_node
@@ -20,9 +21,11 @@ def create_kb_chat_graph(
     """Create the single-round graph used for user knowledge-base chat."""
 
     workflow = StateGraph(KbChatState)
+    workflow.add_node("plan_query", user_kb_plan_query_node)
     workflow.add_node("retrieve", user_kb_retrieve_node)
     workflow.add_node("answer", build_user_kb_generate_answer_node(llm_factory=llm_factory))
-    workflow.set_entry_point("retrieve")
+    workflow.set_entry_point("plan_query")
+    workflow.add_edge("plan_query", "retrieve")
     workflow.add_edge("retrieve", "answer")
     workflow.add_edge("answer", END)
     return workflow.compile()

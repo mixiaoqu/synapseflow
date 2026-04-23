@@ -247,7 +247,7 @@ async def _finalize_ranked_rows(
 ) -> List[dict]:
     if settings.RERANK_ENABLED and results:
         logger.debug(
-            "KB retrieval rerank candidates={} final_top_k={}",
+            "知识库检索：准备重排候选片段，候选数={}，保留上限={}",
             len(results),
             final_top_k,
         )
@@ -322,15 +322,11 @@ def _apply_retrieval_thresholds(
     removed = len(results) - len(filtered)
     if removed:
         logger.info(
-            "KB retrieval thresholds filtered {} of {} rows | distance<= {:.3f} rerank>= {}",
+            "知识库检索：阈值过滤移除了 {} / {} 个候选片段，向量距离阈值<= {:.3f}，精排阈值>= {}",
             removed,
             len(results),
             distance_threshold,
-            (
-                f"{rerank_threshold:.3f}"
-                if rerank_enabled and rerank_threshold is not None
-                else "-"
-            ),
+            (f"{rerank_threshold:.3f}" if rerank_enabled and rerank_threshold is not None else "-"),
         )
     return filtered
 
@@ -362,12 +358,10 @@ def _build_retrieval_output(
     ]
     dist_s = "{:.3f}~{:.3f}".format(min(distances), max(distances)) if distances else "-"
     rerank_s = (
-        "{:.3f}~{:.3f}".format(min(rerank_scores), max(rerank_scores))
-        if rerank_scores
-        else "-"
+        "{:.3f}~{:.3f}".format(min(rerank_scores), max(rerank_scores)) if rerank_scores else "-"
     )
     logger.info(
-        "{} round={} mode={} query_count={} result_count={} distance={} rerank={}",
+        "{} 第 {} 轮检索完成：模式={}，查询数={}，结果数={}，距离范围={}，精排范围={}",
         log_prefix,
         iteration + 1,
         mode,
@@ -377,7 +371,7 @@ def _build_retrieval_output(
         rerank_s,
     )
     logger.debug(
-        "{} recall_k={} final_top_k={} llm_ref_k={}",
+        "{} 检索参数：recall_k={}，final_top_k={}，llm_ref_k={}",
         log_prefix,
         recall_k,
         final_top_k,
@@ -387,7 +381,7 @@ def _build_retrieval_output(
     if not results:
         if knowledge_base_id is not None and not has_documents:
             logger.warning(
-                "{} knowledge_base_id={} has no indexed documents",
+                "{} 知识库 {} 当前没有已建索引文档",
                 log_prefix,
                 knowledge_base_id,
             )
@@ -399,7 +393,7 @@ def _build_retrieval_output(
             }
 
         logger.warning(
-            "{} no hits | knowledge_base={} category={}",
+            "{} 未命中相关内容：知识库={}，分类={}",
             log_prefix,
             knowledge_base_id or "all",
             category_id or "all",
@@ -429,7 +423,7 @@ def _build_retrieval_output(
     kept, context = _apply_kb_context_budget(retrieved_docs, budget)
     if budget > 0 and len(kept) < len(retrieved_docs):
         logger.info(
-            "{} context trimmed to {} chars, kept {} of {} chunks",
+            "{} 已按上下文预算裁剪：预算={} 字符，保留 {} / {} 个片段",
             log_prefix,
             budget,
             len(kept),
@@ -564,7 +558,7 @@ async def run_multi_query_kb_retrieval(
     per_query_recall_k = _scaled_candidate_k(len(queries), recall_k, final_top_k)
     per_query_lexical_k = _scaled_candidate_k(len(queries), rag.lexical_k, final_top_k)
 
-    logger.debug("{} multi-query retrieval queries={}", log_prefix, queries)
+    logger.debug("{} 多查询检索使用的查询列表：{}", log_prefix, queries)
     batches = await asyncio.gather(
         *[
             _retrieve_candidate_rows(

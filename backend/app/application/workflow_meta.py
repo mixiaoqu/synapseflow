@@ -6,8 +6,9 @@ from typing import Any
 
 WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
     "kb_chat": {
-        "retrieve": {"label": "Retrieve"},
-        "answer": {"label": "Answer"},
+        "plan_query": {"label": "规划检索"},
+        "retrieve": {"label": "检索知识库"},
+        "answer": {"label": "生成回答"},
     },
 }
 

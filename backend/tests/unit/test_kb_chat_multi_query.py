@@ -58,10 +58,12 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
         *,
         chat_history: list[dict[str, str]] | None = None,
         memory_summary: str | None = None,
+        max_queries: int | None = None,
     ):
         assert query == "How do I configure the generation model?"
         assert chat_history == []
         assert memory_summary is None
+        assert max_queries == 3
         return [
             "How do I configure the generation model?",
             "generation model config",
@@ -85,6 +87,12 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
         "category_id": 4,
         "user_id": 42,
         "allowed_document_statuses": ["published"],
+        "adaptive_policy": {
+            "retrieval_required": True,
+            "max_queries": 3,
+            "result_limit": 10,
+            "context_budget": 12000,
+        },
     }
     result = asyncio.run(user_kb_retrieve_node(state))
 
@@ -97,4 +105,25 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
     assert captured["query"] == "How do I configure the generation model?"
     assert captured["knowledge_base_id"] == 9
     assert captured["category_id"] == 4
+    assert captured["result_limit"] == 10
+    assert captured["context_budget"] == 12000
     assert captured["document_statuses"] == ["published"]
+
+
+def test_user_kb_retrieve_node_skips_when_policy_disables_retrieval():
+    state = {
+        "query": "hello",
+        "adaptive_policy": {
+            "retrieval_required": False,
+            "max_queries": 0,
+            "result_limit": 0,
+            "context_budget": 0,
+        },
+    }
+
+    result = asyncio.run(user_kb_retrieve_node(state))
+
+    assert result["kb_retrieval_status"] == "skipped"
+    assert result["retrieved_docs"] == []
+    assert result["retrieval_queries"] == []
+    assert result["retrieval_funnel"]["mode"] == "skipped"

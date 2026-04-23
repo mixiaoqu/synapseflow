@@ -2,6 +2,8 @@
 Loguru 日志配置
 从 config/logging.yaml 加载配置，支持 .env 覆盖
 """
+
+import logging
 import sys
 from pathlib import Path
 
@@ -56,3 +58,13 @@ def setup_logging() -> None:
 
     diagnose = log_cfg.diagnose
     logger.configure(extra={"diagnose": diagnose})
+
+    for logger_name in (
+        "sqlalchemy",
+        "sqlalchemy.engine",
+        "sqlalchemy.pool",
+        "sqlalchemy.dialects",
+        "asyncpg",
+        "watchfiles.main",
+    ):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)

@@ -21,12 +21,12 @@ from app.application.stream_events import (
 from app.application.workflow_meta import get_node_label
 from app.db.session import AsyncSessionLocal
 from app.repositories.kb_chat_log_repository import KbChatLogRepository
-from app.services.document_lifecycle import RETRIEVAL_VERSION_LIVE, VISIBLE_ASK_DOCUMENT_STATUSES
 from app.services.chat_memory import (
     ChatMemoryContext,
     ChatMemoryStore,
     DatabaseChatMemoryStore,
 )
+from app.services.document_lifecycle import RETRIEVAL_VERSION_LIVE, VISIBLE_ASK_DOCUMENT_STATUSES
 from app.services.sensitive_word_service import SensitiveWordCheckResult, get_sensitive_word_service
 
 if TYPE_CHECKING:
@@ -117,14 +117,14 @@ class KbChatService(BaseAgentService):
                 ),
                 "chat_history": history,
                 "memory_summary": memory_summary,
+                "adaptive_policy": {},
                 "retrieval_queries": [],
                 "allowed_document_statuses": list(
                     getattr(request, "allowed_document_statuses", None)
                     or VISIBLE_ASK_DOCUMENT_STATUSES
                 ),
                 "retrieval_version_mode": (
-                    getattr(request, "retrieval_version_mode", None)
-                    or RETRIEVAL_VERSION_LIVE
+                    getattr(request, "retrieval_version_mode", None) or RETRIEVAL_VERSION_LIVE
                 ),
                 "retrieved_docs": [],
                 "context": "",
@@ -207,6 +207,11 @@ class KbChatService(BaseAgentService):
                 "answer_status": answer_status,
                 "log_id": log_id,
                 "retrieval_status": state.get("kb_retrieval_status"),
+                "adaptive_policy": (
+                    dict(state.get("adaptive_policy") or {})
+                    if isinstance(state.get("adaptive_policy"), dict)
+                    else None
+                ),
                 "retrieval_queries": list(state.get("retrieval_queries") or []),
                 "retrieval_funnel": (
                     dict(state.get("retrieval_funnel") or {})
@@ -238,10 +243,24 @@ class KbChatService(BaseAgentService):
 
     @staticmethod
     def _node_summary(node_id: str, state: dict[str, Any]) -> dict[str, Any]:
+        if node_id == "plan_query":
+            policy = state.get("adaptive_policy") or {}
+            if isinstance(policy, dict):
+                return {
+                    "intent": policy.get("intent"),
+                    "complexity": policy.get("complexity"),
+                    "retrieval_required": policy.get("retrieval_required"),
+                    "max_queries": policy.get("max_queries"),
+                    "result_limit": policy.get("result_limit"),
+                    "context_budget": policy.get("context_budget"),
+                    "reason": policy.get("reason"),
+                }
+            return {"adaptive_policy": None}
         if node_id == "retrieve":
             return {
                 "retrieved_count": len(state.get("retrieved_docs", [])),
                 "kb_retrieval_status": state.get("kb_retrieval_status"),
+                "query_count": len(state.get("retrieval_queries", []) or []),
             }
         if node_id == "answer":
             return {"answer_length": len(state.get("answer", ""))}
@@ -321,6 +340,7 @@ class KbChatService(BaseAgentService):
             "answer": answer,
             "retrieved_docs": [],
             "kb_retrieval_status": "blocked_sensitive",
+            "adaptive_policy": {},
             "retrieval_queries": [],
             "retrieval_funnel": None,
             "context": "",
@@ -590,7 +610,7 @@ class KbChatService(BaseAgentService):
         started_at = perf_counter()
 
         try:
-            yield emit_start(run_id, "Starting knowledge-base chat")
+            yield emit_start(run_id, "开始知识库问答")
             sensitive_check = await self._check_sensitive_query(request=request)
             if sensitive_check.blocked:
                 blocked_state = self._build_blocked_result(state, sensitive_check)
@@ -640,9 +660,13 @@ class KbChatService(BaseAgentService):
                                 node_name,
                                 run_id,
                                 message=(
-                                    "Retrieving supporting documents"
-                                    if node_id == "retrieve"
-                                    else "Generating answer"
+                                    "正在规划检索策略"
+                                    if node_id == "plan_query"
+                                    else (
+                                        "正在检索知识库"
+                                        if node_id == "retrieve"
+                                        else "正在生成回答"
+                                    )
                                 ),
                             )
                             started_nodes.add(node_id)
@@ -671,7 +695,7 @@ class KbChatService(BaseAgentService):
                             node_id,
                             node_name,
                             run_id,
-                            message="Generating answer",
+                            message="正在生成回答",
                         )
                         started_nodes.add(node_id)
 

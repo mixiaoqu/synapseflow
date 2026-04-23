@@ -18,6 +18,17 @@ KB_NO_HITS_REPLY = (
     "I could not find directly relevant material in the knowledge base. "
     "Try rephrasing the question or widening the retrieval scope."
 )
+KB_CHITCHAT_GREETING_REPLY = (
+    "你好，我主要负责回答当前知识库中的制度、流程、规则和文档内容。你可以继续问我相关问题。"
+)
+KB_CHITCHAT_THANKS_REPLY = "不客气，我可以继续帮你查询当前知识库里的内容。"
+KB_CHITCHAT_GENERIC_REPLY = (
+    "你好，我主要负责回答当前知识库相关问题，例如制度、流程、规则和文档内容。你可以继续问我相关问题。"
+)
+KB_OUT_OF_SCOPE_REPLY = (
+    "我主要负责回答当前知识库相关问题，例如制度、流程、规则和文档内容。"
+    "当前这个请求不属于知识库问答范围，你可以继续问我知识库里的内容。"
+)
 
 
 def _get_default_llm(state: dict[str, Any]) -> Any:
@@ -39,6 +50,32 @@ def should_skip_kb_llm_with_options(
     include_retrieval_fallback: bool,
 ) -> Optional[str]:
     """Optionally short-circuit when retrieval yields nothing useful."""
+
+    adaptive_policy = state.get("adaptive_policy") or {}
+    intent = str(adaptive_policy.get("intent") or "").strip().lower()
+    if intent == "out_of_scope":
+        return KB_OUT_OF_SCOPE_REPLY
+    if intent == "chitchat":
+        query = str(state.get("query") or "").strip().lower()
+        if any(token in query for token in ("谢谢", "感谢", "thanks", "thank you")):
+            return KB_CHITCHAT_THANKS_REPLY
+        if any(
+            token in query
+            for token in (
+                "你好",
+                "您好",
+                "早上好",
+                "上午好",
+                "中午好",
+                "下午好",
+                "晚上好",
+                "hi",
+                "hello",
+                "hey",
+            )
+        ):
+            return KB_CHITCHAT_GREETING_REPLY
+        return KB_CHITCHAT_GENERIC_REPLY
 
     status = state.get("kb_retrieval_status")
     if include_retrieval_fallback and status in {"empty_collection", "empty_knowledge_base"}:

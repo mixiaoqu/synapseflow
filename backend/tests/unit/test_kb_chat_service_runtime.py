@@ -10,16 +10,16 @@ from app.repositories.kb_chat_log_repository import (
     KbChatDiagnosticMessageRecord,
     KbChatLogDetailRecord,
 )
+from app.services.chat_memory import (
+    ChatMemoryContext,
+    ChatSessionDetailRecord,
+    ChatSessionSummaryRecord,
+)
 from app.services.document_lifecycle import (
     PREVIEW_ASK_DOCUMENT_STATUSES,
     RETRIEVAL_VERSION_CURRENT,
     RETRIEVAL_VERSION_LIVE,
     VISIBLE_ASK_DOCUMENT_STATUSES,
-)
-from app.services.chat_memory import (
-    ChatMemoryContext,
-    ChatSessionDetailRecord,
-    ChatSessionSummaryRecord,
 )
 from app.services.sensitive_word_service import SensitiveWordCheckResult
 
@@ -98,7 +98,11 @@ class FakeKbChatGraph:
                             {"query": "LangGraph basics", "chunk_count": 3},
                         ],
                         "stages": [
-                            {"key": "recalled_candidates", "label": "改写后总召回", "chunk_count": 7},
+                            {
+                                "key": "recalled_candidates",
+                                "label": "改写后总召回",
+                                "chunk_count": 7,
+                            },
                             {"key": "merged_candidates", "label": "融合去重后", "chunk_count": 5},
                             {"key": "reranked_candidates", "label": "重排过滤后", "chunk_count": 2},
                             {"key": "context_chunks", "label": "进入回答上下文", "chunk_count": 1},
@@ -138,6 +142,11 @@ class FakeChatMemoryStore:
                 session_id="session-1",
                 title="What is LangGraph?",
                 preview="LangGraph helps compose flows.",
+                project_id=None,
+                project_app_id=None,
+                external_user_id=None,
+                external_user_name=None,
+                source=None,
                 team_id=2,
                 knowledge_base_id=9,
                 knowledge_base_name="Product Docs",
@@ -154,6 +163,11 @@ class FakeChatMemoryStore:
             session_id="session-1",
             title="What is LangGraph?",
             preview="LangGraph helps compose flows.",
+            project_id=None,
+            project_app_id=None,
+            external_user_id=None,
+            external_user_name=None,
+            source=None,
             team_id=2,
             knowledge_base_id=9,
             knowledge_base_name="Product Docs",
@@ -178,8 +192,22 @@ class FakeChatMemoryStore:
             ],
         )
 
-    async def load_context(self, *, user_id: int, session_id: str) -> ChatMemoryContext:
-        self.load_calls.append({"user_id": user_id, "session_id": session_id})
+    async def load_context(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+    ) -> ChatMemoryContext:
+        self.load_calls.append(
+            {
+                "user_id": user_id,
+                "session_id": session_id,
+                "project_app_id": project_app_id,
+                "external_user_id": external_user_id,
+            }
+        )
         return self.context
 
     async def save_turn(
@@ -187,6 +215,11 @@ class FakeChatMemoryStore:
         *,
         user_id: int,
         session_id: str,
+        project_id: int | None = None,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+        external_user_name: str | None = None,
+        source: str | None = None,
         team_id: int | None,
         knowledge_base_id: int | None,
         assistant_id: int | None,
@@ -199,6 +232,11 @@ class FakeChatMemoryStore:
             {
                 "user_id": user_id,
                 "session_id": session_id,
+                "project_id": project_id,
+                "project_app_id": project_app_id,
+                "external_user_id": external_user_id,
+                "external_user_name": external_user_name,
+                "source": source,
                 "team_id": team_id,
                 "knowledge_base_id": knowledge_base_id,
                 "assistant_id": assistant_id,
@@ -209,18 +247,60 @@ class FakeChatMemoryStore:
             }
         )
 
-    async def list_sessions(self, *, user_id: int, limit: int = 30):
-        self.list_calls.append({"user_id": user_id, "limit": limit})
+    async def list_sessions(
+        self,
+        *,
+        user_id: int,
+        limit: int = 30,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+    ):
+        self.list_calls.append(
+            {
+                "user_id": user_id,
+                "limit": limit,
+                "project_app_id": project_app_id,
+                "external_user_id": external_user_id,
+            }
+        )
         return self.sessions[:limit]
 
-    async def get_session_detail(self, *, user_id: int, session_id: str):
-        self.detail_calls.append({"user_id": user_id, "session_id": session_id})
+    async def get_session_detail(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+    ):
+        self.detail_calls.append(
+            {
+                "user_id": user_id,
+                "session_id": session_id,
+                "project_app_id": project_app_id,
+                "external_user_id": external_user_id,
+            }
+        )
         if self.session_detail.session_id != session_id:
             return None
         return self.session_detail
 
-    async def delete_session(self, *, user_id: int, session_id: str) -> bool:
-        self.delete_calls.append({"user_id": user_id, "session_id": session_id})
+    async def delete_session(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+    ) -> bool:
+        self.delete_calls.append(
+            {
+                "user_id": user_id,
+                "session_id": session_id,
+                "project_app_id": project_app_id,
+                "external_user_id": external_user_id,
+            }
+        )
         if self.session_detail.session_id != session_id:
             return False
         self.sessions = [item for item in self.sessions if item.session_id != session_id]
@@ -277,7 +357,14 @@ def test_kb_chat_invoke_uses_graph_result():
     assert response.session_id == "session-1"
     assert graph.last_state["chat_history"][0]["role"] == "user"
     assert graph.last_state["memory_summary"] == "The user is asking about LangGraph basics."
-    assert memory_store.load_calls == [{"user_id": 42, "session_id": "session-1"}]
+    assert memory_store.load_calls == [
+        {
+            "user_id": 42,
+            "session_id": "session-1",
+            "project_app_id": None,
+            "external_user_id": None,
+        }
+    ]
     assert memory_store.save_calls[0]["assistant_message"] == "LangGraph helps compose flows."
     assert memory_store.save_calls[0]["assistant_metadata"]["retrieval_funnel"]["query_count"] == 2
 
@@ -326,12 +413,18 @@ def test_kb_chat_stream_emits_standardized_envelopes():
     assert payloads[-1]["data"]["session_id"]
     assert memory_store.load_calls[0]["session_id"] == payloads[-1]["data"]["session_id"]
     assert memory_store.save_calls[0]["assistant_message"] == "LangGraph helps compose flows."
-    assert memory_store.save_calls[0]["assistant_metadata"]["retrieval_funnel"]["stages"][0][
-        "chunk_count"
-    ] == 7
-    assert memory_store.save_calls[0]["assistant_metadata"]["retrieval_funnel"]["stages"][1][
-        "chunk_count"
-    ] == 5
+    assert (
+        memory_store.save_calls[0]["assistant_metadata"]["retrieval_funnel"]["stages"][0][
+            "chunk_count"
+        ]
+        == 7
+    )
+    assert (
+        memory_store.save_calls[0]["assistant_metadata"]["retrieval_funnel"]["stages"][1][
+            "chunk_count"
+        ]
+        == 5
+    )
     assert graph.last_state["session_id"] == payloads[-1]["data"]["session_id"]
 
 
@@ -360,7 +453,9 @@ def test_kb_chat_invoke_blocks_sensitive_query_before_graph_runs():
     assert response.retrieved_docs == []
     assert graph.last_state is None
     assert memory_store.save_calls[0]["assistant_metadata"]["answer_status"] == "blocked"
-    assert memory_store.save_calls[0]["assistant_metadata"]["retrieval_status"] == "blocked_sensitive"
+    assert (
+        memory_store.save_calls[0]["assistant_metadata"]["retrieval_status"] == "blocked_sensitive"
+    )
     assert sensitive_service.calls == [
         {
             "scene": "query",
@@ -526,7 +621,9 @@ def test_kb_chat_preview_runs_without_persistence():
 
 def test_kb_chat_list_sessions_returns_history_for_user():
     memory_store = FakeChatMemoryStore()
-    service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store)
+    service = KbChatService(
+        llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store
+    )
 
     sessions = asyncio.run(service.list_sessions(user_id=42, limit=10))
 
@@ -534,12 +631,21 @@ def test_kb_chat_list_sessions_returns_history_for_user():
     assert sessions[0].session_id == "session-1"
     assert sessions[0].knowledge_base_name == "Product Docs"
     assert sessions[0].assistant_name == "Project Assistant"
-    assert memory_store.list_calls == [{"user_id": 42, "limit": 10}]
+    assert memory_store.list_calls == [
+        {
+            "user_id": 42,
+            "limit": 10,
+            "project_app_id": None,
+            "external_user_id": None,
+        }
+    ]
 
 
 def test_kb_chat_get_session_returns_persisted_messages():
     memory_store = FakeChatMemoryStore()
-    service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store)
+    service = KbChatService(
+        llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store
+    )
 
     session = asyncio.run(service.get_session(user_id=42, session_id="session-1"))
 
@@ -548,17 +654,33 @@ def test_kb_chat_get_session_returns_persisted_messages():
     assert session.assistant_id == 5
     assert session.messages[0].role == "user"
     assert session.messages[1].content == "LangGraph helps compose flows."
-    assert memory_store.detail_calls == [{"user_id": 42, "session_id": "session-1"}]
+    assert memory_store.detail_calls == [
+        {
+            "user_id": 42,
+            "session_id": "session-1",
+            "project_app_id": None,
+            "external_user_id": None,
+        }
+    ]
 
 
 def test_kb_chat_delete_session_removes_history_item():
     memory_store = FakeChatMemoryStore()
-    service = KbChatService(llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store)
+    service = KbChatService(
+        llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store
+    )
 
     deleted = asyncio.run(service.delete_session(user_id=42, session_id="session-1"))
 
     assert deleted is True
-    assert memory_store.delete_calls == [{"user_id": 42, "session_id": "session-1"}]
+    assert memory_store.delete_calls == [
+        {
+            "user_id": 42,
+            "session_id": "session-1",
+            "project_app_id": None,
+            "external_user_id": None,
+        }
+    ]
 
 
 def test_build_log_detail_response_serializes_nested_records():
@@ -567,6 +689,13 @@ def test_build_log_detail_response_serializes_nested_records():
         id=1,
         user_id=2,
         session_id="session-1",
+        project_id=None,
+        project_name=None,
+        project_app_id=None,
+        project_app_name=None,
+        external_user_id=None,
+        external_user_name=None,
+        source=None,
         knowledge_base_id=9,
         knowledge_base_name="Product Docs",
         assistant_id=5,
