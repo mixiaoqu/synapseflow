@@ -220,13 +220,10 @@ class ConfigRegistry:
         rerank = data.get("rerank", {}) or {}
         return RerankConfig(
             enabled=settings.RERANK_ENABLED,
-            provider=(settings.RERANK_PROVIDER or rerank.get("provider", "bailian")),
+            provider=(settings.RERANK_PROVIDER or rerank.get("provider", "local")),
             api_url=settings.RERANK_API_URL,
-            model=rerank.get("model", "qwen3-rerank"),
-            instruct=rerank.get(
-                "instruct",
-                "Given a web search query, retrieve relevant passages that answer the query.",
-            ),
+            model=rerank.get("model", "BAAI/bge-reranker-v2-m3"),
+            instruct=rerank.get("instruct", ""),
         )
 
     @functools.lru_cache(maxsize=1)

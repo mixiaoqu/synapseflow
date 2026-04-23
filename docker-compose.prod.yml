@@ -71,7 +71,7 @@ services:
       retries: 5
     logging: *default-logging
 
-\  reranker:
+  reranker:
     image: synapseflow-reranker:prod
     build:
       context: ./docker/reranker
@@ -123,16 +123,9 @@ services:
       DRAMATIQ_INDEXING_QUEUE: ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing}
       EMBEDDING_MODEL: ${SF_EMBEDDING_MODEL:-BAAI/bge-m3}
       HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      KIMI_API_KEY: ${KIMI_API_KEY:-}
-      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
-      MODELSCOPE_API_KEY: ${MODELSCOPE_API_KEY:-}
-      AIHUBMIX_API_KEY: ${AIHUBMIX_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
-      MOYU_API_KEY: ${MOYU_API_KEY:-}
+      MOYU_API_KEY: ${MOYU_API_KEY:?set MOYU_API_KEY}
       RERANK_ENABLED: ${SF_RERANK_ENABLED:-true}
-      RERANK_PROVIDER: ${SF_RERANK_PROVIDER:-vllm}
+      RERANK_PROVIDER: ${SF_RERANK_PROVIDER:-local}
       RERANK_TOP_K: ${SF_RERANK_TOP_K:-}
       RERANK_API_URL: ${SF_RERANK_API_URL:-http://reranker:8012}
       RERANK_API_KEY: ${SF_RERANK_API_KEY:-}

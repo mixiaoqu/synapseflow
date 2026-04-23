@@ -1,7 +1,7 @@
 # 检索结果重排配置。
 rerank:
-  # 重排服务提供方标识，用于区分调用哪一类重排接口。
-  provider: vllm
+  # 重排服务提供方标识；local 表示使用 docker/reranker 中的本地 BGE 服务。
+  provider: local
   # 实际使用的重排模型名称。
   model: BAAI/bge-reranker-v2-m3
   # 发送给重排服务的任务说明，用于提升相关性判断效果。

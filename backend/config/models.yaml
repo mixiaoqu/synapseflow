@@ -1,74 +1,66 @@
 providers:
-  dashscope:
-    api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api_key_env: DASHSCOPE_API_KEY
-    description: DashScope OpenAI compatible API
-
-  deepseek:
-    api_base: https://api.deepseek.com/v1
-    api_key_env: DEEPSEEK_API_KEY
-    description: DeepSeek API
-
-  siliconflow:
-    api_base: https://api.siliconflow.cn/v1
-    api_key_env: SILICONFLOW_API_KEY
-    description: SiliconFlow multi-model gateway
-
-  modelscope:
-    api_base: https://api-inference.modelscope.cn/v1
-    api_key_env: MODELSCOPE_API_KEY
-    description: ModelScope inference service
-
-  aihubmix:
-    api_base: https://aihubmix.com/v1
-    api_key_env: AIHUBMIX_API_KEY
-    description: AIHubMix multi-model gateway
-
-  openrouter:
-    api_base: https://openrouter.ai/api/v1
-    api_key_env: OPENROUTER_API_KEY
-    description: OpenRouter multi-model gateway
-
-  kimi:
-    api_base: https://api.moonshot.cn/v1
-    api_key_env: KIMI_API_KEY
-    description: Kimi official API
-
   moyu:
     api_base: https://www.moyu.info/v1
     api_key_env: MOYU_API_KEY
     description: Moyu OpenAI compatible proxy
 
 model_assets:
-  qwen-plus:
+  glm-5-1:
     type: chat
-    provider: dashscope
-    model: qwen3.6-plus
-    name: 阿里千问3.6-plus
+    provider: moyu
+    model: glm-5.1
+    name:  GLM-5.1
     request_timeout: 180
     streaming: true
     max_tokens: 4096
 
-  qwen-max:
+  kimi-k2-6:
     type: chat
-    provider: dashscope
-    model: qwen-max
-    name: Qwen Max
+    provider: moyu
+    model: kimi-k2.6
+    name:  Kimi K2.6
     request_timeout: 180
     streaming: true
     max_tokens: 4096
 
-  deepseek-chat:
+  gpt-5-4-mini:
     type: chat
-    provider: deepseek
-    model: deepseek-chat
-    name: DeepSeekV3.2
+    provider: moyu
+    model: gpt-5.4-mini
+    name:  GPT-5.4 Mini
+    request_timeout: 180
+    streaming: true
+    max_tokens: 4096
+
+  minimax-m2-7:
+    type: chat
+    provider: moyu
+    model: MiniMax/MiniMax-M2.7
+    name:  MiniMax M2.7
+    request_timeout: 180
+    streaming: true
+    max_tokens: 4096
+
+  deepseek-v3-2:
+    type: chat
+    provider: moyu
+    model: deepseek-v3.2
+    name:  DeepSeek V3.2
+    request_timeout: 180
+    streaming: true
+    max_tokens: 4096
+
+  qwen3-6-flash:
+    type: chat
+    provider: moyu
+    model: qwen3.6-flash
+    name:  Qwen3.6 Flash
     request_timeout: 180
     streaming: true
     max_tokens: 4096
 
 system_roles:
-  planner: qwen-plus
-  analysis: qwen-max
-  generation: qwen-plus
-  tool: qwen-plus
+  planner: deepseek-v3-2
+  analysis: deepseek-v3-2
+  generation: deepseek-v3-2
+  tool: deepseek-v3-2
