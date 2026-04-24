@@ -37,9 +37,16 @@ from app.services.document_lifecycle import (
     DOC_STATUS_PENDING_REVIEW,
     DOC_STATUS_PUBLISHED,
 )
+from app.services.document_indexer import persist_document_chunk_plan, prepare_document_chunk_plan
 from app.services.sensitive_word_service import get_sensitive_word_service
 from app.services.vector_store import delete_by_document_id
-from app.utils.file_parser import MAX_FILE_SIZE, SUPPORTED_EXTENSIONS, extract_text_from_file
+from app.utils.document_parse import (
+    ParsedDocument,
+    parse_raw_document_content,
+    parse_uploaded_document_structured,
+    render_parsed_document,
+)
+from app.utils.file_parser import MAX_FILE_SIZE, SUPPORTED_EXTENSIONS
 
 MAX_BATCH_UPLOAD_FILES = 500
 
@@ -130,15 +137,48 @@ class DocumentService:
         self,
         file: UploadFile,
         content: bytes,
-    ) -> tuple[str, str | None, str]:
+    ) -> tuple[str, str | None, ParsedDocument, str]:
         filename = file.filename or "unknown"
-        text, err = extract_text_from_file(filename, content)
-        if err:
-            raise HTTPException(status_code=400, detail=err)
+        parsed, error = parse_uploaded_document_structured(filename, content)
+        if error or parsed is None:
+            raise HTTPException(status_code=400, detail=error or "Document parse failed")
+        text = render_parsed_document(parsed)
         if not text.strip():
             raise HTTPException(status_code=400, detail=f"File '{filename}' is empty")
         title, doc_type = self._get_title_and_type(filename)
-        return title or "Untitled document", doc_type or None, text
+        return title or parsed.title or "Untitled document", doc_type or None, parsed, text
+
+    @staticmethod
+    def _parse_text_content(
+        *,
+        title: str,
+        content: str,
+        document_type: str | None,
+    ) -> tuple[ParsedDocument, str]:
+        parsed = parse_raw_document_content(
+            content,
+            title=title,
+            document_type=document_type or "txt",
+        )
+        text = render_parsed_document(parsed)
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="Document content cannot be empty")
+        return parsed, text
+
+    @staticmethod
+    async def _persist_document_structure(
+        *,
+        db: AsyncSession,
+        document_id: int,
+        parsed_document: ParsedDocument,
+        title: str,
+    ) -> None:
+        plan = prepare_document_chunk_plan(parsed_document, title)
+        await persist_document_chunk_plan(
+            db,
+            document_id=document_id,
+            plan=plan,
+        )
 
     @staticmethod
     def _document_size(doc: Document) -> int:
@@ -252,7 +292,7 @@ class DocumentService:
         if len(content) > MAX_FILE_SIZE:
             raise HTTPException(status_code=400, detail="File exceeds the 10MB limit")
 
-        title, doc_type, text = self._parse_single_file(file, content)
+        title, doc_type, parsed, text = self._parse_single_file(file, content)
         (
             knowledge_base_id,
             category_id,
@@ -275,8 +315,16 @@ class DocumentService:
             category_id=category_id,
             source_path=source_path,
             status=DOC_STATUS_DRAFT,
-            commit=True,
+            commit=False,
         )
+        await self._persist_document_structure(
+            db=db,
+            document_id=doc.id,
+            parsed_document=parsed,
+            title=doc.title,
+        )
+        await db.commit()
+        await db.refresh(doc)
         await indexing_service.enqueue_document_job(
             db=db,
             user_id=user_id,
@@ -312,6 +360,7 @@ class DocumentService:
         repo = DocumentRepository(db, user_id=user_id)
         created: list[Document] = []
         category_names_by_doc_key: dict[int, str | None] = {}
+        parsed_by_doc_key: dict[int, ParsedDocument] = {}
         normalized_source_paths = list(source_paths or [])
 
         for index, file in enumerate(files):
@@ -322,7 +371,7 @@ class DocumentService:
                 ext = "." + (file.filename or "").rsplit(".", 1)[-1].lower()
                 if ext not in SUPPORTED_EXTENSIONS:
                     continue
-                title, doc_type, text = self._parse_single_file(file, content)
+                title, doc_type, parsed, text = self._parse_single_file(file, content)
                 (
                     resolved_knowledge_base_id,
                     resolved_category_id,
@@ -362,12 +411,32 @@ class DocumentService:
                 await repo.add_for_batch(doc)
                 created.append(doc)
                 category_names_by_doc_key[id(doc)] = category_name
+                parsed_by_doc_key[id(doc)] = parsed
             except HTTPException:
                 raise
             except Exception:
-                continue
+                logger.exception(
+                    "Batch upload aborted for file={} due to unexpected error",
+                    file.filename or "unknown",
+                )
+                raise
 
-        await repo.commit_and_refresh_root_ids(created)
+        await repo.prepare_batch_create(created)
+        for doc in created:
+            parsed = parsed_by_doc_key.get(id(doc))
+            if parsed is None:
+                continue
+            await self._persist_document_structure(
+                db=db,
+                document_id=doc.id,
+                parsed_document=parsed,
+                title=doc.title,
+            )
+        await db.commit()
+        for doc in created:
+            await db.refresh(doc)
+        if not created:
+            return []
         await indexing_service.enqueue_documents_batch_job(
             db=db,
             user_id=user_id,
@@ -398,6 +467,13 @@ class DocumentService:
         if not body.content.strip():
             raise HTTPException(status_code=400, detail="Document content cannot be empty")
 
+        title = (body.title or "").strip() or "Untitled document"
+        parsed, text = self._parse_text_content(
+            title=title,
+            content=body.content,
+            document_type=body.document_type,
+        )
+
         (
             knowledge_base_id,
             category_id,
@@ -412,16 +488,24 @@ class DocumentService:
         )
         repo = DocumentRepository(db, user_id=user_id)
         doc = await repo.create(
-            title=(body.title or "").strip() or "Untitled document",
-            content=body.content,
+            title=title,
+            content=text,
             document_type=body.document_type or "txt",
-            size=len(body.content.encode("utf-8")),
+            size=len(text.encode("utf-8")),
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             source_path=source_path,
             status=DOC_STATUS_DRAFT,
-            commit=True,
+            commit=False,
         )
+        await self._persist_document_structure(
+            db=db,
+            document_id=doc.id,
+            parsed_document=parsed,
+            title=doc.title,
+        )
+        await db.commit()
+        await db.refresh(doc)
         await indexing_service.enqueue_document_job(
             db=db,
             user_id=user_id,
@@ -651,9 +735,22 @@ class DocumentService:
                 status_code=400,
                 detail="Only the current latest version can be overwritten",
             )
-        doc = await repo.update_content(doc_id, body.content)
+        parsed, text = self._parse_text_content(
+            title=existing.title,
+            content=body.content,
+            document_type=getattr(existing, "document_type", None),
+        )
+        doc = await repo.update_content(doc_id, text, commit=False)
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
+        await self._persist_document_structure(
+            db=db,
+            document_id=doc.id,
+            parsed_document=parsed,
+            title=doc.title,
+        )
+        await db.commit()
+        await db.refresh(doc)
         await indexing_service.enqueue_document_job(
             db=db,
             user_id=user_id,
@@ -681,9 +778,22 @@ class DocumentService:
 
         root_id = getattr(orig, "root_id", None) or orig.id
         current_doc = await repo.get_current_by_root_id(root_id)
-        new_doc = await repo.create_version(doc_id, body.content, commit=True)
+        parsed, text = self._parse_text_content(
+            title=getattr(orig, "title", None) or "Untitled document",
+            content=body.content,
+            document_type=getattr(orig, "document_type", None),
+        )
+        new_doc = await repo.create_version(doc_id, text, commit=False)
         if not new_doc:
             raise HTTPException(status_code=404, detail="Source document not found")
+        await self._persist_document_structure(
+            db=db,
+            document_id=new_doc.id,
+            parsed_document=parsed,
+            title=new_doc.title,
+        )
+        await db.commit()
+        await db.refresh(new_doc)
         await indexing_service.enqueue_current_document_reindex_job(
             db=db,
             user_id=user_id,

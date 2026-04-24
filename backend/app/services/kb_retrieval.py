@@ -11,6 +11,7 @@ from app.core.config.registry import config_registry
 from app.db.models import Document, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 from app.repositories.access_scope import accessible_document_condition
+from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.services.document_index_state import INDEX_STATUS_INDEXED
 from app.services.document_lifecycle import RETRIEVAL_VERSION_LIVE
 from app.services.embedding import embed_query
@@ -331,7 +332,61 @@ def _apply_retrieval_thresholds(
     return filtered
 
 
-def _build_retrieval_output(
+async def _expand_results_with_parent_context(results: List[dict]) -> List[dict]:
+    child_chunk_ids = [int(row["document_chunk_id"]) for row in results]
+
+    async with AsyncSessionLocal() as db:
+        expansions = await DocumentChunkRepository(db).expand_parent_windows(
+            child_chunk_ids=child_chunk_ids,
+        )
+
+    expanded_by_key: dict[int | str, dict] = {}
+    ordered_keys: list[int | str] = []
+    for row in results:
+        document_chunk_id = int(row["document_chunk_id"])
+        expansion = expansions.get(int(document_chunk_id))
+        if expansion is None:
+            logger.warning(
+                "Skipping child chunk {} during retrieval because no persisted parent window was found",
+                document_chunk_id,
+            )
+            continue
+        updated = dict(row)
+        metadata = dict(updated.get("metadata") or {})
+        metadata.setdefault("child_chunk_id", document_chunk_id)
+        metadata["parent_chunk_id"] = expansion.parent_chunk_id
+        metadata["window_child_ids"] = list(expansion.window_child_ids)
+        metadata["merged_child_chunk_ids"] = sorted(
+            {document_chunk_id, *[int(item) for item in expansion.window_child_ids]}
+        )
+        metadata["evidence_text"] = row.get("chunk_text") or ""
+        updated["metadata"] = metadata
+        updated["chunk_text"] = expansion.content
+        dedupe_key: int | str = (
+            int(expansion.parent_chunk_id)
+            if expansion.parent_chunk_id is not None
+            else int(document_chunk_id)
+        )
+        if dedupe_key not in expanded_by_key:
+            expanded_by_key[dedupe_key] = updated
+            ordered_keys.append(dedupe_key)
+            continue
+
+        existing = expanded_by_key[dedupe_key]
+        existing_meta = dict(existing.get("metadata") or {})
+        merged_child_ids = set(existing_meta.get("merged_child_chunk_ids") or [])
+        merged_child_ids.add(int(document_chunk_id))
+        merged_child_ids.update(int(item) for item in expansion.window_child_ids)
+        existing_meta["merged_child_chunk_ids"] = sorted(merged_child_ids)
+        existing_meta.setdefault("evidence_texts", [])
+        if row.get("chunk_text"):
+            existing_meta["evidence_texts"].append(row.get("chunk_text"))
+        existing["metadata"] = existing_meta
+        expanded_by_key[dedupe_key] = existing
+    return [expanded_by_key[key] for key in ordered_keys]
+
+
+async def _build_retrieval_output(
     *,
     results: List[dict],
     has_documents: bool,
@@ -405,6 +460,18 @@ def _build_retrieval_output(
             "retrieval_funnel": retrieval_funnel,
         }
 
+    results = await _expand_results_with_parent_context(results)
+    if not results:
+        logger.warning(
+            "{} Retrieval candidates were discarded because persisted parent windows were missing",
+            log_prefix,
+        )
+        return {
+            "retrieved_docs": [],
+            "context": "(No relevant documents were found. Please confirm the KB has indexed content.)",
+            "kb_retrieval_status": "no_hits",
+            "retrieval_funnel": retrieval_funnel,
+        }
     retrieved_docs = []
     for row in results:
         chunk_meta = dict(row.get("metadata") or {})
@@ -500,7 +567,7 @@ async def run_kb_retrieval(
         reranked_count=len(results),
         context_count=len(results),
     )
-    return _build_retrieval_output(
+    return await _build_retrieval_output(
         results=results,
         has_documents=has_documents,
         knowledge_base_id=knowledge_base_id,
@@ -604,7 +671,7 @@ async def run_multi_query_kb_retrieval(
         reranked_count=len(results),
         context_count=len(results),
     )
-    output = _build_retrieval_output(
+    output = await _build_retrieval_output(
         results=results,
         has_documents=has_documents,
         knowledge_base_id=knowledge_base_id,

@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -40,3 +41,37 @@ def test_document_service_rejects_publish_from_draft():
 
     with pytest.raises(HTTPException):
         DocumentService._assert_can_publish(doc)
+
+
+def test_upload_documents_batch_does_not_swallow_unexpected_errors(monkeypatch):
+    service = DocumentService()
+
+    class DummyRepository:
+        def __init__(self, db, user_id):
+            self.user_id = user_id
+
+    class DummyUploadFile:
+        def __init__(self, filename: str, payload: bytes) -> None:
+            self.filename = filename
+            self._payload = payload
+
+        async def read(self) -> bytes:
+            return self._payload
+
+    def fake_parse_single_file(file, content):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("app.application.document_service.DocumentRepository", DummyRepository)
+    monkeypatch.setattr(service, "_parse_single_file", fake_parse_single_file)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        asyncio.run(
+            service.upload_documents_batch(
+                db=object(),
+                user_id=1,
+                files=[DummyUploadFile("doc.md", b"# title")],
+                knowledge_base_id=None,
+                category_id=None,
+                source_paths=None,
+            )
+        )

@@ -16,6 +16,7 @@ from app.core.config.registry import config_registry
 from app.db.models import Document, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.repositories.index_job_repository import IndexJobRepository
 from app.services.document_index_state import (
     ACTIVE_INDEX_STATUSES,
@@ -27,7 +28,6 @@ from app.services.document_index_state import (
 from app.services.document_indexer import (
     index_document,
     index_prepared_documents_batch,
-    prepare_document_chunks,
 )
 from app.services.index_job_state import (
     INDEX_JOB_DOCUMENT_STATUS_FAILED,
@@ -131,6 +131,28 @@ class IndexingService:
         )
         return job.id
 
+    @staticmethod
+    async def _mark_documents_dispatch_failed(
+        db: AsyncSession,
+        *,
+        documents: Sequence[tuple[int, str]],
+        error_message: str,
+    ) -> None:
+        for document_id, expected_content_hash in documents:
+            await db.execute(
+                update(Document)
+                .where(
+                    Document.id == int(document_id),
+                    Document.content_hash == str(expected_content_hash),
+                )
+                .values(
+                    index_status=INDEX_STATUS_FAILED,
+                    index_error=error_message,
+                    indexed_at=None,
+                )
+            )
+        await db.commit()
+
     async def enqueue_document_job(
         self,
         db: AsyncSession,
@@ -157,9 +179,15 @@ class IndexingService:
                 job_id=job_id,
             )
         except Exception as exc:
+            error_message = self._truncate_error(exc)
+            await self._mark_documents_dispatch_failed(
+                db,
+                documents=[(document_id, expected_content_hash)],
+                error_message=error_message,
+            )
             await IndexJobRepository(db).mark_job_dispatch_failed(
                 job_id=job_id,
-                error_message=self._truncate_error(exc),
+                error_message=error_message,
             )
             raise
         return job_id
@@ -187,9 +215,15 @@ class IndexingService:
         try:
             self.enqueue_documents_batch(documents=documents, job_id=job_id)
         except Exception as exc:
+            error_message = self._truncate_error(exc)
+            await self._mark_documents_dispatch_failed(
+                db,
+                documents=documents,
+                error_message=error_message,
+            )
             await IndexJobRepository(db).mark_job_dispatch_failed(
                 job_id=job_id,
-                error_message=self._truncate_error(exc),
+                error_message=error_message,
             )
             raise
         return job_id
@@ -222,9 +256,15 @@ class IndexingService:
                 job_id=job_id,
             )
         except Exception as exc:
+            error_message = self._truncate_error(exc)
+            await self._mark_documents_dispatch_failed(
+                db,
+                documents=[(target_document_id, target_content_hash)],
+                error_message=error_message,
+            )
             await IndexJobRepository(db).mark_job_dispatch_failed(
                 job_id=job_id,
-                error_message=self._truncate_error(exc),
+                error_message=error_message,
             )
             raise
         return job_id
@@ -578,6 +618,7 @@ class IndexingService:
             else {}
         )
         prepared: list[dict[str, Any]] = []
+        chunk_repo = DocumentChunkRepository(db)
 
         for document_id, expected_content_hash in documents:
             job_document_status = job_statuses.get((document_id, expected_content_hash))
@@ -684,7 +725,20 @@ class IndexingService:
 
             content = refreshed.content or ""
             title = refreshed.title
-            chunks = prepare_document_chunks(content, title)
+            chunk_count = await chunk_repo.count_child_chunks_for_document(refreshed.id)
+            if chunk_count <= 0:
+                await self._mark_job_document_failed(
+                    db,
+                    job_id=job_id,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                    error_message="文档缺少新的 child chunks，请删除后重新上传",
+                )
+                logger.warning(
+                    "Skipped indexing for doc_id={} because no persisted child chunks were found",
+                    document_id,
+                )
+                continue
             prepared.append(
                 {
                     "document_id": refreshed.id,
@@ -692,8 +746,7 @@ class IndexingService:
                     "content": content,
                     "title": title,
                     "char_count": len(content),
-                    "chunk_count": len(chunks),
-                    "chunks": chunks,
+                    "chunk_count": chunk_count,
                 }
             )
 
@@ -709,10 +762,8 @@ class IndexingService:
         prepared_documents = [
             (
                 int(item["document_id"]),
-                item.get("chunks") or prepare_document_chunks(
-                    str(item["content"]),
-                    item.get("title"),
-                ),
+                str(item["content"]),
+                item.get("title"),
             )
             for item in batch
         ]

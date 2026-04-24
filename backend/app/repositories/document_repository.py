@@ -232,7 +232,13 @@ class DocumentRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def update_content(self, doc_id: int, content: str) -> Document | None:
+    async def update_content(
+        self,
+        doc_id: int,
+        content: str,
+        *,
+        commit: bool = True,
+    ) -> Document | None:
         """Replace the content of an existing latest document."""
         doc = await self.get_by_id_for_user(doc_id)
         if not doc:
@@ -248,8 +254,11 @@ class DocumentRepository:
         doc.is_live = False
         doc.published_at = None
         doc.published_by = None
-        await self.db.commit()
-        await self.db.refresh(doc)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(doc)
+        else:
+            await self.db.flush()
         return doc
 
     async def get_current_by_root_id(self, root_id: int) -> Document | None:

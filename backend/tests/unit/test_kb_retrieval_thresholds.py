@@ -1,3 +1,6 @@
+import asyncio
+from types import SimpleNamespace
+
 from app.core.config.schemas import (
     RagChunkConfig,
     RagConfig,
@@ -101,3 +104,53 @@ def test_apply_retrieval_thresholds_keeps_lexical_only_hits_with_good_rerank(mon
     )
 
     assert [row["document_id"] for row in filtered] == [3]
+
+
+def test_expand_results_with_parent_context_skips_missing_parent_windows(monkeypatch):
+    class DummySession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeChunkRepository:
+        def __init__(self, db):
+            pass
+
+        async def expand_parent_windows(self, *, child_chunk_ids):
+            return {
+                11: SimpleNamespace(
+                    child_chunk_id=11,
+                    parent_chunk_id=101,
+                    content="parent window",
+                    parent_content="parent window",
+                    window_child_ids=[11, 12],
+                )
+            }
+
+    monkeypatch.setattr(kb_retrieval, "AsyncSessionLocal", lambda: DummySession())
+    monkeypatch.setattr(kb_retrieval, "DocumentChunkRepository", FakeChunkRepository)
+
+    expanded = asyncio.run(
+        kb_retrieval._expand_results_with_parent_context(
+            [
+                {
+                    "document_id": 1,
+                    "document_chunk_id": 11,
+                    "chunk_text": "hit one",
+                    "metadata": {},
+                },
+                {
+                    "document_id": 1,
+                    "document_chunk_id": 99,
+                    "chunk_text": "hit two",
+                    "metadata": {},
+                },
+            ]
+        )
+    )
+
+    assert len(expanded) == 1
+    assert expanded[0]["metadata"]["parent_chunk_id"] == 101
+    assert expanded[0]["metadata"]["merged_child_chunk_ids"] == [11, 12]

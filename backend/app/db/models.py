@@ -282,6 +282,47 @@ class Document(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class DocumentChunk(Base):
+    """Persisted parent/child chunk relationships for one document."""
+
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_kind", "chunk_index", name="uq_document_chunks_doc_kind_index"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    chunk_kind = Column(String(20), nullable=False, index=True)
+    parent_chunk_id = Column(
+        Integer,
+        ForeignKey("document_chunks.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    chunk_index = Column(Integer, nullable=False)
+    prev_chunk_id = Column(
+        Integer,
+        ForeignKey("document_chunks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    next_chunk_id = Column(
+        Integer,
+        ForeignKey("document_chunks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    section_path = Column(String(1024), nullable=True)
+    block_types = Column(JSON, nullable=True)
+    start_offset = Column(Integer, nullable=False, default=0)
+    end_offset = Column(Integer, nullable=False, default=0)
+    content = Column(Text, nullable=False)
+    search_text = Column(Text, nullable=False)
+    metadata_ = Column("metadata", JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class IndexJob(Base):
     """Persisted indexing job envelope for task-level progress tracking."""
 
@@ -335,6 +376,12 @@ class Embedding(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_chunk_id = Column(
+        Integer,
+        ForeignKey("document_chunks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     chunk_text = Column(Text, nullable=False)
     search_text = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)

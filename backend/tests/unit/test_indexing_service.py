@@ -1,6 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from app.application.indexing_service import indexing_service
 from app.core.config.registry import config_registry
 from app.services.semantic_chunk import VectorIndexChunk
@@ -81,6 +83,57 @@ def test_enqueue_documents_batch_sends_serialized_document_chunks(monkeypatch):
         "expected_content_hash": "hash-45",
     }
     assert {item["job_id"] for item in captured} == {23}
+
+
+def test_enqueue_document_job_marks_document_failed_when_dispatch_fails(monkeypatch):
+    recorded = {}
+
+    async def fake_create_job(db, **kwargs):
+        return 17
+
+    def fake_enqueue_document(**kwargs):
+        raise RuntimeError("broker unavailable")
+
+    async def fake_mark_documents_dispatch_failed(db, *, documents, error_message):
+        recorded["documents"] = list(documents)
+        recorded["error_message"] = error_message
+
+    class FakeIndexJobRepository:
+        def __init__(self, db):
+            pass
+
+        async def mark_job_dispatch_failed(self, *, job_id, error_message):
+            recorded["job_id"] = job_id
+            recorded["job_error"] = error_message
+
+    monkeypatch.setattr(indexing_service, "_create_job", fake_create_job)
+    monkeypatch.setattr(indexing_service, "enqueue_document", fake_enqueue_document)
+    monkeypatch.setattr(
+        indexing_service,
+        "_mark_documents_dispatch_failed",
+        fake_mark_documents_dispatch_failed,
+    )
+    monkeypatch.setattr(
+        "app.application.indexing_service.IndexJobRepository",
+        FakeIndexJobRepository,
+    )
+
+    with pytest.raises(RuntimeError, match="broker unavailable"):
+        asyncio.run(
+            indexing_service.enqueue_document_job(
+                object(),
+                user_id=1,
+                document_id=42,
+                expected_content_hash="hash-42",
+                knowledge_base_id=3,
+                title="index",
+            )
+        )
+
+    assert recorded["documents"] == [(42, "hash-42")]
+    assert recorded["job_id"] == 17
+    assert recorded["error_message"] == "broker unavailable"
+    assert recorded["job_error"] == "broker unavailable"
 
 
 def test_build_dynamic_batches_splits_on_chunk_and_char_limits():
