@@ -57,6 +57,8 @@ cp .env.prod.example .env.prod
 - `POSTGRES_PASSWORD`
 - `SF_SECRET_KEY`
 - `SF_CORS_ORIGINS`
+- `SF_ENTERPRISE_SERVICE_TOKEN`
+- `SF_EMBED_FRONTEND_BASE_URL`
 - `BOOTSTRAP_ADMIN_PASSWORD`
 - `BOOTSTRAP_USER_PASSWORD`
 - `SF_NGINX_SERVER_NAME`
@@ -64,8 +66,10 @@ cp .env.prod.example .env.prod
 推荐值：
 
 - `SF_CORS_ORIGINS=https://你的域名`
+- `SF_EMBED_FRONTEND_BASE_URL=https://你的域名`
 - `SF_NEXT_PUBLIC_API_URL=` 留空
   说明：让前端默认使用当前域名和 `/api` 反向代理
+- `SF_ENTERPRISE_SERVICE_TOKEN=` 使用足够长的随机字符串
 
 4. 构建并启动
 

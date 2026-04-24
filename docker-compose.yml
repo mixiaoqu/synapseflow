@@ -81,6 +81,9 @@ services:
       - RERANK_ENABLED=${RERANK_ENABLED:-true}
       - RERANK_API_URL=${RERANK_API_URL:-http://reranker:8012}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
+      - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:3000}
+      - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-15}
     ports:
       - "8000:8000"
     volumes:
@@ -115,6 +118,9 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - DRAMATIQ_INDEXING_QUEUE=${DRAMATIQ_INDEXING_QUEUE:-indexing}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
+      - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:3000}
+      - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-15}
     volumes:
       - ./backend:/app
       - backend_venv:/app/.venv
