@@ -3,9 +3,11 @@ FROM python:3.11-slim-bookworm
 WORKDIR /app
 
 ARG UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+ARG PYTORCH_CPU_FIND_LINKS=https://mirrors.aliyun.com/pytorch-wheels/cpu/
 RUN python -m pip install -i ${UV_INDEX_URL} uv==0.10.9
 
 ENV UV_DEFAULT_INDEX=${UV_INDEX_URL}
+ENV UV_FIND_LINKS=${PYTORCH_CPU_FIND_LINKS}
 ENV PATH="/app/.venv/bin:$PATH" \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \

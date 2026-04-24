@@ -112,6 +112,7 @@ services:
       dockerfile: ../docker/backend/Dockerfile
       args:
         UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+        PYTORCH_CPU_FIND_LINKS: ${SF_PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
     restart: unless-stopped
     environment: &backend-env
       ENV: ${SF_ENV:-production}
@@ -125,10 +126,8 @@ services:
       HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
       MOYU_API_KEY: ${MOYU_API_KEY:?set MOYU_API_KEY}
       RERANK_ENABLED: ${SF_RERANK_ENABLED:-true}
-      RERANK_PROVIDER: ${SF_RERANK_PROVIDER:-local}
       RERANK_TOP_K: ${SF_RERANK_TOP_K:-}
       RERANK_API_URL: ${SF_RERANK_API_URL:-http://reranker:8012}
-      RERANK_API_KEY: ${SF_RERANK_API_KEY:-}
       PREVIEW_DIR: /app/previews
       UPLOAD_DIR: /app/uploads
       LANGSMITH_TRACING: ${SF_LANGSMITH_TRACING:-false}
@@ -175,6 +174,7 @@ services:
       dockerfile: ../docker/backend/Dockerfile
       args:
         UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+        PYTORCH_CPU_FIND_LINKS: ${SF_PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
     restart: unless-stopped
     environment: *backend-env
     volumes:

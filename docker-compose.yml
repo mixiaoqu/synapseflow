@@ -71,6 +71,7 @@ services:
       dockerfile: ../docker/backend/Dockerfile
       args:
         UV_INDEX_URL: ${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+        PYTORCH_CPU_FIND_LINKS: ${PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
     container_name: synapseflow-backend
     environment:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
@@ -78,9 +79,7 @@ services:
       - DRAMATIQ_INDEXING_QUEUE=${DRAMATIQ_INDEXING_QUEUE:-indexing}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
       - RERANK_ENABLED=${RERANK_ENABLED:-true}
-      - RERANK_PROVIDER=${RERANK_PROVIDER:-local}
       - RERANK_API_URL=${RERANK_API_URL:-http://reranker:8012}
-      - RERANK_API_KEY=${RERANK_API_KEY:-}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
     ports:
       - "8000:8000"
@@ -109,6 +108,7 @@ services:
       dockerfile: ../docker/backend/Dockerfile
       args:
         UV_INDEX_URL: ${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+        PYTORCH_CPU_FIND_LINKS: ${PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
     container_name: synapseflow-backend-worker
     environment:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
