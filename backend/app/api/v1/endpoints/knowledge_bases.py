@@ -61,6 +61,11 @@ async def list_knowledge_bases(
             processing_document_count=row.processing_document_count,
             failed_document_count=row.failed_document_count,
             unindexed_document_count=row.unindexed_document_count,
+            draft_document_count=row.draft_document_count,
+            submittable_document_count=row.submittable_document_count,
+            pending_review_document_count=row.pending_review_document_count,
+            published_document_count=row.published_document_count,
+            archived_document_count=row.archived_document_count,
             last_document_updated_at=row.last_document_updated_at,
             last_uploaded_at=row.last_uploaded_at,
             status=_resolve_knowledge_base_status(

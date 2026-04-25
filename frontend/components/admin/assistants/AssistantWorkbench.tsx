@@ -660,6 +660,21 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
             open={openSections.basic}
             onToggle={toggleSection}
           >
+            <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm md:grid-cols-2">
+              <div>
+                <p className="text-xs text-slate-500">目标团队</p>
+                <p className="mt-1 truncate font-medium text-slate-800">
+                  {selectedTeam?.name ?? "未选择团队"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">绑定知识库</p>
+                <p className="mt-1 truncate font-medium text-slate-800">
+                  {selectedKnowledgeBase?.name ?? "未绑定知识库"}
+                </p>
+              </div>
+            </div>
+
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <FieldLabel required>名称</FieldLabel>

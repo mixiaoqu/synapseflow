@@ -5,9 +5,6 @@ import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useSta
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  ArrowRight,
-  CheckCircle2,
-  Clock3,
   Database,
   FileText,
   Loader2,
@@ -18,10 +15,10 @@ import {
   Trash2,
   UploadCloud,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
+import { useTeamScope } from "@/components/team-scope/TeamScopeProvider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,56 +31,64 @@ import {
   deleteKnowledgeBase,
   listKnowledgeBases,
   updateKnowledgeBase,
-  type KnowledgeBaseStatus,
   type KnowledgeBaseWithCount,
 } from "@/lib/api/knowledgeBases";
-import { listTeams, type Team } from "@/lib/api/teams";
 import { cn } from "@/lib/utils";
 
 const ACCEPT_FILES = ".txt,.md,.pdf,.docx";
 const SUPPORTED_EXTENSIONS = new Set([".txt", ".md", ".pdf", ".docx"]);
 const MAX_SIZE = 10 * 1024 * 1024;
 const MAX_BATCH = 500;
-const coverThemes = [
-  "bg-gradient-to-br from-emerald-50 via-cyan-50 to-white",
-  "bg-gradient-to-br from-amber-50 via-orange-50 to-white",
-  "bg-gradient-to-br from-violet-50 via-indigo-50 to-white",
-  "bg-gradient-to-br from-lime-50 via-emerald-50 to-white",
-  "bg-gradient-to-br from-pink-50 via-fuchsia-50 to-white",
-  "bg-gradient-to-br from-slate-50 via-zinc-50 to-white",
-];
 
-const statusMeta: Record<
-  KnowledgeBaseStatus,
-  { label: string; icon: LucideIcon; chip: string; dot: string; border: string }
+type KnowledgeBaseCardTone = "danger" | "warning" | "review" | "info" | "success" | "muted";
+type KnowledgeBaseCardAction = "failed" | "indexing" | "pending_review" | "submittable" | "upload";
+
+const cardToneMeta: Record<
+  KnowledgeBaseCardTone,
+  {
+    border: string;
+    stripe: string;
+    chip: string;
+    headline: string;
+    shadow?: string;
+  }
 > = {
-  available: {
-    label: "已就绪",
-    icon: CheckCircle2,
-    chip: "bg-emerald-50 text-emerald-700",
-    dot: "bg-emerald-500",
-    border: "border-l-4 border-l-emerald-500",
+  danger: {
+    border: "border-rose-300",
+    stripe: "bg-rose-500",
+    chip: "border-rose-200 bg-rose-50 text-rose-700",
+    headline: "text-rose-700",
+    shadow: "shadow-rose-100",
   },
-  indexing: {
-    label: "索引中",
-    icon: Clock3,
-    chip: "bg-amber-50 text-amber-700",
-    dot: "bg-amber-500",
-    border: "border-l-4 border-l-amber-500",
+  warning: {
+    border: "border-amber-300",
+    stripe: "bg-amber-500",
+    chip: "border-amber-200 bg-amber-50 text-amber-700",
+    headline: "text-amber-700",
   },
-  error: {
-    label: "有异常",
-    icon: AlertTriangle,
-    chip: "bg-rose-50 text-rose-700",
-    dot: "bg-rose-500",
-    border: "border-l-4 border-l-rose-500",
+  review: {
+    border: "border-orange-300",
+    stripe: "bg-orange-500",
+    chip: "border-orange-200 bg-orange-50 text-orange-700",
+    headline: "text-orange-700",
   },
-  empty: {
-    label: "空库",
-    icon: FileText,
-    chip: "bg-slate-100 text-slate-600",
-    dot: "bg-slate-400",
-    border: "border-l-4 border-l-slate-300",
+  info: {
+    border: "border-blue-300",
+    stripe: "bg-blue-500",
+    chip: "border-blue-200 bg-blue-50 text-blue-700",
+    headline: "text-blue-700",
+  },
+  success: {
+    border: "border-emerald-300",
+    stripe: "bg-emerald-500",
+    chip: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    headline: "text-emerald-700",
+  },
+  muted: {
+    border: "border-slate-200",
+    stripe: "bg-slate-300",
+    chip: "border-slate-200 bg-slate-100 text-slate-600",
+    headline: "text-slate-600",
   },
 };
 
@@ -98,10 +103,78 @@ function formatDateTime(value?: string | null) {
   });
 }
 
+function getIndexingCount(knowledgeBase: KnowledgeBaseWithCount) {
+  return knowledgeBase.queued_document_count + knowledgeBase.processing_document_count;
+}
+
+function getCardSummary(knowledgeBase: KnowledgeBaseWithCount): {
+  label: string;
+  headline: string;
+  tone: KnowledgeBaseCardTone;
+  action: KnowledgeBaseCardAction;
+  actionLabel: string;
+} {
+  const indexingCount = getIndexingCount(knowledgeBase);
+
+  if (knowledgeBase.failed_document_count > 0) {
+    return {
+      label: `索引失败 ${knowledgeBase.failed_document_count}`,
+      headline: `${knowledgeBase.failed_document_count} 篇文档索引失败`,
+      tone: "danger",
+      action: "failed",
+      actionLabel: "查看失败",
+    };
+  }
+  if (indexingCount > 0) {
+    return {
+      label: `索引中 ${indexingCount}`,
+      headline: `${indexingCount} 篇文档正在索引`,
+      tone: "warning",
+      action: "indexing",
+      actionLabel: "查看进度",
+    };
+  }
+  if (knowledgeBase.pending_review_document_count > 0) {
+    return {
+      label: `待审核 ${knowledgeBase.pending_review_document_count}`,
+      headline: `${knowledgeBase.pending_review_document_count} 篇文档待审核`,
+      tone: "review",
+      action: "pending_review",
+      actionLabel: "审核文档",
+    };
+  }
+  if (knowledgeBase.submittable_document_count > 0) {
+    return {
+      label: `可提交审核 ${knowledgeBase.submittable_document_count}`,
+      headline: `${knowledgeBase.submittable_document_count} 篇文档可提交审核`,
+      tone: "info",
+      action: "submittable",
+      actionLabel: "提交审核",
+    };
+  }
+  if (knowledgeBase.published_document_count > 0) {
+    return {
+      label: `已发布 ${knowledgeBase.published_document_count}`,
+      headline: `${knowledgeBase.published_document_count} 篇文档已发布`,
+      tone: "success",
+      action: "upload",
+      actionLabel: "上传文档",
+    };
+  }
+  return {
+    label: "空知识库",
+    headline: "还没有文档",
+    tone: "muted",
+    action: "upload",
+    actionLabel: "上传文档",
+  };
+}
+
 type ConfirmDialogState = {
   open: boolean;
   title: string;
   description: string;
+  contextRows?: Array<{ label: string; value: string }>;
   confirmLabel: string;
   tone: "primary" | "danger";
   onConfirm: null | (() => void | Promise<void>);
@@ -140,14 +213,16 @@ export default function DocumentsPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const {
+    teamId: selectedTeamId,
+    teamsLoading,
+    selectedTeam: activeTeam,
+  } = useTeamScope();
 
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseWithCount[]>([]);
   const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState<number | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
-  const [loadingTeams, setLoadingTeams] = useState(false);
   const [loadingKnowledgeBases, setLoadingKnowledgeBases] = useState(false);
   const [creatingKnowledgeBase, setCreatingKnowledgeBase] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -172,10 +247,6 @@ export default function DocumentsPage() {
     onConfirm: null,
   });
 
-  const activeTeam = useMemo(
-    () => teams.find((item) => item.id === selectedTeamId) ?? null,
-    [selectedTeamId, teams],
-  );
   const displayedKnowledgeBases = useMemo(() => {
     const q = keyword.trim().toLowerCase();
     if (!q) return knowledgeBases;
@@ -183,19 +254,10 @@ export default function DocumentsPage() {
       [item.name, item.description || ""].some((value) => value.toLowerCase().includes(q)),
     );
   }, [keyword, knowledgeBases]);
-
-  const loadTeams = useCallback(async () => {
-    setLoadingTeams(true);
-    try {
-      const list = await listTeams();
-      setTeams(list);
-      setSelectedTeamId((prev) => prev ?? list[0]?.id ?? null);
-    } catch {
-      toast.error("加载团队失败");
-    } finally {
-      setLoadingTeams(false);
-    }
-  }, []);
+  const uploadTargetKnowledgeBase = useMemo(
+    () => knowledgeBases.find((item) => item.id === uploadCollectionId) ?? null,
+    [knowledgeBases, uploadCollectionId],
+  );
 
   const loadKnowledgeBases = useCallback(async () => {
     if (selectedTeamId == null) {
@@ -225,12 +287,9 @@ export default function DocumentsPage() {
   }, [selectedTeamId]);
 
   useEffect(() => {
-    void loadTeams();
-  }, [loadTeams]);
-
-  useEffect(() => {
+    if (teamsLoading) return;
     void loadKnowledgeBases();
-  }, [loadKnowledgeBases]);
+  }, [loadKnowledgeBases, teamsLoading]);
 
   useEffect(() => {
     if (!knowledgeBases.some((item) => item.status === "indexing")) return undefined;
@@ -334,6 +393,11 @@ export default function DocumentsPage() {
     openConfirmDialog({
       title: "删除这个知识库？",
       description: `“${knowledgeBase.name}”会被删除，文档会从知识库解绑。此操作不可恢复。`,
+      contextRows: [
+        { label: "当前团队", value: activeTeam?.name || "未选择团队" },
+        { label: "目标知识库", value: knowledgeBase.name },
+        { label: "包含文档", value: `${knowledgeBase.document_count} 篇` },
+      ],
       confirmLabel: "确认删除",
       tone: "danger",
       onConfirm: async () => {
@@ -404,7 +468,7 @@ export default function DocumentsPage() {
     event.target.value = "";
   };
 
-  const isLoading = loadingTeams || loadingKnowledgeBases;
+  const isLoading = teamsLoading || loadingKnowledgeBases;
   const hasKnowledgeBases = knowledgeBases.length > 0;
 
   return (
@@ -459,26 +523,6 @@ export default function DocumentsPage() {
             </div>
           </div>
 
-          {teams.length > 1 ? (
-            <div className="mt-5 flex flex-wrap items-center gap-2">
-              {teams.map((team) => (
-                <button
-                  key={team.id}
-                  type="button"
-                  onClick={() => setSelectedTeamId(team.id)}
-                  className={cn(
-                    "rounded-full border px-3.5 py-1.5 text-sm transition-colors",
-                    selectedTeamId === team.id
-                      ? "border-blue-200 bg-blue-50 text-blue-700"
-                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50",
-                  )}
-                >
-                  {team.name}
-                </button>
-              ))}
-            </div>
-          ) : null}
-
           {!hasKnowledgeBases && !isLoading ? (
             <p className="mt-4 text-sm text-amber-700">
               当前团队还没有知识库。先创建知识库，再上传文档会更顺畅。
@@ -523,25 +567,40 @@ export default function DocumentsPage() {
             </div>
           ) : (
             <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {displayedKnowledgeBases.map((knowledgeBase, index) => {
+              {displayedKnowledgeBases.map((knowledgeBase) => {
                 const active = selectedKnowledgeBaseId === knowledgeBase.id;
-                const theme = coverThemes[(knowledgeBase.id + index) % coverThemes.length];
-                const meta = statusMeta[knowledgeBase.status];
-                const StatusIcon = meta.icon;
-                const hasError =
-                  knowledgeBase.status === "error" || knowledgeBase.failed_document_count > 0;
+                const indexingCount = getIndexingCount(knowledgeBase);
+                const cardSummary = getCardSummary(knowledgeBase);
+                const tone = cardToneMeta[cardSummary.tone];
+                const runPrimaryAction = () => {
+                  setSelectedKnowledgeBaseId(knowledgeBase.id);
+                  if (cardSummary.action === "upload") {
+                    openUploadModal(knowledgeBase.id);
+                    return;
+                  }
+                  if (
+                    cardSummary.action === "pending_review" ||
+                    cardSummary.action === "submittable"
+                  ) {
+                    const filter =
+                      cardSummary.action === "pending_review" ? "pending_review" : "draft";
+                    router.push(`/admin/review?filter=${filter}`);
+                    return;
+                  }
+                  openKnowledgeBase(knowledgeBase.id);
+                };
 
                 return (
                   <div
                     key={knowledgeBase.id}
                     className={cn(
-                      "group flex h-full min-h-[228px] flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-md",
+                      "group relative flex h-full min-h-[300px] flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-md",
                       active ? "ring-4 ring-blue-50" : "",
-                      hasError ? "border-rose-300" : "border-slate-200 hover:border-slate-300",
-                      active && !hasError ? "border-blue-400" : "",
-                      hasError ? "shadow-rose-100" : "",
+                      tone.border,
+                      tone.shadow,
                     )}
                   >
+                    <div className={cn("absolute inset-y-0 left-0 w-1", tone.stripe)} />
                     <button
                       type="button"
                       onClick={() => {
@@ -550,7 +609,7 @@ export default function DocumentsPage() {
                       }}
                       className="flex flex-1 flex-col text-left outline-none"
                     >
-                      <div className={cn("flex flex-col p-5", theme)}>
+                      <div className="flex flex-1 flex-col p-5 pl-6">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0 flex-1">
                             <span className="inline-flex text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
@@ -562,66 +621,85 @@ export default function DocumentsPage() {
                           </div>
                           <div
                             className={cn(
-                              "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
-                              meta.chip,
+                              "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+                              tone.chip,
                             )}
                           >
-                            <span className={cn("h-2 w-2 rounded-full", meta.dot)} />
-                            <StatusIcon className="h-3.5 w-3.5" />
-                            {meta.label}
+                            {cardSummary.tone === "danger" ? (
+                              <AlertTriangle className="h-3.5 w-3.5" />
+                            ) : cardSummary.tone === "warning" ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : cardSummary.tone === "muted" ? (
+                              <FileText className="h-3.5 w-3.5" />
+                            ) : (
+                              <span className={cn("h-2 w-2 rounded-full", tone.stripe)} />
+                            )}
+                            {cardSummary.label}
                           </div>
                         </div>
                         <p className="mt-1.5 line-clamp-2 text-sm text-slate-500">
                           {knowledgeBase.description || "围绕单个主题集中组织文档、检索与问答。"}
                         </p>
-                      </div>
 
-                      <div className="grid grid-cols-3 divide-x divide-slate-100 border-y border-slate-100 bg-slate-50/50 mt-auto">
-                        <div className="flex flex-col items-center justify-center px-2 py-2.5">
-                          <p className="text-[11px] font-medium text-slate-400">文档总数</p>
-                          <p className="mt-0.5 text-base font-semibold text-slate-700">
-                            {knowledgeBase.document_count}
+                        <div className="mt-5">
+                          <p className={cn("text-lg font-semibold", tone.headline)}>
+                            {cardSummary.headline}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            最近上传 {formatDateTime(knowledgeBase.last_uploaded_at)}
                           </p>
                         </div>
-                        <div className="flex flex-col items-center justify-center px-2 py-2.5">
-                          <p className="text-[11px] font-medium text-slate-400">已就绪</p>
-                          <p className="mt-0.5 text-base font-semibold text-emerald-600">
-                            {knowledgeBase.indexed_document_count}
-                          </p>
-                        </div>
-                        <div className="flex flex-col items-center justify-center px-2 py-2.5">
-                          <p
-                            className={cn(
-                              "text-[11px] font-medium",
-                              hasError
-                                ? "text-rose-500"
-                                : knowledgeBase.processing_document_count > 0
-                                  ? "text-amber-500"
-                                  : "text-slate-400",
-                            )}
-                          >
-                            异常/处理中
-                          </p>
-                          <p
-                            className={cn(
-                              "mt-0.5 text-base font-semibold",
-                              hasError
-                                ? "text-rose-600"
-                                : knowledgeBase.processing_document_count > 0
-                                  ? "text-amber-600"
-                                  : "text-slate-700",
-                            )}
-                          >
-                            {knowledgeBase.failed_document_count || knowledgeBase.processing_document_count}
-                          </p>
+
+                        <div className="mt-5 grid grid-cols-3 gap-2">
+                          {[
+                            {
+                              label: "可提交审核",
+                              value: knowledgeBase.submittable_document_count,
+                              className: "text-blue-700",
+                            },
+                            {
+                              label: "待审核",
+                              value: knowledgeBase.pending_review_document_count,
+                              className: "text-orange-700",
+                            },
+                            {
+                              label: "已发布",
+                              value: knowledgeBase.published_document_count,
+                              className: "text-emerald-700",
+                            },
+                            {
+                              label: "索引中",
+                              value: indexingCount,
+                              className: "text-amber-700",
+                            },
+                            {
+                              label: "失败",
+                              value: knowledgeBase.failed_document_count,
+                              className: "text-rose-700",
+                            },
+                            {
+                              label: "总文档",
+                              value: knowledgeBase.document_count,
+                              className: "text-slate-700",
+                            },
+                          ].map((item) => (
+                            <div key={item.label} className="rounded-xl bg-slate-50 px-3 py-2">
+                              <p className="truncate text-[11px] font-medium text-slate-400">
+                                {item.label}
+                              </p>
+                              <p className={cn("mt-1 text-base font-semibold", item.className)}>
+                                {item.value}
+                              </p>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     </button>
 
-                    <div className="flex items-center justify-between bg-white px-4 py-3">
+                    <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-white px-4 py-3 pl-5">
                       <div className="flex items-center gap-2 text-xs text-slate-400">
                         <span>更新于 {formatDateTime(knowledgeBase.updated_at)}</span>
-                        {knowledgeBase.processing_document_count > 0 && (
+                        {indexingCount > 0 && (
                           <span className="flex items-center gap-1 text-amber-600">
                             <Loader2 className="h-3 w-3 animate-spin" />
                             处理中...
@@ -631,18 +709,39 @@ export default function DocumentsPage() {
 
                       <div className="flex items-center gap-1.5">
                         <Button
-                          variant="outline"
                           size="sm"
-                          className="h-8 rounded-lg border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedKnowledgeBaseId(knowledgeBase.id);
-                            openUploadModal(knowledgeBase.id);
-                          }}
+                          className={cn(
+                            "h-8 rounded-lg px-3 text-xs text-white",
+                            cardSummary.tone === "danger"
+                              ? "bg-rose-600 hover:bg-rose-700"
+                              : cardSummary.tone === "warning" || cardSummary.tone === "review"
+                                ? "bg-amber-600 hover:bg-amber-700"
+                                : cardSummary.tone === "info"
+                                  ? "bg-blue-600 hover:bg-blue-700"
+                                  : "bg-slate-900 hover:bg-slate-800",
+                          )}
+                          onClick={runPrimaryAction}
                         >
-                          <UploadCloud className="mr-1.5 h-4 w-4" />
-                          快捷上传
+                          {cardSummary.action === "upload" ? (
+                            <UploadCloud className="mr-1.5 h-4 w-4" />
+                          ) : null}
+                          {cardSummary.actionLabel}
                         </Button>
+                        {cardSummary.action !== "upload" ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 rounded-lg border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedKnowledgeBaseId(knowledgeBase.id);
+                              openUploadModal(knowledgeBase.id);
+                            }}
+                          >
+                            <UploadCloud className="mr-1.5 h-4 w-4" />
+                            上传
+                          </Button>
+                        ) : null}
 
                         <DropdownMenu.Root>
                           <DropdownMenu.Trigger asChild>
@@ -815,6 +914,12 @@ export default function DocumentsPage() {
 
             <div className="mt-5 space-y-4">
               <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">所属团队</label>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                  {activeTeam?.name || "未选择团队"}
+                </div>
+              </div>
+              <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700">知识库名称</label>
                 <Input
                   value={editName}
@@ -872,6 +977,18 @@ export default function DocumentsPage() {
                 <p className="mt-2 text-sm leading-6 text-slate-500">
                   {confirmDialog.description}
                 </p>
+                {confirmDialog.contextRows?.length ? (
+                  <div className="mt-4 space-y-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm">
+                    {confirmDialog.contextRows.map((row) => (
+                      <div key={row.label} className="flex items-center justify-between gap-4">
+                        <span className="text-slate-500">{row.label}</span>
+                        <span className="min-w-0 truncate font-medium text-slate-800">
+                          {row.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <Button
                 variant="ghost"
@@ -928,6 +1045,20 @@ export default function DocumentsPage() {
             </div>
 
             <div className="mt-5 space-y-4">
+              <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm sm:grid-cols-2">
+                <div>
+                  <p className="text-xs text-slate-500">目标团队</p>
+                  <p className="mt-1 truncate font-medium text-slate-800">
+                    {activeTeam?.name || "未选择团队"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">目标知识库</p>
+                  <p className="mt-1 truncate font-medium text-slate-800">
+                    {uploadTargetKnowledgeBase?.name || "未选择知识库"}
+                  </p>
+                </div>
+              </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700">目标知识库</label>
                 <select

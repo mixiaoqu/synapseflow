@@ -68,6 +68,7 @@ type ConfirmDialogState = {
   open: boolean;
   title: string;
   description: string;
+  contextRows?: Array<{ label: string; value: string }>;
   confirmLabel: string;
   tone: "primary" | "danger";
   onConfirm: null | (() => void | Promise<void>);
@@ -1000,6 +1001,11 @@ function KnowledgeBaseDetailPageContent() {
     openConfirmDialog({
       title: "删除这个知识库？",
       description: `“${kb.name}”会被删除，文档会从知识库解绑，之后可重新归档到其他知识库。此操作不可恢复。`,
+      contextRows: [
+        { label: "所属团队", value: activeTeam?.name || "未识别团队" },
+        { label: "目标知识库", value: kb.name },
+        { label: "包含文档", value: `${kb.document_count} 篇` },
+      ],
       confirmLabel: "确认删除",
       tone: "danger",
       onConfirm: async () => {
@@ -1988,6 +1994,18 @@ function KnowledgeBaseDetailPageContent() {
                 <p className="mt-2 text-sm leading-6 text-slate-500">
                   {confirmDialog.description}
                 </p>
+                {confirmDialog.contextRows?.length ? (
+                  <div className="mt-4 space-y-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm">
+                    {confirmDialog.contextRows.map((row) => (
+                      <div key={row.label} className="flex items-center justify-between gap-4">
+                        <span className="text-slate-500">{row.label}</span>
+                        <span className="min-w-0 truncate font-medium text-slate-800">
+                          {row.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <Button variant="ghost" size="icon" onClick={closeConfirmDialog}>
                 <X className="h-4 w-4" />
@@ -2039,6 +2057,20 @@ function KnowledgeBaseDetailPageContent() {
               </div>
 
               <div className="mt-4">
+                <div className="mb-4 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs text-slate-500">目标团队</p>
+                    <p className="mt-1 truncate font-medium text-slate-800">
+                      {activeTeam?.name || "未识别团队"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">目标知识库</p>
+                    <p className="mt-1 truncate font-medium text-slate-800">
+                      {kb?.name || "当前知识库"}
+                    </p>
+                  </div>
+                </div>
                 <label className="mb-2 block text-sm font-medium text-slate-700">目标分类</label>
                 <select
                   value={uploadCategoryId ?? ""}

@@ -60,6 +60,11 @@ class KnowledgeBaseWithCount(KnowledgeBaseResponse):
     processing_document_count: int = 0
     failed_document_count: int = 0
     unindexed_document_count: int = 0
+    draft_document_count: int = 0
+    submittable_document_count: int = 0
+    pending_review_document_count: int = 0
+    published_document_count: int = 0
+    archived_document_count: int = 0
     last_document_updated_at: datetime | None = None
     last_uploaded_at: datetime | None = None
     status: KnowledgeBaseStatus = "empty"

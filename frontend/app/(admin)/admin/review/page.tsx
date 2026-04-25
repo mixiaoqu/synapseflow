@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { FilterX, Loader2, RefreshCcw, Search } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
@@ -34,6 +35,10 @@ import {
 
 const FETCH_PAGE_SIZE = 100;
 
+function isReviewFilter(value: string | null): value is ReviewFilter {
+  return Boolean(value && REVIEW_FILTER_ORDER.includes(value as ReviewFilter));
+}
+
 async function runReviewAction(
   documentId: number,
   action: ReviewAction,
@@ -65,7 +70,8 @@ function mergeUpdatedDocuments(
   );
 }
 
-export default function AdminReviewPage() {
+function AdminReviewPageContent() {
+  const searchParams = useSearchParams();
   const { teamId, selectedTeam, teamsLoading } = useTeamScope();
 
   const [items, setItems] = useState<DocumentListItem[]>([]);
@@ -126,6 +132,13 @@ export default function AdminReviewPage() {
     if (teamsLoading) return;
     void loadDocuments();
   }, [loadDocuments, teamsLoading]);
+
+  useEffect(() => {
+    const filter = searchParams.get("filter");
+    if (isReviewFilter(filter)) {
+      setActiveFilter(filter);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     setSelectedIds((current) => current.filter((id) => items.some((item) => item.id === id)));
@@ -481,5 +494,20 @@ export default function AdminReviewPage() {
         onRunAction={runSingleAction}
       />
     </div>
+  );
+}
+
+export default function AdminReviewPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-full items-center justify-center bg-slate-50 text-sm text-slate-500">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          正在加载审核中心...
+        </div>
+      }
+    >
+      <AdminReviewPageContent />
+    </Suspense>
   );
 }

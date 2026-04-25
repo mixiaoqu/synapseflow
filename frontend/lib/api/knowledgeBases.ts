@@ -31,6 +31,11 @@ export interface KnowledgeBaseWithCount extends KnowledgeBaseBase {
   processing_document_count: number;
   failed_document_count: number;
   unindexed_document_count: number;
+  draft_document_count: number;
+  submittable_document_count: number;
+  pending_review_document_count: number;
+  published_document_count: number;
+  archived_document_count: number;
   last_document_updated_at: string | null;
   last_uploaded_at: string | null;
   status: KnowledgeBaseStatus;

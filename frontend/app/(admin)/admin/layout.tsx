@@ -20,8 +20,8 @@ import {
 } from "lucide-react";
 
 import { TeamScopeProvider } from "@/components/team-scope/TeamScopeProvider";
+import { TeamContextBar } from "@/components/team-scope/TeamContextBar";
 import { BackgroundTasksPanel } from "@/components/tasks/BackgroundTasksPanel";
-import { TeamScopeSwitcher } from "@/components/teams/TeamScopeSwitcher";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { clearAuthSession } from "@/lib/auth/session";
 
@@ -148,9 +148,6 @@ function AdminLayoutContent({
                 <p className="mt-0.5 text-[11px] text-gray-500">Knowledge Ops Console</p>
               </div>
             </div>
-            <div className="mt-4">
-              <TeamScopeSwitcher className="w-full min-w-0" />
-            </div>
           </div>
 
           <nav className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -247,9 +244,10 @@ function AdminLayoutContent({
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 bg-gradient-to-b from-slate-50 to-white text-slate-900">
+        <main className="flex min-w-0 flex-1 flex-col bg-gradient-to-b from-slate-50 to-white text-slate-900">
+          <TeamContextBar />
           <BackgroundTasksPanel documentsHref="/admin/documents" />
-          <div className="h-full min-h-0 overflow-y-auto">{children}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
         </main>
       </div>
     </TeamScopeProvider>

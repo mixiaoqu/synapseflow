@@ -15,6 +15,12 @@ from app.services.document_index_state import (
     INDEX_STATUS_PROCESSING,
     INDEX_STATUS_QUEUED,
 )
+from app.services.document_lifecycle import (
+    DOC_STATUS_ARCHIVED,
+    DOC_STATUS_DRAFT,
+    DOC_STATUS_PENDING_REVIEW,
+    DOC_STATUS_PUBLISHED,
+)
 
 
 @dataclass(slots=True)
@@ -43,6 +49,11 @@ class KnowledgeBaseSummaryRecord:
     processing_document_count: int
     failed_document_count: int
     unindexed_document_count: int
+    draft_document_count: int
+    submittable_document_count: int
+    pending_review_document_count: int
+    published_document_count: int
+    archived_document_count: int
     last_document_updated_at: datetime | None
     last_uploaded_at: datetime | None
     recent_documents: list[KnowledgeBaseRecentDocumentRecord]
@@ -67,6 +78,22 @@ class KnowledgeBaseRepository:
             case((Document.index_status == INDEX_STATUS_PROCESSING, 1), else_=0)
         )
         failed_count = func.sum(case((Document.index_status == INDEX_STATUS_FAILED, 1), else_=0))
+        draft_count = func.sum(case((Document.status == DOC_STATUS_DRAFT, 1), else_=0))
+        submittable_count = func.sum(
+            case(
+                (
+                    (Document.status == DOC_STATUS_DRAFT)
+                    & (Document.index_status == INDEX_STATUS_INDEXED),
+                    1,
+                ),
+                else_=0,
+            )
+        )
+        pending_review_count = func.sum(
+            case((Document.status == DOC_STATUS_PENDING_REVIEW, 1), else_=0)
+        )
+        published_count = func.sum(case((Document.status == DOC_STATUS_PUBLISHED, 1), else_=0))
+        archived_count = func.sum(case((Document.status == DOC_STATUS_ARCHIVED, 1), else_=0))
         unindexed_count = func.sum(
             case(
                 (
@@ -85,6 +112,11 @@ class KnowledgeBaseRepository:
                 processing_count.label("processing_doc_count"),
                 failed_count.label("failed_doc_count"),
                 unindexed_count.label("unindexed_doc_count"),
+                draft_count.label("draft_doc_count"),
+                submittable_count.label("submittable_doc_count"),
+                pending_review_count.label("pending_review_doc_count"),
+                published_count.label("published_doc_count"),
+                archived_count.label("archived_doc_count"),
                 func.max(Document.updated_at).label("last_document_updated_at"),
                 func.max(Document.created_at).label("last_uploaded_at"),
             )
@@ -111,6 +143,11 @@ class KnowledgeBaseRepository:
                 processing_document_count=processing_doc_count or 0,
                 failed_document_count=failed_doc_count or 0,
                 unindexed_document_count=unindexed_doc_count or 0,
+                draft_document_count=draft_doc_count or 0,
+                submittable_document_count=submittable_doc_count or 0,
+                pending_review_document_count=pending_review_doc_count or 0,
+                published_document_count=published_doc_count or 0,
+                archived_document_count=archived_doc_count or 0,
                 last_document_updated_at=last_document_updated_at,
                 last_uploaded_at=last_uploaded_at,
                 recent_documents=recent_docs_map.get(knowledge_base.id, []),
@@ -123,6 +160,11 @@ class KnowledgeBaseRepository:
                 processing_doc_count,
                 failed_doc_count,
                 unindexed_doc_count,
+                draft_doc_count,
+                submittable_doc_count,
+                pending_review_doc_count,
+                published_doc_count,
+                archived_doc_count,
                 last_document_updated_at,
                 last_uploaded_at,
             ) in rows
