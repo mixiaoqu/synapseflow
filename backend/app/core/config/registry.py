@@ -24,8 +24,6 @@ from .schemas import (
     ModelConfig,
     RagChunkConfig,
     RagConfig,
-    RagEvaluateConfig,
-    RagEvaluateWeights,
     RagRetrievalConfig,
     RerankConfig,
 )
@@ -153,39 +151,33 @@ class ConfigRegistry:
     @functools.lru_cache(maxsize=1)
     def get_rag_config(self) -> RagConfig:
         """
-        Get RAG-related config including chunking, retrieval, and evaluation.
+        Get RAG-related config including chunking and retrieval.
         All values come from `config/embedding.yaml` and are cached in-process.
         """
         data = load_embedding_raw()
         chunk = data.get("chunk", {}) or {}
         retrieval = data.get("retrieval", {}) or {}
-        ev = data.get("evaluate", {}) or {}
-        w = ev.get("weights", {}) or {}
-        wr = float(w.get("relevance", 0.25))
-        wg = float(w.get("groundedness", 0.45))
-        wc = float(w.get("completeness", 0.30))
-        total = wr + wg + wc
-        if total > 0 and abs(total - 1.0) > 1e-6:
-            wr, wg, wc = wr / total, wg / total, wc / total
 
         return RagConfig(
             chunk=RagChunkConfig(
                 size=int(chunk.get("size", 700)),
                 overlap=int(chunk.get("overlap", 100)),
+                parent_target_min=int(chunk.get("parent_target_min", 1200)),
+                parent_target_max=int(chunk.get("parent_target_max", 2500)),
+                child_target_min=int(chunk.get("child_target_min", 400)),
+                child_target_max=int(chunk.get("child_target_max", 900)),
+                split_overlap_units=int(chunk.get("split_overlap_units", 1)),
+                parent_window_max_chars=int(chunk.get("parent_window_max_chars", 1800)),
+                parent_window_neighbor_span=int(chunk.get("parent_window_neighbor_span", 1)),
             ),
             retrieval=RagRetrievalConfig(
                 k_first=int(retrieval.get("k_first", 16)),
-                k_iteration=int(retrieval.get("k_iteration", 20)),
                 distance_threshold=float(retrieval.get("distance_threshold", 0.5)),
-                distance_threshold_iteration=float(
-                    retrieval.get("distance_threshold_iteration", 0.6)
-                ),
                 rerank_threshold=(
                     float(retrieval["rerank_threshold"])
                     if retrieval.get("rerank_threshold") is not None
                     else None
                 ),
-                fallback_top_n=int(retrieval.get("fallback_top_n", 3)),
                 final_top_k=(
                     settings.RERANK_TOP_K
                     if settings.RERANK_TOP_K is not None
@@ -201,15 +193,6 @@ class ConfigRegistry:
                 rrf_k=int(retrieval.get("rrf_k", 60)),
                 hybrid_pool_limit=int(retrieval.get("hybrid_pool_limit", 64)),
                 kb_context_max_chars=int(retrieval.get("kb_context_max_chars", 12000)),
-            ),
-            evaluate=RagEvaluateConfig(
-                context_max_chars=int(ev.get("context_max_chars", 3000)),
-                pass_threshold=float(ev.get("pass_threshold", 0.75)),
-                weights=RagEvaluateWeights(
-                    relevance=wr,
-                    groundedness=wg,
-                    completeness=wc,
-                ),
             ),
         )
 

@@ -5,8 +5,6 @@
 - `/ask`：用户问答界面
 - `/admin`：后台管理界面
 
-旧的实验性页面与路由（`kb-chat`、`kb-curation`、`revision`、`prototype`、`assistant-lab` 等）已从前端入口和后端公开路由中移除，不再作为当前产品范围的一部分。
-
 ## 技术栈
 
 ### Backend
@@ -55,7 +53,7 @@ synapseflow/
 ### 1. 启动基础依赖
 
 ```bash
-docker-compose up -d postgres
+docker compose up -d postgres redis reranker
 ```
 
 ### 2. 启动后端
@@ -69,7 +67,14 @@ uv run uvicorn app.main:app --reload
 
 后端默认地址：`http://localhost:8000`
 
-### 3. 启动前端
+### 3. 启动 worker
+
+```bash
+cd backend
+uv run dramatiq app.workers.indexing_tasks --processes 1 --threads 1
+```
+
+### 4. 启动前端
 
 ```bash
 cd frontend
@@ -97,6 +102,5 @@ pnpm dev
 
 ## 开发建议
 
-- 页面入口只围绕 `/ask` 与 `/admin` 组织，避免再次回到多实验页并存的结构。
-- 业务实现优先放在特性目录或服务层，不再依赖 `app/(dashboard)` 这类历史路由容器。
-- 若后续恢复实验功能，建议先在 feature 层重建，再决定是否公开为正式路由。
+- 页面入口只围绕 `/ask` 与 `/admin` 组织。
+- 业务实现优先放在特性目录或服务层。

@@ -1,4 +1,4 @@
-"""Shared retrieval pipeline for KB chat, curation, and tools."""
+"""Shared retrieval pipeline for knowledge-base chat."""
 
 import asyncio
 from typing import Any, Dict, List, Optional
@@ -244,7 +244,6 @@ async def _finalize_ranked_rows(
     query: str,
     results: List[dict],
     final_top_k: int,
-    iteration: int,
 ) -> List[dict]:
     if settings.RERANK_ENABLED and results:
         logger.debug(
@@ -257,7 +256,6 @@ async def _finalize_ranked_rows(
         results = results[:final_top_k]
     return _apply_retrieval_thresholds(
         results,
-        iteration=iteration,
         rerank_enabled=settings.RERANK_ENABLED,
     )
 
@@ -298,16 +296,13 @@ def _passes_rerank_threshold(
 def _apply_retrieval_thresholds(
     results: List[dict],
     *,
-    iteration: int,
     rerank_enabled: bool,
 ) -> List[dict]:
     if not results:
         return []
 
     rag = config_registry.get_rag_config().retrieval
-    distance_threshold = (
-        rag.distance_threshold_iteration if iteration > 0 else rag.distance_threshold
-    )
+    distance_threshold = rag.distance_threshold
     rerank_threshold = rag.rerank_threshold
 
     filtered = [
@@ -392,7 +387,6 @@ async def _build_retrieval_output(
     has_documents: bool,
     knowledge_base_id: Optional[int],
     category_id: Optional[int],
-    iteration: int,
     log_prefix: str,
     recall_k: int,
     final_top_k: int,
@@ -416,9 +410,8 @@ async def _build_retrieval_output(
         "{:.3f}~{:.3f}".format(min(rerank_scores), max(rerank_scores)) if rerank_scores else "-"
     )
     logger.info(
-        "{} 第 {} 轮检索完成：模式={}，查询数={}，结果数={}，距离范围={}，精排范围={}",
+        "{} 检索完成：模式={}，查询数={}，结果数={}，距离范围={}，精排范围={}",
         log_prefix,
-        iteration + 1,
         mode,
         query_count,
         len(results),
@@ -526,7 +519,6 @@ async def run_kb_retrieval(
     team_id: Optional[int],
     knowledge_base_id: Optional[int],
     category_id: Optional[int] = None,
-    iteration: int = 0,
     log_prefix: str = "[KB Retrieval]",
     user_id: int | None = None,
     result_limit: int | None = None,
@@ -537,7 +529,7 @@ async def run_kb_retrieval(
     """Retrieve KB chunks and return prompt-ready state."""
 
     rag = config_registry.get_rag_config().retrieval
-    recall_k = rag.k_iteration if iteration > 0 else rag.k_first
+    recall_k = rag.k_first
     final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
     llm_ref_k = max(1, result_limit) if result_limit is not None else rag.llm_reference_top_k
 
@@ -556,7 +548,6 @@ async def run_kb_retrieval(
         query=query,
         results=results,
         final_top_k=final_top_k,
-        iteration=iteration,
     )
     mode = "hybrid" if rag.hybrid_enabled else "vector"
     retrieval_funnel = _build_retrieval_funnel(
@@ -572,7 +563,6 @@ async def run_kb_retrieval(
         has_documents=has_documents,
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
-        iteration=iteration,
         log_prefix=log_prefix,
         recall_k=recall_k,
         final_top_k=final_top_k,
@@ -590,7 +580,6 @@ async def run_multi_query_kb_retrieval(
     team_id: Optional[int],
     knowledge_base_id: Optional[int],
     category_id: Optional[int] = None,
-    iteration: int = 0,
     log_prefix: str = "[KB Retrieval]",
     user_id: int | None = None,
     result_limit: int | None = None,
@@ -607,7 +596,6 @@ async def run_multi_query_kb_retrieval(
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
-            iteration=iteration,
             log_prefix=log_prefix,
             user_id=user_id,
             result_limit=result_limit,
@@ -619,7 +607,7 @@ async def run_multi_query_kb_retrieval(
         return output
 
     rag = config_registry.get_rag_config().retrieval
-    recall_k = rag.k_iteration if iteration > 0 else rag.k_first
+    recall_k = rag.k_first
     final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
     llm_ref_k = max(1, result_limit) if result_limit is not None else rag.llm_reference_top_k
     per_query_recall_k = _scaled_candidate_k(len(queries), recall_k, final_top_k)
@@ -661,7 +649,6 @@ async def run_multi_query_kb_retrieval(
         query=query,
         results=fused_results,
         final_top_k=final_top_k,
-        iteration=iteration,
     )
     retrieval_funnel = _build_retrieval_funnel(
         mode="hybrid" if rag.hybrid_enabled else "vector",
@@ -676,7 +663,6 @@ async def run_multi_query_kb_retrieval(
         has_documents=has_documents,
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
-        iteration=iteration,
         log_prefix=log_prefix,
         recall_k=per_query_recall_k,
         final_top_k=final_top_k,

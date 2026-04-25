@@ -6,13 +6,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.config.registry import config_registry
 from app.utils.document_parse import ParsedBlock, ParsedDocument, render_parsed_document
 
-PARENT_TARGET_MIN = 1200
-PARENT_TARGET_MAX = 2500
-CHILD_TARGET_MIN = 400
-CHILD_TARGET_MAX = 900
-OVERLAP_UNITS = 1
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[。！？!?；;\.])")
 
 
@@ -72,15 +68,40 @@ class _Fragment:
     metadata: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class _ChunkSettings:
+    parent_target_min: int
+    parent_target_max: int
+    child_target_min: int
+    child_target_max: int
+    split_overlap_units: int
+
+
+def _get_chunk_settings() -> _ChunkSettings:
+    chunk_cfg = config_registry.get_rag_config().chunk
+    parent_target_min = max(1, int(chunk_cfg.parent_target_min))
+    parent_target_max = max(parent_target_min, int(chunk_cfg.parent_target_max))
+    child_target_min = max(1, int(chunk_cfg.child_target_min))
+    child_target_max = max(child_target_min, int(chunk_cfg.child_target_max))
+    return _ChunkSettings(
+        parent_target_min=parent_target_min,
+        parent_target_max=parent_target_max,
+        child_target_min=child_target_min,
+        child_target_max=child_target_max,
+        split_overlap_units=max(0, int(chunk_cfg.split_overlap_units)),
+    )
+
+
 def build_chunk_plan(
     parsed: ParsedDocument,
     *,
     document_title: str | None = None,
 ) -> DocumentChunkPlan:
+    chunk_settings = _get_chunk_settings()
     full_text = render_parsed_document(parsed)
     rendered_blocks = _rendered_blocks_with_offsets(parsed)
     content_blocks = [block for block in rendered_blocks if block.type != "heading" and block.text.strip()]
-    parent_payloads = _build_parent_payloads(content_blocks)
+    parent_payloads = _build_parent_payloads(content_blocks, chunk_settings)
     parent_chunks: list[PlannedChunk] = []
     child_chunks: list[PlannedChunk] = []
 
@@ -107,8 +128,9 @@ def build_chunk_plan(
             )
         )
 
-        child_payloads = _build_child_payloads(payload)
+        child_payloads = _build_child_payloads(payload, chunk_settings)
         for child_index, child in enumerate(child_payloads):
+            child_content = _join_fragments(child)
             child_chunks.append(
                 PlannedChunk(
                     local_id=f"child-{len(child_chunks)}",
@@ -121,11 +143,11 @@ def build_chunk_plan(
                     block_types=_unique_block_types(child),
                     start_offset=child[0].start_offset,
                     end_offset=child[-1].end_offset,
-                    content=_join_fragments(child),
+                    content=child_content,
                     search_text=_build_search_text(
                         document_title,
                         _common_section_path(child),
-                        _join_fragments(child),
+                        child_content,
                     ),
                     metadata={
                         "block_count": len(child),
@@ -234,7 +256,6 @@ def _rendered_blocks_with_offsets(parsed: ParsedDocument) -> list[_RenderedBlock
             )
         )
 
-
     return rendered
 
 
@@ -249,7 +270,8 @@ def _render_block(block: ParsedBlock) -> str:
             if line.startswith(("-", "*", "+")):
                 normalized.append(line if line.startswith("- ") else f"- {line[1:].strip()}")
             elif re.match(r"^\d+[.)]\s+", line):
-                normalized.append(f"- {re.sub(r'^\d+[.)]\s+', '', line)}")
+                item_text = re.sub(r"^\d+[.)]\s+", "", line)
+                normalized.append(f"- {item_text}")
             else:
                 normalized.append(f"- {line}")
         return "\n".join(normalized)
@@ -258,13 +280,16 @@ def _render_block(block: ParsedBlock) -> str:
     return block.text.strip()
 
 
-def _build_parent_payloads(blocks: list[_RenderedBlock]) -> list[list[_Fragment]]:
+def _build_parent_payloads(
+    blocks: list[_RenderedBlock],
+    chunk_settings: _ChunkSettings,
+) -> list[list[_Fragment]]:
     sections = _split_sections(blocks)
     payloads: list[list[_Fragment]] = []
     pending: list[_Fragment] = []
     pending_length = 0
 
-    for index, section in enumerate(sections):
+    for section in sections:
         section_len = _payload_length(section)
         same_lineage = bool(
             pending
@@ -274,10 +299,10 @@ def _build_parent_payloads(blocks: list[_RenderedBlock]) -> list[list[_Fragment]
 
         should_merge_short_section = (
             pending
-            and pending_length < PARENT_TARGET_MIN
-            and section_len < PARENT_TARGET_MIN
+            and pending_length < chunk_settings.parent_target_min
+            and section_len < chunk_settings.parent_target_min
             and same_lineage
-            and pending_length + 2 + section_len <= PARENT_TARGET_MAX
+            and pending_length + 2 + section_len <= chunk_settings.parent_target_max
         )
 
         if pending and not should_merge_short_section:
@@ -290,15 +315,24 @@ def _build_parent_payloads(blocks: list[_RenderedBlock]) -> list[list[_Fragment]
 
         section_cursor: list[_Fragment] = []
         section_cursor_length = 0
-        for fragment in _expand_block_fragments(section, PARENT_TARGET_MAX):
+        for fragment in _expand_block_fragments(
+            section,
+            chunk_settings.parent_target_max,
+            chunk_settings,
+        ):
             fragment_length = len(fragment.text)
             joiner = 2 if section_cursor else 0
-            if section_cursor and section_cursor_length + joiner + fragment_length > PARENT_TARGET_MAX:
+            if (
+                section_cursor
+                and section_cursor_length + joiner + fragment_length > chunk_settings.parent_target_max
+            ):
                 payloads.append(section_cursor)
                 section_cursor = []
                 section_cursor_length = 0
             section_cursor.append(fragment)
-            section_cursor_length += fragment_length if not section_cursor_length else joiner + fragment_length
+            section_cursor_length += (
+                fragment_length if not section_cursor_length else joiner + fragment_length
+            )
 
         if not section_cursor:
             continue
@@ -315,15 +349,18 @@ def _build_parent_payloads(blocks: list[_RenderedBlock]) -> list[list[_Fragment]
     return payloads
 
 
-def _build_child_payloads(parent_fragments: list[_Fragment]) -> list[list[_Fragment]]:
+def _build_child_payloads(
+    parent_fragments: list[_Fragment],
+    chunk_settings: _ChunkSettings,
+) -> list[list[_Fragment]]:
     payloads: list[list[_Fragment]] = []
     current: list[_Fragment] = []
     current_length = 0
 
-    for fragment in _expand_fragments_for_children(parent_fragments):
+    for fragment in _expand_fragments_for_children(parent_fragments, chunk_settings):
         fragment_length = len(fragment.text)
         joiner = 2 if current else 0
-        if current and current_length + joiner + fragment_length > CHILD_TARGET_MAX:
+        if current and current_length + joiner + fragment_length > chunk_settings.child_target_max:
             payloads.append(current)
             current = []
             current_length = 0
@@ -356,21 +393,29 @@ def _split_sections(blocks: list[_RenderedBlock]) -> list[list[_RenderedBlock]]:
 def _expand_block_fragments(
     blocks: list[_RenderedBlock],
     target_max: int,
+    chunk_settings: _ChunkSettings,
 ) -> list[_Fragment]:
     fragments: list[_Fragment] = []
     for block in blocks:
-        fragments.extend(_split_rendered_block(block, target_max))
-    return _merge_tiny_fragments(fragments, target_max)
+        fragments.extend(_split_rendered_block(block, target_max, chunk_settings))
+    return _merge_tiny_fragments(fragments, target_max, chunk_settings)
 
 
-def _expand_fragments_for_children(parent_fragments: list[_Fragment]) -> list[_Fragment]:
+def _expand_fragments_for_children(
+    parent_fragments: list[_Fragment],
+    chunk_settings: _ChunkSettings,
+) -> list[_Fragment]:
     fragments: list[_Fragment] = []
     for fragment in parent_fragments:
-        fragments.extend(_split_fragment_for_children(fragment))
-    return _merge_tiny_fragments(fragments, CHILD_TARGET_MAX)
+        fragments.extend(_split_fragment_for_children(fragment, chunk_settings))
+    return _merge_tiny_fragments(fragments, chunk_settings.child_target_max, chunk_settings)
 
 
-def _split_rendered_block(block: _RenderedBlock, target_max: int) -> list[_Fragment]:
+def _split_rendered_block(
+    block: _RenderedBlock,
+    target_max: int,
+    chunk_settings: _ChunkSettings,
+) -> list[_Fragment]:
     fragment = _Fragment(
         type=block.type,
         text=block.text,
@@ -380,43 +425,61 @@ def _split_rendered_block(block: _RenderedBlock, target_max: int) -> list[_Fragm
         end_offset=block.end_offset,
         metadata=dict(block.metadata or {}),
     )
-    return _split_fragment(fragment, target_max)
+    return _split_fragment(fragment, target_max, chunk_settings)
 
 
-def _split_fragment_for_children(fragment: _Fragment) -> list[_Fragment]:
-    return _split_fragment(fragment, CHILD_TARGET_MAX)
+def _split_fragment_for_children(
+    fragment: _Fragment,
+    chunk_settings: _ChunkSettings,
+) -> list[_Fragment]:
+    return _split_fragment(fragment, chunk_settings.child_target_max, chunk_settings)
 
 
-def _split_fragment(fragment: _Fragment, target_max: int) -> list[_Fragment]:
+def _split_fragment(
+    fragment: _Fragment,
+    target_max: int,
+    chunk_settings: _ChunkSettings,
+) -> list[_Fragment]:
     if len(fragment.text) <= target_max:
         return [fragment]
     if fragment.type == "table":
-        return _split_table_fragment(fragment, target_max)
-    return _split_text_fragment(fragment, target_max)
+        return _split_table_fragment(fragment, target_max, chunk_settings)
+    return _split_text_fragment(fragment, target_max, chunk_settings)
 
 
-def _split_table_fragment(fragment: _Fragment, target_max: int) -> list[_Fragment]:
+def _split_table_fragment(
+    fragment: _Fragment,
+    target_max: int,
+    chunk_settings: _ChunkSettings,
+) -> list[_Fragment]:
     rows = [row for row in fragment.text.split("\n") if row.strip()]
-    return _split_units(fragment, rows, target_max)
+    return _split_units(fragment, rows, target_max, chunk_settings)
 
 
-def _split_text_fragment(fragment: _Fragment, target_max: int) -> list[_Fragment]:
+def _split_text_fragment(
+    fragment: _Fragment,
+    target_max: int,
+    chunk_settings: _ChunkSettings,
+) -> list[_Fragment]:
     units = _split_sentences(fragment.text)
     if len(units) <= 1:
         units = [line for line in fragment.text.split("\n\n") if line.strip()]
     if len(units) <= 1:
         units = [fragment.text]
-    return _split_units(fragment, units, target_max)
+    return _split_units(fragment, units, target_max, chunk_settings)
 
 
-def _split_units(fragment: _Fragment, units: list[str], target_max: int) -> list[_Fragment]:
+def _split_units(
+    fragment: _Fragment,
+    units: list[str],
+    target_max: int,
+    chunk_settings: _ChunkSettings,
+) -> list[_Fragment]:
     if not units:
         return [fragment]
     pieces: list[_Fragment] = []
     current_units: list[str] = []
     current_start = fragment.start_offset
-    cursor = fragment.start_offset
-    text_cursor = 0
 
     for unit in units:
         unit = unit.strip()
@@ -437,15 +500,21 @@ def _split_units(fragment: _Fragment, units: list[str], target_max: int) -> list
                     metadata=dict(fragment.metadata or {}),
                 )
             )
-            overlap = current_units[-OVERLAP_UNITS:] if OVERLAP_UNITS else []
+            overlap = (
+                current_units[-chunk_settings.split_overlap_units:]
+                if chunk_settings.split_overlap_units
+                else []
+            )
             current_units = list(overlap)
-            current_start = max(fragment.start_offset, current_start + max(1, len(chunk_text) - len(joiner.join(overlap))))
+            current_start = max(
+                fragment.start_offset,
+                current_start + max(1, len(chunk_text) - len(joiner.join(overlap))),
+            )
         current_units.append(unit)
-        text_cursor += len(unit)
-        cursor = min(fragment.end_offset, fragment.start_offset + text_cursor)
 
     if current_units:
-        chunk_text = ("\n" if fragment.type == "table" else " ").join(current_units).strip()
+        joiner = "\n" if fragment.type == "table" else " "
+        chunk_text = joiner.join(current_units).strip()
         pieces.append(
             _Fragment(
                 type=fragment.type,
@@ -453,7 +522,10 @@ def _split_units(fragment: _Fragment, units: list[str], target_max: int) -> list
                 section_path=fragment.section_path,
                 heading_path=fragment.heading_path,
                 start_offset=current_start,
-                end_offset=max(current_start, min(fragment.end_offset, current_start + len(chunk_text))),
+                end_offset=max(
+                    current_start,
+                    min(fragment.end_offset, current_start + len(chunk_text)),
+                ),
                 metadata=dict(fragment.metadata or {}),
             )
         )
@@ -467,18 +539,26 @@ def _split_sentences(text: str) -> list[str]:
     return [item.strip() for item in _SENTENCE_BOUNDARY_RE.split(text) if item.strip()]
 
 
-def _merge_tiny_fragments(fragments: list[_Fragment], target_max: int) -> list[_Fragment]:
+def _merge_tiny_fragments(
+    fragments: list[_Fragment],
+    target_max: int,
+    chunk_settings: _ChunkSettings,
+) -> list[_Fragment]:
     if not fragments:
         return []
 
     merged: list[_Fragment] = []
+    minimum_merge_length = max(
+        120,
+        min(chunk_settings.child_target_min, chunk_settings.parent_target_min) // 2,
+    )
     for fragment in fragments:
         if not merged:
             merged.append(fragment)
             continue
         previous = merged[-1]
         if (
-            len(previous.text) < max(120, min(CHILD_TARGET_MIN, PARENT_TARGET_MIN) // 2)
+            len(previous.text) < minimum_merge_length
             and previous.section_path == fragment.section_path
             and previous.type == fragment.type
             and len(previous.text) + 2 + len(fragment.text) <= target_max
@@ -497,11 +577,11 @@ def _merge_tiny_fragments(fragments: list[_Fragment], target_max: int) -> list[_
     return merged
 
 
-def _payload_length(payload: list[_Fragment]) -> int:
+def _payload_length(payload: list[_Fragment] | list[_RenderedBlock]) -> int:
     return len(_join_fragments(payload))
 
 
-def _join_fragments(payload: list[_Fragment]) -> str:
+def _join_fragments(payload: list[_Fragment] | list[_RenderedBlock]) -> str:
     return "\n\n".join(fragment.text.strip() for fragment in payload if fragment.text.strip()).strip()
 
 
