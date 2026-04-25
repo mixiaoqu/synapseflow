@@ -1,3 +1,12 @@
+x-backend-image: &backend-image
+  image: synapseflow-backend:latest
+  build:
+    context: ./backend
+    dockerfile: ../docker/backend/Dockerfile
+    args:
+      UV_INDEX_URL: ${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+      PYTORCH_CPU_FIND_LINKS: ${PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -65,21 +74,17 @@ services:
       start_period: 20m
 
   backend:
-    image: synapseflow-backend:latest
-    build:
-      context: ./backend
-      dockerfile: ../docker/backend/Dockerfile
-      args:
-        UV_INDEX_URL: ${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
-        PYTORCH_CPU_FIND_LINKS: ${PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
+    <<: *backend-image
     container_name: synapseflow-backend
     environment:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - DRAMATIQ_INDEXING_QUEUE=${DRAMATIQ_INDEXING_QUEUE:-indexing}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      - HF_HOME=/app/.cache/huggingface
       - RERANK_ENABLED=${RERANK_ENABLED:-true}
-      - RERANK_API_URL=${RERANK_API_URL:-http://reranker:8012}
+      - RERANK_API_URL=${RERANK_API_URL:-http://reranker:8012/v1/rerank}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
       - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:3000}
@@ -89,6 +94,7 @@ services:
     volumes:
       - ./backend:/app
       - backend_venv:/app/.venv
+      - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
     depends_on:
       postgres:
@@ -105,25 +111,22 @@ services:
       - uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   backend-worker:
-    image: synapseflow-backend:latest
-    build:
-      context: ./backend
-      dockerfile: ../docker/backend/Dockerfile
-      args:
-        UV_INDEX_URL: ${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
-        PYTORCH_CPU_FIND_LINKS: ${PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
+    <<: *backend-image
     container_name: synapseflow-backend-worker
     environment:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - DRAMATIQ_INDEXING_QUEUE=${DRAMATIQ_INDEXING_QUEUE:-indexing}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      - HF_HOME=/app/.cache/huggingface
       - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
       - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:3000}
       - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-15}
     volumes:
       - ./backend:/app
       - backend_venv:/app/.venv
+      - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
     depends_on:
       postgres:
@@ -160,6 +163,7 @@ services:
 volumes:
   postgres_data:
   backend_venv:
+  backend_hf_cache:
   backend_previews:
   redis_data:
   reranker_models:

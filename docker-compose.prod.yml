@@ -1,3 +1,12 @@
+x-backend-image: &backend-image
+  image: synapseflow-backend:prod
+  build:
+    context: ./backend
+    dockerfile: ../docker/backend/Dockerfile
+    args:
+      UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+      PYTORCH_CPU_FIND_LINKS: ${SF_PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
+
 services:
   nginx:
     image: nginx:1.27-alpine
@@ -106,13 +115,7 @@ services:
     logging: *default-logging
 
   backend:
-    image: synapseflow-backend:prod
-    build:
-      context: ./backend
-      dockerfile: ../docker/backend/Dockerfile
-      args:
-        UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
-        PYTORCH_CPU_FIND_LINKS: ${SF_PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
+    <<: *backend-image
     restart: unless-stopped
     environment: &backend-env
       ENV: ${SF_ENV:-production}
@@ -171,13 +174,7 @@ services:
     logging: *default-logging
 
   backend-worker:
-    image: synapseflow-backend:prod
-    build:
-      context: ./backend
-      dockerfile: ../docker/backend/Dockerfile
-      args:
-        UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
-        PYTORCH_CPU_FIND_LINKS: ${SF_PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
+    <<: *backend-image
     restart: unless-stopped
     environment: *backend-env
     volumes:
