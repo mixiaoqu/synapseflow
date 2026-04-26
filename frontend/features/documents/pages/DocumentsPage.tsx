@@ -311,26 +311,6 @@ export default function DocumentsPage() {
     }
   };
 
-  const legacyHandleDeleteKnowledgeBase = async (knowledgeBase: KnowledgeBaseWithCount) => {
-    if (typeof window !== "undefined") {
-      const confirmed = window.confirm(
-        `删除知识库“${knowledgeBase.name}”？\n\n知识库会被删除，文档会从知识库解绑。此操作不可恢复。`,
-      );
-      if (!confirmed) return;
-    }
-
-    setDeletingKnowledgeBaseId(knowledgeBase.id);
-    try {
-      await deleteKnowledgeBase(knowledgeBase.id);
-      toast.success("知识库已删除");
-      await loadKnowledgeBases();
-    } catch (error: unknown) {
-      toast.error((error as { message?: string }).message || "删除失败");
-    } finally {
-      setDeletingKnowledgeBaseId(null);
-    }
-  };
-
   const handleEditKnowledgeBase = async () => {
     if (!editName.trim() || editingKnowledgeBaseId == null) return;
 
@@ -348,27 +328,6 @@ export default function DocumentsPage() {
     } finally {
       setSavingKnowledgeBase(false);
     }
-  };
-
-  const brokenHandleDeleteKnowledgeBase = (knowledgeBase: KnowledgeBaseWithCount) => {
-    openConfirmDialog({
-      title: "删除这个知识库？",
-      description: `“${knowledgeBase.name}”会被删除，文档会从知识库解绑。此操作不可恢复。`,
-      confirmLabel: "确认删除",
-      tone: "danger",
-      onConfirm: async () => {
-        setDeletingKnowledgeBaseId(knowledgeBase.id);
-        try {
-          await deleteKnowledgeBase(knowledgeBase.id);
-          toast.success("知识库已删除");
-          await loadKnowledgeBases();
-        } catch (error: unknown) {
-          toast.error((error as { message?: string }).message || "删除失败");
-        } finally {
-          setDeletingKnowledgeBaseId(null);
-        }
-      },
-    });
   };
 
   const handleDeleteKnowledgeBase = (knowledgeBase: KnowledgeBaseWithCount) => {

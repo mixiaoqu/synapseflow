@@ -277,16 +277,13 @@ def _passes_rerank_threshold(
 def _apply_retrieval_thresholds(
     results: list[dict[str, Any]],
     *,
-    iteration: int,
     rerank_enabled: bool,
 ) -> list[dict[str, Any]]:
     if not results:
         return []
 
     rag = config_registry.get_rag_config().retrieval
-    distance_threshold = (
-        rag.distance_threshold_iteration if iteration > 0 else rag.distance_threshold
-    )
+    distance_threshold = rag.distance_threshold
     rerank_threshold = rag.rerank_threshold
 
     filtered = [
@@ -577,7 +574,6 @@ async def run_kb_retrieval(
         results=results,
         rerank_enabled=resolved_rerank,
         final_top_k=final_top_k,
-        iteration=iteration,
     )
     retrieval_funnel = _build_retrieval_funnel(
         mode=resolved_mode,
@@ -592,7 +588,6 @@ async def run_kb_retrieval(
         has_documents=has_documents,
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
-        iteration=iteration,
         log_prefix=log_prefix,
         retrieval_mode=resolved_mode,
         recall_k=resolved_recall_k,
@@ -633,7 +628,6 @@ async def run_multi_query_kb_retrieval(
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
-            iteration=iteration,
             log_prefix=log_prefix,
             user_id=user_id,
             result_limit=result_limit,
@@ -707,7 +701,6 @@ async def run_multi_query_kb_retrieval(
         results=fused_results,
         rerank_enabled=resolved_rerank,
         final_top_k=final_top_k,
-        iteration=iteration,
     )
     retrieval_funnel = _build_retrieval_funnel(
         mode=resolved_mode,
@@ -722,7 +715,6 @@ async def run_multi_query_kb_retrieval(
         has_documents=has_documents,
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
-        iteration=iteration,
         log_prefix=log_prefix,
         retrieval_mode=resolved_mode,
         recall_k=per_query_recall_k,

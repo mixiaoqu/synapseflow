@@ -42,16 +42,20 @@ class IndexingBatchConfig:
 class RagChunkConfig:
     size: int
     overlap: int
+    parent_target_min: int = 1200
+    parent_target_max: int = 2500
+    child_target_min: int = 400
+    child_target_max: int = 900
+    split_overlap_units: int = 1
+    parent_window_max_chars: int = 1800
+    parent_window_neighbor_span: int = 1
 
 
 @dataclass(frozen=True)
 class RagRetrievalConfig:
     k_first: int
-    k_iteration: int
     distance_threshold: float
-    distance_threshold_iteration: float
     rerank_threshold: float | None
-    fallback_top_n: int
     final_top_k: int
     llm_reference_top_k: int | None
     hybrid_enabled: bool
@@ -62,24 +66,9 @@ class RagRetrievalConfig:
 
 
 @dataclass(frozen=True)
-class RagEvaluateWeights:
-    relevance: float
-    groundedness: float
-    completeness: float
-
-
-@dataclass(frozen=True)
-class RagEvaluateConfig:
-    context_max_chars: int
-    pass_threshold: float
-    weights: RagEvaluateWeights
-
-
-@dataclass(frozen=True)
 class RagConfig:
     chunk: RagChunkConfig
     retrieval: RagRetrievalConfig
-    evaluate: RagEvaluateConfig
 
 
 @dataclass(frozen=True)

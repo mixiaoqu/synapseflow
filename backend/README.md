@@ -5,8 +5,6 @@
 - `/ask` 用户问答界面
 - `/admin` 后台管理界面
 
-旧的 `kb-chat`、`kb-curation`、`revision`、`prototype` 相关公开路由已经从 `app/api/v1/router.py` 收口，不再作为当前产品的对外 API。
-
 ## 开发命令
 
 ### 安装依赖

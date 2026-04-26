@@ -4,8 +4,6 @@ from types import SimpleNamespace
 from app.core.config.schemas import (
     RagChunkConfig,
     RagConfig,
-    RagEvaluateConfig,
-    RagEvaluateWeights,
     RagRetrievalConfig,
 )
 from app.services import kb_retrieval
@@ -13,14 +11,21 @@ from app.services import kb_retrieval
 
 def _rag_config(*, rerank_threshold: float | None = 0.35) -> RagConfig:
     return RagConfig(
-        chunk=RagChunkConfig(size=700, overlap=100),
+        chunk=RagChunkConfig(
+            size=700,
+            overlap=100,
+            parent_target_min=1200,
+            parent_target_max=2500,
+            child_target_min=400,
+            child_target_max=900,
+            split_overlap_units=1,
+            parent_window_max_chars=1800,
+            parent_window_neighbor_span=1,
+        ),
         retrieval=RagRetrievalConfig(
             k_first=32,
-            k_iteration=32,
             distance_threshold=0.5,
-            distance_threshold_iteration=0.6,
             rerank_threshold=rerank_threshold,
-            fallback_top_n=3,
             final_top_k=10,
             llm_reference_top_k=10,
             hybrid_enabled=True,
@@ -28,15 +33,6 @@ def _rag_config(*, rerank_threshold: float | None = 0.35) -> RagConfig:
             rrf_k=60,
             hybrid_pool_limit=64,
             kb_context_max_chars=12000,
-        ),
-        evaluate=RagEvaluateConfig(
-            context_max_chars=3000,
-            pass_threshold=0.75,
-            weights=RagEvaluateWeights(
-                relevance=0.25,
-                groundedness=0.45,
-                completeness=0.30,
-            ),
         ),
     )
 
@@ -54,7 +50,6 @@ def test_apply_retrieval_thresholds_filters_weak_dense_hits(monkeypatch):
 
     filtered = kb_retrieval._apply_retrieval_thresholds(
         rows,
-        iteration=0,
         rerank_enabled=False,
     )
 
@@ -74,7 +69,6 @@ def test_apply_retrieval_thresholds_enforces_rerank_threshold_when_available(mon
 
     filtered = kb_retrieval._apply_retrieval_thresholds(
         rows,
-        iteration=0,
         rerank_enabled=True,
     )
 
@@ -99,7 +93,6 @@ def test_apply_retrieval_thresholds_keeps_lexical_only_hits_with_good_rerank(mon
 
     filtered = kb_retrieval._apply_retrieval_thresholds(
         rows,
-        iteration=0,
         rerank_enabled=True,
     )
 

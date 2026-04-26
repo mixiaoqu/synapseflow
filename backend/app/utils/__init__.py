@@ -10,7 +10,6 @@ from app.utils.document_parse import (
     render_parsed_document,
 )
 from app.utils.json_utils import extract_json_from_llm_response
-from app.utils.qa_utils import build_document_modification_suggestions
 
 __all__ = [
     "normalize_requirements_plaintext",
@@ -21,5 +20,4 @@ __all__ = [
     "SUPPORTED_EXTENSIONS",
     "MAX_FILE_SIZE",
     "extract_json_from_llm_response",
-    "build_document_modification_suggestions",
 ]

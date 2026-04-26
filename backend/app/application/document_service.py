@@ -41,12 +41,13 @@ from app.services.document_indexer import persist_document_chunk_plan, prepare_d
 from app.services.sensitive_word_service import get_sensitive_word_service
 from app.services.vector_store import delete_by_document_id
 from app.utils.document_parse import (
+    MAX_FILE_SIZE,
     ParsedDocument,
+    SUPPORTED_EXTENSIONS,
     parse_raw_document_content,
     parse_uploaded_document_structured,
     render_parsed_document,
 )
-from app.utils.file_parser import MAX_FILE_SIZE, SUPPORTED_EXTENSIONS
 
 MAX_BATCH_UPLOAD_FILES = 500
 

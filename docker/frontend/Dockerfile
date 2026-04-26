@@ -16,8 +16,6 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 COPY . .
 
-RUN pnpm run build
-
 EXPOSE 3000
 
-CMD ["pnpm", "run", "start"]
+CMD ["pnpm", "run", "dev"]

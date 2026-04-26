@@ -68,7 +68,7 @@ function JobCard({ job }: { job: ActiveIndexingJob }) {
 }
 
 export function BackgroundTasksPanel({
-  documentsHref = "/documents",
+  documentsHref = "/admin/documents",
 }: {
   documentsHref?: string;
 }) {

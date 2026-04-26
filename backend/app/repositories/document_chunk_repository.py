@@ -8,6 +8,7 @@ from typing import Sequence
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config.registry import config_registry
 from app.db.models import DocumentChunk, Embedding
 from app.services.semantic_chunk import PlannedChunk
 
@@ -116,9 +117,20 @@ class DocumentChunkRepository:
         self,
         *,
         child_chunk_ids: Sequence[int],
-        max_parent_chars: int = 1800,
-        neighbor_span: int = 1,
+        max_parent_chars: int | None = None,
+        neighbor_span: int | None = None,
     ) -> dict[int, ParentWindowExpansion]:
+        chunk_cfg = config_registry.get_rag_config().chunk
+        resolved_max_parent_chars = (
+            max_parent_chars
+            if max_parent_chars is not None
+            else max(1, int(chunk_cfg.parent_window_max_chars))
+        )
+        resolved_neighbor_span = (
+            neighbor_span
+            if neighbor_span is not None
+            else max(0, int(chunk_cfg.parent_window_neighbor_span))
+        )
         target_ids = [int(item) for item in child_chunk_ids if item is not None]
         if not target_ids:
             return {}
@@ -176,7 +188,7 @@ class DocumentChunkRepository:
             )
             merged_indexes: set[int] = set()
             for hit_index in hit_indexes or [current_index]:
-                for offset in range(-neighbor_span, neighbor_span + 1):
+                for offset in range(-resolved_neighbor_span, resolved_neighbor_span + 1):
                     candidate = hit_index + offset
                     if 0 <= candidate < len(siblings):
                         merged_indexes.add(candidate)
@@ -184,7 +196,11 @@ class DocumentChunkRepository:
             window_rows = [siblings[idx] for idx in sorted(merged_indexes)] or [row]
             window_text = "\n\n".join(item.content for item in window_rows if item.content.strip()).strip()
             parent_text = (parent_row.content if parent_row else "").strip() or None
-            content = parent_text if parent_text and len(parent_text) <= max_parent_chars else window_text
+            content = (
+                parent_text
+                if parent_text and len(parent_text) <= resolved_max_parent_chars
+                else window_text
+            )
             expansions[int(row.id)] = ParentWindowExpansion(
                 child_chunk_id=int(row.id),
                 parent_chunk_id=parent_id,
