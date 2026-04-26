@@ -19,15 +19,15 @@ KB_NO_HITS_REPLY = (
     "Try rephrasing the question or widening the retrieval scope."
 )
 KB_CHITCHAT_GREETING_REPLY = (
-    "你好，我主要负责回答当前知识库中的制度、流程、规则和文档内容。你可以继续问我相关问题。"
+    "浣犲ソ锛屾垜涓昏璐熻矗鍥炵瓟褰撳墠鐭ヨ瘑搴撲腑鐨勫埗搴︺€佹祦绋嬨€佽鍒欏拰鏂囨。鍐呭銆備綘鍙互缁х画闂垜鐩稿叧闂銆?"
 )
-KB_CHITCHAT_THANKS_REPLY = "不客气，我可以继续帮你查询当前知识库里的内容。"
+KB_CHITCHAT_THANKS_REPLY = "涓嶅姘旓紝鎴戝彲浠ョ户缁府浣犳煡璇㈠綋鍓嶇煡璇嗗簱閲岀殑鍐呭銆?"
 KB_CHITCHAT_GENERIC_REPLY = (
-    "你好，我主要负责回答当前知识库相关问题，例如制度、流程、规则和文档内容。你可以继续问我相关问题。"
+    "浣犲ソ锛屾垜涓昏璐熻矗鍥炵瓟褰撳墠鐭ヨ瘑搴撶浉鍏抽棶棰橈紝渚嬪鍒跺害銆佹祦绋嬨€佽鍒欏拰鏂囨。鍐呭銆備綘鍙互缁х画闂垜鐩稿叧闂銆?"
 )
 KB_OUT_OF_SCOPE_REPLY = (
-    "我主要负责回答当前知识库相关问题，例如制度、流程、规则和文档内容。"
-    "当前这个请求不属于知识库问答范围，你可以继续问我知识库里的内容。"
+    "鎴戜富瑕佽礋璐ｅ洖绛斿綋鍓嶇煡璇嗗簱鐩稿叧闂锛屼緥濡傚埗搴︺€佹祦绋嬨€佽鍒欏拰鏂囨。鍐呭銆?"
+    "褰撳墠杩欎釜璇锋眰涓嶅睘浜庣煡璇嗗簱闂瓟鑼冨洿锛屼綘鍙互缁х画闂垜鐭ヨ瘑搴撻噷鐨勫唴瀹广€?"
 )
 
 
@@ -36,6 +36,12 @@ def _get_default_llm(state: dict[str, Any]) -> Any:
 
     model_key = str(state.get("assistant_llm_model_key") or "generation").strip() or "generation"
     return get_llm(model_key)
+
+
+def _response_mode(state: dict[str, Any]) -> str:
+    retrieval_plan = state.get("retrieval_plan") or {}
+    answer_plan = retrieval_plan.get("answer") or {}
+    return str(answer_plan.get("response_mode") or "").strip().lower()
 
 
 def should_skip_kb_llm(state: dict[str, Any]) -> Optional[str]:
@@ -51,24 +57,23 @@ def should_skip_kb_llm_with_options(
 ) -> Optional[str]:
     """Optionally short-circuit when retrieval yields nothing useful."""
 
-    adaptive_policy = state.get("adaptive_policy") or {}
-    intent = str(adaptive_policy.get("intent") or "").strip().lower()
-    if intent == "out_of_scope":
+    response_mode = _response_mode(state)
+    if response_mode == "out_of_scope":
         return KB_OUT_OF_SCOPE_REPLY
-    if intent == "chitchat":
+    if response_mode == "chitchat":
         query = str(state.get("query") or "").strip().lower()
-        if any(token in query for token in ("谢谢", "感谢", "thanks", "thank you")):
+        if any(token in query for token in ("璋㈣阿", "鎰熻阿", "thanks", "thank you")):
             return KB_CHITCHAT_THANKS_REPLY
         if any(
             token in query
             for token in (
-                "你好",
-                "您好",
-                "早上好",
-                "上午好",
-                "中午好",
-                "下午好",
-                "晚上好",
+                "浣犲ソ",
+                "鎮ㄥソ",
+                "鏃╀笂濂?",
+                "涓婂崍濂?",
+                "涓崍濂?",
+                "涓嬪崍濂?",
+                "鏅氫笂濂?",
                 "hi",
                 "hello",
                 "hey",

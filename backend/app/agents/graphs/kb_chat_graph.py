@@ -8,6 +8,7 @@ from langgraph.graph import END, StateGraph
 
 from app.agents.nodes.kb_chat import (
     user_kb_plan_query_node,
+    user_kb_rewrite_query_node,
     user_kb_retrieve_node,
 )
 from app.agents.nodes.kb_chat.generate_answer import build_user_kb_generate_answer_node
@@ -22,10 +23,12 @@ def create_kb_chat_graph(
 
     workflow = StateGraph(KbChatState)
     workflow.add_node("plan_query", user_kb_plan_query_node)
+    workflow.add_node("rewrite_query", user_kb_rewrite_query_node)
     workflow.add_node("retrieve", user_kb_retrieve_node)
     workflow.add_node("answer", build_user_kb_generate_answer_node(llm_factory=llm_factory))
     workflow.set_entry_point("plan_query")
-    workflow.add_edge("plan_query", "retrieve")
+    workflow.add_edge("plan_query", "rewrite_query")
+    workflow.add_edge("rewrite_query", "retrieve")
     workflow.add_edge("retrieve", "answer")
     workflow.add_edge("answer", END)
     return workflow.compile()

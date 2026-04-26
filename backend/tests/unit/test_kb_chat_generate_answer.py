@@ -26,8 +26,8 @@ def test_should_skip_kb_llm_with_options_can_keep_llm_path_for_no_hits():
 
 def test_should_skip_kb_llm_with_options_returns_greeting_reply_for_chitchat():
     state = {
-        "query": "你好",
-        "adaptive_policy": {"intent": "chitchat"},
+        "query": "浣犲ソ",
+        "retrieval_plan": {"answer": {"response_mode": "chitchat"}},
     }
 
     assert (
@@ -38,8 +38,8 @@ def test_should_skip_kb_llm_with_options_returns_greeting_reply_for_chitchat():
 
 def test_should_skip_kb_llm_with_options_returns_thanks_reply_for_chitchat():
     state = {
-        "query": "谢谢你",
-        "adaptive_policy": {"intent": "chitchat"},
+        "query": "璋㈣阿浣?",
+        "retrieval_plan": {"answer": {"response_mode": "chitchat"}},
     }
 
     assert (
@@ -50,8 +50,8 @@ def test_should_skip_kb_llm_with_options_returns_thanks_reply_for_chitchat():
 
 def test_should_skip_kb_llm_with_options_returns_generic_reply_for_chitchat():
     state = {
-        "query": "今天天气真不错",
-        "adaptive_policy": {"intent": "chitchat"},
+        "query": "浠婂ぉ澶╂皵鐪熶笉閿?",
+        "retrieval_plan": {"answer": {"response_mode": "chitchat"}},
     }
 
     assert (
@@ -62,8 +62,8 @@ def test_should_skip_kb_llm_with_options_returns_generic_reply_for_chitchat():
 
 def test_should_skip_kb_llm_with_options_returns_boundary_reply_for_out_of_scope():
     state = {
-        "query": "请你帮我写一首歌",
-        "adaptive_policy": {"intent": "out_of_scope"},
+        "query": "璇蜂綘甯垜鍐欎竴棣栨瓕",
+        "retrieval_plan": {"answer": {"response_mode": "out_of_scope"}},
     }
 
     assert (
@@ -78,8 +78,8 @@ def test_generate_kb_chat_answer_text_short_circuits_out_of_scope_without_llm():
             raise AssertionError("LLM should not be called for out_of_scope replies")
 
     state = {
-        "query": "帮我写一首诗",
-        "adaptive_policy": {"intent": "out_of_scope"},
+        "query": "甯垜鍐欎竴棣栬瘲",
+        "retrieval_plan": {"answer": {"response_mode": "out_of_scope"}},
         "kb_retrieval_status": "skipped",
         "retrieved_docs": [],
         "context": "",

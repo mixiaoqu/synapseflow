@@ -117,8 +117,9 @@ class KbChatService(BaseAgentService):
                 ),
                 "chat_history": history,
                 "memory_summary": memory_summary,
-                "adaptive_policy": {},
+                "retrieval_plan": {},
                 "retrieval_queries": [],
+                "rewrite_meta": {},
                 "allowed_document_statuses": list(
                     getattr(request, "allowed_document_statuses", None)
                     or VISIBLE_ASK_DOCUMENT_STATUSES
@@ -207,9 +208,14 @@ class KbChatService(BaseAgentService):
                 "answer_status": answer_status,
                 "log_id": log_id,
                 "retrieval_status": state.get("kb_retrieval_status"),
-                "adaptive_policy": (
-                    dict(state.get("adaptive_policy") or {})
-                    if isinstance(state.get("adaptive_policy"), dict)
+                "retrieval_plan": (
+                    dict(state.get("retrieval_plan") or {})
+                    if isinstance(state.get("retrieval_plan"), dict)
+                    else None
+                ),
+                "rewrite_meta": (
+                    dict(state.get("rewrite_meta") or {})
+                    if isinstance(state.get("rewrite_meta"), dict)
                     else None
                 ),
                 "retrieval_queries": list(state.get("retrieval_queries") or []),
@@ -244,23 +250,34 @@ class KbChatService(BaseAgentService):
     @staticmethod
     def _node_summary(node_id: str, state: dict[str, Any]) -> dict[str, Any]:
         if node_id == "plan_query":
-            policy = state.get("adaptive_policy") or {}
-            if isinstance(policy, dict):
+            retrieval_plan = state.get("retrieval_plan") or {}
+            if isinstance(retrieval_plan, dict):
                 return {
-                    "intent": policy.get("intent"),
-                    "complexity": policy.get("complexity"),
-                    "retrieval_required": policy.get("retrieval_required"),
-                    "max_queries": policy.get("max_queries"),
-                    "result_limit": policy.get("result_limit"),
-                    "context_budget": policy.get("context_budget"),
-                    "reason": policy.get("reason"),
+                    "plan_name": retrieval_plan.get("plan_name"),
+                    "retrieval_required": retrieval_plan.get("retrieval_required"),
+                    "rewrite_mode": ((retrieval_plan.get("rewrite") or {}).get("mode")),
+                    "retrieval_mode": ((retrieval_plan.get("retrieval") or {}).get("mode")),
+                    "rerank_enabled": (
+                        (retrieval_plan.get("retrieval") or {}).get("rerank_enabled")
+                    ),
+                    "reason": retrieval_plan.get("reason"),
                 }
-            return {"adaptive_policy": None}
+            return {"retrieval_plan": None}
+        if node_id == "rewrite_query":
+            rewrite_meta = state.get("rewrite_meta") or {}
+            return {
+                "rewrite_mode": rewrite_meta.get("mode"),
+                "query_count": rewrite_meta.get("query_count"),
+                "fallback": rewrite_meta.get("fallback"),
+            }
         if node_id == "retrieve":
             return {
                 "retrieved_count": len(state.get("retrieved_docs", [])),
                 "kb_retrieval_status": state.get("kb_retrieval_status"),
                 "query_count": len(state.get("retrieval_queries", []) or []),
+                "retrieval_mode": ((state.get("retrieval_plan") or {}).get("retrieval") or {}).get(
+                    "mode"
+                ),
             }
         if node_id == "answer":
             return {"answer_length": len(state.get("answer", ""))}
@@ -340,8 +357,9 @@ class KbChatService(BaseAgentService):
             "answer": answer,
             "retrieved_docs": [],
             "kb_retrieval_status": "blocked_sensitive",
-            "adaptive_policy": {},
+            "retrieval_plan": {},
             "retrieval_queries": [],
+            "rewrite_meta": {},
             "retrieval_funnel": None,
             "context": "",
             "matched_sensitive_words": list(check_result.matched_words),

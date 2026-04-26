@@ -1,5 +1,7 @@
 """Retrieval node for end-user knowledge-base chat."""
 
+from __future__ import annotations
+
 from typing import Any, Dict
 
 from loguru import logger
@@ -7,11 +9,10 @@ from loguru import logger
 from app.agents.common.retrieval import pick_query_from_state
 from app.agents.states import KbChatState
 from app.services.chat_memory import format_chat_history
-from app.services.kb_query_rewrite import build_kb_chat_retrieval_queries
 from app.services.kb_retrieval import run_kb_retrieval, run_multi_query_kb_retrieval
 
 
-def _coerce_positive_int(value: Any, *, default: int, minimum: int = 1) -> int:
+def _coerce_positive_int(value: Any, *, default: int, minimum: int = 0) -> int:
     try:
         return max(minimum, int(value))
     except (TypeError, ValueError):
@@ -22,19 +23,18 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
     """Retrieve context for the current user query."""
 
     query = pick_query_from_state(state, "query")
-    adaptive_policy = state.get("adaptive_policy") or {}
-    if adaptive_policy.get("retrieval_required") is False:
+    retrieval_plan = state.get("retrieval_plan") or {}
+    retrieval_cfg = retrieval_plan.get("retrieval") or {}
+    if retrieval_plan.get("retrieval_required") is False:
         logger.info(
-            "[知识库检索] 已按策略跳过检索：类型={}，复杂度={}，原因={}",
-            adaptive_policy.get("intent"),
-            adaptive_policy.get("complexity"),
-            adaptive_policy.get("reason"),
+            "[KB Retrieval] skipped by retrieval_plan plan={} reason={}",
+            retrieval_plan.get("plan_name"),
+            retrieval_plan.get("reason"),
         )
         return {
             "retrieved_docs": [],
             "context": "",
             "kb_retrieval_status": "skipped",
-            "retrieval_queries": [],
             "retrieval_funnel": {
                 "mode": "skipped",
                 "query_count": 0,
@@ -43,60 +43,61 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
             },
         }
 
-    max_queries = _coerce_positive_int(
-        adaptive_policy.get("max_queries"),
-        default=2,
-        minimum=1,
-    )
-    result_limit = _coerce_positive_int(
-        adaptive_policy.get("result_limit"),
-        default=8,
+    retrieval_mode = str(retrieval_cfg.get("mode") or "vector").strip().lower()
+    recall_k = _coerce_positive_int(retrieval_cfg.get("recall_k"), default=10, minimum=1)
+    lexical_k = _coerce_positive_int(retrieval_cfg.get("lexical_k"), default=0, minimum=0)
+    final_top_k = _coerce_positive_int(retrieval_cfg.get("final_top_k"), default=6, minimum=1)
+    llm_reference_top_k = _coerce_positive_int(
+        retrieval_cfg.get("llm_reference_top_k"),
+        default=4,
         minimum=1,
     )
     context_budget = _coerce_positive_int(
-        adaptive_policy.get("context_budget"),
-        default=10000,
+        retrieval_cfg.get("context_budget"),
+        default=8000,
         minimum=1,
     )
-    retrieval_queries = await build_kb_chat_retrieval_queries(
-        query,
-        chat_history=state.get("chat_history") or [],
-        memory_summary=state.get("memory_summary"),
-        max_queries=max_queries,
-    )
+    rerank_enabled = bool(retrieval_cfg.get("rerank_enabled"))
+    retrieval_queries = [
+        str(item).strip()
+        for item in list(state.get("retrieval_queries") or [])
+        if str(item or "").strip()
+    ]
+    if not retrieval_queries:
+        retrieval_queries = [query]
+
     history_text = format_chat_history(state.get("chat_history") or [], max_messages=4)
 
+    common_kwargs = {
+        "team_id": state.get("team_id"),
+        "knowledge_base_id": state.get("knowledge_base_id"),
+        "category_id": state.get("category_id"),
+        "iteration": 0,
+        "log_prefix": "[User KB Retrieval]",
+        "user_id": state.get("user_id"),
+        "result_limit": final_top_k,
+        "llm_reference_top_k": llm_reference_top_k,
+        "context_budget": context_budget,
+        "document_statuses": state.get("allowed_document_statuses"),
+        "retrieval_version_mode": state.get("retrieval_version_mode"),
+        "retrieval_mode": retrieval_mode,
+        "recall_k": recall_k,
+        "lexical_k": lexical_k,
+        "rerank_enabled": rerank_enabled,
+    }
     if len(retrieval_queries) > 1:
         result = await run_multi_query_kb_retrieval(
             query=query,
             retrieval_queries=retrieval_queries,
-            team_id=state.get("team_id"),
-            knowledge_base_id=state.get("knowledge_base_id"),
-            category_id=state.get("category_id"),
-            iteration=0,
-            log_prefix="[User KB Retrieval]",
-            user_id=state.get("user_id"),
-            result_limit=result_limit,
-            context_budget=context_budget,
-            document_statuses=state.get("allowed_document_statuses"),
-            retrieval_version_mode=state.get("retrieval_version_mode"),
+            **common_kwargs,
         )
     else:
         result = await run_kb_retrieval(
-            query=query,
-            team_id=state.get("team_id"),
-            knowledge_base_id=state.get("knowledge_base_id"),
-            category_id=state.get("category_id"),
-            iteration=0,
-            log_prefix="[User KB Retrieval]",
-            user_id=state.get("user_id"),
-            result_limit=result_limit,
-            context_budget=context_budget,
-            document_statuses=state.get("allowed_document_statuses"),
-            retrieval_version_mode=state.get("retrieval_version_mode"),
+            query=retrieval_queries[0],
+            **common_kwargs,
         )
 
-    result["retrieval_queries"] = retrieval_queries or [query]
+    result["retrieval_queries"] = retrieval_queries
     if history_text:
         result["chat_history"] = state.get("chat_history") or []
     return result

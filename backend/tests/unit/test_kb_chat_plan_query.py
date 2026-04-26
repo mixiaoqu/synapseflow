@@ -2,8 +2,9 @@ import asyncio
 from types import SimpleNamespace
 
 from app.agents.nodes.kb_chat.plan_query import (
-    build_adaptive_policy,
-    build_llm_adaptive_policy,
+    build_llm_retrieval_plan,
+    build_retrieval_plan,
+    user_kb_plan_query_node,
 )
 
 
@@ -18,93 +19,66 @@ class FakePlannerLlm:
         return SimpleNamespace(content=self.content)
 
 
-def test_build_adaptive_policy_maps_complex_comparison():
-    policy = build_adaptive_policy(
-        query="正式员工和外包人员的报销规则有什么区别？",
-        intent="comparison",
-        complexity="complex",
-        reason="用户要求比较多个对象的制度差异。",
+def test_build_retrieval_plan_maps_compare_lookup():
+    plan = build_retrieval_plan(
+        plan_name="compare_lookup",
+        reason="The user asks for differences across two policies.",
     )
 
-    assert policy == {
-        "intent": "comparison",
-        "complexity": "complex",
-        "retrieval_required": True,
-        "max_queries": 4,
-        "result_limit": 12,
-        "context_budget": 12000,
-        "reason": "用户要求比较多个对象的制度差异。",
-    }
+    assert plan["plan_name"] == "compare_lookup"
+    assert plan["retrieval_required"] is True
+    assert plan["rewrite"]["mode"] == "llm"
+    assert plan["rewrite"]["max_queries"] == 3
+    assert plan["retrieval"]["mode"] == "hybrid"
+    assert plan["retrieval"]["rerank_enabled"] is True
+    assert plan["answer"]["response_mode"] == "grounded"
 
 
-def test_build_adaptive_policy_allows_pure_chitchat_to_skip_retrieval():
-    policy = build_adaptive_policy(
-        query="早上好",
-        intent="chitchat",
-        complexity="simple",
-        reason="纯寒暄。",
+def test_build_retrieval_plan_maps_chitchat_to_no_retrieval():
+    plan = build_retrieval_plan(
+        plan_name="chitchat",
+        reason="Pure greeting without a KB question.",
     )
 
-    assert policy["retrieval_required"] is False
-    assert policy["max_queries"] == 0
-    assert policy["result_limit"] == 0
-    assert policy["context_budget"] == 0
+    assert plan["retrieval_required"] is False
+    assert plan["rewrite"]["mode"] == "skip"
+    assert plan["retrieval"]["mode"] == "none"
+    assert plan["answer"]["response_mode"] == "chitchat"
 
 
-def test_build_adaptive_policy_trusts_planner_chitchat_label():
-    policy = build_adaptive_policy(
-        query="你好，报销标准是什么？",
-        intent="chitchat",
-        complexity="simple",
-        reason="寒暄。",
-    )
-
-    assert policy["intent"] == "chitchat"
-    assert policy["complexity"] == "simple"
-    assert policy["retrieval_required"] is False
-    assert policy["max_queries"] == 0
-
-
-def test_build_adaptive_policy_skips_out_of_scope_retrieval():
-    policy = build_adaptive_policy(
-        query="帮我写一首诗",
-        intent="out_of_scope",
-        complexity="normal",
-        reason="用户请求不属于知识库问答。",
-    )
-
-    assert policy["intent"] == "out_of_scope"
-    assert policy["retrieval_required"] is False
-    assert policy["max_queries"] == 0
-    assert policy["result_limit"] == 0
-    assert policy["context_budget"] == 0
-
-
-def test_build_llm_adaptive_policy_parses_llm_labels():
-    policy = asyncio.run(
-        build_llm_adaptive_policy(
-            "差旅报销怎么申请？",
+def test_build_llm_retrieval_plan_parses_llm_route():
+    plan = asyncio.run(
+        build_llm_retrieval_plan(
+            "How do I submit a reimbursement request?",
             llm_factory=lambda: FakePlannerLlm(
-                '{"intent":"procedural","complexity":"normal","reason":"用户询问流程。"}'
+                '{"plan_name":"procedural_lookup","reason":"Asks for workflow steps."}'
             ),
         )
     )
 
-    assert policy["intent"] == "procedural"
-    assert policy["complexity"] == "normal"
-    assert policy["result_limit"] == 8
-    assert policy["reason"] == "用户询问流程。"
+    assert plan["plan_name"] == "procedural_lookup"
+    assert plan["rewrite"]["mode"] == "heuristic"
+    assert plan["retrieval"]["mode"] == "hybrid"
+    assert plan["reason"] == "Asks for workflow steps."
 
 
-def test_build_llm_adaptive_policy_falls_back_on_llm_error():
-    policy = asyncio.run(
-        build_llm_adaptive_policy(
-            "报销标准是什么？",
-            llm_factory=lambda: FakePlannerLlm(RuntimeError("planner unavailable")),
+def test_user_kb_plan_query_node_falls_back_to_default_plan_on_llm_error(monkeypatch):
+    import app.agents.nodes.kb_chat.plan_query as plan_module
+
+    async def fake_build_llm_retrieval_plan(*args, **kwargs):
+        raise RuntimeError("planner unavailable")
+
+    monkeypatch.setattr(plan_module, "build_llm_retrieval_plan", fake_build_llm_retrieval_plan)
+
+    result = asyncio.run(
+        user_kb_plan_query_node(
+            {
+                "query": "What is the vacation policy?",
+                "chat_history": [],
+                "memory_summary": None,
+            }
         )
     )
 
-    assert policy["intent"] == "kb_lookup"
-    assert policy["complexity"] == "normal"
-    assert policy["retrieval_required"] is True
-    assert policy["reason"] == "Fallback default policy."
+    assert result["retrieval_plan"]["plan_name"] == "fast_lookup"
+    assert result["retrieval_plan"]["retrieval"]["mode"] == "vector"
