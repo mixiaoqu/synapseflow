@@ -81,4 +81,8 @@ def test_user_kb_plan_query_node_falls_back_to_default_plan_on_llm_error(monkeyp
     )
 
     assert result["retrieval_plan"]["plan_name"] == "fast_lookup"
-    assert result["retrieval_plan"]["retrieval"]["mode"] == "vector"
+    assert result["retrieval_plan"]["retrieval"]["mode"] == "hybrid"
+    assert result["retrieval_plan"]["retrieval"]["recall_k"] == 24
+    assert result["retrieval_plan"]["retrieval"]["lexical_k"] == 16
+    assert result["retrieval_plan"]["retrieval"]["final_top_k"] == 8
+    assert result["retrieval_plan"]["retrieval"]["llm_reference_top_k"] == 6

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import get_current_user
+from app.core.config.settings import settings
 from app.core.security import create_access_token, verify_password
 from app.db.models import User
 from app.db.session import get_db
@@ -18,6 +19,9 @@ async def register_user(
     body: UserRegister,
     db: AsyncSession = Depends(get_db),
 ):
+    if not settings.ENABLE_PUBLIC_REGISTRATION:
+        raise HTTPException(status_code=403, detail="Public registration is disabled")
+
     repo = UserRepository(db)
     if await repo.get_by_username(body.username):
         raise HTTPException(status_code=409, detail="Username already exists")

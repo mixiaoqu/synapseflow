@@ -81,12 +81,12 @@ PLAN_TEMPLATES: dict[PlanName, dict[str, Any]] = {
             "strategies": [],
         },
         "retrieval": {
-            "mode": "vector",
-            "recall_k": 10,
-            "lexical_k": 0,
+            "mode": "hybrid",
+            "recall_k": 24,
+            "lexical_k": 16,
             "rerank_enabled": False,
-            "final_top_k": 6,
-            "llm_reference_top_k": 4,
+            "final_top_k": 8,
+            "llm_reference_top_k": 6,
             "context_budget": 8000,
         },
         "answer": {
