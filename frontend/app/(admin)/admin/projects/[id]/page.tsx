@@ -9,10 +9,12 @@ import {
   Code2,
   Copy,
   Edit,
+  Eye,
   Link as LinkIcon,
   Loader2,
   MoreHorizontal,
   Plus,
+  RefreshCcw,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -34,6 +36,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import {
   assistantsApi,
@@ -41,6 +50,7 @@ import {
 } from "@/lib/api/assistants";
 import {
   projectsApi,
+  type ProjectAppEmbedPreviewResponse,
   type ProjectAppPayload,
   type ProjectAppResponse,
   type ProjectPayload,
@@ -128,10 +138,14 @@ export default function ProjectDetailsPage() {
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [appDialogOpen, setAppDialogOpen] = useState(false);
   const [embedModalOpen, setEmbedModalOpen] = useState(false);
+  const [previewDrawerOpen, setPreviewDrawerOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [projectForm, setProjectForm] = useState<ProjectFormState | null>(null);
   const [appForm, setAppForm] = useState<AppFormState>(EMPTY_APP_FORM);
   const [editingApp, setEditingApp] = useState<ProjectAppResponse | null>(null);
   const [selectedApp, setSelectedApp] = useState<ProjectAppResponse | null>(null);
+  const [previewApp, setPreviewApp] = useState<ProjectAppResponse | null>(null);
+  const [previewSession, setPreviewSession] = useState<ProjectAppEmbedPreviewResponse | null>(null);
 
   const loadData = useCallback(async () => {
     if (projectId == null) {
@@ -271,6 +285,38 @@ export default function ProjectDetailsPage() {
   const handleShowEmbed = (app: ProjectAppResponse) => {
     setSelectedApp(app);
     setEmbedModalOpen(true);
+  };
+
+  const openPreviewDrawer = async (app: ProjectAppResponse) => {
+    if (!project) return;
+
+    setPreviewApp(app);
+    setPreviewSession(null);
+    setPreviewLoading(true);
+    setPreviewDrawerOpen(true);
+
+    try {
+      const session = await projectsApi.createEmbedPreview(project.id, app.id);
+      setPreviewSession(session);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "生成预览链接失败");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const refreshPreviewDrawer = async () => {
+    if (!previewApp || !project) return;
+
+    setPreviewLoading(true);
+    try {
+      const session = await projectsApi.createEmbedPreview(project.id, previewApp.id);
+      setPreviewSession(session);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "刷新预览失败");
+    } finally {
+      setPreviewLoading(false);
+    }
   };
 
   const copyText = async (value: string) => {
@@ -471,6 +517,15 @@ Content-Type: application/json
                     </span>
                   </div>
                   <div className="col-span-1 flex justify-end gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 shadow-sm"
+                      onClick={() => void openPreviewDrawer(app)}
+                    >
+                      <Eye className="h-3.5 w-3.5 text-slate-500" />
+                      预览
+                    </Button>
                     <Button
                       variant="outline"
                       size="sm"
@@ -727,6 +782,81 @@ Content-Type: application/json
           </div>
         </DialogContent>
       </Dialog>
+
+      <Sheet
+        open={previewDrawerOpen}
+        onOpenChange={(open) => {
+          setPreviewDrawerOpen(open);
+          if (!open) {
+            setPreviewLoading(false);
+            setPreviewApp(null);
+            setPreviewSession(null);
+          }
+        }}
+      >
+        <SheetContent
+          side="right"
+          className="flex w-full max-w-full flex-col overflow-hidden p-0 sm:max-w-3xl lg:max-w-5xl"
+        >
+          <SheetHeader className="border-b border-slate-200 bg-white px-5 py-4 pr-14">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <SheetTitle>Embed 预览</SheetTitle>
+                <SheetDescription className="mt-1">
+                  {previewApp ? `${previewApp.name} / ${previewApp.code}` : "应用嵌入预览"}
+                </SheetDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                {previewSession ? (
+                  <span className="hidden rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-500 sm:inline-flex">
+                    {previewSession.expires_in_seconds}s
+                  </span>
+                ) : null}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void refreshPreviewDrawer()}
+                  disabled={previewLoading || previewApp == null}
+                  className="gap-1.5"
+                >
+                  {previewLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCcw className="h-3.5 w-3.5" />
+                  )}
+                  刷新
+                </Button>
+              </div>
+            </div>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 bg-slate-100">
+            {previewLoading ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="flex items-center gap-2 text-sm text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  正在生成预览链接...
+                </div>
+              </div>
+            ) : previewSession?.embed_url ? (
+              <iframe
+                key={previewSession.embed_url}
+                src={previewSession.embed_url}
+                className="h-full w-full border-0 bg-white"
+                title={previewApp ? `${previewApp.name} embed preview` : "Embed preview"}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center px-6">
+                <div className="max-w-md text-center">
+                  <p className="text-sm font-medium text-slate-900">无法打开预览</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    请确认应用已启用，且已绑定一个可用的默认助手。
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

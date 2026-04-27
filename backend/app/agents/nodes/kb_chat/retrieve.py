@@ -72,7 +72,6 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
         "team_id": state.get("team_id"),
         "knowledge_base_id": state.get("knowledge_base_id"),
         "category_id": state.get("category_id"),
-        "iteration": 0,
         "log_prefix": "[User KB Retrieval]",
         "user_id": state.get("user_id"),
         "result_limit": final_top_k,

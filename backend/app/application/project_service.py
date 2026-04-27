@@ -14,7 +14,12 @@ from app.models.schemas.project import (
     ProjectResponse,
     ProjectUpdate,
 )
-from app.repositories.project_repository import ProjectAppRecord, ProjectRecord, ProjectRepository
+from app.repositories.project_repository import (
+    ProjectAppRecord,
+    ProjectAppRuntimeRecord,
+    ProjectRecord,
+    ProjectRepository,
+)
 from app.repositories.team_repository import TeamRepository
 
 
@@ -170,6 +175,25 @@ class ProjectService:
         if record is None or record.app.project_id != project_id:
             raise HTTPException(status_code=404, detail="Project app not found")
         return self._to_app_response(record)
+
+    async def get_app_runtime(
+        self,
+        *,
+        project_id: int,
+        app_id: int,
+        active_only: bool = True,
+    ) -> ProjectAppRuntimeRecord:
+        project = await self.repository.get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        await self._ensure_team_access(project.team_id)
+        runtime = await self.repository.get_runtime_by_app_id(
+            project_app_id=app_id,
+            active_only=active_only,
+        )
+        if runtime is None or runtime.project.id != project_id:
+            raise HTTPException(status_code=404, detail="Active project application not found")
+        return runtime
 
     async def create_app(
         self,

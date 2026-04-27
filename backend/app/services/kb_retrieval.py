@@ -314,7 +314,6 @@ async def _finalize_ranked_rows(
     results: list[dict[str, Any]],
     rerank_enabled: bool,
     final_top_k: int,
-    iteration: int,
 ) -> list[dict[str, Any]]:
     if rerank_enabled and results:
         logger.debug(
@@ -325,11 +324,7 @@ async def _finalize_ranked_rows(
         results = await rerank(query, results, top_k=final_top_k)
     else:
         results = results[:final_top_k]
-    return _apply_retrieval_thresholds(
-        results,
-        iteration=iteration,
-        rerank_enabled=rerank_enabled,
-    )
+    return _apply_retrieval_thresholds(results, rerank_enabled=rerank_enabled)
 
 
 async def _expand_results_with_parent_context(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -392,7 +387,6 @@ async def _build_retrieval_output(
     has_documents: bool,
     knowledge_base_id: int | None,
     category_id: int | None,
-    iteration: int,
     log_prefix: str,
     retrieval_mode: str,
     recall_k: int,
@@ -416,9 +410,8 @@ async def _build_retrieval_output(
         "{:.3f}~{:.3f}".format(min(rerank_scores), max(rerank_scores)) if rerank_scores else "-"
     )
     logger.info(
-        "{} retrieval complete | iteration={} mode={} query_count={} results={} distance={} rerank={}",
+        "{} retrieval complete | mode={} query_count={} results={} distance={} rerank={}",
         log_prefix,
-        iteration + 1,
         retrieval_mode,
         query_count,
         len(results),
@@ -527,7 +520,6 @@ async def run_kb_retrieval(
     team_id: int | None,
     knowledge_base_id: int | None,
     category_id: int | None = None,
-    iteration: int = 0,
     log_prefix: str = "[KB Retrieval]",
     user_id: int | None = None,
     result_limit: int | None = None,
@@ -544,9 +536,7 @@ async def run_kb_retrieval(
 
     rag = config_registry.get_rag_config().retrieval
     resolved_mode = str(retrieval_mode or ("hybrid" if rag.hybrid_enabled else "vector")).lower()
-    resolved_recall_k = recall_k if recall_k is not None else (
-        rag.k_iteration if iteration > 0 else rag.k_first
-    )
+    resolved_recall_k = recall_k if recall_k is not None else rag.k_first
     resolved_lexical_k = lexical_k if lexical_k is not None else rag.lexical_k
     final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
     llm_ref_k = (
@@ -606,7 +596,6 @@ async def run_multi_query_kb_retrieval(
     team_id: int | None,
     knowledge_base_id: int | None,
     category_id: int | None = None,
-    iteration: int = 0,
     log_prefix: str = "[KB Retrieval]",
     user_id: int | None = None,
     result_limit: int | None = None,
@@ -645,9 +634,7 @@ async def run_multi_query_kb_retrieval(
 
     rag = config_registry.get_rag_config().retrieval
     resolved_mode = str(retrieval_mode or ("hybrid" if rag.hybrid_enabled else "vector")).lower()
-    resolved_recall_k = recall_k if recall_k is not None else (
-        rag.k_iteration if iteration > 0 else rag.k_first
-    )
+    resolved_recall_k = recall_k if recall_k is not None else rag.k_first
     resolved_lexical_k = lexical_k if lexical_k is not None else rag.lexical_k
     final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
     llm_ref_k = (

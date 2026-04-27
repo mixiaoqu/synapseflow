@@ -168,7 +168,7 @@ export default function LoginPage() {
 
 function LoginPageContent() {
   const searchParams = useSearchParams();
-  const nextPath = useMemo(() => searchParams.get("next") || "/ask", [searchParams]);
+  const nextPath = useMemo(() => searchParams.get("next") || "/admin", [searchParams]);
 
   useEffect(() => {
     if (getAccessToken()) {

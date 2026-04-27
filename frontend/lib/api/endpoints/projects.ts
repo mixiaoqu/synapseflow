@@ -44,6 +44,11 @@ export interface ProjectAppPayload {
   is_active: boolean;
 }
 
+export interface ProjectAppEmbedPreviewResponse {
+  embed_url: string;
+  expires_in_seconds: number;
+}
+
 export const projectsApi = {
   list: (filters?: { team_id?: number | null }) => {
     const params = new URLSearchParams();
@@ -78,6 +83,12 @@ export const projectsApi = {
     apiClient.put<ProjectAppResponse>(
       `/api/v1/projects/${projectId}/apps/${appId}`,
       payload,
+    ),
+
+  createEmbedPreview: (projectId: number, appId: number) =>
+    apiClient.post<ProjectAppEmbedPreviewResponse>(
+      `/api/v1/projects/${projectId}/apps/${appId}/embed-preview`,
+      {},
     ),
 
   deleteApp: (projectId: number, appId: number) =>

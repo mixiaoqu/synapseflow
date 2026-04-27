@@ -1,13 +1,19 @@
 """Project and project application management endpoints."""
 
-from fastapi import APIRouter, Depends, Query
+from datetime import timedelta
+from urllib.parse import urlencode
+
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import require_content_roles
 from app.application.project_service import ProjectService
+from app.core.config import settings
+from app.core.security import create_embed_token
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.project import (
+    EmbedSessionResponse,
     ProjectAppCreate,
     ProjectAppResponse,
     ProjectAppUpdate,
@@ -17,6 +23,13 @@ from app.models.schemas.project import (
 )
 
 router = APIRouter()
+
+
+def _resolve_embed_frontend_base_url(request: Request) -> str:
+    configured = settings.EMBED_FRONTEND_BASE_URL.strip()
+    if configured:
+        return configured.rstrip("/")
+    return str(request.base_url).rstrip("/")
 
 
 @router.get("", response_model=list[ProjectResponse])
@@ -128,3 +141,33 @@ async def delete_project_app(
         app_id=app_id,
     )
     return {"message": "Deleted successfully"}
+
+
+@router.post("/{project_id}/apps/{app_id}/embed-preview", response_model=EmbedSessionResponse)
+async def create_project_app_embed_preview(
+    project_id: int,
+    app_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    runtime = await ProjectService(db, user_id=current_user.id).get_app_runtime(
+        project_id=project_id,
+        app_id=app_id,
+        active_only=True,
+    )
+    expires = max(1, settings.EMBED_TOKEN_EXPIRE_MINUTES)
+    token = create_embed_token(
+        project_id=runtime.project.id,
+        project_app_id=runtime.app.id,
+        external_user_id=f"admin-preview:{current_user.id}",
+        external_user_name=(current_user.full_name or current_user.username or "").strip() or None,
+        source="admin_preview",
+        expires_delta=timedelta(minutes=expires),
+    )
+    base_url = _resolve_embed_frontend_base_url(request)
+    embed_url = f"{base_url}/embed/assistant?{urlencode({'token': token})}"
+    return EmbedSessionResponse(
+        embed_url=embed_url,
+        expires_in_seconds=expires * 60,
+    )
