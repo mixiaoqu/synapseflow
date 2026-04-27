@@ -1,4 +1,4 @@
-"""Lightweight retrieval query rewrite helpers for single-round KB chat."""
+"""Retrieval query rewrite helpers for KB chat."""
 
 from __future__ import annotations
 
@@ -7,9 +7,10 @@ from typing import Any, Callable
 
 from loguru import logger
 
-from app.core.config.registry import config_registry
 from app.core.llm import get_llm_for_analysis
 from app.utils import extract_json_from_llm_response
+
+RewriteMode = str
 
 _MAX_RETRIEVAL_QUERIES = 4
 _MAX_QUERY_LENGTH = 160
@@ -31,6 +32,7 @@ _QUESTION_BODY_PATTERN = re.compile(
 _CODE_TOKEN_PATTERN = re.compile(
     r"`([^`]+)`|\"([^\"]+)\"|'([^']+)'|\u300a([^\u300b]+)\u300b|([A-Za-z0-9_./:-]{3,})"
 )
+_CJK_COMPARE_PATTERN = re.compile(r"(\u533a\u522b|\u5dee\u5f02|\u5bf9\u6bd4|\u6bd4\u8f83)")
 
 
 def _coerce_text(content: Any) -> str:
@@ -93,26 +95,6 @@ def _extract_code_tokens(text: str) -> list[str]:
     return tokens
 
 
-def _build_fallback_queries(query: str, *, limit: int) -> list[str]:
-    original = _normalize_query(query)
-    if not original:
-        return []
-
-    compact = _strip_filler_phrases(original)
-    code_tokens = _extract_code_tokens(original)
-    candidates: list[str] = [original]
-
-    if compact and compact.casefold() != original.casefold():
-        candidates.append(compact)
-
-    if code_tokens:
-        candidates.append(" ".join(code_tokens[:3]))
-        if compact:
-            candidates.append(_normalize_query(f"{compact} {' '.join(code_tokens[:2])}"))
-
-    return _dedupe_keep_order(candidates, limit=limit)
-
-
 def _recent_user_context(chat_history: list[dict[str, str]] | None, *, limit: int = 2) -> str:
     recent = [
         _normalize_query(str(item.get("content") or ""))
@@ -123,23 +105,51 @@ def _recent_user_context(chat_history: list[dict[str, str]] | None, *, limit: in
     return " | ".join(recent[-limit:])
 
 
-def _augment_fallback_queries(
-    fallback: list[str],
+def _split_compare_query(original: str) -> list[str]:
+    lowered = original.lower()
+    if " vs " in lowered:
+        parts = [item.strip() for item in re.split(r"\bvs\b", original, flags=re.IGNORECASE)]
+    elif " and " in lowered and any(token in lowered for token in ("difference", "compare")):
+        parts = [item.strip() for item in re.split(r"\band\b", original, flags=re.IGNORECASE)]
+    elif _CJK_COMPARE_PATTERN.search(original):
+        parts = [item.strip() for item in re.split(r"(?:和|与|跟|及)", original) if item.strip()]
+    else:
+        parts = []
+    return [_normalize_query(item) for item in parts if len(_normalize_query(item)) >= 2]
+
+
+def _build_heuristic_queries(
+    query: str,
     *,
-    original: str,
     chat_history: list[dict[str, str]] | None,
     memory_summary: str | None,
     limit: int,
+    strategies: set[str],
 ) -> list[str]:
-    recent_user_context = _recent_user_context(chat_history)
-    summary = _normalize_query(memory_summary or "")
-    candidates = [original, *fallback]
+    original = _normalize_query(query)
+    if not original:
+        return []
 
-    if recent_user_context:
-        candidates.append(_normalize_query(f"{recent_user_context} {original}"))
-    if summary:
-        candidates.append(_normalize_query(f"{summary} {original}"))
-
+    candidates: list[str] = [original]
+    compact = _strip_filler_phrases(original)
+    code_tokens = _extract_code_tokens(original)
+    if (
+        "query_compaction" in strategies or "terminology_normalization" in strategies
+    ) and compact and compact.casefold() != original.casefold():
+        candidates.append(compact)
+    if "terminology_normalization" in strategies and code_tokens:
+        candidates.append(" ".join(code_tokens[:3]))
+        if compact:
+            candidates.append(_normalize_query(f"{compact} {' '.join(code_tokens[:2])}"))
+    if "context_completion" in strategies:
+        recent_user_context = _recent_user_context(chat_history)
+        summary = _normalize_query(memory_summary or "")
+        if recent_user_context:
+            candidates.append(_normalize_query(f"{recent_user_context} {original}"))
+        if summary:
+            candidates.append(_normalize_query(f"{summary} {original}"))
+    if "multi_aspect_split" in strategies:
+        candidates.extend(_split_compare_query(original))
     return _dedupe_keep_order(candidates, limit=limit)
 
 
@@ -147,6 +157,7 @@ def _build_rewrite_prompt(
     query: str,
     *,
     max_queries: int,
+    strategies: set[str],
     chat_history: list[dict[str, str]] | None = None,
     memory_summary: str | None = None,
 ) -> str:
@@ -160,6 +171,17 @@ def _build_rewrite_prompt(
 
     summary_text = _normalize_query(memory_summary or "") or "(none)"
     context_text = "\n".join(history_lines) or "(none)"
+    objective_lines = {
+        "context_completion": "Use recent conversation context to resolve short follow-up references when needed.",
+        "terminology_normalization": "Favor canonical product, process, config, and document terminology.",
+        "query_compaction": "Favor short search-style queries over natural-language questions.",
+        "multi_aspect_split": "When useful, include separate queries for distinct comparison or summary subtopics.",
+    }
+    active_objectives = [
+        f"- {objective_lines[name]}"
+        for name in ("context_completion", "terminology_normalization", "query_compaction", "multi_aspect_split")
+        if name in strategies
+    ] or ["- Preserve the original wording unless a clearer retrieval query is obvious."]
 
     return f"""
 You are rewriting a single user question into short retrieval-focused queries for a knowledge base.
@@ -173,7 +195,9 @@ Rules:
 - Do not invent facts.
 - Keep product names, file names, API paths, config keys, and quoted text unchanged when present.
 - Favor short search-style queries over full explanations.
-- When useful, cover terminology, scenario phrasing, and entity completion.
+
+Rewrite objectives:
+{chr(10).join(active_objectives)}
 
 Conversation summary:
 {summary_text}
@@ -192,27 +216,34 @@ async def build_kb_chat_retrieval_queries(
     chat_history: list[dict[str, str]] | None = None,
     memory_summary: str | None = None,
     llm_factory: Callable[[], Any] | None = None,
-    allow_llm: bool | None = None,
+    mode: RewriteMode = "heuristic",
     max_queries: int | None = None,
+    strategies: list[str] | None = None,
 ) -> list[str]:
-    """Build 1-4 retrieval-focused queries for single-round KB chat."""
+    """Build retrieval-focused queries for single-round KB chat."""
 
     original = _normalize_query(query)
     if not original:
         return []
 
     limit = max(1, min(max_queries or _MAX_RETRIEVAL_QUERIES, _MAX_RETRIEVAL_QUERIES))
-    fallback = _augment_fallback_queries(
-        _build_fallback_queries(original, limit=limit),
-        original=original,
+    normalized_mode = str(mode or "heuristic").strip().lower()
+    strategy_set = {
+        str(item).strip()
+        for item in list(strategies or [])
+        if str(item or "").strip()
+    }
+    heuristic = _build_heuristic_queries(
+        original,
         chat_history=chat_history,
         memory_summary=memory_summary,
         limit=limit,
+        strategies=strategy_set,
     )
-
-    should_use_llm = allow_llm if allow_llm is not None else config_registry.llm_configured
-    if not should_use_llm and llm_factory is None:
-        return fallback
+    if normalized_mode == "skip":
+        return [original]
+    if normalized_mode != "llm":
+        return heuristic or [original]
 
     try:
         resolved_factory = llm_factory or get_llm_for_analysis
@@ -221,6 +252,7 @@ async def build_kb_chat_retrieval_queries(
             _build_rewrite_prompt(
                 original,
                 max_queries=limit,
+                strategies=strategy_set,
                 chat_history=chat_history,
                 memory_summary=memory_summary,
             )
@@ -228,7 +260,7 @@ async def build_kb_chat_retrieval_queries(
         parsed = extract_json_from_llm_response(_coerce_text(getattr(response, "content", response)))
         raw_queries = parsed.get("queries") or []
         llm_queries = [item for item in raw_queries if isinstance(item, str)]
-        return _dedupe_keep_order([original, *llm_queries, *fallback], limit=limit)
+        return _dedupe_keep_order([original, *llm_queries, *heuristic], limit=limit)
     except Exception as exc:
         logger.warning("KB chat query rewrite failed, fallback to heuristic queries: {}", exc)
-        return fallback
+        return heuristic or [original]

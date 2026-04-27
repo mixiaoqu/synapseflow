@@ -1,8 +1,9 @@
-"""Adaptive retrieval planning node for end-user knowledge-base chat."""
+"""Retrieval planning node for end-user knowledge-base chat."""
 
 from __future__ import annotations
 
 import re
+from time import perf_counter
 from typing import Any, Callable
 
 from loguru import logger
@@ -12,138 +13,174 @@ from app.agents.common.retrieval import pick_query_from_state
 from app.agents.states import KbChatState
 from app.core.llm import get_llm_for_planner
 
-Intent = str
-Complexity = str
+PlanName = str
 
-ALLOWED_INTENTS: set[Intent] = {
+ALLOWED_PLAN_NAMES: set[PlanName] = {
     "chitchat",
-    "kb_lookup",
-    "procedural",
-    "comparison",
-    "summary",
-    "ambiguous_followup",
     "out_of_scope",
+    "fast_lookup",
+    "followup_lookup",
+    "procedural_lookup",
+    "compare_lookup",
+    "summary_lookup",
 }
-ALLOWED_COMPLEXITIES: set[Complexity] = {"simple", "normal", "complex"}
+DEFAULT_PLAN_NAME: PlanName = "fast_lookup"
+DEFAULT_REASON = "Fallback retrieval plan."
 
-DEFAULT_INTENT: Intent = "kb_lookup"
-DEFAULT_COMPLEXITY: Complexity = "normal"
-DEFAULT_REASON = "Fallback default policy."
-
-_POLICY_TABLE: dict[tuple[Intent, Complexity], dict[str, int | bool]] = {
-    ("chitchat", "simple"): {
+PLAN_TEMPLATES: dict[PlanName, dict[str, Any]] = {
+    "chitchat": {
         "retrieval_required": False,
-        "max_queries": 0,
-        "result_limit": 0,
-        "context_budget": 0,
+        "rewrite": {
+            "enabled": False,
+            "mode": "skip",
+            "max_queries": 0,
+            "strategies": [],
+        },
+        "retrieval": {
+            "mode": "none",
+            "recall_k": 0,
+            "lexical_k": 0,
+            "rerank_enabled": False,
+            "final_top_k": 0,
+            "llm_reference_top_k": 0,
+            "context_budget": 0,
+        },
+        "answer": {
+            "response_mode": "chitchat",
+            "grounded_only": False,
+        },
     },
-    ("kb_lookup", "simple"): {
-        "retrieval_required": True,
-        "max_queries": 1,
-        "result_limit": 4,
-        "context_budget": 6000,
-    },
-    ("kb_lookup", "normal"): {
-        "retrieval_required": True,
-        "max_queries": 2,
-        "result_limit": 8,
-        "context_budget": 10000,
-    },
-    ("kb_lookup", "complex"): {
-        "retrieval_required": True,
-        "max_queries": 3,
-        "result_limit": 10,
-        "context_budget": 12000,
-    },
-    ("procedural", "simple"): {
-        "retrieval_required": True,
-        "max_queries": 2,
-        "result_limit": 6,
-        "context_budget": 8000,
-    },
-    ("procedural", "normal"): {
-        "retrieval_required": True,
-        "max_queries": 2,
-        "result_limit": 8,
-        "context_budget": 10000,
-    },
-    ("procedural", "complex"): {
-        "retrieval_required": True,
-        "max_queries": 3,
-        "result_limit": 10,
-        "context_budget": 12000,
-    },
-    ("comparison", "simple"): {
-        "retrieval_required": True,
-        "max_queries": 3,
-        "result_limit": 8,
-        "context_budget": 10000,
-    },
-    ("comparison", "normal"): {
-        "retrieval_required": True,
-        "max_queries": 3,
-        "result_limit": 10,
-        "context_budget": 10000,
-    },
-    ("comparison", "complex"): {
-        "retrieval_required": True,
-        "max_queries": 4,
-        "result_limit": 12,
-        "context_budget": 12000,
-    },
-    ("summary", "simple"): {
-        "retrieval_required": True,
-        "max_queries": 2,
-        "result_limit": 8,
-        "context_budget": 10000,
-    },
-    ("summary", "normal"): {
-        "retrieval_required": True,
-        "max_queries": 3,
-        "result_limit": 10,
-        "context_budget": 12000,
-    },
-    ("summary", "complex"): {
-        "retrieval_required": True,
-        "max_queries": 4,
-        "result_limit": 12,
-        "context_budget": 12000,
-    },
-    ("ambiguous_followup", "simple"): {
-        "retrieval_required": True,
-        "max_queries": 3,
-        "result_limit": 8,
-        "context_budget": 10000,
-    },
-    ("ambiguous_followup", "normal"): {
-        "retrieval_required": True,
-        "max_queries": 3,
-        "result_limit": 8,
-        "context_budget": 10000,
-    },
-    ("ambiguous_followup", "complex"): {
-        "retrieval_required": True,
-        "max_queries": 4,
-        "result_limit": 10,
-        "context_budget": 12000,
-    },
-    ("out_of_scope", "simple"): {
+    "out_of_scope": {
         "retrieval_required": False,
-        "max_queries": 0,
-        "result_limit": 0,
-        "context_budget": 0,
+        "rewrite": {
+            "enabled": False,
+            "mode": "skip",
+            "max_queries": 0,
+            "strategies": [],
+        },
+        "retrieval": {
+            "mode": "none",
+            "recall_k": 0,
+            "lexical_k": 0,
+            "rerank_enabled": False,
+            "final_top_k": 0,
+            "llm_reference_top_k": 0,
+            "context_budget": 0,
+        },
+        "answer": {
+            "response_mode": "out_of_scope",
+            "grounded_only": False,
+        },
     },
-    ("out_of_scope", "normal"): {
-        "retrieval_required": False,
-        "max_queries": 0,
-        "result_limit": 0,
-        "context_budget": 0,
+    "fast_lookup": {
+        "retrieval_required": True,
+        "rewrite": {
+            "enabled": False,
+            "mode": "skip",
+            "max_queries": 1,
+            "strategies": [],
+        },
+        "retrieval": {
+            "mode": "vector",
+            "recall_k": 10,
+            "lexical_k": 0,
+            "rerank_enabled": False,
+            "final_top_k": 6,
+            "llm_reference_top_k": 4,
+            "context_budget": 8000,
+        },
+        "answer": {
+            "response_mode": "grounded",
+            "grounded_only": True,
+        },
     },
-    ("out_of_scope", "complex"): {
-        "retrieval_required": False,
-        "max_queries": 0,
-        "result_limit": 0,
-        "context_budget": 0,
+    "followup_lookup": {
+        "retrieval_required": True,
+        "rewrite": {
+            "enabled": True,
+            "mode": "heuristic",
+            "max_queries": 2,
+            "strategies": ["context_completion", "query_compaction"],
+        },
+        "retrieval": {
+            "mode": "vector",
+            "recall_k": 12,
+            "lexical_k": 0,
+            "rerank_enabled": False,
+            "final_top_k": 6,
+            "llm_reference_top_k": 4,
+            "context_budget": 9000,
+        },
+        "answer": {
+            "response_mode": "grounded",
+            "grounded_only": True,
+        },
+    },
+    "procedural_lookup": {
+        "retrieval_required": True,
+        "rewrite": {
+            "enabled": True,
+            "mode": "heuristic",
+            "max_queries": 2,
+            "strategies": ["terminology_normalization", "query_compaction"],
+        },
+        "retrieval": {
+            "mode": "hybrid",
+            "recall_k": 14,
+            "lexical_k": 8,
+            "rerank_enabled": False,
+            "final_top_k": 6,
+            "llm_reference_top_k": 4,
+            "context_budget": 9000,
+        },
+        "answer": {
+            "response_mode": "grounded",
+            "grounded_only": True,
+        },
+    },
+    "compare_lookup": {
+        "retrieval_required": True,
+        "rewrite": {
+            "enabled": True,
+            "mode": "llm",
+            "max_queries": 3,
+            "strategies": ["multi_aspect_split", "terminology_normalization"],
+        },
+        "retrieval": {
+            "mode": "hybrid",
+            "recall_k": 18,
+            "lexical_k": 10,
+            "rerank_enabled": True,
+            "final_top_k": 8,
+            "llm_reference_top_k": 5,
+            "context_budget": 10000,
+        },
+        "answer": {
+            "response_mode": "grounded",
+            "grounded_only": True,
+        },
+    },
+    "summary_lookup": {
+        "retrieval_required": True,
+        "rewrite": {
+            "enabled": True,
+            "mode": "llm",
+            "max_queries": 3,
+            "strategies": ["multi_aspect_split", "terminology_normalization"],
+        },
+        "retrieval": {
+            "mode": "hybrid",
+            "recall_k": 20,
+            "lexical_k": 12,
+            "rerank_enabled": True,
+            "final_top_k": 8,
+            "llm_reference_top_k": 5,
+            "context_budget": 11000,
+        },
+        "answer": {
+            "response_mode": "grounded",
+            "grounded_only": True,
+        },
     },
 }
 
@@ -166,7 +203,7 @@ def _compact_text(text: str, *, limit: int = 600) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())[:limit].strip()
 
 
-def _normalize_label(value: Any) -> str:
+def _normalize_plan_name(value: Any) -> str:
     return re.sub(r"\s+", "_", str(value or "").strip().lower())
 
 
@@ -189,41 +226,27 @@ def _build_planner_prompt(
     history_text = _format_recent_history(chat_history)
     summary_text = _compact_text(memory_summary or "", limit=600) or "(none)"
     return f"""
-You are planning retrieval for a knowledge-base QA system.
+You are routing a user question to one retrieval plan for a knowledge-base QA system.
 
-Classify the current user question. Return JSON only.
+Return JSON only:
+{{"plan_name": "fast_lookup", "reason": "short reason"}}
+
+Choose exactly one plan_name from:
+- chitchat: greeting, thanks, or small talk with no business question
+- out_of_scope: unrelated to the knowledge base or asks for open-ended creation
+- fast_lookup: clear single-topic knowledge lookup
+- followup_lookup: short follow-up that depends on recent conversation context
+- procedural_lookup: asks for steps, workflow, setup, process, or how-to guidance
+- compare_lookup: asks for differences, tradeoffs, conflicts, or multiple subjects
+- summary_lookup: asks to summarize, organize, collect, or aggregate information
 
 Rules:
 - Do not answer the user.
-- Do not rewrite or normalize the user question.
-- Do not create retrieval queries.
-- Choose only one allowed intent and one allowed complexity.
-- Use recent chat history only to identify context-dependent follow-up questions.
-- If a message includes a business, policy, process, document, or knowledge-base question,
-  do not classify it as chitchat even if it starts with a greeting or thanks.
-
-Allowed intent values:
-- chitchat: pure greeting or thanks with no business question
-- kb_lookup: ordinary knowledge-base lookup
-- procedural: asks how to do something, steps, process, application, approval, setup
-- comparison: asks differences, comparison, conflicts, multiple subjects
-- summary: asks to summarize, list, organize, collect requirements or notes
-- ambiguous_followup: short follow-up depending on earlier conversation
-- out_of_scope: clearly unrelated to knowledge-base QA
-
-Allowed complexity values:
-- simple: narrow single-fact or pure chitchat
-- normal: typical single-topic question
-- complex: multi-subject, comparison, summary, conflict, or broad procedural question
-
-Return this JSON shape:
-{{"intent": "kb_lookup", "complexity": "normal", "reason": "short reason"}}
-
-Examples:
-- User: 帮我写一首歌
-  Output: {{"intent": "out_of_scope", "complexity": "simple", "reason": "用户请求歌曲创作，不属于知识库问答范围。"}}
-- User: 帮我写一首诗
-  Output: {{"intent": "out_of_scope", "complexity": "simple", "reason": "用户请求诗歌创作，不属于知识库问答范围。"}}
+- Do not rewrite the question.
+- Prefer fast_lookup unless there is a clear reason to use another plan.
+- Use followup_lookup only when the question depends on prior context.
+- Use compare_lookup only for true comparisons or multiple entities.
+- Use summary_lookup only for collection, synthesis, or summarization requests.
 
 Conversation summary:
 {summary_text}
@@ -236,108 +259,102 @@ Current user question:
 """.strip()
 
 
-def build_adaptive_policy(
+def build_retrieval_plan(
     *,
-    query: str,
-    intent: Any,
-    complexity: Any,
+    plan_name: Any,
     reason: Any = "",
 ) -> dict[str, Any]:
-    """Map planner labels into bounded retrieval parameters."""
-
-    resolved_intent = _normalize_label(intent)
-    resolved_complexity = _normalize_label(complexity)
+    resolved_plan_name = _normalize_plan_name(plan_name)
+    if resolved_plan_name not in ALLOWED_PLAN_NAMES:
+        resolved_plan_name = DEFAULT_PLAN_NAME
     resolved_reason = _compact_text(str(reason or ""), limit=240) or DEFAULT_REASON
-
-    if resolved_intent not in ALLOWED_INTENTS:
-        resolved_intent = DEFAULT_INTENT
-    if resolved_complexity not in ALLOWED_COMPLEXITIES:
-        resolved_complexity = DEFAULT_COMPLEXITY
-
-    if resolved_intent == "chitchat":
-        resolved_complexity = "simple"
-
-    policy_values = _POLICY_TABLE.get(
-        (resolved_intent, resolved_complexity),
-        _POLICY_TABLE[(DEFAULT_INTENT, DEFAULT_COMPLEXITY)],
-    )
+    template = PLAN_TEMPLATES[resolved_plan_name]
     return {
-        "intent": resolved_intent,
-        "complexity": resolved_complexity,
-        "retrieval_required": bool(policy_values["retrieval_required"]),
-        "max_queries": int(policy_values["max_queries"]),
-        "result_limit": int(policy_values["result_limit"]),
-        "context_budget": int(policy_values["context_budget"]),
+        "plan_name": resolved_plan_name,
         "reason": resolved_reason,
+        "retrieval_required": bool(template["retrieval_required"]),
+        "rewrite": {
+            "enabled": bool(template["rewrite"]["enabled"]),
+            "mode": str(template["rewrite"]["mode"]),
+            "max_queries": int(template["rewrite"]["max_queries"]),
+            "strategies": list(template["rewrite"]["strategies"]),
+        },
+        "retrieval": {
+            "mode": str(template["retrieval"]["mode"]),
+            "recall_k": int(template["retrieval"]["recall_k"]),
+            "lexical_k": int(template["retrieval"]["lexical_k"]),
+            "rerank_enabled": bool(template["retrieval"]["rerank_enabled"]),
+            "final_top_k": int(template["retrieval"]["final_top_k"]),
+            "llm_reference_top_k": int(template["retrieval"]["llm_reference_top_k"]),
+            "context_budget": int(template["retrieval"]["context_budget"]),
+        },
+        "answer": {
+            "response_mode": str(template["answer"]["response_mode"]),
+            "grounded_only": bool(template["answer"]["grounded_only"]),
+        },
     }
 
 
-def build_default_adaptive_policy(query: str, *, reason: str = DEFAULT_REASON) -> dict[str, Any]:
-    return build_adaptive_policy(
-        query=query,
-        intent=DEFAULT_INTENT,
-        complexity=DEFAULT_COMPLEXITY,
-        reason=reason,
-    )
+def build_default_retrieval_plan(*, reason: str = DEFAULT_REASON) -> dict[str, Any]:
+    return build_retrieval_plan(plan_name=DEFAULT_PLAN_NAME, reason=reason)
 
 
-async def build_llm_adaptive_policy(
+async def build_llm_retrieval_plan(
     query: str,
     *,
     chat_history: list[dict[str, Any]] | None = None,
     memory_summary: str | None = None,
     llm_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
-    """Ask the planner LLM for labels and convert them into a retrieval policy."""
-
     if not query.strip():
-        return build_default_adaptive_policy(query, reason="Empty query fallback policy.")
+        return build_default_retrieval_plan(reason="Empty query fallback plan.")
 
-    try:
-        llm = (
-            llm_factory()
-            if llm_factory is not None
-            else get_llm_for_planner(
-                temperature=0,
-                max_tokens=300,
-            )
+    llm = (
+        llm_factory()
+        if llm_factory is not None
+        else get_llm_for_planner(
+            temperature=0,
+            max_tokens=200,
         )
-        response = await llm.ainvoke(
-            _build_planner_prompt(
-                query,
-                chat_history=chat_history,
-                memory_summary=memory_summary,
-            )
+    )
+    response = await llm.ainvoke(
+        _build_planner_prompt(
+            query,
+            chat_history=chat_history,
+            memory_summary=memory_summary,
         )
-        parsed = parse_llm_json_object(_coerce_text(getattr(response, "content", response)))
-        return build_adaptive_policy(
-            query=query,
-            intent=parsed.get("intent"),
-            complexity=parsed.get("complexity"),
-            reason=parsed.get("reason"),
-        )
-    except Exception as exc:
-        logger.warning("KB chat plan_query failed, using default adaptive policy: {}", exc)
-        return build_default_adaptive_policy(query)
+    )
+    parsed = parse_llm_json_object(_coerce_text(getattr(response, "content", response)))
+    return build_retrieval_plan(
+        plan_name=parsed.get("plan_name"),
+        reason=parsed.get("reason"),
+    )
 
 
 async def user_kb_plan_query_node(state: KbChatState) -> dict[str, Any]:
-    """Plan retrieval strength for the current KB chat turn."""
+    """Build the retrieval plan for the current KB chat turn."""
 
     query = pick_query_from_state(state, "query")
-    policy = await build_llm_adaptive_policy(
-        query,
-        chat_history=state.get("chat_history") or [],
-        memory_summary=state.get("memory_summary"),
-    )
+    started_at = perf_counter()
+    try:
+        retrieval_plan = await build_llm_retrieval_plan(
+            query,
+            chat_history=state.get("chat_history") or [],
+            memory_summary=state.get("memory_summary"),
+        )
+    except Exception as exc:
+        logger.warning("KB chat plan_query failed, using default retrieval plan: {}", exc)
+        retrieval_plan = build_default_retrieval_plan()
+
+    latency_ms = int((perf_counter() - started_at) * 1000)
     logger.info(
-        "[知识库规划] 类型={} 复杂度={} 是否检索={} 查询数上限={} 结果上限={} 上下文预算={} 原因={}",
-        policy.get("intent"),
-        policy.get("complexity"),
-        policy.get("retrieval_required"),
-        policy.get("max_queries"),
-        policy.get("result_limit"),
-        policy.get("context_budget"),
-        policy.get("reason"),
+        "[KB Plan] plan={} retrieval_required={} rewrite_mode={} retrieval_mode={} rerank={} latency_ms={} reason={}",
+        retrieval_plan.get("plan_name"),
+        retrieval_plan.get("retrieval_required"),
+        (retrieval_plan.get("rewrite") or {}).get("mode"),
+        (retrieval_plan.get("retrieval") or {}).get("mode"),
+        (retrieval_plan.get("retrieval") or {}).get("rerank_enabled"),
+        latency_ms,
+        retrieval_plan.get("reason"),
     )
-    return {"adaptive_policy": policy}
+    return {"retrieval_plan": retrieval_plan}

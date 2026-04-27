@@ -1,7 +1,9 @@
-"""Shared retrieval pipeline for knowledge-base chat."""
+"""Shared retrieval pipeline for KB chat, curation, and tools."""
+
+from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from loguru import logger
 from sqlalchemy import select
@@ -19,7 +21,7 @@ from app.services.reranker import rerank
 from app.services.vector_store import reciprocal_rank_fusion_many, search, search_hybrid_rrf
 
 
-def _format_kb_chunk(doc: Dict[str, Any], content: str) -> str:
+def _format_kb_chunk(doc: dict[str, Any], content: str) -> str:
     meta = doc.get("metadata", {}) or {}
     title = meta.get("document_title", "Unknown document")
     section_path = meta.get("section_path")
@@ -30,18 +32,19 @@ def _format_kb_chunk(doc: Dict[str, Any], content: str) -> str:
 
 
 def _apply_kb_context_budget(
-    retrieved_docs: List[Dict[str, Any]],
+    retrieved_docs: list[dict[str, Any]],
     max_chars: int,
-) -> tuple[List[Dict[str, Any]], str]:
+) -> tuple[list[dict[str, Any]], str]:
     """Trim retrieved docs to fit the prompt context budget."""
+
     if not retrieved_docs:
         return [], ""
     if max_chars <= 0:
         parts = [_format_kb_chunk(doc, doc.get("content") or "") for doc in retrieved_docs]
         return retrieved_docs, "\n\n".join(parts)
 
-    kept: List[Dict[str, Any]] = []
-    parts: List[str] = []
+    kept: list[dict[str, Any]] = []
+    parts: list[str] = []
     used = 0
     for doc in retrieved_docs:
         content = doc.get("content") or ""
@@ -136,12 +139,12 @@ def _build_retrieval_funnel(
     stages: list[dict[str, Any]] = [
         {
             "key": "recalled_candidates",
-            "label": "改写后总召回",
+            "label": "Initial Recall",
             "chunk_count": recalled_count,
             "note": (
-                "所有改写查询召回的候选片段总数（包含不同查询间的重复命中）"
+                "Total recalled chunks across rewritten queries before merge."
                 if multi_query
-                else "当前查询初始召回的候选片段数"
+                else "Chunks recalled for the current query before filtering."
             ),
         }
     ]
@@ -149,24 +152,24 @@ def _build_retrieval_funnel(
         stages.append(
             {
                 "key": "merged_candidates",
-                "label": "融合去重后",
+                "label": "Merged Candidates",
                 "chunk_count": merged_count,
-                "note": "多条改写查询经 RRF 融合后的候选片段数",
+                "note": "Candidate chunks after multi-query RRF merge and dedupe.",
             }
         )
     stages.extend(
         [
             {
                 "key": "reranked_candidates",
-                "label": "重排过滤后",
+                "label": "Post Filter",
                 "chunk_count": reranked_count,
-                "note": "经过 rerank 和阈值过滤后保留下来的片段数",
+                "note": "Chunks remaining after rerank and threshold filtering.",
             },
             {
                 "key": "context_chunks",
-                "label": "进入回答上下文",
+                "label": "Context Chunks",
                 "chunk_count": context_count,
-                "note": "最终拼进回答上下文的片段数",
+                "note": "Chunks that finally enter the answer context.",
             },
         ]
     )
@@ -181,28 +184,28 @@ def _build_retrieval_funnel(
 async def _retrieve_candidate_rows(
     *,
     query: str,
-    team_id: Optional[int],
-    knowledge_base_id: Optional[int],
-    category_id: Optional[int],
+    team_id: int | None,
+    knowledge_base_id: int | None,
+    category_id: int | None,
     user_id: int | None,
+    retrieval_mode: str,
     recall_k: int,
-    lexical_k: int | None = None,
+    lexical_k: int = 0,
     document_statuses: list[str] | None = None,
     retrieval_version_mode: str | None = None,
-) -> tuple[List[dict], bool]:
+) -> tuple[list[dict[str, Any]], bool]:
     rag = config_registry.get_rag_config().retrieval
     query_embedding = await asyncio.to_thread(embed_query, query)
-    lexical_limit = max(1, lexical_k if lexical_k is not None else rag.lexical_k)
 
     async with AsyncSessionLocal() as db:
-        if rag.hybrid_enabled:
-            pool_limit = min(rag.hybrid_pool_limit, recall_k + lexical_limit)
+        if retrieval_mode == "hybrid":
+            pool_limit = min(rag.hybrid_pool_limit, recall_k + max(lexical_k, 1))
             results = await search_hybrid_rrf(
                 db,
                 query_text=query,
                 query_embedding=query_embedding,
                 k_dense=recall_k,
-                k_lexical=lexical_limit,
+                k_lexical=max(1, lexical_k),
                 user_id=user_id,
                 team_id=team_id,
                 knowledge_base_id=knowledge_base_id,
@@ -239,45 +242,23 @@ async def _retrieve_candidate_rows(
     return results, has_documents
 
 
-async def _finalize_ranked_rows(
-    *,
-    query: str,
-    results: List[dict],
-    final_top_k: int,
-) -> List[dict]:
-    if settings.RERANK_ENABLED and results:
-        logger.debug(
-            "知识库检索：准备重排候选片段，候选数={}，保留上限={}",
-            len(results),
-            final_top_k,
-        )
-        results = await rerank(query, results, top_k=final_top_k)
-    else:
-        results = results[:final_top_k]
-    return _apply_retrieval_thresholds(
-        results,
-        rerank_enabled=settings.RERANK_ENABLED,
-    )
-
-
-def _meaningful_dense_distance(row: dict) -> float | None:
+def _meaningful_dense_distance(row: dict[str, Any]) -> float | None:
     raw_distance = row.get("distance")
     if raw_distance is None:
         return None
     try:
-        distance = float(raw_distance)
+        return float(raw_distance)
     except (TypeError, ValueError):
         return None
-    return distance
 
 
-def _passes_distance_threshold(row: dict, threshold: float) -> bool:
+def _passes_distance_threshold(row: dict[str, Any], threshold: float) -> bool:
     distance = _meaningful_dense_distance(row)
     return distance is None or distance <= threshold
 
 
 def _passes_rerank_threshold(
-    row: dict,
+    row: dict[str, Any],
     *,
     rerank_enabled: bool,
     threshold: float | None,
@@ -294,10 +275,10 @@ def _passes_rerank_threshold(
 
 
 def _apply_retrieval_thresholds(
-    results: List[dict],
+    results: list[dict[str, Any]],
     *,
     rerank_enabled: bool,
-) -> List[dict]:
+) -> list[dict[str, Any]]:
     if not results:
         return []
 
@@ -318,16 +299,40 @@ def _apply_retrieval_thresholds(
     removed = len(results) - len(filtered)
     if removed:
         logger.info(
-            "知识库检索：阈值过滤移除了 {} / {} 个候选片段，向量距离阈值<= {:.3f}，精排阈值>= {}",
+            "[KB Retrieval] threshold filtering removed {} of {} candidates | distance_threshold={} rerank_threshold={}",
             removed,
             len(results),
             distance_threshold,
-            (f"{rerank_threshold:.3f}" if rerank_enabled and rerank_threshold is not None else "-"),
+            rerank_threshold if rerank_enabled else "-",
         )
     return filtered
 
 
-async def _expand_results_with_parent_context(results: List[dict]) -> List[dict]:
+async def _finalize_ranked_rows(
+    *,
+    query: str,
+    results: list[dict[str, Any]],
+    rerank_enabled: bool,
+    final_top_k: int,
+    iteration: int,
+) -> list[dict[str, Any]]:
+    if rerank_enabled and results:
+        logger.debug(
+            "[KB Retrieval] preparing rerank | candidates={} keep={}",
+            len(results),
+            final_top_k,
+        )
+        results = await rerank(query, results, top_k=final_top_k)
+    else:
+        results = results[:final_top_k]
+    return _apply_retrieval_thresholds(
+        results,
+        iteration=iteration,
+        rerank_enabled=rerank_enabled,
+    )
+
+
+async def _expand_results_with_parent_context(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     child_chunk_ids = [int(row["document_chunk_id"]) for row in results]
 
     async with AsyncSessionLocal() as db:
@@ -335,11 +340,11 @@ async def _expand_results_with_parent_context(results: List[dict]) -> List[dict]
             child_chunk_ids=child_chunk_ids,
         )
 
-    expanded_by_key: dict[int | str, dict] = {}
+    expanded_by_key: dict[int | str, dict[str, Any]] = {}
     ordered_keys: list[int | str] = []
     for row in results:
         document_chunk_id = int(row["document_chunk_id"])
-        expansion = expansions.get(int(document_chunk_id))
+        expansion = expansions.get(document_chunk_id)
         if expansion is None:
             logger.warning(
                 "Skipping child chunk {} during retrieval because no persisted parent window was found",
@@ -360,7 +365,7 @@ async def _expand_results_with_parent_context(results: List[dict]) -> List[dict]
         dedupe_key: int | str = (
             int(expansion.parent_chunk_id)
             if expansion.parent_chunk_id is not None
-            else int(document_chunk_id)
+            else document_chunk_id
         )
         if dedupe_key not in expanded_by_key:
             expanded_by_key[dedupe_key] = updated
@@ -370,7 +375,7 @@ async def _expand_results_with_parent_context(results: List[dict]) -> List[dict]
         existing = expanded_by_key[dedupe_key]
         existing_meta = dict(existing.get("metadata") or {})
         merged_child_ids = set(existing_meta.get("merged_child_chunk_ids") or [])
-        merged_child_ids.add(int(document_chunk_id))
+        merged_child_ids.add(document_chunk_id)
         merged_child_ids.update(int(item) for item in expansion.window_child_ids)
         existing_meta["merged_child_chunk_ids"] = sorted(merged_child_ids)
         existing_meta.setdefault("evidence_texts", [])
@@ -383,24 +388,25 @@ async def _expand_results_with_parent_context(results: List[dict]) -> List[dict]
 
 async def _build_retrieval_output(
     *,
-    results: List[dict],
+    results: list[dict[str, Any]],
     has_documents: bool,
-    knowledge_base_id: Optional[int],
-    category_id: Optional[int],
+    knowledge_base_id: int | None,
+    category_id: int | None,
+    iteration: int,
     log_prefix: str,
+    retrieval_mode: str,
     recall_k: int,
     final_top_k: int,
     llm_ref_k: int | None,
     query_count: int,
     context_budget: int | None,
     retrieval_funnel: dict[str, Any] | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     rag = config_registry.get_rag_config().retrieval
 
     if llm_ref_k is not None:
         results = results[: max(1, llm_ref_k)]
 
-    mode = "hybrid" if rag.hybrid_enabled else "vector"
     distances = [row.get("distance") for row in results if row.get("distance") is not None]
     rerank_scores = [
         row.get("rerank_score") for row in results if row.get("rerank_score") is not None
@@ -410,16 +416,17 @@ async def _build_retrieval_output(
         "{:.3f}~{:.3f}".format(min(rerank_scores), max(rerank_scores)) if rerank_scores else "-"
     )
     logger.info(
-        "{} 检索完成：模式={}，查询数={}，结果数={}，距离范围={}，精排范围={}",
+        "{} retrieval complete | iteration={} mode={} query_count={} results={} distance={} rerank={}",
         log_prefix,
-        mode,
+        iteration + 1,
+        retrieval_mode,
         query_count,
         len(results),
         dist_s,
         rerank_s,
     )
     logger.debug(
-        "{} 检索参数：recall_k={}，final_top_k={}，llm_ref_k={}",
+        "{} retrieval params | recall_k={} final_top_k={} llm_ref_k={}",
         log_prefix,
         recall_k,
         final_top_k,
@@ -429,7 +436,7 @@ async def _build_retrieval_output(
     if not results:
         if knowledge_base_id is not None and not has_documents:
             logger.warning(
-                "{} 知识库 {} 当前没有已建索引文档",
+                "{} knowledge base {} has no indexed documents",
                 log_prefix,
                 knowledge_base_id,
             )
@@ -441,7 +448,7 @@ async def _build_retrieval_output(
             }
 
         logger.warning(
-            "{} 未命中相关内容：知识库={}，分类={}",
+            "{} no relevant content found | knowledge_base_id={} category_id={}",
             log_prefix,
             knowledge_base_id or "all",
             category_id or "all",
@@ -456,7 +463,7 @@ async def _build_retrieval_output(
     results = await _expand_results_with_parent_context(results)
     if not results:
         logger.warning(
-            "{} Retrieval candidates were discarded because persisted parent windows were missing",
+            "{} retrieval candidates were discarded because persisted parent windows were missing",
             log_prefix,
         )
         return {
@@ -465,7 +472,8 @@ async def _build_retrieval_output(
             "kb_retrieval_status": "no_hits",
             "retrieval_funnel": retrieval_funnel,
         }
-    retrieved_docs = []
+
+    retrieved_docs: list[dict[str, Any]] = []
     for row in results:
         chunk_meta = dict(row.get("metadata") or {})
         meta = {
@@ -483,7 +491,7 @@ async def _build_retrieval_output(
     kept, context = _apply_kb_context_budget(retrieved_docs, budget)
     if budget > 0 and len(kept) < len(retrieved_docs):
         logger.info(
-            "{} 已按上下文预算裁剪：预算={} 字符，保留 {} / {} 个片段",
+            "{} context budget applied | budget={} kept={}/{}",
             log_prefix,
             budget,
             len(kept),
@@ -501,9 +509,9 @@ async def _build_retrieval_output(
                     *list((retrieval_funnel or {}).get("stages") or [])[:-1],
                     {
                         "key": "context_chunks",
-                        "label": "进入回答上下文",
+                        "label": "Context Chunks",
                         "chunk_count": len(kept),
-                        "note": "最终拼进回答上下文的片段数",
+                        "note": "Chunks that finally enter the answer context.",
                     },
                 ],
             }
@@ -516,22 +524,37 @@ async def _build_retrieval_output(
 async def run_kb_retrieval(
     *,
     query: str,
-    team_id: Optional[int],
-    knowledge_base_id: Optional[int],
-    category_id: Optional[int] = None,
+    team_id: int | None,
+    knowledge_base_id: int | None,
+    category_id: int | None = None,
+    iteration: int = 0,
     log_prefix: str = "[KB Retrieval]",
     user_id: int | None = None,
     result_limit: int | None = None,
+    llm_reference_top_k: int | None = None,
     context_budget: int | None = None,
     document_statuses: list[str] | None = None,
     retrieval_version_mode: str | None = None,
-) -> Dict[str, Any]:
+    retrieval_mode: str | None = None,
+    recall_k: int | None = None,
+    lexical_k: int | None = None,
+    rerank_enabled: bool | None = None,
+) -> dict[str, Any]:
     """Retrieve KB chunks and return prompt-ready state."""
 
     rag = config_registry.get_rag_config().retrieval
-    recall_k = rag.k_first
+    resolved_mode = str(retrieval_mode or ("hybrid" if rag.hybrid_enabled else "vector")).lower()
+    resolved_recall_k = recall_k if recall_k is not None else (
+        rag.k_iteration if iteration > 0 else rag.k_first
+    )
+    resolved_lexical_k = lexical_k if lexical_k is not None else rag.lexical_k
     final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
-    llm_ref_k = max(1, result_limit) if result_limit is not None else rag.llm_reference_top_k
+    llm_ref_k = (
+        max(1, llm_reference_top_k)
+        if llm_reference_top_k is not None
+        else rag.llm_reference_top_k
+    )
+    resolved_rerank = settings.RERANK_ENABLED if rerank_enabled is None else bool(rerank_enabled)
 
     results, has_documents = await _retrieve_candidate_rows(
         query=query,
@@ -539,7 +562,9 @@ async def run_kb_retrieval(
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
         user_id=user_id,
-        recall_k=recall_k,
+        retrieval_mode=resolved_mode,
+        recall_k=resolved_recall_k,
+        lexical_k=resolved_lexical_k,
         document_statuses=document_statuses,
         retrieval_version_mode=retrieval_version_mode,
     )
@@ -547,11 +572,11 @@ async def run_kb_retrieval(
     results = await _finalize_ranked_rows(
         query=query,
         results=results,
+        rerank_enabled=resolved_rerank,
         final_top_k=final_top_k,
     )
-    mode = "hybrid" if rag.hybrid_enabled else "vector"
     retrieval_funnel = _build_retrieval_funnel(
-        mode=mode,
+        mode=resolved_mode,
         query_stats=[{"query": query, "chunk_count": raw_count}],
         recalled_count=raw_count,
         merged_count=raw_count,
@@ -564,7 +589,8 @@ async def run_kb_retrieval(
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
         log_prefix=log_prefix,
-        recall_k=recall_k,
+        retrieval_mode=resolved_mode,
+        recall_k=resolved_recall_k,
         final_top_k=final_top_k,
         llm_ref_k=llm_ref_k,
         query_count=1,
@@ -577,16 +603,22 @@ async def run_multi_query_kb_retrieval(
     *,
     query: str,
     retrieval_queries: list[str],
-    team_id: Optional[int],
-    knowledge_base_id: Optional[int],
-    category_id: Optional[int] = None,
+    team_id: int | None,
+    knowledge_base_id: int | None,
+    category_id: int | None = None,
+    iteration: int = 0,
     log_prefix: str = "[KB Retrieval]",
     user_id: int | None = None,
     result_limit: int | None = None,
+    llm_reference_top_k: int | None = None,
     context_budget: int | None = None,
     document_statuses: list[str] | None = None,
     retrieval_version_mode: str | None = None,
-) -> Dict[str, Any]:
+    retrieval_mode: str | None = None,
+    recall_k: int | None = None,
+    lexical_k: int | None = None,
+    rerank_enabled: bool | None = None,
+) -> dict[str, Any]:
     """Retrieve KB chunks from multiple rewritten queries and fuse them with RRF."""
 
     queries = _dedupe_queries(retrieval_queries or [query])
@@ -599,21 +631,39 @@ async def run_multi_query_kb_retrieval(
             log_prefix=log_prefix,
             user_id=user_id,
             result_limit=result_limit,
+            llm_reference_top_k=llm_reference_top_k,
             context_budget=context_budget,
             document_statuses=document_statuses,
             retrieval_version_mode=retrieval_version_mode,
+            retrieval_mode=retrieval_mode,
+            recall_k=recall_k,
+            lexical_k=lexical_k,
+            rerank_enabled=rerank_enabled,
         )
         output["retrieval_queries"] = queries or [query]
         return output
 
     rag = config_registry.get_rag_config().retrieval
-    recall_k = rag.k_first
+    resolved_mode = str(retrieval_mode or ("hybrid" if rag.hybrid_enabled else "vector")).lower()
+    resolved_recall_k = recall_k if recall_k is not None else (
+        rag.k_iteration if iteration > 0 else rag.k_first
+    )
+    resolved_lexical_k = lexical_k if lexical_k is not None else rag.lexical_k
     final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
-    llm_ref_k = max(1, result_limit) if result_limit is not None else rag.llm_reference_top_k
-    per_query_recall_k = _scaled_candidate_k(len(queries), recall_k, final_top_k)
-    per_query_lexical_k = _scaled_candidate_k(len(queries), rag.lexical_k, final_top_k)
+    llm_ref_k = (
+        max(1, llm_reference_top_k)
+        if llm_reference_top_k is not None
+        else rag.llm_reference_top_k
+    )
+    resolved_rerank = settings.RERANK_ENABLED if rerank_enabled is None else bool(rerank_enabled)
+    per_query_recall_k = _scaled_candidate_k(len(queries), resolved_recall_k, final_top_k)
+    per_query_lexical_k = (
+        _scaled_candidate_k(len(queries), resolved_lexical_k, 1)
+        if resolved_mode == "hybrid" and resolved_lexical_k > 0
+        else 0
+    )
 
-    logger.debug("{} 多查询检索使用的查询列表：{}", log_prefix, queries)
+    logger.debug("{} multi-query retrieval using queries={}", log_prefix, queries)
     batches = await asyncio.gather(
         *[
             _retrieve_candidate_rows(
@@ -622,6 +672,7 @@ async def run_multi_query_kb_retrieval(
                 knowledge_base_id=knowledge_base_id,
                 category_id=category_id,
                 user_id=user_id,
+                retrieval_mode=resolved_mode,
                 recall_k=per_query_recall_k,
                 lexical_k=per_query_lexical_k,
                 document_statuses=document_statuses,
@@ -648,10 +699,11 @@ async def run_multi_query_kb_retrieval(
     results = await _finalize_ranked_rows(
         query=query,
         results=fused_results,
+        rerank_enabled=resolved_rerank,
         final_top_k=final_top_k,
     )
     retrieval_funnel = _build_retrieval_funnel(
-        mode="hybrid" if rag.hybrid_enabled else "vector",
+        mode=resolved_mode,
         query_stats=query_stats,
         recalled_count=recalled_count,
         merged_count=len(fused_results),
@@ -664,6 +716,7 @@ async def run_multi_query_kb_retrieval(
         knowledge_base_id=knowledge_base_id,
         category_id=category_id,
         log_prefix=log_prefix,
+        retrieval_mode=resolved_mode,
         recall_k=per_query_recall_k,
         final_top_k=final_top_k,
         llm_ref_k=llm_ref_k,

@@ -22,8 +22,9 @@ class KbChatState(BaseAgentContext, total=False):
     category_id: Optional[int]
     chat_history: List[Dict[str, Any]]
     memory_summary: Optional[str]
-    adaptive_policy: Dict[str, Any]
+    retrieval_plan: Dict[str, Any]
     retrieval_queries: List[str]
+    rewrite_meta: Dict[str, Any]
     retrieval_funnel: Dict[str, Any]
     allowed_document_statuses: List[str]
     retrieval_version_mode: str
