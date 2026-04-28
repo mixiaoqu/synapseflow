@@ -76,9 +76,9 @@ PLAN_TEMPLATES: dict[PlanName, dict[str, Any]] = {
         "retrieval_required": True,
         "rewrite": {
             "enabled": True,
-            "mode": "skip",
+            "mode": "heuristic",
             "max_queries": 2,
-            "strategies": [],
+            "strategies": ["terminology_normalization", "query_compaction"],
         },
         "retrieval": {
             "mode": "hybrid",
