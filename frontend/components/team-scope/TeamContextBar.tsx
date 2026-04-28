@@ -6,7 +6,8 @@ import { useTeamScope } from "@/components/team-scope/TeamScopeProvider";
 import { TeamScopeSwitcher } from "@/components/teams/TeamScopeSwitcher";
 
 export function TeamContextBar() {
-  const { selectedTeam, teamsLoading } = useTeamScope();
+  const { selectedTeam, teams, teamsLoading } = useTeamScope();
+  const showTeamSwitcher = teamsLoading || teams.length > 1;
 
   return (
     <div className="shrink-0 border-b border-slate-200 bg-white/95 px-6 py-3 text-slate-900 shadow-sm shadow-slate-900/[0.02] backdrop-blur">
@@ -29,7 +30,7 @@ export function TeamContextBar() {
             </p>
           </div>
         </div>
-        <TeamScopeSwitcher className="w-full xl:w-auto" />
+        {showTeamSwitcher ? <TeamScopeSwitcher className="w-full xl:w-auto" /> : null}
       </div>
     </div>
   );

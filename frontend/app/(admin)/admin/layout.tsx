@@ -69,10 +69,10 @@ const menuGroups = [
 ];
 
 const ROLE_COLORS: Record<string, { bg: string; text: string }> = {
-  kb_admin: { bg: "bg-violet-50", text: "text-violet-700" },
-  kb_reviewer: { bg: "bg-amber-50", text: "text-amber-700" },
-  kb_editor: { bg: "bg-blue-50", text: "text-blue-700" },
-  end_user: { bg: "bg-slate-100", text: "text-slate-600" },
+  kb_admin: { bg: "border border-violet-400/20 bg-violet-500/20", text: "text-violet-200" },
+  kb_reviewer: { bg: "border border-amber-400/20 bg-amber-500/20", text: "text-amber-200" },
+  kb_editor: { bg: "border border-blue-400/20 bg-blue-500/20", text: "text-blue-200" },
+  end_user: { bg: "border border-white/15 bg-white/10", text: "text-slate-300" },
 };
 
 function avatarPalette(id: number) {
@@ -168,38 +168,43 @@ function AdminLayoutContent({
                         <ChevronDown className="h-3.5 w-3.5" />
                       )}
                     </button>
-                    {!isCollapsed && (
-                      <div className="space-y-0.5">
-                        {group.items.map((item) => {
-                          const Icon = item.icon;
-                          const active =
-                            pathname === item.href ||
-                            (item.href !== "/admin" && pathname.startsWith(`${item.href}/`));
+                    <div
+                      className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+                        isCollapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
+                      }`}
+                    >
+                      <div className="min-h-0 overflow-hidden">
+                        <div className="space-y-0.5">
+                          {group.items.map((item) => {
+                            const Icon = item.icon;
+                            const active =
+                              pathname === item.href ||
+                              (item.href !== "/admin" && pathname.startsWith(`${item.href}/`));
 
-                          return (
-                            <Link
-                              key={item.href}
-                              href={item.href}
-                              className={`group flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm transition-all ${
-                                active
-                                  ? "bg-blue-500/10 text-blue-400 font-medium"
-                                  : "text-gray-400 hover:bg-white/8 hover:text-white"
-                              }`}
-                            >
-                              <Icon
-                                className={`h-4 w-4 shrink-0 transition-colors ${
-                                  active ? "text-blue-400" : "text-gray-500 group-hover:text-gray-300"
+                            return (
+                              <Link
+                                key={item.href}
+                                href={item.href}
+                                className={`group relative flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm transition-all ${
+                                  active
+                                    ? "bg-blue-500/10 text-blue-400 font-medium before:absolute before:left-0 before:top-1/2 before:h-1/2 before:w-1 before:-translate-y-1/2 before:rounded-r-full before:bg-blue-500"
+                                    : "text-gray-400 hover:bg-white/8 hover:text-white"
                                 }`}
-                              />
-                              <span>{item.title}</span>
-                              {active ? (
-                                <ChevronRight className="ml-auto h-3.5 w-3.5 text-blue-400/50" />
-                              ) : null}
-                            </Link>
-                          );
-                        })}
+                              >
+                                <Icon
+                                  className={`h-4 w-4 shrink-0 transition-colors ${
+                                    active
+                                      ? "text-blue-400"
+                                      : "text-gray-500 group-hover:text-gray-300"
+                                  }`}
+                                />
+                                <span>{item.title}</span>
+                              </Link>
+                            );
+                          })}
+                        </div>
                       </div>
-                    )}
+                    </div>
                   </div>
                 );
               })}
@@ -207,7 +212,7 @@ function AdminLayoutContent({
           </nav>
 
           <div className="shrink-0 border-t border-white/10 p-4">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="rounded-2xl border border-white/15 bg-white/[0.05] p-4 shadow-inner shadow-white/[0.02]">
               <div className="flex items-center gap-3">
                 <div
                   className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${avatarPalette(currentUser.id)}`}
@@ -228,14 +233,15 @@ function AdminLayoutContent({
               <div className="mt-4 flex gap-2">
                 <Link
                   href="/ask"
-                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs text-gray-300 transition-colors hover:bg-white/8 hover:text-white"
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/15 px-3 py-2 text-xs text-gray-300 transition-colors hover:border-white/20 hover:bg-white/[0.06] hover:text-white"
                 >
                   进入问答
                 </Link>
                 <button
                   type="button"
                   onClick={() => clearAuthSession()}
-                  className="flex items-center gap-1 rounded-xl border border-red-500/20 px-3 py-2 text-xs text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
+                  className="flex items-center gap-1 rounded-xl border border-white/10 px-3 py-2 text-xs text-gray-400 transition-colors hover:border-white/20 hover:bg-white/[0.06] hover:text-white"
+                  title="退出登录"
                 >
                   <LogOut className="h-3.5 w-3.5" />
                 </button>

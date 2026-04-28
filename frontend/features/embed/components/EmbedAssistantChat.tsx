@@ -13,6 +13,7 @@ import {
   Square,
   ThumbsDown,
   ThumbsUp,
+  User,
   X,
   Zap,
 } from "lucide-react";
@@ -113,12 +114,11 @@ export function EmbedAssistantChat() {
     if (!query || isTyping) return;
     void handleSendMessage(query);
     setInputValue("");
-    if (inputRef.current) {
-      inputRef.current.style.height = "auto";
-    }
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       onSend();
@@ -219,7 +219,7 @@ export function EmbedAssistantChat() {
       {/* ── Messages ── */}
       <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto scroll-smooth">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-5 lg:max-w-4xl">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-0 px-4 py-5 lg:max-w-4xl">
 
             {/* Welcome bubble */}
             {messages.length === 0 && (
@@ -260,6 +260,8 @@ export function EmbedAssistantChat() {
             <AnimatePresence initial={false}>
               {messages.map((message, index) => {
                 const isUser = message.role === "user";
+                const previousMessage = messages[index - 1];
+                const startsNewTurn = isUser && previousMessage != null;
                 const docs = message.retrievedDocs ?? [];
                 const hasDocs = docs.length > 0;
                 const isLast = index === messages.length - 1;
@@ -274,17 +276,18 @@ export function EmbedAssistantChat() {
                     className={cn(
                       "group/message flex w-full flex-col",
                       isUser ? "items-end" : "items-start",
+                      index === 0 ? "" : startsNewTurn ? "mt-8" : "mt-2",
                     )}
                   >
                     <div
                       className={cn(
-                        "flex w-full max-w-full items-end gap-2",
+                        "flex w-full max-w-full items-start gap-2",
                         isUser ? "justify-end" : "justify-start",
                       )}
                     >
                       {/* Bot avatar */}
                       {!isUser && (
-                        <div className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow shadow-blue-200">
+                        <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow shadow-blue-200">
                           <Bot className="h-3.5 w-3.5 text-white" />
                         </div>
                       )}
@@ -293,8 +296,8 @@ export function EmbedAssistantChat() {
                         className={cn(
                           "flex min-w-0 flex-col gap-1.5",
                           isUser
-                            ? "max-w-[calc(100%-2.25rem)] items-end"
-                            : "w-full max-w-[calc(100%-2.25rem)] items-start",
+                            ? "max-w-[85%] items-end"
+                            : "w-full max-w-[85%] items-start",
                         )}
                       >
                         {/* Bubble */}
@@ -302,8 +305,8 @@ export function EmbedAssistantChat() {
                           className={cn(
                             "relative max-w-full text-[14px] leading-relaxed",
                             isUser
-                              ? "rounded-[18px] rounded-br-[4px] bg-gradient-to-br from-blue-500 to-indigo-600 px-4 py-2.5 text-left text-white shadow-md shadow-blue-200/50"
-                              : "w-full rounded-[18px] rounded-bl-[4px] border border-slate-200/80 bg-white px-4 py-3 pr-10 text-slate-800 shadow-sm",
+                              ? "rounded-[18px] rounded-tr-[4px] bg-blue-600 px-4 py-2.5 text-left text-white shadow-md shadow-blue-200/50"
+                              : "w-full rounded-[18px] rounded-tl-[4px] border border-slate-200/80 bg-white px-4 py-3 text-slate-800 shadow-sm",
                           )}
                         >
                           {isUser ? (
@@ -398,6 +401,14 @@ export function EmbedAssistantChat() {
                                     <span className="truncate">{getDocTitle(doc)}</span>
                                   </div>
                                 ))}
+                                {docs.length > 4 ? (
+                                  <div
+                                    className="flex items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-500"
+                                    title={`还有 ${docs.length - 4} 个参考来源`}
+                                  >
+                                    +{docs.length - 4}
+                                  </div>
+                                ) : null}
                               </div>
                             )}
 
@@ -437,6 +448,12 @@ export function EmbedAssistantChat() {
                           </div>
                         )}
                       </div>
+
+                      {isUser && (
+                        <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-400 shadow-sm">
+                          <User className="h-3.5 w-3.5" />
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 );
@@ -450,12 +467,12 @@ export function EmbedAssistantChat() {
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 4 }}
-                  className="flex items-end gap-2"
+                  className="flex items-start gap-2"
                 >
-                  <div className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow shadow-blue-200">
+                  <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow shadow-blue-200">
                     <Bot className="h-3.5 w-3.5 text-white" />
                   </div>
-                  <div className="flex w-[260px] flex-col gap-2 rounded-[18px] rounded-bl-[4px] border border-slate-200/80 bg-white px-4 py-3 shadow-sm">
+                  <div className="flex w-[260px] flex-col gap-2 rounded-[18px] rounded-tl-[4px] border border-slate-200/80 bg-white px-4 py-3 shadow-sm">
                     <div className="flex items-center gap-2">
                       <TypingDots />
                       <span className="text-[12px] font-medium text-slate-500">
@@ -497,7 +514,7 @@ export function EmbedAssistantChat() {
                     <Zap className="h-3 w-3 fill-amber-400 text-amber-400" />
                     热门问题
                   </div>
-                  <div className="flex flex-col gap-1.5">
+                  <div className="flex flex-wrap gap-1.5">
                     {suggestions.map((suggestion, index) => (
                       <motion.button
                         key={`${suggestion}-${index}`}
@@ -506,10 +523,10 @@ export function EmbedAssistantChat() {
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: index * 0.06 }}
                         onClick={() => void handleSendMessage(suggestion)}
-                        className="group flex items-center gap-2.5 rounded-xl border border-slate-200/80 bg-white px-3.5 py-2.5 text-left text-[13px] text-slate-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 hover:shadow-md active:scale-[0.99]"
+                        className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-slate-200/80 bg-white px-3 py-1.5 text-left text-[12px] text-slate-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 hover:shadow-md active:scale-[0.99]"
                       >
-                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-blue-400 transition-transform group-hover:scale-110" />
-                        <span className="truncate">{suggestion}</span>
+                        <MessageSquare className="h-3 w-3 shrink-0 text-blue-400 transition-transform group-hover:scale-110" />
+                        <span className="max-w-[220px] truncate">{suggestion}</span>
                       </motion.button>
                     ))}
                   </div>
