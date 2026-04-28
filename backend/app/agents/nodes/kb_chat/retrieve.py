@@ -7,6 +7,7 @@ from typing import Any, Dict
 from loguru import logger
 
 from app.agents.common.retrieval import pick_query_from_state
+from app.agents.common.streaming import emit_progress, get_optional_stream_writer
 from app.agents.states import KbChatState
 from app.services.chat_memory import format_chat_history
 from app.services.kb_retrieval import run_kb_retrieval, run_multi_query_kb_retrieval
@@ -23,6 +24,7 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
     """Retrieve context for the current user query."""
 
     query = pick_query_from_state(state, "query")
+    stream_writer = get_optional_stream_writer()
     retrieval_plan = state.get("retrieval_plan") or {}
     retrieval_cfg = retrieval_plan.get("retrieval") or {}
     if retrieval_plan.get("retrieval_required") is False:
@@ -68,6 +70,26 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
 
     history_text = format_chat_history(state.get("chat_history") or [], max_messages=4)
 
+    def emit_retrieval_progress(data: dict[str, Any]) -> None:
+        emit_progress(
+            stream_writer,
+            node_id="retrieve",
+            stage=str(data.get("stage") or "retrieve"),
+            message=str(data.get("message") or "正在检索知识库..."),
+            **{key: value for key, value in data.items() if key not in {"stage", "message"}},
+        )
+
+    emit_progress(
+        stream_writer,
+        node_id="retrieve",
+        stage="retrieve",
+        message="正在检索知识库...",
+        retrieval_mode=retrieval_mode,
+        query_count=len(retrieval_queries),
+        recall_k=recall_k,
+        lexical_k=lexical_k,
+    )
+
     common_kwargs = {
         "team_id": state.get("team_id"),
         "knowledge_base_id": state.get("knowledge_base_id"),
@@ -83,6 +105,7 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
         "recall_k": recall_k,
         "lexical_k": lexical_k,
         "rerank_enabled": rerank_enabled,
+        "progress_callback": emit_retrieval_progress,
     }
     if len(retrieval_queries) > 1:
         result = await run_multi_query_kb_retrieval(

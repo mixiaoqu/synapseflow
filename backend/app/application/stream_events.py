@@ -61,6 +61,25 @@ def emit_error(run_id: str | None, message: str) -> str:
     )
 
 
+def emit_progress(
+    run_id: str | None,
+    *,
+    node_id: str,
+    node_name: str,
+    message: str,
+    data: dict[str, Any] | None = None,
+) -> str:
+    payload = dict(data or {})
+    payload["message"] = message
+    return emit_event(
+        AgentEventType.PROGRESS,
+        payload,
+        node_id=node_id,
+        node_name=node_name,
+        run_id=run_id,
+    )
+
+
 def emit_node_start(
     node_id: str,
     node_name: str,

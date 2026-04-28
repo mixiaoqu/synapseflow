@@ -18,6 +18,7 @@ import {
 } from "@/lib/api/endpoints/ask";
 import { getStoredUser } from "@/lib/auth/session";
 import { consumeSseStream } from "@/lib/stream/sse";
+import { getStreamStatusMessage } from "@/lib/stream/status";
 import { v4 as uuidv4 } from "uuid";
 
 const SESSION_LIST_LIMIT = 50;
@@ -30,6 +31,7 @@ export interface AssistantChatTurn {
   answerStatus?: string | null;
   logId?: number | null;
   retrievedDocs: AskRetrievedDoc[];
+  streamStatus?: string | null;
   error: string | null;
 }
 
@@ -112,6 +114,7 @@ function toTurns(sessionId: string, messages: AskSessionMessage[]): AssistantCha
         answerStatus: null,
         logId: null,
         retrievedDocs: [],
+        streamStatus: null,
         error: null,
       };
       return;
@@ -126,6 +129,7 @@ function toTurns(sessionId: string, messages: AskSessionMessage[]): AssistantCha
           answerStatus: message.answer_status ?? null,
           logId: message.log_id ?? null,
           retrievedDocs: message.retrieved_docs ?? [],
+          streamStatus: null,
           error: null,
         };
         return;
@@ -591,6 +595,7 @@ export function useAssistantChat() {
             answerStatus: null,
             logId: null,
             retrievedDocs: [],
+            streamStatus: null,
             error: null,
           },
         ],
@@ -606,6 +611,16 @@ export function useAssistantChat() {
           const activeTurnId = activeTurnIdRef.current;
           if (!activeTurnId) return;
 
+          const streamStatus = getStreamStatusMessage(event);
+          if (streamStatus) {
+            updateConversation(selectedAssistantId, (current) => ({
+              ...current,
+              turns: current.turns.map((turn) =>
+                turn.id === activeTurnId ? { ...turn, streamStatus } : turn,
+              ),
+            }));
+          }
+
           switch (event.type) {
             case "retrieved": {
               const docs = event.data.retrieved_docs;
@@ -614,7 +629,14 @@ export function useAssistantChat() {
                 ...current,
                 turns: current.turns.map((turn) =>
                   turn.id === activeTurnId
-                    ? { ...turn, retrievedDocs: docs as AskRetrievedDoc[] }
+                    ? {
+                        ...turn,
+                        retrievedDocs: docs as AskRetrievedDoc[],
+                        streamStatus:
+                          docs.length > 0
+                            ? `已匹配 ${docs.length} 条相关资料`
+                            : "未匹配到相关资料",
+                      }
                     : turn,
                 ),
               }));
@@ -627,7 +649,11 @@ export function useAssistantChat() {
                 ...current,
                 turns: current.turns.map((turn) =>
                   turn.id === activeTurnId
-                    ? { ...turn, answer: `${turn.answer}${text}` }
+                    ? {
+                        ...turn,
+                        answer: `${turn.answer}${text}`,
+                        streamStatus: "正在生成回答...",
+                      }
                     : turn,
                 ),
               }));
@@ -658,6 +684,7 @@ export function useAssistantChat() {
                             : turn.answer,
                         answerStatus: answerStatus ?? turn.answerStatus,
                         logId: logId ?? turn.logId,
+                        streamStatus: null,
                         retrievedDocs: Array.isArray(docs)
                           ? (docs as AskRetrievedDoc[])
                           : turn.retrievedDocs,
@@ -676,7 +703,9 @@ export function useAssistantChat() {
               updateConversation(selectedAssistantId, (current) => ({
                 ...current,
                 turns: current.turns.map((turn) =>
-                  turn.id === activeTurnId ? { ...turn, error: message } : turn,
+                  turn.id === activeTurnId
+                    ? { ...turn, error: message, streamStatus: null }
+                    : turn,
                 ),
               }));
               toast.error(message);
@@ -698,7 +727,7 @@ export function useAssistantChat() {
           updateConversation(selectedAssistantId, (current) => ({
             ...current,
             turns: current.turns.map((turn) =>
-              turn.id === activeTurnId ? { ...turn, error: message } : turn,
+              turn.id === activeTurnId ? { ...turn, error: message, streamStatus: null } : turn,
             ),
           }));
         }

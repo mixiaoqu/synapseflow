@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 from sqlalchemy import select
@@ -531,6 +531,7 @@ async def run_kb_retrieval(
     recall_k: int | None = None,
     lexical_k: int | None = None,
     rerank_enabled: bool | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Retrieve KB chunks and return prompt-ready state."""
 
@@ -559,6 +560,14 @@ async def run_kb_retrieval(
         retrieval_version_mode=retrieval_version_mode,
     )
     raw_count = len(results)
+    if progress_callback is not None and resolved_rerank and results:
+        progress_callback(
+            {
+                "stage": "rerank",
+                "message": "正在筛选相关资料...",
+                "candidate_count": raw_count,
+            }
+        )
     results = await _finalize_ranked_rows(
         query=query,
         results=results,
@@ -573,6 +582,14 @@ async def run_kb_retrieval(
         reranked_count=len(results),
         context_count=len(results),
     )
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "context",
+                "message": "正在组织回答上下文...",
+                "retrieved_count": len(results),
+            }
+        )
     return await _build_retrieval_output(
         results=results,
         has_documents=has_documents,
@@ -607,6 +624,7 @@ async def run_multi_query_kb_retrieval(
     recall_k: int | None = None,
     lexical_k: int | None = None,
     rerank_enabled: bool | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Retrieve KB chunks from multiple rewritten queries and fuse them with RRF."""
 
@@ -628,6 +646,7 @@ async def run_multi_query_kb_retrieval(
             recall_k=recall_k,
             lexical_k=lexical_k,
             rerank_enabled=rerank_enabled,
+            progress_callback=progress_callback,
         )
         output["retrieval_queries"] = queries or [query]
         return output
@@ -683,6 +702,14 @@ async def run_multi_query_kb_retrieval(
         limit=fused_limit,
         weights=[1.25] + [1.0] * (len(queries) - 1),
     )
+    if progress_callback is not None and resolved_rerank and fused_results:
+        progress_callback(
+            {
+                "stage": "rerank",
+                "message": "正在筛选相关资料...",
+                "candidate_count": len(fused_results),
+            }
+        )
     results = await _finalize_ranked_rows(
         query=query,
         results=fused_results,
@@ -697,6 +724,14 @@ async def run_multi_query_kb_retrieval(
         reranked_count=len(results),
         context_count=len(results),
     )
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "context",
+                "message": "正在组织回答上下文...",
+                "retrieved_count": len(results),
+            }
+        )
     output = await _build_retrieval_output(
         results=results,
         has_documents=has_documents,

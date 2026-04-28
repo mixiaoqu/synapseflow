@@ -16,6 +16,7 @@ from app.application.stream_events import (
     emit_event,
     emit_node_complete,
     emit_node_start,
+    emit_progress,
     emit_start,
 )
 from app.application.workflow_meta import get_node_label
@@ -258,6 +259,18 @@ class KbChatService(BaseAgentService):
                 return chunk_type, chunk_data
 
         return None, {}
+
+    @staticmethod
+    def _node_progress_message(node_id: str) -> str:
+        if node_id == "plan_query":
+            return "正在理解问题..."
+        if node_id == "rewrite_query":
+            return "正在优化检索问题..."
+        if node_id == "retrieve":
+            return "正在检索知识库..."
+        if node_id == "answer":
+            return "正在生成回答..."
+        return "正在处理..."
 
     @staticmethod
     def _node_summary(node_id: str, state: dict[str, Any]) -> dict[str, Any]:
@@ -689,15 +702,7 @@ class KbChatService(BaseAgentService):
                                 node_id,
                                 node_name,
                                 run_id,
-                                message=(
-                                    "正在规划检索策略"
-                                    if node_id == "plan_query"
-                                    else (
-                                        "正在检索知识库"
-                                        if node_id == "retrieve"
-                                        else "正在生成回答"
-                                    )
-                                ),
+                                message=self._node_progress_message(node_id),
                             )
                             started_nodes.add(node_id)
 
@@ -720,12 +725,37 @@ class KbChatService(BaseAgentService):
                 elif chunk_type == "custom":
                     node_id = chunk_data.get("node_id") or "answer"
                     node_name = get_node_label("kb_chat", node_id)
+                    if chunk_data.get("type") == "progress":
+                        message = str(
+                            chunk_data.get("message") or self._node_progress_message(node_id)
+                        )
+                        if node_id not in started_nodes:
+                            yield emit_node_start(
+                                node_id,
+                                node_name,
+                                run_id,
+                                message=message,
+                            )
+                            started_nodes.add(node_id)
+                        yield emit_progress(
+                            run_id,
+                            node_id=node_id,
+                            node_name=node_name,
+                            message=message,
+                            data={
+                                key: value
+                                for key, value in chunk_data.items()
+                                if key not in {"type", "node_id", "message"}
+                            },
+                        )
+                        continue
+
                     if node_id not in started_nodes:
                         yield emit_node_start(
                             node_id,
                             node_name,
                             run_id,
-                            message="正在生成回答",
+                            message=self._node_progress_message(node_id),
                         )
                         started_nodes.add(node_id)
 

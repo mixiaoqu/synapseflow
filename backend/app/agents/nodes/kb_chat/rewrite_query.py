@@ -8,6 +8,7 @@ from typing import Any
 from loguru import logger
 
 from app.agents.common.retrieval import pick_query_from_state
+from app.agents.common.streaming import emit_progress, get_optional_stream_writer
 from app.agents.states import KbChatState
 from app.services.kb_query_rewrite import build_kb_chat_retrieval_queries
 
@@ -23,6 +24,7 @@ async def user_kb_rewrite_query_node(state: KbChatState) -> dict[str, Any]:
     """Rewrite the current query according to the retrieval plan."""
 
     query = pick_query_from_state(state, "query")
+    stream_writer = get_optional_stream_writer()
     retrieval_plan = state.get("retrieval_plan") or {}
     rewrite_plan = retrieval_plan.get("rewrite") or {}
     if retrieval_plan.get("retrieval_required") is False:
@@ -45,6 +47,18 @@ async def user_kb_rewrite_query_node(state: KbChatState) -> dict[str, Any]:
         for item in list(rewrite_plan.get("strategies") or [])
         if str(item or "").strip()
     ]
+    emit_progress(
+        stream_writer,
+        node_id="rewrite_query",
+        stage="rewrite",
+        message=(
+            "正在优化检索问题..."
+            if rewrite_enabled and mode != "skip"
+            else "正在准备检索问题..."
+        ),
+        rewrite_mode=(mode if rewrite_enabled else "skip"),
+        max_queries=max_queries,
+    )
     started_at = perf_counter()
     retrieval_queries = await build_kb_chat_retrieval_queries(
         query,

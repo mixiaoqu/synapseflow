@@ -10,6 +10,7 @@ from loguru import logger
 
 from app.agents.common.llm_json import parse_llm_json_object
 from app.agents.common.retrieval import pick_query_from_state
+from app.agents.common.streaming import emit_progress, get_optional_stream_writer
 from app.agents.states import KbChatState
 from app.core.llm import get_llm_for_planner
 
@@ -82,7 +83,7 @@ PLAN_TEMPLATES: dict[PlanName, dict[str, Any]] = {
         },
         "retrieval": {
             "mode": "hybrid",
-            "recall_k": 16,
+            "recall_k": 24,
             "lexical_k": 16,
             "rerank_enabled": True,
             "final_top_k": 8,
@@ -334,6 +335,13 @@ async def user_kb_plan_query_node(state: KbChatState) -> dict[str, Any]:
     """Build the retrieval plan for the current KB chat turn."""
 
     query = pick_query_from_state(state, "query")
+    stream_writer = get_optional_stream_writer()
+    emit_progress(
+        stream_writer,
+        node_id="plan_query",
+        stage="planning",
+        message="正在理解问题...",
+    )
     started_at = perf_counter()
     try:
         retrieval_plan = await build_llm_retrieval_plan(

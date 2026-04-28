@@ -11,6 +11,7 @@ import type {
   AskSessionMessage,
 } from "@/lib/api/endpoints/ask";
 import { consumeSseStream } from "@/lib/stream/sse";
+import { getStreamStatusMessage } from "@/lib/stream/status";
 
 const DEFAULT_ASSISTANT_NAME = "智能助手";
 const DEFAULT_GREETING = "你好，我是智能助手，可以为你解答相关问题。";
@@ -66,17 +67,6 @@ function toMessages(messages: AskSessionMessage[]): Message[] {
       logId: message.log_id ?? null,
       feedbackValue: null,
     }));
-}
-
-function getNodeStatus(nodeId?: string, message?: unknown): string | null {
-  if (nodeId === "retrieve") return "正在检索知识库，匹配相关内容...";
-  if (nodeId === "answer") return "正在生成回答...";
-
-  if (typeof message !== "string") return null;
-  if (/retrieving/i.test(message)) return "正在检索知识库，匹配相关内容...";
-  if (/generating/i.test(message)) return "正在生成回答...";
-  if (/starting/i.test(message)) return "正在准备问题...";
-  return message;
 }
 
 export function useEmbeddedAssistant() {
@@ -220,17 +210,19 @@ export function useEmbeddedAssistant() {
         await consumeSseStream(stream, (event) => {
           if (controller.signal.aborted) return;
 
+          const statusMessage = getStreamStatusMessage(event);
+          if (statusMessage) {
+            setStreamStatus(statusMessage);
+          }
+
           switch (event.type) {
+            case "progress": {
+              break;
+            }
             case "start": {
-              setStreamStatus(
-                getNodeStatus(event.node_id, event.data.message) ?? "正在准备问题...",
-              );
               break;
             }
             case "node_start": {
-              setStreamStatus(
-                getNodeStatus(event.node_id, event.data.message) ?? "正在处理...",
-              );
               break;
             }
             case "node_complete": {

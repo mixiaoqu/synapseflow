@@ -6,6 +6,7 @@ from typing import Any, AsyncGenerator, Callable, Optional
 
 from loguru import logger
 
+from app.agents.common.streaming import emit_progress, get_optional_stream_writer
 from app.agents.prompts.kb_chat import build_kb_chat_answer_prompt
 from app.agents.states import KbChatState
 from app.services.chat_memory import format_chat_history
@@ -126,20 +127,6 @@ def _coerce_text(content: Any) -> str:
     return str(content or "")
 
 
-def _get_optional_stream_writer() -> Callable[[dict[str, Any]], None] | None:
-    """Return LangGraph's stream writer when available inside graph streaming."""
-
-    try:
-        from langgraph.config import get_stream_writer
-    except ModuleNotFoundError:  # pragma: no cover - optional dependency
-        return None
-
-    try:
-        return get_stream_writer()
-    except RuntimeError:  # pragma: no cover - no active graph stream context
-        return None
-
-
 async def generate_kb_chat_answer_text(
     state: dict[str, Any],
     *,
@@ -151,6 +138,15 @@ async def generate_kb_chat_answer_text(
 
     llm = llm_factory() if llm_factory is not None else _get_default_llm(state)
     prompt = _build_prompt(state)
+    stream_writer = get_optional_stream_writer()
+    emit_progress(
+        stream_writer,
+        node_id="answer",
+        stage="answer_prepare",
+        message="正在组织回答...",
+        context_len=len(state.get("context") or ""),
+        retrieved_count=len(state.get("retrieved_docs") or []),
+    )
     try:
         logger.info(
             "[KB Answer] invoking LLM | query_len={} context_len={} retrieved_count={}",
@@ -186,6 +182,14 @@ async def stream_kb_chat_answer_text(
 
     llm = llm_factory() if llm_factory is not None else _get_default_llm(state)
     prompt = _build_prompt(state)
+    emit_progress(
+        stream_writer,
+        node_id="answer",
+        stage="answer_stream",
+        message="正在生成回答...",
+        context_len=len(state.get("context") or ""),
+        retrieved_count=len(state.get("retrieved_docs") or []),
+    )
     logger.info(
         "[KB Answer] streaming LLM | query_len={} context_len={} retrieved_count={}",
         len(state.get("query") or ""),
@@ -218,7 +222,7 @@ def build_user_kb_generate_answer_node(
 
     async def _node(state: KbChatState) -> dict[str, Any]:
         parts: list[str] = []
-        stream_writer = _get_optional_stream_writer()
+        stream_writer = get_optional_stream_writer()
         async for text in stream_kb_chat_answer_text(
             state,
             llm_factory=llm_factory,

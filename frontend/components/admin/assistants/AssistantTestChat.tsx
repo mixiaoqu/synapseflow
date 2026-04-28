@@ -20,6 +20,7 @@ import {
 } from "@/lib/api/assistants";
 import type { AskRetrievedDoc } from "@/lib/api/endpoints/ask";
 import { consumeSseStream } from "@/lib/stream/sse";
+import { getStreamStatusMessage } from "@/lib/stream/status";
 import { cn } from "@/lib/utils";
 
 interface TestTurn {
@@ -29,6 +30,7 @@ interface TestTurn {
   answerStatus?: string | null;
   logId?: number | null;
   retrievedDocs: AskRetrievedDoc[];
+  streamStatus?: string | null;
   error: string | null;
 }
 
@@ -176,6 +178,7 @@ export function AssistantTestChat({
         answerStatus: null,
         logId: null,
         retrievedDocs: [],
+        streamStatus: null,
         error: null,
       },
     ]);
@@ -202,11 +205,22 @@ export function AssistantTestChat({
       });
 
       await consumeSseStream(stream, (event) => {
+        const streamStatus = getStreamStatusMessage(event);
+        if (streamStatus) {
+          patchActiveTurn({ streamStatus });
+        }
+
         switch (event.type) {
           case "retrieved": {
             const docs = event.data.retrieved_docs;
             if (Array.isArray(docs)) {
-              patchActiveTurn({ retrievedDocs: docs as AskRetrievedDoc[] });
+              patchActiveTurn({
+                retrievedDocs: docs as AskRetrievedDoc[],
+                streamStatus:
+                  docs.length > 0
+                    ? `已匹配 ${docs.length} 条相关资料`
+                    : "未匹配到相关资料",
+              });
             }
             break;
           }
@@ -217,7 +231,13 @@ export function AssistantTestChat({
             if (!activeTurnId) break;
             setTurns((current) =>
               current.map((turn) =>
-                turn.id === activeTurnId ? { ...turn, answer: `${turn.answer}${text}` } : turn,
+                turn.id === activeTurnId
+                  ? {
+                      ...turn,
+                      answer: `${turn.answer}${text}`,
+                      streamStatus: "正在生成回答...",
+                    }
+                  : turn,
               ),
             );
             break;
@@ -241,12 +261,13 @@ export function AssistantTestChat({
             if (completeDocs.length > 0) {
               patch.retrievedDocs = completeDocs;
             }
+            patch.streamStatus = null;
             patchActiveTurn(patch);
             break;
           }
           case "error": {
             const message = String(event.data.message ?? "测试失败");
-            patchActiveTurn({ error: message });
+            patchActiveTurn({ error: message, streamStatus: null });
             toast.error(message);
             break;
           }
@@ -256,7 +277,7 @@ export function AssistantTestChat({
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "测试失败";
-      patchActiveTurn({ error: message });
+      patchActiveTurn({ error: message, streamStatus: null });
       toast.error(message);
     } finally {
       setSubmitLoading(false);
@@ -359,7 +380,7 @@ export function AssistantTestChat({
                   ) : (
                     <div className="flex items-center gap-2 text-sm text-slate-500">
                       <Loader2 className="h-3 w-3 animate-spin" />
-                      正在生成回答...
+                      {turn.streamStatus || "正在生成回答..."}
                     </div>
                   )}
 

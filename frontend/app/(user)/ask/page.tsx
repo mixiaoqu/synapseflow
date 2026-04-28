@@ -123,12 +123,12 @@ function AnswerStatusBadge({
   );
 }
 
-function AssistantReplySkeleton() {
+function AssistantReplySkeleton({ status }: { status?: string | null }) {
   return (
     <div className="space-y-2.5">
       <div className="flex items-center gap-2 text-sm text-slate-400">
         <Loader2 className="h-4 w-4 animate-spin text-emerald-500" />
-        <span>正在生成回答...</span>
+        <span>{status || "正在生成回答..."}</span>
       </div>
       <div className="space-y-2">
         <div className="h-3.5 w-full animate-pulse rounded bg-slate-100" />
@@ -705,7 +705,7 @@ function AskPageContent() {
                               {turn.error}
                             </div>
                           ) : turnIsPending ? (
-                            <AssistantReplySkeleton />
+                            <AssistantReplySkeleton status={turn.streamStatus} />
                           ) : (
                             <AnswerMarkdown text={turn.answer} />
                           )}
