@@ -17,6 +17,11 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
+  AdminPage,
+  AdminPageContent,
+  AdminPageHeader,
+} from "@/components/admin/layout/AdminPage";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -689,88 +694,80 @@ export default function AdminTeamsPage() {
   /* ================================================================ */
 
   return (
-    <div className="h-full px-6 py-8 sm:px-8">
-      <div className="mx-auto flex h-full max-w-7xl gap-6">
-      {/* Main content */}
-      <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        {/* Page header */}
-        <div className="shrink-0 border-b border-slate-100 bg-white px-6 py-5 sm:px-8">
-          <div className="flex items-start justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold text-slate-900">团队管理</h1>
-              <p className="mt-1 text-sm text-slate-500">
-                维护组织团队，把账号分配到具体团队中。
-              </p>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-slate-400">
+    <AdminPage>
+      <AdminPageHeader
+        title="团队管理"
+        description="维护组织团队，把账号分配到具体团队中。"
+        actions={
+          <div className="flex items-center gap-3">
+            <div className="hidden items-center gap-2 text-xs text-slate-400 sm:flex">
               <Users className="h-4 w-4" />
               {teams.length} 个团队 · {users.length} 个账号
             </div>
+            <Button type="button" onClick={openCreateDialog} className="gap-2 rounded-2xl">
+              <Plus className="h-4 w-4" />
+              新建团队
+            </Button>
           </div>
-        </div>
+        }
+      />
 
-        {/* Table area */}
-        <div className="min-h-0 flex-1 overflow-auto">
-          <div className="px-6 py-5 sm:px-8">
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Building2 className="h-4 w-4 text-slate-400" />
-                <h2 className="text-sm font-semibold text-slate-800">团队列表</h2>
-                <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                  {teams.length}
-                </span>
+      <div className="flex gap-6">
+        {/* Main content */}
+        <AdminPageContent className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {/* Table area */}
+          <div className="min-h-0 flex-1 overflow-auto">
+            <div className="px-6 py-5 sm:px-8">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-slate-400" />
+                  <h2 className="text-sm font-semibold text-slate-800">团队列表</h2>
+                  <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                    {teams.length}
+                  </span>
+                </div>
               </div>
-              <Button
-                type="button"
-                size="sm"
-                onClick={openCreateDialog}
-                className="rounded-xl"
-              >
-                <Plus className="h-4 w-4" />
-                新建团队
-              </Button>
-            </div>
 
-            {loading ? (
-              <div className="space-y-2">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-14 rounded-xl bg-slate-100" />
-                ))}
-              </div>
-            ) : teams.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 py-16 text-xs text-slate-400">
-                <Building2 className="mb-3 h-10 w-10 text-slate-300" />
-                <p className="mb-1 font-medium text-slate-500">还没有团队</p>
-                <p>点击上方「新建团队」创建第一个团队</p>
-              </div>
-            ) : (
-              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
-                        团队名称
-                      </th>
-                      <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
-                        编码
-                      </th>
-                      <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
-                        描述
-                      </th>
-                      <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
-                        创建时间
-                      </th>
-                      <th className="px-5 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-400">
-                        操作
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {teams.map((team) => (
-                      <tr
-                        key={team.id}
-                        className="transition-colors hover:bg-slate-50"
-                      >
+              {loading ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-14 rounded-xl bg-slate-100" />
+                  ))}
+                </div>
+              ) : teams.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 py-16 text-xs text-slate-400">
+                  <Building2 className="mb-3 h-10 w-10 text-slate-300" />
+                  <p className="mb-1 font-medium text-slate-500">还没有团队</p>
+                  <p>点击上方「新建团队」创建第一个团队</p>
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
+                          团队名称
+                        </th>
+                        <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
+                          编码
+                        </th>
+                        <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
+                          描述
+                        </th>
+                        <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
+                          创建时间
+                        </th>
+                        <th className="px-5 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-400">
+                          操作
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {teams.map((team) => (
+                        <tr
+                          key={team.id}
+                          className="transition-colors hover:bg-slate-50"
+                        >
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-2.5">
                             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-xs font-semibold text-slate-600">
@@ -824,15 +821,15 @@ export default function AdminTeamsPage() {
                             </button>
                           </div>
                         </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      </div>
+        </AdminPageContent>
 
       {/* Member panel */}
       {memberPanelOpen && activeTeam && (
@@ -849,6 +846,7 @@ export default function AdminTeamsPage() {
           />
         </div>
       )}
+      </div>
 
       {/* Dialogs */}
       <TeamFormDialog
@@ -890,7 +888,6 @@ export default function AdminTeamsPage() {
         onConfirm={handleRemoveMember}
         onCancel={() => setRemoveMemberTarget(null)}
       />
-      </div>
-    </div>
+    </AdminPage>
   );
 }

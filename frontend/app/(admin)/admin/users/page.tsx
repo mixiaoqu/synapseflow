@@ -16,6 +16,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  AdminPage,
+  AdminPageContent,
+  AdminPageHeader,
+} from "@/components/admin/layout/AdminPage";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -351,33 +356,28 @@ export default function AdminUsersPage() {
     search.trim() !== "" || roleFilter !== "all" || statusFilter !== "all";
 
   return (
-    <div className="px-6 py-8 sm:px-8">
-      <div className="mx-auto max-w-7xl">
-        {/* ---- Header ---- */}
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-              用户管理
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-500">
-              管理系统中所有用户的账号信息、角色权限和启停状态。
-            </p>
-          </div>
-          <Button
-            type="button"
-            className="gap-2 rounded-2xl"
-            onClick={() => {
-              resetCreateDraft();
-              setCreateModalOpen(true);
-            }}
-          >
-            <UserPlus className="h-4 w-4" />
-            新建用户
-          </Button>
-        </div>
+    <>
+      <AdminPage>
+        <AdminPageHeader
+          title="用户管理"
+          description="管理系统中所有用户的账号信息、角色权限和启停状态。"
+          actions={
+            <Button
+              type="button"
+              className="gap-2 rounded-2xl"
+              onClick={() => {
+                resetCreateDraft();
+                setCreateModalOpen(true);
+              }}
+            >
+              <UserPlus className="h-4 w-4" />
+              新建用户
+            </Button>
+          }
+        />
 
         {/* ---- Stat cards ---- */}
-        <div className="mt-6 grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-3">
           <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100">
               <Users className="h-5 w-5 text-slate-600" />
@@ -408,7 +408,7 @@ export default function AdminUsersPage() {
         </div>
 
         {/* ---- Filters ---- */}
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <AdminPageContent>
           <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
             <div className="relative min-w-[260px] flex-1">
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -626,8 +626,8 @@ export default function AdminUsersPage() {
               {activeFilters && `（全部 ${items.length} 条）`}
             </div>
           )}
-        </section>
-      </div>
+        </AdminPageContent>
+      </AdminPage>
 
       {/* Create Modal */}
       <Dialog open={createModalOpen} onOpenChange={(o) => {
@@ -840,6 +840,6 @@ export default function AdminUsersPage() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

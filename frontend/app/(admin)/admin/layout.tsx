@@ -250,7 +250,7 @@ function AdminLayoutContent({
           </div>
         </aside>
 
-        <main className="flex min-w-0 flex-1 flex-col bg-gradient-to-b from-slate-50 to-white text-slate-900">
+        <main className="flex min-w-0 flex-1 flex-col bg-slate-50 text-slate-900">
           <TeamContextBar />
           <BackgroundTasksPanel documentsHref="/admin/documents" />
           <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>

@@ -75,16 +75,16 @@ PLAN_TEMPLATES: dict[PlanName, dict[str, Any]] = {
     "fast_lookup": {
         "retrieval_required": True,
         "rewrite": {
-            "enabled": False,
+            "enabled": True,
             "mode": "skip",
-            "max_queries": 1,
+            "max_queries": 2,
             "strategies": [],
         },
         "retrieval": {
             "mode": "hybrid",
-            "recall_k": 24,
+            "recall_k": 16,
             "lexical_k": 16,
-            "rerank_enabled": False,
+            "rerank_enabled": True,
             "final_top_k": 8,
             "llm_reference_top_k": 6,
             "context_budget": 8000,
@@ -103,12 +103,12 @@ PLAN_TEMPLATES: dict[PlanName, dict[str, Any]] = {
             "strategies": ["context_completion", "query_compaction"],
         },
         "retrieval": {
-            "mode": "vector",
-            "recall_k": 12,
-            "lexical_k": 0,
-            "rerank_enabled": False,
-            "final_top_k": 6,
-            "llm_reference_top_k": 4,
+            "mode": "hybrid",
+            "recall_k": 24,
+            "lexical_k": 16,
+            "rerank_enabled": True,
+            "final_top_k": 8,
+            "llm_reference_top_k": 6,
             "context_budget": 9000,
         },
         "answer": {
@@ -121,14 +121,14 @@ PLAN_TEMPLATES: dict[PlanName, dict[str, Any]] = {
         "rewrite": {
             "enabled": True,
             "mode": "heuristic",
-            "max_queries": 2,
+            "max_queries": 3,
             "strategies": ["terminology_normalization", "query_compaction"],
         },
         "retrieval": {
             "mode": "hybrid",
-            "recall_k": 14,
-            "lexical_k": 8,
-            "rerank_enabled": False,
+            "recall_k": 32,
+            "lexical_k": 24,
+            "rerank_enabled": True,
             "final_top_k": 6,
             "llm_reference_top_k": 4,
             "context_budget": 9000,
@@ -170,11 +170,11 @@ PLAN_TEMPLATES: dict[PlanName, dict[str, Any]] = {
         },
         "retrieval": {
             "mode": "hybrid",
-            "recall_k": 20,
-            "lexical_k": 12,
+            "recall_k": 32,
+            "lexical_k": 24,
             "rerank_enabled": True,
-            "final_top_k": 8,
-            "llm_reference_top_k": 5,
+            "final_top_k": 10,
+            "llm_reference_top_k": 8,
             "context_budget": 11000,
         },
         "answer": {
@@ -242,7 +242,6 @@ Choose exactly one plan_name from:
 
 Rules:
 - Do not answer the user.
-- Do not rewrite the question.
 - Prefer fast_lookup unless there is a clear reason to use another plan.
 - Use followup_lookup only when the question depends on prior context.
 - Use compare_lookup only for true comparisons or multiple entities.

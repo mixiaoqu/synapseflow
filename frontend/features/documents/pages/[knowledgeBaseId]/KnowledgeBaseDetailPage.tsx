@@ -251,6 +251,7 @@ function KnowledgeBaseDetailPageContent() {
   const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
   const previewArticleRef = useRef<HTMLElement | null>(null);
+  const docsRequestSeqRef = useRef(0);
   const [activePreviewHeadingId, setActivePreviewHeadingId] = useState<string | null>(null);
 
   const activeTeam = teams.find((item) => item.id === teamId) ?? null;
@@ -567,59 +568,67 @@ function KnowledgeBaseDetailPageContent() {
     };
   }, [kbId, reloadToken]);
 
-  useEffect(() => {
+  const loadDocumentsList = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!Number.isFinite(kbId) || kbId <= 0) return;
 
-    let cancelled = false;
+    const requestSeq = ++docsRequestSeqRef.current;
+    if (!silent) setLoadingDocs(true);
 
-    const run = async () => {
-      setLoadingDocs(true);
+    try {
+      const result = await listDocuments({
+        page: docPage,
+        page_size: docPageSize,
+        keyword: keyword || undefined,
+        knowledge_base_id: kbId,
+        category_id: selectedCategoryId ?? undefined,
+        team_id: teamId ?? undefined,
+      });
 
-      try {
-        const result = await listDocuments({
-          page: docPage,
-          page_size: docPageSize,
-          keyword: keyword || undefined,
-          knowledge_base_id: kbId,
-          category_id: selectedCategoryId ?? undefined,
-          team_id: teamId ?? undefined,
-        });
+      if (requestSeq !== docsRequestSeqRef.current) return;
 
-        if (cancelled) return;
-
-        if (result.total > 0 && result.items.length === 0 && docPage > 1) {
-          setDocPage((prev) => Math.max(1, prev - 1));
-          return;
-        }
-
-        setDocs(result.items);
-        setDocsTotal(result.total);
-        setSelectedDocId((prev) => {
-          if (prev && result.items.some((item) => item.id === prev)) return prev;
-          if (lastViewedDocStorageKey && typeof window !== "undefined") {
-            const storedId = Number(window.localStorage.getItem(lastViewedDocStorageKey));
-            if (storedId > 0 && result.items.some((item) => item.id === storedId)) {
-              return storedId;
-            }
-          }
-          return result.items[0]?.id ?? null;
-        });
-      } catch (error) {
-        if (!cancelled) {
-          toast.error(error instanceof Error ? error.message : "加载文档列表失败");
-          setDocs([]);
-          setDocsTotal(0);
-        }
-      } finally {
-        if (!cancelled) setLoadingDocs(false);
+      if (result.total > 0 && result.items.length === 0 && docPage > 1) {
+        setDocPage((prev) => Math.max(1, prev - 1));
+        return;
       }
-    };
 
-    void run();
+      setDocs(result.items);
+      setDocsTotal(result.total);
+      setSelectedDocId((prev) => {
+        if (prev && result.items.some((item) => item.id === prev)) return prev;
+        if (lastViewedDocStorageKey && typeof window !== "undefined") {
+          const storedId = Number(window.localStorage.getItem(lastViewedDocStorageKey));
+          if (storedId > 0 && result.items.some((item) => item.id === storedId)) {
+            return storedId;
+          }
+        }
+        return result.items[0]?.id ?? null;
+      });
 
-    return () => {
-      cancelled = true;
-    };
+      if (silent) {
+        setSelectedDoc((current) => {
+          if (!current) return current;
+          const updated = result.items.find((item) => item.id === current.id);
+          if (!updated) return current;
+          return {
+            ...current,
+            index_status: updated.index_status,
+            index_error: updated.index_error,
+            indexed_at: updated.indexed_at,
+            updated_at: updated.updated_at,
+          };
+        });
+      }
+    } catch (error) {
+      if (requestSeq !== docsRequestSeqRef.current) return;
+      if (!silent) {
+        toast.error(error instanceof Error ? error.message : "加载文档列表失败");
+        setDocs([]);
+        setDocsTotal(0);
+      }
+    } finally {
+      if (requestSeq !== docsRequestSeqRef.current) return;
+      if (!silent) setLoadingDocs(false);
+    }
   }, [
     docPage,
     docPageSize,
@@ -630,6 +639,10 @@ function KnowledgeBaseDetailPageContent() {
     selectedCategoryId,
     teamId,
   ]);
+
+  useEffect(() => {
+    void loadDocumentsList();
+  }, [loadDocumentsList]);
 
   useEffect(() => {
     if (filteredDocs.length === 0) {
@@ -694,10 +707,10 @@ function KnowledgeBaseDetailPageContent() {
       return undefined;
     }
     const timer = window.setTimeout(() => {
-      setReloadToken((value) => value + 1);
-    }, 3000);
+      void loadDocumentsList({ silent: true });
+    }, 8000);
     return () => window.clearTimeout(timer);
-  }, [docs]);
+  }, [docs, loadDocumentsList]);
 
   useEffect(() => {
     if (!selectedDocId) {

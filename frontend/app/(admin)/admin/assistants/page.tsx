@@ -6,6 +6,11 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AssistantTestChat } from "@/components/admin/assistants/AssistantTestChat";
 import {
+  AdminPage,
+  AdminPageContent,
+  AdminPageHeader,
+} from "@/components/admin/layout/AdminPage";
+import {
   Activity,
   BarChart3,
   Brain,
@@ -452,43 +457,31 @@ export default function AdminAssistantsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] px-6 py-8 md:px-8">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <section className="overflow-hidden rounded-[32px] border border-slate-200/80 bg-white shadow-sm">
-          <div className="bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.12),_transparent_28%),linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] p-6">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-3">
-                <div className="text-xs font-medium uppercase tracking-[0.22em] text-emerald-600">
-                  AI Workforce
-                </div>
-                <div>
-                  <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-                    我的助手团队
-                  </h1>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                    管理连接不同知识库、承担不同任务的数字员工，快速配置、测试和调度它们的工作状态。
-                  </p>
-                  <button
-                    type="button"
-                    className="mt-3 inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 shadow-sm transition-colors hover:border-emerald-200 hover:text-emerald-700"
-                  >
-                    <Users className="h-3.5 w-3.5" />
-                    当前工作区：{selectedTeam?.name ?? "未选择团队"}
-                  </button>
-                </div>
-              </div>
+    <>
+      <AdminPage>
+        <AdminPageHeader
+          eyebrow="AI Workforce"
+          title="我的助手团队"
+          description="管理连接不同知识库、承担不同任务的数字员工，快速配置、测试和调度它们的工作状态。"
+          actions={
+            <button
+              type="button"
+              onClick={() => openCreateDrawer()}
+              disabled={teamId == null}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Plus className="h-4 w-4" />
+              新建助手
+            </button>
+          }
+        />
 
-              <button
-                type="button"
-                onClick={() => openCreateDrawer()}
-                disabled={teamId == null}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-5 text-sm font-medium text-white shadow-lg shadow-emerald-500/20 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Plus className="h-4 w-4" />
-                新建助手
-              </button>
-            </div>
-            <div className="mt-6 grid gap-3 md:grid-cols-4">
+        <div className="inline-flex h-9 w-fit items-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 shadow-sm">
+          <Users className="h-3.5 w-3.5" />
+          当前工作区：{selectedTeam?.name ?? "未选择团队"}
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-4">
               {[
                 {
                   label: "本周总调用",
@@ -529,11 +522,9 @@ export default function AdminAssistantsPage() {
                   <div className="mt-1 text-xs text-slate-400">{item.hint}</div>
                 </div>
               ))}
-            </div>
-          </div>
-        </section>
+        </div>
 
-        <section className="rounded-[32px] border border-slate-200/80 bg-white p-5 shadow-sm">
+        <AdminPageContent className="p-5">
           <div className="flex flex-col gap-4 border-b border-slate-100 pb-5">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
               <div className="relative w-full max-w-md">
@@ -878,8 +869,8 @@ export default function AdminAssistantsPage() {
               })}
             </div>
           )}
-        </section>
-      </div>
+        </AdminPageContent>
+      </AdminPage>
       <Sheet
         open={testingAssistantId != null}
         onOpenChange={(open) => {
@@ -900,6 +891,6 @@ export default function AdminAssistantsPage() {
           </div>
         </SheetContent>
       </Sheet>
-    </div>
+    </>
   );
 }

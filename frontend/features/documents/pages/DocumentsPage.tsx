@@ -259,14 +259,14 @@ export default function DocumentsPage() {
     [knowledgeBases, uploadCollectionId],
   );
 
-  const loadKnowledgeBases = useCallback(async () => {
+  const loadKnowledgeBases = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (selectedTeamId == null) {
       setKnowledgeBases([]);
       setSelectedKnowledgeBaseId(null);
       setUploadCollectionId(null);
       return;
     }
-    setLoadingKnowledgeBases(true);
+    if (!silent) setLoadingKnowledgeBases(true);
     try {
       const list = await listKnowledgeBases(selectedTeamId);
       setKnowledgeBases(list);
@@ -277,12 +277,14 @@ export default function DocumentsPage() {
         prev && list.some((item) => item.id === prev) ? prev : list[0]?.id ?? null,
       );
     } catch {
-      toast.error("加载知识库失败");
-      setKnowledgeBases([]);
-      setSelectedKnowledgeBaseId(null);
-      setUploadCollectionId(null);
+      if (!silent) {
+        toast.error("加载知识库失败");
+        setKnowledgeBases([]);
+        setSelectedKnowledgeBaseId(null);
+        setUploadCollectionId(null);
+      }
     } finally {
-      setLoadingKnowledgeBases(false);
+      if (!silent) setLoadingKnowledgeBases(false);
     }
   }, [selectedTeamId]);
 
@@ -294,8 +296,8 @@ export default function DocumentsPage() {
   useEffect(() => {
     if (!knowledgeBases.some((item) => item.status === "indexing")) return undefined;
     const timer = window.setTimeout(() => {
-      void loadKnowledgeBases();
-    }, 3000);
+      void loadKnowledgeBases({ silent: true });
+    }, 8000);
     return () => window.clearTimeout(timer);
   }, [knowledgeBases, loadKnowledgeBases]);
 
