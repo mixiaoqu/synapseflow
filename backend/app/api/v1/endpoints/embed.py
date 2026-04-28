@@ -17,6 +17,7 @@ from app.api.dependencies.embed import (
 )
 from app.application.kb_chat_service import get_kb_chat_service
 from app.core.config import settings
+from app.core.config.embed_pages import EmbedPageConfig, get_embed_page_config
 from app.core.security import create_embed_token
 from app.db.session import get_db
 from app.models.schemas.kb_chat import (
@@ -28,6 +29,7 @@ from app.models.schemas.kb_chat import (
 from app.models.schemas.project import (
     EmbedAssistantBootstrapResponse,
     EmbedAssistantChatRequest,
+    EmbedPageConfigResponse,
     EmbedSessionCreate,
     EmbedSessionResponse,
 )
@@ -73,6 +75,8 @@ def _build_embed_runtime_request(
     context: EmbedTokenContext,
     query: str,
     session_id: str | None = None,
+    page_context: dict | None = None,
+    page_config: EmbedPageConfig | None = None,
 ) -> SimpleNamespace:
     assistant = runtime.assistant
     return SimpleNamespace(
@@ -94,7 +98,40 @@ def _build_embed_runtime_request(
         assistant_persona_prompt=assistant.persona_prompt,
         assistant_rule_template=assistant.rule_template,
         assistant_suggested_prompts=list(assistant.suggested_prompts or []),
+        page_context=page_context,
+        page_config=page_config.model_dump() if page_config is not None else None,
     )
+
+
+def _page_config_response(config: EmbedPageConfig) -> EmbedPageConfigResponse:
+    return EmbedPageConfigResponse(
+        page_type=config.page_type,
+        page_name=config.page_name,
+        page_description=config.page_description,
+        assistant_intro=config.assistant_intro,
+        suggested_questions=list(config.suggested_questions or []),
+    )
+
+
+def _resolve_page_config(
+    *,
+    runtime: ProjectAppRuntimeRecord,
+    page_type: str | None,
+) -> EmbedPageConfig | None:
+    return get_embed_page_config(runtime.app.code, page_type)
+
+
+def _build_page_context(
+    *,
+    runtime: ProjectAppRuntimeRecord,
+    page_type: str | None,
+) -> dict | None:
+    if not page_type:
+        return None
+    return {
+        "app_id": runtime.app.code,
+        "page_type": page_type,
+    }
 
 
 def _resolve_embed_frontend_base_url(request: Request) -> str:
@@ -126,6 +163,7 @@ async def create_embed_session(
         external_user_id=body.external_user_id.strip(),
         external_user_name=(body.external_user_name or "").strip() or None,
         source=(body.source or "").strip() or None,
+        initial_page_type=(body.initial_page_type or "").strip() or None,
         expires_delta=timedelta(minutes=expires),
     )
     base_url = _resolve_embed_frontend_base_url(request)
@@ -143,6 +181,10 @@ async def embed_bootstrap(
 ):
     runtime = await _get_runtime_from_context(db=db, context=context)
     assistant = runtime.assistant
+    page_config = _resolve_page_config(
+        runtime=runtime,
+        page_type=context.initial_page_type,
+    )
     return EmbedAssistantBootstrapResponse(
         project_id=runtime.project.id,
         project_code=runtime.project.code,
@@ -155,6 +197,7 @@ async def embed_bootstrap(
         welcome_message=assistant.welcome_message,
         placeholder_text=assistant.placeholder_text,
         suggested_prompts=list(assistant.suggested_prompts or []),
+        page_config=_page_config_response(page_config) if page_config is not None else None,
     )
 
 
@@ -213,11 +256,19 @@ async def invoke_embed_assistant(
     if not query:
         raise HTTPException(status_code=400, detail="query is required")
     runtime = await _get_runtime_from_context(db=db, context=context)
+    page_type = (
+        body.page_context.page_type
+        if body.page_context is not None
+        else context.initial_page_type
+    )
+    page_config = _resolve_page_config(runtime=runtime, page_type=page_type)
     request = _build_embed_runtime_request(
         runtime=runtime,
         context=context,
         query=query,
         session_id=body.session_id,
+        page_context=_build_page_context(runtime=runtime, page_type=page_type),
+        page_config=page_config,
     )
     return await get_kb_chat_service().invoke(request, user_id=None)
 
@@ -232,11 +283,19 @@ async def stream_embed_assistant(
     if not query:
         raise HTTPException(status_code=400, detail="query is required")
     runtime = await _get_runtime_from_context(db=db, context=context)
+    page_type = (
+        body.page_context.page_type
+        if body.page_context is not None
+        else context.initial_page_type
+    )
+    page_config = _resolve_page_config(runtime=runtime, page_type=page_type)
     request = _build_embed_runtime_request(
         runtime=runtime,
         context=context,
         query=query,
         session_id=body.session_id,
+        page_context=_build_page_context(runtime=runtime, page_type=page_type),
+        page_config=page_config,
     )
     return StreamingResponse(
         get_kb_chat_service().stream(request, user_id=None),

@@ -18,6 +18,8 @@ class KbChatState(BaseAgentContext, total=False):
     assistant_persona_prompt: Optional[str]
     assistant_rule_template: Optional[str]
     assistant_suggested_prompts: List[str]
+    page_context: Dict[str, Any]
+    page_config: Dict[str, Any]
     knowledge_base_id: Optional[int]
     category_id: Optional[int]
     chat_history: List[Dict[str, Any]]

@@ -115,6 +115,8 @@ class KbChatService(BaseAgentService):
                 "assistant_suggested_prompts": list(
                     getattr(request, "assistant_suggested_prompts", None) or []
                 ),
+                "page_context": dict(getattr(request, "page_context", None) or {}),
+                "page_config": dict(getattr(request, "page_config", None) or {}),
                 "chat_history": history,
                 "memory_summary": memory_summary,
                 "retrieval_plan": {},
@@ -226,6 +228,16 @@ class KbChatService(BaseAgentService):
                 ),
                 "answer_context": state.get("context"),
                 "retrieved_docs": list(retrieved_docs or []),
+                "page_context": (
+                    dict(state.get("page_context") or {})
+                    if isinstance(state.get("page_context"), dict)
+                    else None
+                ),
+                "page_config": (
+                    dict(state.get("page_config") or {})
+                    if isinstance(state.get("page_config"), dict)
+                    else None
+                ),
             },
         )
 

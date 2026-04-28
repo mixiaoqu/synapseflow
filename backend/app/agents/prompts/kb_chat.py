@@ -15,6 +15,8 @@ def build_kb_chat_answer_prompt(
     assistant_persona_prompt: str = "",
     assistant_rule_template: str = "",
     assistant_suggested_prompts: list[str] | None = None,
+    page_config: dict | None = None,
+    page_context: dict | None = None,
     retrieval_status: str = "",
 ) -> str:
     """Build the prompt for the end-user knowledge-base chat flow."""
@@ -34,6 +36,24 @@ def build_kb_chat_answer_prompt(
         if str(item).strip()
     ]
     suggested_prompts_block = "\n".join(suggested_prompt_lines) or "(none)"
+    page_config = page_config or {}
+    page_context = page_context or {}
+    page_name = str(page_config.get("page_name") or "").strip()
+    page_description = str(page_config.get("page_description") or "").strip()
+    assistant_intro = str(page_config.get("assistant_intro") or "").strip()
+    page_type = str(page_context.get("page_type") or "").strip()
+    page_lines = []
+    if page_name:
+        page_lines.append(f"页面名称：{page_name}")
+    if page_type:
+        page_lines.append(f"页面标识：{page_type}")
+    if page_description:
+        page_lines.append(f"页面说明：{page_description}")
+    if assistant_intro:
+        page_lines.append(f"助手入口说明：{assistant_intro}")
+    if page_lines:
+        page_lines.append("该页面只是用户打开助手时的入口上下文。若用户问题涉及其他页面或业务模块，应以用户问题和知识库内容为准。")
+    page_context_block = "\n".join(page_lines) or "(none)"
 
     return f"""
 You are a knowledge-base assistant for end users.
@@ -63,6 +83,9 @@ Base constraints:
 
 [Configured suggested prompts]
 {suggested_prompts_block}
+
+[Current business page]
+{page_context_block}
 
 [Conversation summary]
 {summary_block}

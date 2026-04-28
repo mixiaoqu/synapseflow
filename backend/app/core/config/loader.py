@@ -78,3 +78,9 @@ def load_repositories_raw() -> Dict[str, Any]:
     """Load `repositories.yaml` and expand `${VAR}` placeholders."""
     data = load_yaml(CONFIG_DIR / "repositories.yaml", {"repositories": [], "defaults": {}})
     return substitute_env_deep(data)
+
+
+def load_embed_pages_raw() -> Dict[str, Any]:
+    """Load embedded assistant page configuration."""
+    data = load_yaml(CONFIG_DIR / "embed_pages.yaml", {"apps": {}})
+    return substitute_env_deep(data)

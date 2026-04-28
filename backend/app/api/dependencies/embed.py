@@ -21,6 +21,7 @@ class EmbedTokenContext:
     external_user_id: str
     external_user_name: str | None
     source: str | None
+    initial_page_type: str | None
 
 
 async def require_enterprise_service_token(
@@ -65,4 +66,10 @@ async def get_embed_token_context(
             else None
         ),
         source=str(payload["source"]) if payload.get("source") is not None else None,
+        initial_page_type=(
+            str(payload["initial_page_type"]).strip()
+            if payload.get("initial_page_type") is not None
+            else None
+        )
+        or None,
     )

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
 
 import { embedApi } from "@/lib/api/endpoints/embed";
+import type { EmbedPageConfig, EmbedPageContext } from "@/lib/api/endpoints/embed";
 import type {
   AskRetrievedDoc,
   AskSessionMessage,
@@ -90,6 +91,8 @@ export function useEmbeddedAssistant() {
   const [placeholder, setPlaceholder] = useState("输入你的问题...");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [contextLabel, setContextLabel] = useState("");
+  const [pageContext, setPageContext] = useState<EmbedPageContext | null>(null);
+  const [pageConfig, setPageConfig] = useState<EmbedPageConfig | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
@@ -120,7 +123,26 @@ export function useEmbeddedAssistant() {
         setContextLabel(
           [bootstrap.project_name, bootstrap.app_name].filter(Boolean).join(" / "),
         );
-        setSuggestions(bootstrap.suggested_prompts || []);
+        if (bootstrap.page_config) {
+          const resolvedPageConfig = bootstrap.page_config;
+          setPageConfig(resolvedPageConfig);
+          setPageContext({
+            app_id: bootstrap.app_code,
+            page_type: resolvedPageConfig.page_type,
+          });
+          setContextLabel(
+            [bootstrap.project_name, bootstrap.app_name, resolvedPageConfig.page_name]
+              .filter(Boolean)
+              .join(" / "),
+          );
+          const assistantIntro = resolvedPageConfig.assistant_intro?.trim() || "";
+          if (assistantIntro) {
+            setGreeting(assistantIntro);
+          }
+          setSuggestions(resolvedPageConfig.suggested_questions || []);
+        } else {
+          setSuggestions(bootstrap.suggested_prompts || []);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(formatEmbedError(err, "初始化助手失败"));
@@ -188,6 +210,7 @@ export function useEmbeddedAssistant() {
           {
             query,
             session_id: currentSessionId,
+            page_context: pageContext,
           },
           controller.signal,
         );
@@ -323,7 +346,7 @@ export function useEmbeddedAssistant() {
         setIsTyping(false);
       }
     },
-    [currentSessionId, isTyping, token],
+    [currentSessionId, isTyping, pageContext, token],
   );
 
   const handleStopGenerating = useCallback(() => {
@@ -396,6 +419,7 @@ export function useEmbeddedAssistant() {
     placeholder,
     suggestions,
     contextLabel,
+    pageConfig,
     error,
     scrollRef,
     handleSendMessage,

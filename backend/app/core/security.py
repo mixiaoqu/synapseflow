@@ -42,6 +42,7 @@ def create_embed_token(
     external_user_id: str,
     external_user_name: str | None = None,
     source: str | None = None,
+    initial_page_type: str | None = None,
     expires_delta: timedelta | None = None,
 ) -> str:
     """Create a short-lived token for embedded assistant iframes."""
@@ -57,6 +58,7 @@ def create_embed_token(
         "external_user_id": external_user_id,
         "external_user_name": external_user_name,
         "source": source,
+        "initial_page_type": initial_page_type,
         "exp": expire_at,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)

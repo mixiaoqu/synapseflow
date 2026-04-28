@@ -17,6 +17,20 @@ export interface EmbedAssistantBootstrap {
   welcome_message?: string | null;
   placeholder_text?: string | null;
   suggested_prompts: string[];
+  page_config?: EmbedPageConfig | null;
+}
+
+export interface EmbedPageConfig {
+  page_type: string;
+  page_name: string;
+  page_description?: string | null;
+  assistant_intro?: string | null;
+  suggested_questions: string[];
+}
+
+export interface EmbedPageContext {
+  app_id?: string | null;
+  page_type: string;
 }
 
 function embedAuthHeaders(token: string): HeadersInit {
@@ -61,7 +75,7 @@ export const embedApi = {
 
   invoke: (
     token: string,
-    payload: { query: string; session_id?: string | null },
+    payload: { query: string; session_id?: string | null; page_context?: EmbedPageContext | null },
   ) =>
     apiClient.post<AskResponse>("/api/v1/embed/assistant/invoke", payload, {
       auth: false,
@@ -70,7 +84,7 @@ export const embedApi = {
 
   stream: (
     token: string,
-    payload: { query: string; session_id?: string | null },
+    payload: { query: string; session_id?: string | null; page_context?: EmbedPageContext | null },
     signal?: AbortSignal,
   ) =>
     apiClient.postStream("/api/v1/embed/assistant/stream", payload, {

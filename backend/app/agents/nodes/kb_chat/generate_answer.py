@@ -106,6 +106,8 @@ def _build_prompt(state: dict[str, Any]) -> str:
         assistant_persona_prompt=state.get("assistant_persona_prompt") or "",
         assistant_rule_template=state.get("assistant_rule_template") or "",
         assistant_suggested_prompts=list(state.get("assistant_suggested_prompts") or []),
+        page_config=dict(state.get("page_config") or {}),
+        page_context=dict(state.get("page_context") or {}),
         retrieval_status=state.get("kb_retrieval_status") or "ok",
     )
 
