@@ -32,13 +32,12 @@ import {
 
 const DEFAULT_LATENCY_THRESHOLD_MS = 5000;
 const QA_REVIEW_LABELS = [
-  "检索失败",
-  "检索命中但答案未引用",
-  "答案有依据但表达差",
-  "答案正确但不完整",
-  "幻觉/无依据扩写",
-  "知识库缺内容",
-  "问题超出范围",
+  "问题理解错了",
+  "Query 改写错了",
+  "没召回到正确文档",
+  "召回到了但排序/Rerank排掉",
+  "进上下文但回答没用好",
+  "知识库本身缺资料",
 ] as const;
 
 type QaPanelFilters = {

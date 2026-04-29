@@ -88,7 +88,7 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
       - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:3000}
-      - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-15}
+      - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-60}
     ports:
       - "8000:8000"
     volumes:
@@ -122,7 +122,7 @@ services:
       - HF_HOME=/app/.cache/huggingface
       - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
       - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:3000}
-      - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-15}
+      - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-60}
     volumes:
       - ./backend:/app
       - backend_venv:/app/.venv

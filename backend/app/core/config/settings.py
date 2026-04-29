@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
     ENABLE_PUBLIC_REGISTRATION: bool = False
     ENTERPRISE_SERVICE_TOKEN: str = ""
-    EMBED_TOKEN_EXPIRE_MINUTES: int = 15
+    EMBED_TOKEN_EXPIRE_MINUTES: int = 60
     EMBED_FRONTEND_BASE_URL: str = ""
 
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
