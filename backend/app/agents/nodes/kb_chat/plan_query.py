@@ -85,7 +85,7 @@ PLAN_TEMPLATES: dict[PlanName, dict[str, Any]] = {
             "mode": "hybrid",
             "recall_k": 24,
             "lexical_k": 16,
-            "rerank_enabled": True,
+            "rerank_enabled": False,
             "final_top_k": 8,
             "llm_reference_top_k": 6,
             "context_budget": 8000,

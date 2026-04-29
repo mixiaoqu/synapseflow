@@ -23,6 +23,7 @@ import { v4 as uuidv4 } from "uuid";
 
 const SESSION_LIST_LIMIT = 50;
 const ACTIVE_SESSION_STORAGE_KEY = "synapseflow.assistant-chat.active-sessions";
+const MIN_STREAM_STATUS_VISIBLE_MS = 650;
 
 export interface AssistantChatTurn {
   id: string;
@@ -195,6 +196,8 @@ export function useAssistantChat() {
   const [mobileTab, setMobileTab] = useState<"chat" | "sources">("chat");
 
   const activeTurnIdRef = useRef<string | null>(null);
+  const streamStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastStreamStatusAtRef = useRef(0);
   const previousTeamIdRef = useRef<number | null>(null);
   const restoredAssistantKeysRef = useRef<Set<string>>(new Set());
   const activeSessionStorageKeyRef = useRef<string>(
@@ -239,6 +242,58 @@ export function useAssistantChat() {
     },
     [],
   );
+
+  const setTurnStreamStatus = useCallback(
+    (assistantId: number, turnId: string, streamStatus: string | null) => {
+      updateConversation(assistantId, (current) => ({
+        ...current,
+        turns: current.turns.map((turn) =>
+          turn.id === turnId ? { ...turn, streamStatus } : turn,
+        ),
+      }));
+    },
+    [updateConversation],
+  );
+
+  const clearPendingStreamStatus = useCallback(() => {
+    if (streamStatusTimerRef.current) {
+      clearTimeout(streamStatusTimerRef.current);
+      streamStatusTimerRef.current = null;
+    }
+  }, []);
+
+  const showStreamStatus = useCallback(
+    (assistantId: number, turnId: string, streamStatus: string) => {
+      const now = Date.now();
+      const elapsed = now - lastStreamStatusAtRef.current;
+      const delay =
+        lastStreamStatusAtRef.current > 0
+          ? Math.max(0, MIN_STREAM_STATUS_VISIBLE_MS - elapsed)
+          : 0;
+
+      clearPendingStreamStatus();
+
+      const applyStatus = () => {
+        streamStatusTimerRef.current = null;
+        lastStreamStatusAtRef.current = Date.now();
+        setTurnStreamStatus(assistantId, turnId, streamStatus);
+      };
+
+      if (delay > 0) {
+        streamStatusTimerRef.current = setTimeout(applyStatus, delay);
+        return;
+      }
+
+      applyStatus();
+    },
+    [clearPendingStreamStatus, setTurnStreamStatus],
+  );
+
+  useEffect(() => {
+    return () => {
+      clearPendingStreamStatus();
+    };
+  }, [clearPendingStreamStatus]);
 
   const resetConversation = useCallback(() => {
     if (selectedAssistantId == null) return;
@@ -579,6 +634,8 @@ export function useAssistantChat() {
       const turnId = `assistant-turn-${uuidv4()}`;
       let completed = false;
 
+      clearPendingStreamStatus();
+      lastStreamStatusAtRef.current = 0;
       activeTurnIdRef.current = turnId;
       setSubmitLoading(true);
       setQuery("");
@@ -613,12 +670,7 @@ export function useAssistantChat() {
 
           const streamStatus = getStreamStatusMessage(event);
           if (streamStatus) {
-            updateConversation(selectedAssistantId, (current) => ({
-              ...current,
-              turns: current.turns.map((turn) =>
-                turn.id === activeTurnId ? { ...turn, streamStatus } : turn,
-              ),
-            }));
+            showStreamStatus(selectedAssistantId, activeTurnId, streamStatus);
           }
 
           switch (event.type) {
@@ -632,10 +684,6 @@ export function useAssistantChat() {
                     ? {
                         ...turn,
                         retrievedDocs: docs as AskRetrievedDoc[],
-                        streamStatus:
-                          docs.length > 0
-                            ? `已匹配 ${docs.length} 条相关资料`
-                            : "未匹配到相关资料",
                       }
                     : turn,
                 ),
@@ -645,6 +693,8 @@ export function useAssistantChat() {
             case "token": {
               const text = event.data.text;
               if (typeof text !== "string" || !text) break;
+              clearPendingStreamStatus();
+              lastStreamStatusAtRef.current = Date.now();
               updateConversation(selectedAssistantId, (current) => ({
                 ...current,
                 turns: current.turns.map((turn) =>
@@ -660,6 +710,7 @@ export function useAssistantChat() {
               break;
             }
             case "complete": {
+              clearPendingStreamStatus();
               completed = true;
               const docs = event.data.retrieved_docs;
               const nextSessionId =
@@ -699,6 +750,7 @@ export function useAssistantChat() {
               break;
             }
             case "error": {
+              clearPendingStreamStatus();
               const message = String(event.data.message ?? "请求失败");
               updateConversation(selectedAssistantId, (current) => ({
                 ...current,
@@ -721,6 +773,7 @@ export function useAssistantChat() {
         }
         return true;
       } catch (error) {
+        clearPendingStreamStatus();
         const message = error instanceof Error ? error.message : "请求失败";
         const activeTurnId = activeTurnIdRef.current;
         if (activeTurnId) {
@@ -734,17 +787,20 @@ export function useAssistantChat() {
         toast.error(message);
         return false;
       } finally {
+        clearPendingStreamStatus();
         setSubmitLoading(false);
         activeTurnIdRef.current = null;
       }
     },
     [
       activeConversation.sessionId,
+      clearPendingStreamStatus,
       loadSessions,
       loading,
       persistActiveSessionId,
       query,
       selectedAssistantId,
+      showStreamStatus,
       updateConversation,
     ],
   );

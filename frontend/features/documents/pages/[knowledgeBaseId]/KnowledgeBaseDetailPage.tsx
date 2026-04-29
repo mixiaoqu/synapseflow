@@ -995,17 +995,30 @@ function KnowledgeBaseDetailPageContent() {
     });
   };
 
-  const onReindexAll = async () => {
-    setReindexingAll(true);
-    try {
-      const result = await reindexAll({ team_id: teamId ?? undefined, knowledge_base_id: kbId });
-      toast.success(result.message || `已将 ${result.queued} 篇文档加入重建队列`);
-      reload();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "全量重建索引失败");
-    } finally {
-      setReindexingAll(false);
-    }
+  const onReindexAll = () => {
+    openConfirmDialog({
+      title: "全量重建索引？",
+      description:
+        "重建会把当前知识库文档重新加入索引队列。重建期间，相关文档会暂时不参与知识库问答检索。",
+      contextRows: [
+        { label: "目标知识库", value: kb?.name || "当前知识库" },
+        { label: "预计文档", value: `${kb?.document_count ?? docsTotal} 篇` },
+      ],
+      confirmLabel: "确认重建",
+      tone: "danger",
+      onConfirm: async () => {
+        setReindexingAll(true);
+        try {
+          const result = await reindexAll({ team_id: teamId ?? undefined, knowledge_base_id: kbId });
+          toast.success(result.message || `已将 ${result.queued} 篇文档加入重建队列`);
+          reload();
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "全量重建索引失败");
+        } finally {
+          setReindexingAll(false);
+        }
+      },
+    });
   };
 
   const onDeleteKnowledgeBase = () => {
@@ -1227,7 +1240,7 @@ function KnowledgeBaseDetailPageContent() {
               variant="outline"
               className="rounded-full border-slate-200 text-slate-700"
               disabled={reindexingAll}
-              onClick={() => void onReindexAll()}
+              onClick={onReindexAll}
             >
               {reindexingAll ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
