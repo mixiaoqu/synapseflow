@@ -52,7 +52,7 @@ def build_kb_chat_answer_prompt(
     if assistant_intro:
         page_lines.append(f"助手入口说明：{assistant_intro}")
     if page_lines:
-        page_lines.append("该页面只是用户打开助手时的入口上下文。若用户问题涉及其他页面或业务模块，应以用户问题和知识库内容为准。")
+        page_lines.append("以上信息描述用户提问时所在的业务环境，用于理解“当前页面、这个页面、这里”等指代。")
     page_context_block = "\n".join(page_lines) or "(none)"
 
     return f"""
@@ -68,7 +68,6 @@ Base constraints:
 6. Always preserve the configured assistant persona and response rules, even when the knowledge base is insufficient.
 7. If retrieval status is not "ok", do not invent facts. Give a helpful answer in Chinese that clearly states the limitation while still following the configured assistant style.
 8. 按内容选择清晰的排版：对比、价格、权限、状态、字段说明优先用 Markdown 表格；操作流程、设置步骤用编号步骤；注意事项、限制条件用简短项目符号；信息少于 2 项时不强行使用表格。
-
 [Assistant persona]
 {persona_block}
 
@@ -84,7 +83,7 @@ Base constraints:
 [Configured suggested prompts]
 {suggested_prompts_block}
 
-[Current business page]
+[User environment]
 {page_context_block}
 
 [Conversation summary]

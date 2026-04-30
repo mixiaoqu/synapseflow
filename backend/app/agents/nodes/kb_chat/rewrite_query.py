@@ -20,6 +20,16 @@ def _coerce_positive_int(value: Any, *, default: int, minimum: int = 0) -> int:
         return default
 
 
+def _build_runtime_context(state: KbChatState) -> dict[str, Any]:
+    page_config = dict(state.get("page_config") or {})
+    page_context = dict(state.get("page_context") or {})
+    return {
+        "page_name": page_config.get("page_name"),
+        "page_type": page_context.get("page_type") or page_config.get("page_type"),
+        "page_description": page_config.get("page_description"),
+    }
+
+
 async def user_kb_rewrite_query_node(state: KbChatState) -> dict[str, Any]:
     """Rewrite the current query according to the retrieval plan."""
 
@@ -64,6 +74,7 @@ async def user_kb_rewrite_query_node(state: KbChatState) -> dict[str, Any]:
         query,
         chat_history=state.get("chat_history") or [],
         memory_summary=state.get("memory_summary"),
+        runtime_context=_build_runtime_context(state),
         mode=(mode if rewrite_enabled else "skip"),
         max_queries=max_queries,
         strategies=strategies,

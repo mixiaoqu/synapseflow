@@ -33,6 +33,9 @@ _CODE_TOKEN_PATTERN = re.compile(
     r"`([^`]+)`|\"([^\"]+)\"|'([^']+)'|\u300a([^\u300b]+)\u300b|([A-Za-z0-9_./:-]{3,})"
 )
 _CJK_COMPARE_PATTERN = re.compile(r"(\u533a\u522b|\u5dee\u5f02|\u5bf9\u6bd4|\u6bd4\u8f83)")
+_RUNTIME_REFERENCE_PATTERN = re.compile(
+    r"(当前页面|这个页面|该页面|本页面|当前页|这个页|本页|这里)"
+)
 
 
 def _coerce_text(content: Any) -> str:
@@ -67,6 +70,35 @@ def _dedupe_keep_order(items: list[str], *, limit: int) -> list[str]:
         if len(out) >= limit:
             break
     return out
+
+
+def _format_runtime_context(runtime_context: dict[str, Any] | None) -> str:
+    if not isinstance(runtime_context, dict):
+        return ""
+
+    page_name = _normalize_query(str(runtime_context.get("page_name") or ""))
+    page_type = _normalize_query(str(runtime_context.get("page_type") or ""))
+    page_description = _normalize_query(str(runtime_context.get("page_description") or ""))
+    lines = []
+    if page_name:
+        lines.append(f"页面名称：{page_name}")
+    if page_type:
+        lines.append(f"页面标识：{page_type}")
+    if page_description:
+        lines.append(f"页面说明：{page_description}")
+    return "\n".join(lines)
+
+
+def _runtime_contextual_query(query: str, runtime_context: dict[str, Any] | None) -> str:
+    if not _RUNTIME_REFERENCE_PATTERN.search(query):
+        return ""
+
+    page_name = ""
+    if isinstance(runtime_context, dict):
+        page_name = _normalize_query(str(runtime_context.get("page_name") or ""))
+    if not page_name or page_name in query:
+        return ""
+    return _normalize_query(f"{page_name} {query}")
 
 
 def _strip_filler_phrases(text: str) -> str:
@@ -123,6 +155,7 @@ def _build_heuristic_queries(
     *,
     chat_history: list[dict[str, str]] | None,
     memory_summary: str | None,
+    runtime_context: dict[str, Any] | None,
     limit: int,
     strategies: set[str],
 ) -> list[str]:
@@ -130,7 +163,8 @@ def _build_heuristic_queries(
     if not original:
         return []
 
-    candidates: list[str] = [original]
+    runtime_query = _runtime_contextual_query(original, runtime_context)
+    candidates: list[str] = [runtime_query, original] if runtime_query else [original]
     compact = _strip_filler_phrases(original)
     code_tokens = _extract_code_tokens(original)
     if (
@@ -160,6 +194,7 @@ def _build_rewrite_prompt(
     strategies: set[str],
     chat_history: list[dict[str, str]] | None = None,
     memory_summary: str | None = None,
+    runtime_context: dict[str, Any] | None = None,
 ) -> str:
     history_lines = []
     for item in list(chat_history or [])[-4:]:
@@ -171,6 +206,7 @@ def _build_rewrite_prompt(
 
     summary_text = _normalize_query(memory_summary or "") or "(none)"
     context_text = "\n".join(history_lines) or "(none)"
+    runtime_context_text = _format_runtime_context(runtime_context) or "(none)"
     objective_lines = {
         "context_completion": "Use recent conversation context to resolve short follow-up references when needed.",
         "terminology_normalization": "Favor canonical product, process, config, and document terminology.",
@@ -195,6 +231,7 @@ Rules:
 - Do not invent facts.
 - Keep product names, file names, API paths, config keys, and quoted text unchanged when present.
 - Favor short search-style queries over full explanations.
+- User environment helps resolve references like "当前页面", "这个页面", and "这里"; do not replace explicit page or module names.
 
 Rewrite objectives:
 {chr(10).join(active_objectives)}
@@ -204,6 +241,9 @@ Conversation summary:
 
 Recent chat turns:
 {context_text}
+
+User environment:
+{runtime_context_text}
 
 User question:
 {query}
@@ -215,6 +255,7 @@ async def build_kb_chat_retrieval_queries(
     *,
     chat_history: list[dict[str, str]] | None = None,
     memory_summary: str | None = None,
+    runtime_context: dict[str, Any] | None = None,
     llm_factory: Callable[[], Any] | None = None,
     mode: RewriteMode = "heuristic",
     max_queries: int | None = None,
@@ -237,6 +278,7 @@ async def build_kb_chat_retrieval_queries(
         original,
         chat_history=chat_history,
         memory_summary=memory_summary,
+        runtime_context=runtime_context,
         limit=limit,
         strategies=strategy_set,
     )
@@ -255,6 +297,7 @@ async def build_kb_chat_retrieval_queries(
                 strategies=strategy_set,
                 chat_history=chat_history,
                 memory_summary=memory_summary,
+                runtime_context=runtime_context,
             )
         )
         parsed = extract_json_from_llm_response(_coerce_text(getattr(response, "content", response)))
