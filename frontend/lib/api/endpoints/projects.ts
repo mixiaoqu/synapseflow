@@ -4,6 +4,9 @@ export interface ProjectResponse {
   id: number;
   team_id: number;
   team_name?: string | null;
+  product_id: number;
+  product_code?: string | null;
+  product_name?: string | null;
   code: string;
   name: string;
   description?: string | null;
@@ -17,6 +20,7 @@ export interface ProjectPayload {
   name: string;
   code: string;
   team_id: number;
+  product_id: number;
   description?: string | null;
   is_active: boolean;
 }

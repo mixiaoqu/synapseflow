@@ -42,10 +42,12 @@ router = APIRouter()
 async def _get_runtime_from_codes(
     *,
     db: AsyncSession,
+    product_code: str,
     project_code: str,
     app_code: str,
 ) -> ProjectAppRuntimeRecord:
     runtime = await ProjectRepository(db).get_runtime_by_codes(
+        product_code=product_code,
         project_code=project_code,
         app_code=app_code,
         active_only=True,
@@ -82,11 +84,11 @@ def _build_embed_runtime_request(
     return SimpleNamespace(
         query=query,
         session_id=session_id,
+        product_id=runtime.product.id,
         project_id=runtime.project.id,
         project_app_id=runtime.app.id,
         external_user_id=context.external_user_id,
         external_user_name=context.external_user_name,
-        source=context.source,
         team_id=assistant.team_id,
         knowledge_base_id=assistant.knowledge_base_id,
         category_id=assistant.category_id,
@@ -118,7 +120,11 @@ def _resolve_page_config(
     runtime: ProjectAppRuntimeRecord,
     page_type: str | None,
 ) -> EmbedPageConfig | None:
-    return get_embed_page_config(runtime.app.code, page_type)
+    return get_embed_page_config(
+        runtime.project.code,
+        runtime.app.code,
+        page_type,
+    )
 
 
 def _build_page_context(
@@ -153,6 +159,7 @@ async def create_embed_session(
 ):
     runtime = await _get_runtime_from_codes(
         db=db,
+        product_code=body.product_code,
         project_code=body.project_code,
         app_code=body.app_code,
     )
@@ -162,7 +169,6 @@ async def create_embed_session(
         project_app_id=runtime.app.id,
         external_user_id=body.external_user_id.strip(),
         external_user_name=(body.external_user_name or "").strip() or None,
-        source=(body.source or "").strip() or None,
         initial_page_type=(body.initial_page_type or "").strip() or None,
         expires_delta=timedelta(minutes=expires),
     )
@@ -186,6 +192,9 @@ async def embed_bootstrap(
         page_type=context.initial_page_type,
     )
     return EmbedAssistantBootstrapResponse(
+        product_id=runtime.product.id,
+        product_code=runtime.product.code,
+        product_name=runtime.product.name,
         project_id=runtime.project.id,
         project_code=runtime.project.code,
         project_name=runtime.project.name,

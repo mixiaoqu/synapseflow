@@ -15,11 +15,11 @@ class KbChatRequest(BaseModel):
     category_id: Optional[int] = Field(None, description="Limit retrieval to one category")
     assistant_id: Optional[int] = Field(None, description="Assistant profile id")
     session_id: Optional[str] = Field(None, description="Optional session id")
+    product_id: Optional[int] = None
     project_id: Optional[int] = None
     project_app_id: Optional[int] = None
     external_user_id: Optional[str] = None
     external_user_name: Optional[str] = None
-    source: Optional[str] = None
     page_context: Dict[str, Any] | None = None
     page_config: Dict[str, Any] | None = None
 
@@ -65,11 +65,11 @@ class KbChatSessionSummary(BaseModel):
     session_id: str = Field(..., description="Stable session identifier")
     title: str = Field(..., description="Display title derived from the conversation")
     preview: Optional[str] = Field(None, description="Short preview of the latest message")
+    product_id: Optional[int] = Field(None, description="Embedded product id")
     project_id: Optional[int] = Field(None, description="Embedded project id")
     project_app_id: Optional[int] = Field(None, description="Embedded project application id")
     external_user_id: Optional[str] = Field(None, description="External enterprise user id")
     external_user_name: Optional[str] = Field(None, description="External enterprise user name")
-    source: Optional[str] = Field(None, description="Embedded call source")
     team_id: Optional[int] = Field(None, description="Selected team id")
     knowledge_base_id: Optional[int] = Field(None, description="Selected knowledge base id")
     knowledge_base_name: Optional[str] = Field(None, description="Selected knowledge base name")
@@ -120,13 +120,13 @@ class KbChatLogItem(BaseModel):
     id: int
     user_id: int | None = None
     session_id: str | None = None
+    product_id: int | None = None
     project_id: int | None = None
     project_name: str | None = None
     project_app_id: int | None = None
     project_app_name: str | None = None
     external_user_id: str | None = None
     external_user_name: str | None = None
-    source: str | None = None
     team_id: int | None = None
     team_name: str | None = None
     knowledge_base_id: int | None = None

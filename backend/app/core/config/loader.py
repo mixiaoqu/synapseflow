@@ -80,7 +80,8 @@ def load_repositories_raw() -> Dict[str, Any]:
     return substitute_env_deep(data)
 
 
-def load_embed_pages_raw() -> Dict[str, Any]:
-    """Load embedded assistant page configuration."""
-    data = load_yaml(CONFIG_DIR / "embed_pages.yaml", {"apps": {}})
+def load_embed_app_pages_raw(project_code: str, app_code: str) -> Dict[str, Any]:
+    """Load page config from config/embed_pages/<project_code>/<app_code>.yaml."""
+    path = CONFIG_DIR / "embed_pages" / project_code / f"{app_code}.yaml"
+    data = load_yaml(path, {})
     return substitute_env_deep(data)

@@ -9,6 +9,7 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     code: str = Field(..., min_length=1, max_length=120)
     team_id: int = Field(..., gt=0)
+    product_id: int = Field(..., gt=0)
     description: str | None = None
     is_active: bool = True
 
@@ -17,6 +18,7 @@ class ProjectUpdate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     code: str = Field(..., min_length=1, max_length=120)
     team_id: int = Field(..., gt=0)
+    product_id: int = Field(..., gt=0)
     description: str | None = None
     is_active: bool = True
 
@@ -27,6 +29,9 @@ class ProjectResponse(BaseModel):
     id: int
     team_id: int
     team_name: str | None = None
+    product_id: int
+    product_code: str | None = None
+    product_name: str | None = None
     code: str
     name: str
     description: str | None = None
@@ -70,11 +75,11 @@ class ProjectAppResponse(BaseModel):
 
 
 class EmbedSessionCreate(BaseModel):
+    product_code: str = Field(..., min_length=1, max_length=120)
     project_code: str = Field(..., min_length=1, max_length=120)
     app_code: str = Field(..., min_length=1, max_length=120)
     external_user_id: str = Field(..., min_length=1, max_length=255)
     external_user_name: str | None = Field(default=None, max_length=255)
-    source: str | None = Field(default=None, max_length=80)
     initial_page_type: str | None = Field(default=None, max_length=120)
 
 
@@ -92,6 +97,9 @@ class EmbedPageConfigResponse(BaseModel):
 
 
 class EmbedAssistantBootstrapResponse(BaseModel):
+    product_id: int
+    product_code: str
+    product_name: str
     project_id: int
     project_code: str
     project_name: str

@@ -6,6 +6,9 @@ import type {
 } from "./ask";
 
 export interface EmbedAssistantBootstrap {
+  product_id: number;
+  product_code: string;
+  product_name: string;
   project_id: number;
   project_code: string;
   project_name: string;

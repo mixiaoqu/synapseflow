@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { Suspense, useState } from "react";
@@ -7,6 +7,7 @@ import {
   BarChart3,
   BookOpen,
   Bot,
+  Box,
   Building2,
   CheckSquare,
   ChevronDown,
@@ -46,6 +47,7 @@ const menuGroups = [
   {
     title: "业务核心",
     items: [
+      { href: "/admin/products", title: "产品管理", icon: Box },
       { href: "/admin/projects", title: "项目管理", icon: FolderKanban },
       { href: "/admin/documents", title: "知识库管理", icon: BookOpen },
       { href: "/admin/assistants", title: "助手管理", icon: Bot },
@@ -103,7 +105,7 @@ function roleBadge(role: string) {
 
 function SessionLoadingScreen() {
   return (
-    <div className="flex h-[100dvh] min-h-0 items-center justify-center bg-gray-950 text-white">
+      <div className="flex h-[100dvh] min-h-0 items-center justify-center bg-gray-950 text-white">
       <div className="rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-sm">
         正在恢复管理后台...
       </div>
@@ -271,3 +273,4 @@ export default function AdminLayout({
     </Suspense>
   );
 }
+

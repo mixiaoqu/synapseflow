@@ -16,6 +16,7 @@ from app.db.models import (
     DocumentCategory,
     KbChatLog,
     KnowledgeBase,
+    Product,
     Project,
     ProjectApp,
     Team,
@@ -28,13 +29,14 @@ class KbChatLogRecord:
     id: int
     user_id: int | None
     session_id: str | None
+    product_id: int | None
+    product_name: str | None
     project_id: int | None
     project_name: str | None
     project_app_id: int | None
     project_app_name: str | None
     external_user_id: str | None
     external_user_name: str | None
-    source: str | None
     team_id: int | None
     team_name: str | None
     knowledge_base_id: int | None
@@ -101,11 +103,11 @@ class KbChatLogRepository:
         *,
         user_id: int | None,
         session_id: str | None,
+        product_id: int | None = None,
         project_id: int | None = None,
         project_app_id: int | None = None,
         external_user_id: str | None = None,
         external_user_name: str | None = None,
-        source: str | None = None,
         knowledge_base_id: int | None,
         assistant_id: int | None,
         category_id: int | None,
@@ -119,11 +121,11 @@ class KbChatLogRepository:
         row = KbChatLog(
             user_id=user_id,
             session_id=session_id,
+            product_id=product_id,
             project_id=project_id,
             project_app_id=project_app_id,
             external_user_id=external_user_id,
             external_user_name=external_user_name,
-            source=source,
             knowledge_base_id=knowledge_base_id,
             assistant_id=assistant_id,
             category_id=category_id,
@@ -165,6 +167,7 @@ class KbChatLogRepository:
                 KbChatLog,
                 KnowledgeBase,
                 AssistantProfile.name.label("assistant_name"),
+                Product.name.label("product_name"),
                 Project.name.label("project_name"),
                 ProjectApp.name.label("project_app_name"),
                 Team.name.label("team_name"),
@@ -172,6 +175,7 @@ class KbChatLogRepository:
             )
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
             .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
+            .outerjoin(Product, KbChatLog.product_id == Product.id)
             .outerjoin(Project, KbChatLog.project_id == Project.id)
             .outerjoin(ProjectApp, KbChatLog.project_app_id == ProjectApp.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
@@ -205,6 +209,7 @@ class KbChatLogRepository:
             .select_from(KbChatLog)
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
             .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
+            .outerjoin(Product, KbChatLog.product_id == Product.id)
             .outerjoin(Project, KbChatLog.project_id == Project.id)
             .outerjoin(ProjectApp, KbChatLog.project_app_id == ProjectApp.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
@@ -236,13 +241,14 @@ class KbChatLogRepository:
                     id=item.id,
                     user_id=item.user_id,
                     session_id=item.session_id,
+                    product_id=item.product_id,
+                    product_name=product_name,
                     project_id=item.project_id,
                     project_name=project_name,
                     project_app_id=item.project_app_id,
                     project_app_name=project_app_name,
                     external_user_id=item.external_user_id,
                     external_user_name=item.external_user_name,
-                    source=item.source,
                     team_id=knowledge_base.team_id if knowledge_base else None,
                     team_name=team_name,
                     knowledge_base_id=item.knowledge_base_id,
@@ -270,6 +276,7 @@ class KbChatLogRepository:
                     item,
                     knowledge_base,
                     assistant_name,
+                    product_name,
                     project_name,
                     project_app_name,
                     team_name,
@@ -341,6 +348,7 @@ class KbChatLogRepository:
                 KnowledgeBase.name.label("knowledge_base_name"),
                 KnowledgeBase.team_id.label("knowledge_base_team_id"),
                 AssistantProfile.name.label("assistant_name"),
+                Product.name.label("product_name"),
                 Project.name.label("project_name"),
                 ProjectApp.name.label("project_app_name"),
                 Team.name.label("team_name"),
@@ -348,6 +356,7 @@ class KbChatLogRepository:
             )
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
             .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
+            .outerjoin(Product, KbChatLog.product_id == Product.id)
             .outerjoin(Project, KbChatLog.project_id == Project.id)
             .outerjoin(ProjectApp, KbChatLog.project_app_id == ProjectApp.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
@@ -363,6 +372,7 @@ class KbChatLogRepository:
             knowledge_base_name,
             knowledge_base_team_id,
             assistant_name,
+            product_name,
             project_name,
             project_app_name,
             team_name,
@@ -385,6 +395,7 @@ class KbChatLogRepository:
             item=item,
             knowledge_base_name=knowledge_base_name,
             assistant_name=assistant_name,
+            product_name=product_name,
             project_name=project_name,
             project_app_name=project_app_name,
             category_name=category_name,
@@ -502,6 +513,7 @@ class KbChatLogRepository:
         item: KbChatLog,
         knowledge_base_name: str | None,
         assistant_name: str | None,
+        product_name: str | None,
         project_name: str | None,
         project_app_name: str | None,
         category_name: str | None,
@@ -588,13 +600,14 @@ class KbChatLogRepository:
             id=item.id,
             user_id=item.user_id,
             session_id=item.session_id,
+            product_id=item.product_id,
+            product_name=product_name,
             project_id=item.project_id,
             project_name=project_name,
             project_app_id=item.project_app_id,
             project_app_name=project_app_name,
             external_user_id=item.external_user_id,
             external_user_name=item.external_user_name,
-            source=item.source,
             knowledge_base_id=item.knowledge_base_id,
             knowledge_base_name=knowledge_base_name,
             assistant_id=item.assistant_id,

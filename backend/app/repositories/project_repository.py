@@ -7,13 +7,15 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AssistantProfile, KnowledgeBase, Project, ProjectApp, Team
+from app.db.models import AssistantProfile, KnowledgeBase, Product, Project, ProjectApp, Team
 
 
 @dataclass(slots=True)
 class ProjectRecord:
     project: Project
     team_name: str | None
+    product_code: str | None
+    product_name: str | None
     app_count: int
 
 
@@ -27,6 +29,7 @@ class ProjectAppRecord:
 
 @dataclass(slots=True)
 class ProjectAppRuntimeRecord:
+    product: Product
     project: Project
     app: ProjectApp
     assistant: AssistantProfile
@@ -46,34 +49,48 @@ class ProjectRepository:
     async def list_projects(self, *, team_id: int | None = None) -> list[ProjectRecord]:
         app_count = func.count(ProjectApp.id)
         stmt = (
-            select(Project, Team.name, app_count.label("app_count"))
+            select(Project, Team.name, Product.code, Product.name, app_count.label("app_count"))
             .join(Team, Team.id == Project.team_id)
+            .join(Product, Product.id == Project.product_id)
             .outerjoin(ProjectApp, ProjectApp.project_id == Project.id)
-            .group_by(Project.id, Team.name)
+            .group_by(Project.id, Team.name, Product.code, Product.name)
             .order_by(Project.created_at.desc(), Project.id.desc())
         )
         if team_id is not None:
             stmt = stmt.where(Project.team_id == team_id)
         rows = (await self.db.execute(stmt)).all()
         return [
-            ProjectRecord(project=project, team_name=team_name, app_count=int(count or 0))
-            for project, team_name, count in rows
+            ProjectRecord(
+                project=project,
+                team_name=team_name,
+                product_code=product_code,
+                product_name=product_name,
+                app_count=int(count or 0),
+            )
+            for project, team_name, product_code, product_name, count in rows
         ]
 
     async def get_project_record(self, project_id: int) -> ProjectRecord | None:
         app_count = func.count(ProjectApp.id)
         stmt = (
-            select(Project, Team.name, app_count.label("app_count"))
+            select(Project, Team.name, Product.code, Product.name, app_count.label("app_count"))
             .join(Team, Team.id == Project.team_id)
+            .join(Product, Product.id == Project.product_id)
             .outerjoin(ProjectApp, ProjectApp.project_id == Project.id)
             .where(Project.id == project_id)
-            .group_by(Project.id, Team.name)
+            .group_by(Project.id, Team.name, Product.code, Product.name)
         )
         row = (await self.db.execute(stmt)).one_or_none()
         if row is None:
             return None
-        project, team_name, count = row
-        return ProjectRecord(project=project, team_name=team_name, app_count=int(count or 0))
+        project, team_name, product_code, product_name, count = row
+        return ProjectRecord(
+            project=project,
+            team_name=team_name,
+            product_code=product_code,
+            product_name=product_name,
+            app_count=int(count or 0),
+        )
 
     async def get_project(self, project_id: int) -> Project | None:
         return await self.db.get(Project, project_id)
@@ -82,8 +99,21 @@ class ProjectRepository:
         stmt = select(Project).where(Project.code == self.normalize_code(code))
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
-    async def project_code_exists(self, code: str, *, exclude_id: int | None = None) -> bool:
-        stmt = select(func.count()).select_from(Project).where(Project.code == self.normalize_code(code))
+    async def project_code_exists(
+        self,
+        product_id: int,
+        code: str,
+        *,
+        exclude_id: int | None = None,
+    ) -> bool:
+        stmt = (
+            select(func.count())
+            .select_from(Project)
+            .where(
+                Project.product_id == product_id,
+                Project.code == self.normalize_code(code),
+            )
+        )
         if exclude_id is not None:
             stmt = stmt.where(Project.id != exclude_id)
         return bool((await self.db.execute(stmt)).scalar() or 0)
@@ -190,22 +220,26 @@ class ProjectRepository:
     async def get_runtime_by_codes(
         self,
         *,
+        product_code: str,
         project_code: str,
         app_code: str,
         active_only: bool = True,
     ) -> ProjectAppRuntimeRecord | None:
         stmt = (
-            select(Project, ProjectApp, AssistantProfile, KnowledgeBase.name)
+            select(Product, Project, ProjectApp, AssistantProfile, KnowledgeBase.name)
+            .join(Project, Project.product_id == Product.id)
             .join(ProjectApp, ProjectApp.project_id == Project.id)
             .join(AssistantProfile, AssistantProfile.id == ProjectApp.default_assistant_id)
             .outerjoin(KnowledgeBase, KnowledgeBase.id == AssistantProfile.knowledge_base_id)
             .where(
+                Product.code == self.normalize_code(product_code),
                 Project.code == self.normalize_code(project_code),
                 ProjectApp.code == self.normalize_code(app_code),
             )
         )
         if active_only:
             stmt = stmt.where(
+                Product.is_active.is_(True),
                 Project.is_active.is_(True),
                 ProjectApp.is_active.is_(True),
                 AssistantProfile.is_active.is_(True),
@@ -213,8 +247,9 @@ class ProjectRepository:
         row = (await self.db.execute(stmt)).one_or_none()
         if row is None:
             return None
-        project, app, assistant, knowledge_base_name = row
+        product, project, app, assistant, knowledge_base_name = row
         return ProjectAppRuntimeRecord(
+            product=product,
             project=project,
             app=app,
             assistant=assistant,
@@ -228,7 +263,8 @@ class ProjectRepository:
         active_only: bool = True,
     ) -> ProjectAppRuntimeRecord | None:
         stmt = (
-            select(Project, ProjectApp, AssistantProfile, KnowledgeBase.name)
+            select(Product, Project, ProjectApp, AssistantProfile, KnowledgeBase.name)
+            .join(Project, Project.product_id == Product.id)
             .join(ProjectApp, ProjectApp.project_id == Project.id)
             .join(AssistantProfile, AssistantProfile.id == ProjectApp.default_assistant_id)
             .outerjoin(KnowledgeBase, KnowledgeBase.id == AssistantProfile.knowledge_base_id)
@@ -236,6 +272,7 @@ class ProjectRepository:
         )
         if active_only:
             stmt = stmt.where(
+                Product.is_active.is_(True),
                 Project.is_active.is_(True),
                 ProjectApp.is_active.is_(True),
                 AssistantProfile.is_active.is_(True),
@@ -243,8 +280,9 @@ class ProjectRepository:
         row = (await self.db.execute(stmt)).one_or_none()
         if row is None:
             return None
-        project, app, assistant, knowledge_base_name = row
+        product, project, app, assistant, knowledge_base_name = row
         return ProjectAppRuntimeRecord(
+            product=product,
             project=project,
             app=app,
             assistant=assistant,

@@ -183,14 +183,33 @@ class AssistantProfile(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
-class Project(Base):
-    """Business project that can expose embedded assistant applications."""
+class Product(Base):
+    """Business product definition under one team."""
 
-    __tablename__ = "projects"
+    __tablename__ = "products"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
     code = Column(String(120), nullable=False, unique=True, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class Project(Base):
+    """Business project that can expose embedded assistant applications."""
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        UniqueConstraint("product_id", "code", name="uq_projects_product_code"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(120), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, index=True)
@@ -407,6 +426,7 @@ class ChatSession(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     session_id = Column(String(64), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
     project_app_id = Column(
         Integer,
@@ -416,7 +436,6 @@ class ChatSession(Base):
     )
     external_user_id = Column(String(255), nullable=True, index=True)
     external_user_name = Column(String(255), nullable=True)
-    source = Column(String(80), nullable=True, index=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True)
     knowledge_base_id = Column(
         Integer,
@@ -467,6 +486,7 @@ class KbChatLog(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     session_id = Column(String(64), nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
     project_app_id = Column(
         Integer,
@@ -476,7 +496,6 @@ class KbChatLog(Base):
     )
     external_user_id = Column(String(255), nullable=True, index=True)
     external_user_name = Column(String(255), nullable=True)
-    source = Column(String(80), nullable=True, index=True)
     knowledge_base_id = Column(
         Integer,
         ForeignKey("knowledge_bases.id", ondelete="SET NULL"),

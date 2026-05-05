@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AssistantProfile, Project, ProjectApp
+from app.db.models import AssistantProfile, Product, Project, ProjectApp
 from app.models.schemas.project import (
     ProjectAppCreate,
     ProjectAppResponse,
@@ -20,6 +20,7 @@ from app.repositories.project_repository import (
     ProjectRecord,
     ProjectRepository,
 )
+from app.repositories.product_repository import ProductRepository
 from app.repositories.team_repository import TeamRepository
 
 
@@ -28,6 +29,7 @@ class ProjectService:
         self.db = db
         self.user_id = user_id
         self.repository = ProjectRepository(db)
+        self.product_repository = ProductRepository(db)
         self.team_repository = TeamRepository(db, user_id=user_id)
 
     @staticmethod
@@ -49,6 +51,9 @@ class ProjectService:
             id=project.id,
             team_id=project.team_id,
             team_name=record.team_name,
+            product_id=project.product_id,
+            product_code=record.product_code,
+            product_name=record.product_name,
             code=project.code,
             name=project.name,
             description=project.description,
@@ -79,6 +84,14 @@ class ProjectService:
     async def _ensure_team_access(self, team_id: int) -> None:
         if not await self.team_repository.can_access_team(team_id):
             raise HTTPException(status_code=403, detail="Team access denied")
+
+    async def _get_product_for_project(self, *, product_id: int, team_id: int) -> Product:
+        product = await self.product_repository.get_product(product_id)
+        if product is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+        if product.team_id != team_id:
+            raise HTTPException(status_code=400, detail="Product does not belong to the project team")
+        return product
 
     async def _get_assistant_for_project(
         self,
@@ -113,11 +126,13 @@ class ProjectService:
 
     async def create_project(self, payload: ProjectCreate) -> ProjectResponse:
         await self._ensure_team_access(payload.team_id)
+        await self._get_product_for_project(product_id=payload.product_id, team_id=payload.team_id)
         code = self._normalize_code(payload.code)
-        if await self.repository.project_code_exists(code):
+        if await self.repository.project_code_exists(payload.product_id, code):
             raise HTTPException(status_code=400, detail="Project code already exists")
         project = Project(
             team_id=payload.team_id,
+            product_id=payload.product_id,
             code=code,
             name=payload.name.strip(),
             description=self._normalize_optional_text(payload.description),
@@ -135,12 +150,18 @@ class ProjectService:
             raise HTTPException(status_code=404, detail="Project not found")
         await self._ensure_team_access(project.team_id)
         await self._ensure_team_access(payload.team_id)
+        await self._get_product_for_project(product_id=payload.product_id, team_id=payload.team_id)
 
         code = self._normalize_code(payload.code)
-        if await self.repository.project_code_exists(code, exclude_id=project_id):
+        if await self.repository.project_code_exists(
+            payload.product_id,
+            code,
+            exclude_id=project_id,
+        ):
             raise HTTPException(status_code=400, detail="Project code already exists")
 
         project.team_id = payload.team_id
+        project.product_id = payload.product_id
         project.code = code
         project.name = payload.name.strip()
         project.description = self._normalize_optional_text(payload.description)

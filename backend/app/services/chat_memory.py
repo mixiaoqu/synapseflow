@@ -35,11 +35,11 @@ class ChatSessionSummaryRecord:
     session_id: str
     title: str
     preview: str | None
+    product_id: int | None
     project_id: int | None
     project_app_id: int | None
     external_user_id: str | None
     external_user_name: str | None
-    source: str | None
     team_id: int | None
     knowledge_base_id: int | None
     knowledge_base_name: str | None
@@ -76,11 +76,11 @@ class ChatMemoryStore(Protocol):
         *,
         user_id: int | None,
         session_id: str,
+        product_id: int | None = None,
         project_id: int | None = None,
         project_app_id: int | None = None,
         external_user_id: str | None = None,
         external_user_name: str | None = None,
-        source: str | None = None,
         team_id: int | None,
         knowledge_base_id: int | None,
         assistant_id: int | None,
@@ -182,11 +182,11 @@ class DatabaseChatMemoryStore:
         *,
         user_id: int | None,
         session_id: str,
+        product_id: int | None = None,
         project_id: int | None = None,
         project_app_id: int | None = None,
         external_user_id: str | None = None,
         external_user_name: str | None = None,
-        source: str | None = None,
         team_id: int | None,
         knowledge_base_id: int | None,
         assistant_id: int | None,
@@ -208,11 +208,11 @@ class DatabaseChatMemoryStore:
                 project_app_id=project_app_id,
                 external_user_id=external_user_id,
             )
+            session.product_id = product_id
             session.project_id = project_id
             session.project_app_id = project_app_id
             session.external_user_id = external_user_id
             session.external_user_name = external_user_name
-            session.source = source
             session.team_id = team_id
             session.knowledge_base_id = knowledge_base_id
             session.assistant_id = assistant_id
@@ -336,11 +336,11 @@ class DatabaseChatMemoryStore:
                 session_id=summary.session_id,
                 title=summary.title,
                 preview=summary.preview,
+                product_id=summary.product_id,
                 project_id=summary.project_id,
                 project_app_id=summary.project_app_id,
                 external_user_id=summary.external_user_id,
                 external_user_name=summary.external_user_name,
-                source=summary.source,
                 team_id=summary.team_id,
                 knowledge_base_id=summary.knowledge_base_id,
                 knowledge_base_name=summary.knowledge_base_name,
@@ -496,11 +496,11 @@ class DatabaseChatMemoryStore:
             session_id=session.session_id,
             title=title,
             preview=preview,
+            product_id=session.product_id,
             project_id=session.project_id,
             project_app_id=session.project_app_id,
             external_user_id=session.external_user_id,
             external_user_name=session.external_user_name,
-            source=session.source,
             team_id=session.team_id,
             knowledge_base_id=session.knowledge_base_id,
             knowledge_base_name=kb_name,

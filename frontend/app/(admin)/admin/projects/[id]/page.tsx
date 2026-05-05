@@ -54,6 +54,7 @@ import {
   assistantsApi,
   type AssistantSummary,
 } from "@/lib/api/assistants";
+import { productsApi, type ProductResponse } from "@/lib/api/products";
 import {
   projectsApi,
   type ProjectAppEmbedPreviewResponse,
@@ -67,6 +68,7 @@ interface ProjectFormState {
   name: string;
   code: string;
   description: string;
+  product_id: string;
   is_active: boolean;
 }
 
@@ -104,6 +106,7 @@ function toProjectForm(project: ProjectResponse): ProjectFormState {
     name: project.name,
     code: project.code,
     description: project.description ?? "",
+    product_id: String(project.product_id),
     is_active: project.is_active,
   };
 }
@@ -113,6 +116,7 @@ function toProjectPayload(project: ProjectResponse, form: ProjectFormState): Pro
     name: form.name.trim(),
     code: form.code.trim(),
     team_id: project.team_id,
+    product_id: Number(form.product_id),
     description: form.description.trim() || null,
     is_active: form.is_active,
   };
@@ -151,6 +155,7 @@ export default function ProjectDetailsPage() {
 
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [apps, setApps] = useState<ProjectAppResponse[]>([]);
+  const [products, setProducts] = useState<ProductResponse[]>([]);
   const [assistants, setAssistants] = useState<AssistantSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -176,13 +181,15 @@ export default function ProjectDetailsPage() {
     setLoading(true);
     try {
       const nextProject = await projectsApi.get(projectId);
-      const [nextApps, nextAssistants] = await Promise.all([
+      const [nextApps, nextAssistants, nextProducts] = await Promise.all([
         projectsApi.listApps(projectId),
         assistantsApi.list({ team_id: nextProject.team_id, active_only: true }),
+        productsApi.list({ team_id: nextProject.team_id }),
       ]);
       setProject(nextProject);
       setApps(nextApps);
       setAssistants(nextAssistants);
+      setProducts(nextProducts);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "加载项目详情失败");
     } finally {
@@ -210,7 +217,7 @@ export default function ProjectDetailsPage() {
 
   const saveProject = async () => {
     if (!project || !projectForm) return;
-    if (!projectForm.name.trim() || !projectForm.code.trim()) {
+    if (!projectForm.name.trim() || !projectForm.code.trim() || !projectForm.product_id) {
       toast.error("项目名称和编码不能为空");
       return;
     }
@@ -412,11 +419,11 @@ Authorization: Bearer <ENTERPRISE_SERVICE_TOKEN>
 Content-Type: application/json
 
 {
+  "product_code": "${project.product_code ?? "product_code"}",
   "project_code": "${project.code}",
   "app_code": "${selectedApp?.code ?? "app_code"}",
   "external_user_id": "YOUR_USER_ID",
   "external_user_name": "张三",
-  "source": "web_portal"
 }`;
 
   const iframeSnippet = `<iframe
@@ -626,6 +633,25 @@ Content-Type: application/json
           </DialogHeader>
           {projectForm && (
             <div className="space-y-4 py-2">
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-slate-700">Product</label>
+                <select
+                  value={projectForm.product_id}
+                  onChange={(event) =>
+                    setProjectForm((current) =>
+                      current ? { ...current, product_id: event.target.value } : current,
+                    )
+                  }
+                  className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-900"
+                >
+                  <option value="">Select a product</option>
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.name} ({product.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="grid gap-2">
                 <label className="text-sm font-medium text-slate-700">项目名称</label>
                 <Input

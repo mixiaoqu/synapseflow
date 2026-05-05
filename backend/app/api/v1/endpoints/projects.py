@@ -162,7 +162,6 @@ async def create_project_app_embed_preview(
         project_app_id=runtime.app.id,
         external_user_id=f"admin-preview:{current_user.id}",
         external_user_name=(current_user.full_name or current_user.username or "").strip() or None,
-        source="admin_preview",
         expires_delta=timedelta(minutes=expires),
     )
     base_url = _resolve_embed_frontend_base_url(request)
