@@ -1,0 +1,1377 @@
+﻿基于 LangChain + PostgreSQL 的医药流通领域 RAG 系统完整优化方案
+一、引言
+1.1 目标
+构建一个面向医药流通行业的、高精度、可信赖、可扩展的企业级 RAG 系统。系统需具备：
+高召回率：能准确找到药品信息、GSP条款、采购流程、效期规则等业务知识。
+高可信度：答案可溯源到具体文档、条款编号，并自动过滤幻觉。
+权限合规：支持不同角色（采购、质量、仓库）的数据隔离与审计。
+持续进化：通过 Badcase 运营闭环，效果可度量、可优化。
+1.2 技术栈
+向量库：PostgreSQL + pgvector（存储文档块及嵌入）
+检索框架：LangChain（编排检索链、Agent）
+嵌入模型：BGE-large-zh-v1.5（中文通用），后期微调为医药领域专用
+重排序：Cross-Encoder（如 ms-marco-MiniLM-L-6-v2）
+知识图谱：Neo4j 或 PostgreSQL 关系表（可选，用于实体关系）
+规则库：PostgreSQL 结构化表（存储业务规则）
+LLM：GPT-4o-mini 或国产模型（用于生成、评估）
+NLP：文档解析、Embedding、重排序用云服务，分词、实体识别用开源工具+自建领域知识库。
+┌────────────────────────────────┐
+│                        自然语言处理层                          │
+│  分词 | 实体识别 | 同义词扩展 | 意图分类 | 依存句法 | 关系抽取   │
+└────────────────────────────────┘
+│
+┌────────────┼─────────────┐
+▼                         ▼                         ▼
+┌───────┐       ┌───────┐       ┌────────┐
+│  结构化数据  │       │   知识图谱   │       │   非结构化文档 │
+│  (规则库/SQL) │       │   (Neo4j/PG) │       │  (pgvector)   │
+└───────┘       └───────┘       └───────┘
+│                        │                         │
+└────────────┼────────────┘
+▼
+┌─────────────────────────────────┐
+│              混合检索器 + Agentic 决策 (LangChain)              │
+│  • 意图路由 → 选择工具                                          │
+│  • 查询改写 → 同义词扩展/多查询生成                              │
+│  • 融合排序 → RRF + 重排序                                      │
+└─────────────────────────────────┘
+▼
+┌─────────────────────────────────┐
+│                LLM 生成 + 后处理 (引用溯源/NLI)                  │
+└─────────────────────────────────┘
+二、核心概念梳理
+三、按效果优先级的调优方法
+以下方法按效果提升幅度和投入产出比排序，从高到低。
+P0搭建评测体系
+测试集：从真实用户问题中抽取 500 条，覆盖精确词、语义、多实体等类型，每条标注正确答案的文档 ID 或段落。
+评测脚本：基于 LangChain 的 RetrievalQA 或自定义评估器，计算 Recall@k（k=5）、MRR、引用准确率。
+基线：使用当前线上配置跑一遍，记录关键指标。
+环境确认
+1.PostgreSQL 13+ 安装 pgvector 扩展。
+2.LangChain 集成 PGVector 向量存储。
+3.准备分词、Embedding、重排序、NLI 模型依赖。
+第一优先级：基础检索优化（提升 15-25%）
+3.1.1 递归分块 + 语义边界切分
+目的：保证分块语义完整，避免切断关键词和逻辑关系。
+原理：使用 RecursiveCharacterTextSplitter，优先按段落、句子、标点切分。
+实施：
+python
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+splitter = RecursiveCharacterTextSplitter(
+chunk_size=800, chunk_overlap=200,
+separators=["\n\n","\n","。","！","？","；","，"," ",""])
+医药流通示例：
+错误切分：“储存条件：2-8” + “℃”，导致“2-8℃”被切断。
+正确切分：保留完整句子“储存条件：2-8℃”。
+预期效果：召回率提升 10-15%。
+3.1.2 混合检索（向量 + BM25）+ RRF 融合
+目的：同时利用语义匹配和精确词匹配。
+原理：向量检索处理同义词、口语化；BM25 处理药品名、条款号。
+实施：
+向量：使用 pgvector + HNSW 索引
+BM25：使用 PostgreSQL 全文检索 tsvector
+RRF：k=60（经典最优值），可通过网格搜索微调。
+医药流通示例：
+查询：“阿莫西林胶囊的储存温度”
+向量检索可能匹配到“阿莫西林颗粒的储存条件”（语义相似），BM25 精准匹配“阿莫西林胶囊”，融合后提升召回。
+预期效果：Recall@5 从 0.72 提升至 0.89。
+3.1.3 重排序
+目的：修正向量检索的排序错误，将真正相关的文档提到前面。
+原理：两阶段检索：先用向量快速取 Top 20-50，再用 Cross-Encoder 精确打分，取 Top 5。
+实施：
+python
+from sentence_transformers import CrossEncoder
+reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+pairs =[[query, doc]for doc in candidates]
+scores = reranker.predict(pairs)
+医药流通示例：
+查询：“首营品种审批需要哪些资料？”
+向量检索可能把“首营企业审批流程”排在前面，但重排序后“首营品种资料清单”会上升。
+预期效果：准确率提升 5-10%，是 ROI 最高的策略之一。
+第二优先级：增强检索能力（提升 10-20%）
+3.2.1 查询扩展
+目的：将简短、模糊的用户查询扩展为更详细的检索语句。
+原理：用 LLM 生成查询的 2-3 种扩展版本，或直接扩写为包含术语的完整问题。
+实施：
+python
+prompt =f"将以下查询扩展为更详细、包含关键术语的版本：{query}"
+expanded = llm.invoke(prompt)
+医药流通示例：
+原查询：“阿莫西林快过期了”
+扩展后：“药品阿莫西林临近有效期时的处理流程，包括近效期预警、库存处置、销售限制等。”
+预期效果：模糊查询召回率提升 10-15%。
+3.2.2 多查询 RAG
+目的：生成 3-4 种不同表述的查询，并行检索，去重融合。
+原理：缓解“表述不一致导致检索失败”问题。
+实施：用 LLM 生成变体，并行执行检索，按 RRF 融合。
+医药流通示例：
+原查询：“GSP 对冷链药品的要求”
+变体1：“GSP 冷链药品管理规范”
+变体2：“药品经营质量管理规范 冷链条款”
+变体3：“冷链药品收货与储存标准”
+预期效果：复杂查询召回率提升 5-10%。
+3.2.3 上下文检索（为高价值文档）
+目的：让每个分块携带所属文档的标题、章节等上下文，避免信息孤岛。
+原理：在嵌入前，用 LLM 为每个分块生成一句简短上下文，拼接到分块前。
+实施：
+python
+context =f"此内容来自《{doc_title}》第{section}节，主要说明..."
+chunk_with_context =f"{context}\n\n{original_chunk}"
+医药流通示例：
+原始分块：“储存温度 2-8℃”
+添加上下文：“此信息来自《XX药品说明书》第3条储存条件”
+检索时更容易匹配到药品名+储存温度的查询。
+预期效果：对关键文档（说明书、GSP）召回率提升 5-10%，但增加成本（LLM 调用）。
+第三优先级：高级推理与信任（提升 5-15%）
+3.3.1 引用溯源 + NLI 幻觉检测
+目的：确保答案每句话都有文档依据，过滤无依据的幻觉。
+原理：将生成答案拆句，对每句计算与检索文档的语义相似度，候选文档送入 NLI 模型 验证蕴含关系。
+1.归因流程：对每个句子，计算与各文档的相似度，筛选 Top 3 候选。
+2.对每个候选执行 NLI 验证，若任一验证为 entailment，标记为已验证，记录来源。
+若无一支持，标记为“未验证”。
+3.分级处理
+高危幻觉：句子包含数字、条款编号、强断言词，且未验证 → 删除该句。
+低危幻觉：推理性语句未验证 → 保留但添加警告标记 。
+4.结构化输出
+返回 JSON，包含答案、引用列表、未验证警告。
+json
+{
+"answer":"...",
+"citations":[{"sentence":"...","source":{"doc_id":1,"text":"..."}}],
+"unverified":[{"sentence":"...","reason":"no evidence"}]}
+实施：
+使用 cross-encoder/nli-deberta-v3-base 验证蕴含概率。
+对无法验证的事实性句子（含数字、条款号）自动删除或标记。
+医药流通示例：
+答案：“根据 GSP 第 45 条，冷链药品应在 2-8℃储存。”
+NLI 检查：文档中第 45 条是否确实包含此内容，若不支持则删除。
+预期效果：引用准确率 >94%，幻觉率降低 80%。
+3.3.2 Agentic RAG（条件路由 + 迭代检索）
+目的：根据问题类型动态选择检索策略，对复杂问题进行多轮检索。
+原理：LLM 作为 Agent，调用不同工具（向量库、规则库、SQL）并决定是否继续检索。
+实施：使用 LangChain 的 AgentExecutor，定义工具描述和示例。
+医药流通示例：
+用户：“为什么这批胰岛素不能上传追溯码？”
+Agent 步骤：
+调用规则库：检查追溯码上传条件（有效期、三单关联等）
+若规则不满足，调用向量库：检索“追溯码上传失败处理流程”
+综合生成答案，指出具体原因和解决方法。
+预期效果：复杂问题准确率提升 10-20%。
+3.3.3 知识图谱增强
+目的：处理多实体关联问题，如“XX 药品的供应商有哪些 GSP 证书？”
+原理：构建实体-关系图（药品、供应商、证书、条款），检索时结合图遍历和向量检索。
+实施：使用 Neo4j 或 PostgreSQL 关系表存储图谱，用 Cypher 或 SQL 查询。
+医药流通示例：
+查询：“XX 药业的阿莫西林胶囊，其 GMP 证书什么时候到期？”
+图查询：MATCH (s:Supplier {name:'XX药业'})-[:PRODUCES]->(d:Drug {name:'阿莫西林胶囊'})<-[:CERTIFIED_BY]-(c:Certificate) RETURN c.expiry_date
+预期效果：关系查询准确率提升 15-20%。
+第四优先级：持续进化与安全（基础保障）
+3.4.1 Badcase 运营闭环
+目的：建立系统化的问题收集、分类、修复、验证流程。
+实施：
+收集：用户差评、客服工单、自动质量检测（检索相关性、忠实度）。
+分类：用 LLM 将问题归为四类（检索失败、幻觉、路由错误、知识缺失）。
+修复：按类型优化分块、参数、Prompt 或补充知识。
+验证：原 case 验证 + 全量回归测试（容差 2%）。
+发布：灰度 10% → 全量。
+预期效果：系统准确率每月提升 1-2%，持续向好。
+3.4.2 权限管理与审计
+目的：确保不同角色只能访问授权数据，满足合规要求。
+实施：
+在文档 metadata 中存储 branch、security_level 等字段。
+检索时添加过滤条件：WHERE (branch = user_branch OR branch = '公共') AND security_level <= user_level
+记录审计日志：用户、查询、返回文档 ID、时间。
+医药流通示例：
+采购员不能查看薪资文件，仓库管理员只能查看本仓库的库存数据。
+预期效果：通过安全审计，避免数据泄露风险。
+四、分阶段实施步骤
+阶段一：基础优化（2-3周）—— 快速见效
+目标：建立基线，实现混合检索 + 重排序，准确率提升至 85% 以上。
+阶段二：增强检索（3-4周）—— 精准提升
+目标：引入查询扩展、多查询、上下文检索，提升模糊和复杂查询效果。
+阶段三：高级推理与可信（4-6周）—— 深度优化
+目标：实现引用溯源、Agentic RAG、知识图谱，处理复杂业务问题。
+阶段四：持续进化与规模化（长期）
+目标：建立运营闭环，迭代优化，扩展至全业务。
+五、总结与关键建议
+从简单开始，度量驱动：先实现混合检索+重排序，建立基线；每次改进都对比指标，确保正向收益。
+分层治理：将检索、推理、安全、运营分开设计，便于独立优化和故障隔离。
+医药流通领域特色：重点投入在术语理解（微调嵌入）、规则建模（GSP、效期）、关系查询（知识图谱）、合规溯源（引用+NLI）上。
+避免过度工程：根据业务场景选择组合，不要一次性使用所有策略。推荐组合：
+基础版：阶段一 + 阶段二（混合检索+重排序+查询扩展）
+专业版：基础版 + 引用溯源 + Agentic RAG
+企业版：专业版 + 知识图谱 + 微调嵌入
+附：一份基础可用版配置清单
+涵盖从环境搭建到检索参数调优的完整步骤。你可以直接按此清单部署并逐步验证。
+一、环境与依赖
+1.1 PostgreSQL + pgvector 安装
+bash
+# Ubuntu/Debian
+sudoaptinstall postgresql-16 postgresql-16-pgvector
+# 或使用 Docker
+docker run --name pgvector -ePOSTGRES_PASSWORD=mysecret -d pgvector/pgvector:pg16
+1.2 Python 依赖（核心）
+bash
+pip install langchain langchain-postgres pgvector psycopg2-binary
+pip install sentence-transformers  # BGE 嵌入
+pip install rank-bm25 jieba          # BM25 与分词
+pip install openai                   # 若使用 OpenAI 模型（非必须）
+二、数据库表结构
+2.1 文档表（含向量与全文检索）
+sql
+-- 启用扩展
+CREATE EXTENSION IFNOTEXISTS vector;CREATE EXTENSION IFNOTEXISTS pg_trgm;-- 用于相似度
+-- 主表
+CREATETABLE documents (
+id SERIALPRIMARYKEY,
+content TEXTNOTNULL,-- 原始分块文本
+embedding vector(1024),-- BGE-large-zh 维度 1024
+metadata JSONB,-- 存储来源、权限等信息
+tsv TSVECTOR,-- 用于 BM25 全文检索
+created_at TIMESTAMPDEFAULTNOW());
+-- 向量索引（HNSW）
+CREATEINDEX documents_embedding_idx ON documents
+USING hnsw (embedding vector_cosine_ops);
+-- 全文检索索引
+CREATEINDEX documents_tsv_idx ON documents
+USING GIN (tsv);
+-- 可选：为常用 metadata 字段建立索引
+CREATEINDEX documents_metadata_branch_idx ON documents
+((metadata->>'branch'));
+2.2 辅助表（同义词库，可选）
+sql
+CREATETABLE synonyms (
+id SERIALPRIMARYKEY,
+source_term TEXTNOTNULL,
+target_term TEXTNOTNULL,
+category VARCHAR(50)-- 例如 'drug', 'process');
+三、分块配置（LangChain）
+python
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+text_splitter = RecursiveCharacterTextSplitter(
+chunk_size=800,# 字符数（约 200-300 token）
+chunk_overlap=200,# 重叠 25%
+separators=[
+"\n\n",# 段落
+"\n",# 行
+"。","！","？",# 中文句号
+"；","，",# 分号、逗号
+" ",""# 单词、字符
+],
+length_function=len,)
+说明：优先在段落和句子边界切分，保证语义完整性。
+四、嵌入模型配置
+python
+from sentence_transformers import SentenceTransformer
+# 加载 BGE-large-zh-v1.5
+model = SentenceTransformer('BAAI/bge-large-zh-v1.5')
+# 查询时需添加前缀（BGE 官方推荐）
+defencode_query(text:str):
+return model.encode("为这个句子生成表示以用于检索相关文章："+ text)
+defencode_document(text:str):
+return model.encode(text)# 文档不加前缀
+五、混合检索配置
+5.1 BM25 检索器（使用 PostgreSQL 全文检索）
+python
+import psycopg2
+from psycopg2.extras import RealDictCursor
+classBM25Retriever:
+def__init__(self, conn_string):
+self.conn = psycopg2.connect(conn_string)
+self.conn.autocommit =True
+defretrieve(self, query, top_k=20):
+# 使用 PostgreSQL 的 ts_rank 实现 BM25 排序
+cur = self.conn.cursor(cursor_factory=RealDictCursor)
+cur.execute("""
+SELECT id, content, metadata,
+ts_rank(tsv, plainto_tsquery('chinese', %s)) AS score
+FROM documents
+WHERE tsv @@ plainto_tsquery('chinese', %s)
+ORDER BY score DESC
+LIMIT %s
+""",(query, query, top_k))
+results = cur.fetchall()
+return[(row['id'], row['score'])for row in results]
+注意：需要确保文档入库时 tsv 列已更新（见下节）。
+5.2 向量检索器（pgvector）
+python
+from langchain.vectorstores import PGVector
+from langchain.embeddings import HuggingFaceEmbeddings
+# LangChain 适配器
+embeddings = HuggingFaceEmbeddings(
+model_name="BAAI/bge-large-zh-v1.5",
+model_kwargs={'device':'cpu'},# 或 'cuda'
+encode_kwargs={'normalize_embeddings':True})
+vectorstore = PGVector(
+connection_string=CONN_STRING,
+embedding_function=embeddings,
+collection_name="my_docs",
+use_jsonb=True,)
+5.3 RRF 融合函数
+python
+defrrf_fusion(bm25_results, vector_results, k=60, alpha=0.5):
+"""
+bm25_results: list of (doc_id, score) 按分数降序排列
+vector_results: list of (doc_id, score) 按分数降序排列
+"""
+scores ={}
+for rank,(doc_id, _)inenumerate(bm25_results):
+scores[doc_id]= scores.get(doc_id,0)+ alpha /(k + rank +1)
+for rank,(doc_id, _)inenumerate(vector_results):
+scores[doc_id]= scores.get(doc_id,0)+(1- alpha)/(k + rank +1)
+# 返回按融合分数降序的文档ID列表
+returnsorted(scores.items(), key=lambda x: x[1], reverse=True)
+5.4 完整混合检索器 （带缓存 + 权限过滤）
+python
+from functools import lru_cachefrom langchain.vectorstores import PGVectorfrom langchain.embeddings import HuggingFaceEmbeddingsfrom rank_bm25 import BM25Okapiimport jiebaimport psycopg2
+classHybridRetriever:
+# 类级别的 BM25 缓存（单例）
+_bm25 =None
+_doc_ids =None
+def__init__(self, pg_conn, embedding_model="BAAI/bge-large-zh-v1.5",
+k=60, alpha=0.5, candidate_k=20, enable_cache=True):
+self.pg_conn = pg_conn
+self.embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
+self.vectorstore = PGVector(connection_string=pg_conn, embedding_function=self.embeddings)
+self.k = k
+self.alpha = alpha
+self.candidate_k = candidate_k
+self.enable_cache = enable_cache
+# 单例模式构建 BM25（仅首次实例化时构建）
+if HybridRetriever._bm25 isNone:
+HybridRetriever._bm25, HybridRetriever._doc_ids = self._build_bm25()
+def_build_bm25(self):
+with self.pg_conn.cursor()as cur:
+cur.execute("SELECT id, content FROM documents")
+rows = cur.fetchall()
+doc_ids =[r[0]for r in rows]
+tokenized =[list(jieba.cut(r[1]))for r in rows]
+return BM25Okapi(tokenized), doc_ids
+def_fetch_documents_by_ids(self, doc_ids):
+"""根据 ID 列表获取 Document 对象（含内容）"""
+ifnot doc_ids:
+return[]
+with self.pg_conn.cursor()as cur:
+cur.execute("SELECT id, content, metadata FROM documents WHERE id = ANY(%s)",(doc_ids,))
+rows = cur.fetchall()
+from langchain.schema import Document
+docs =[]
+for row in rows:
+doc = Document(page_content=row[1], metadata=row[2])
+doc.metadata['id']= row[0]
+docs.append(doc)
+# 保持原顺序
+doc_map ={doc.metadata['id']: doc for doc in docs}
+return[doc_map[doc_id]for doc_id in doc_ids if doc_id in doc_map]
+@lru_cache(maxsize=128)# 查询结果缓存（仅当 enable_cache=True 且 query 可哈希时）
+def_cached_retrieve(self, query, top_k=5):
+# 实际检索逻辑
+return self._retrieve_impl(query, top_k)
+def_retrieve_impl(self, query, top_k):
+# BM25 检索
+tokenized_query =list(jieba.cut(query))
+bm25_scores = self._bm25.get_scores(tokenized_query)
+# 取前 candidate_k 个
+top_indices =sorted(range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True)[:self.candidate_k]
+bm25_ids =[self._doc_ids[i]for i in top_indices]
+# 向量检索（带权限过滤示例，需自行扩展 filter）
+# 这里简化，假设 vectorstore 已集成权限过滤
+vector_results = self.vectorstore.similarity_search_with_score(query, k=self.candidate_k)
+vector_ids =[]
+for doc, _ in vector_results:
+doc_id = doc.metadata.get('id')
+if doc_id isnotNone:
+vector_ids.append(doc_id)
+# RRF 融合
+fused = self._rrf_fusion(bm25_ids, vector_ids, self.k, self.alpha)
+final_ids =[doc_id for doc_id, _ in fused[:top_k]]
+return self._fetch_documents_by_ids(final_ids)
+defretrieve(self, query, top_k=5):
+if self.enable_cache:
+return self._cached_retrieve(query, top_k)
+else:
+return self._retrieve_impl(query, top_k)
+@staticmethod
+def_rrf_fusion(list1, list2, k, alpha):
+scores ={}
+for rank, doc_id inenumerate(list1):
+scores[doc_id]= scores.get(doc_id,0)+ alpha /(k + rank +1)
+for rank, doc_id inenumerate(list2):
+scores[doc_id]= scores.get(doc_id,0)+(1- alpha)/(k + rank +1)
+returnsorted(scores.items(), key=lambda x: x[1], reverse=True)
+六、索引与数据入库
+6.1 文档入库（含向量与全文索引更新）
+python
+definsert_document(content, metadata):
+# 1. 生成向量
+embedding = encode_document(content).tolist()
+# 2. 生成 tsv 列（中文分词需自定义）
+import jieba
+words =' '.join(jieba.cut(content))
+tsv = to_tsvector('chinese', words)# 需使用 PostgreSQL 的 to_tsvector
+# 实际执行时，使用 SQL 插入，并让数据库计算 tsv
+cur.execute("""
+INSERT INTO documents (content, embedding, metadata, tsv)
+VALUES (%s, %s, %s, to_tsvector('chinese', %s))
+""",(content, embedding, json.dumps(metadata), words))
+注：to_tsvector('chinese', words) 需要 PostgreSQL 支持中文分词（如 zhparser）。若未配置，可简化：先插入，后续用触发器更新。
+6.2 批量入库建议
+使用 psycopg2 的 execute_values 批量插入，提高效率。
+每批 100-200 条，避免内存爆炸。
+七、参数调优（网格搜索）
+7.1 准备验证集
+创建 500 条标注数据，每条包含：
+query：用户问题
+relevant_doc_ids：正确答案对应的文档 ID 列表
+7.2 评估函数
+python
+defrecall_at_k(retrieved_ids, relevant_ids, k=5):
+top_k = retrieved_ids[:k]
+return1ifany(doc_id in relevant_ids for doc_id in top_k)else0
+7.3 网格搜索
+python
+best_alpha =0.5
+best_k =60
+best_recall =0.0
+for alpha in[0.3,0.4,0.5,0.6]:
+for k in[40,60,80]:
+retriever = HybridRetriever(conn_string, vectorstore, alpha=alpha, k=k)
+recalls =[]
+for q, relevant in validation_set:
+retrieved = retriever.retrieve(q, top_k=5)
+retrieved_ids =[doc_id for doc_id, _ in retrieved]
+recalls.append(recall_at_k(retrieved_ids, relevant, k=5))
+avg_recall =sum(recalls)/len(recalls)
+if avg_recall > best_recall:
+best_recall = avg_recall
+best_alpha = alpha
+best_k = k
+print(f"Best alpha={best_alpha}, k={best_k}, Recall@5={best_recall:.4f}")
+八、重排序（可选，提升精度）
+安装 sentence-transformers 后使用 Cross-Encoder：
+python
+from sentence_transformers import CrossEncoder
+reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+defrerank(query, candidates, top_k=5):
+# candidates: list of document texts
+pairs =[[query, doc]for doc in candidates]
+scores = reranker.predict(pairs)
+sorted_indices =sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+return[candidates[i]for i in sorted_indices[:top_k]]
+集成到检索器：在 RRF 融合后，取前 20 个候选，用重排序重新打分，再返回前 5。
+九、权限与元数据过滤（简化版）
+若需要按部门/安全级别过滤，可在检索时添加 WHERE 条件：
+python
+defretrieve_with_filter(query, user_branch, user_level):
+# 向量检索时添加 filter
+filter={
+"branch":{"$in":[user_branch,"公共"]},
+"security_level":{"$lte": user_level}
+}
+results = vectorstore.similarity_search_with_score(query, k=20,filter=filter)
+# 同样 BM25 检索也需在 SQL 中加入相应过滤条件
+十、监控与日志（基础）
+sql
+CREATETABLE retrieval_logs (
+id SERIALPRIMARYKEY,
+query TEXT,
+user_id VARCHAR(64),
+retrieved_docs JSONB,
+response_time_ms INT,
+created_at TIMESTAMPDEFAULTNOW());
+在每次检索后记录，用于后续分析。
+十一、完整部署检查清单
+PostgreSQL 安装 pgvector 扩展，配置中文分词（可选）
+创建 documents 表及索引
+安装 Python 依赖
+实现递归分块函数
+实现嵌入模型封装（BGE）
+实现 BM25 检索器（基于 PostgreSQL 全文检索）
+实现向量检索器（LangChain PGVector）
+实现 RRF 融合函数
+实现混合检索器
+准备 500 条验证集
+执行网格搜索，确定最优 alpha 和 k
+实现重排序（可选）
+集成权限过滤（若需要）
+建立日志记录
+单元测试：验证检索结果至少包含一个正确答案
+按此清单部署，你将得到一个 基础可用的混合检索 RAG 系统，后续可在此基础上逐步叠加 NLP 增强、Agentic 决策等功能。
+附：针对算法备案中要求的问答关键词过滤
+在RAG系统中通常需要在两个环节分别实施，以形成“输入过滤 + 输出过滤”的双重保障。下面我结合你的技术栈（LangChain + PostgreSQL）给出具体实施位置与技术栈建议。
+一、关键词过滤的两种实施环节对比
+备案要求通常希望“全过程可审计”，建议两个环节都做，并在日志中记录过滤行为。
+二、技术栈选型
+结合你的医药流通场景（数据可能涉及患者隐私、商业机密），建议采用：
+敏感词精确匹配（AC自动机）+ 本地微调分类模型 的组合
+若备案允许且成本可控，可叠加云端API作为备用
+三、在LangChain架构中的具体实施点
+3.1 输入过滤（在检索链最前端）
+python
+from langchain.schema import BaseCallbackHandlerfrom aho_corasick import Automaton  # pyahocorasick
+classInputFilterHandler(BaseCallbackHandler):
+"""在查询进入检索前执行过滤"""
+def__init__(self, sensitive_words_list):
+self.automaton = Automaton()
+for word in sensitive_words_list:
+self.automaton.add_word(word, word)
+self.automaton.make_automaton()
+defon_chain_start(self, serialized, inputs,**kwargs):
+query = inputs.get("input","")
+# 1. 精确匹配敏感词
+if self.automaton.exists(query):
+raise ValueError("查询包含敏感词，已拦截")
+# 2. 可选：调用分类模型判断语义
+if self.semantic_filter.is_violation(query):
+raise ValueError("查询内容违规，已拦截")
+return inputs
+3.2 输出过滤（在生成后、返回前）
+python
+classOutputFilterHandler(BaseCallbackHandler):
+defon_llm_end(self, response,**kwargs):
+answer = response.generations[0][0].text
+# 1. 精确匹配
+if self.automaton.contains(answer):
+# 记录日志、替换为预设安全回答
+return"抱歉，系统检测到回答中包含敏感内容，已拦截。"
+# 2. 分类模型二次判断
+if self.semantic_filter.is_violation(answer):
+return"系统无法回答当前问题，请联系管理员。"
+return answer
+3.3 集成到LangChain的检索问答链
+python
+from langchain.chains import RetrievalQAfrom langchain.callbacks import CallbackManager
+callback_manager = CallbackManager([
+InputFilterHandler(sensitive_words),
+OutputFilterHandler(sensitive_words)])
+qa_chain = RetrievalQA.from_chain_type(
+llm=llm,
+retriever=hybrid_retriever,
+callbacks=callback_manager)
+四、数据库与日志记录
+为满足备案的“可追溯”要求，需记录过滤行为：
+sql
+CREATETABLE filter_logs (
+id SERIALPRIMARYKEY,
+typeVARCHAR(10),-- 'input' 或 'output'
+original_text TEXT,
+filtered_reason TEXT,
+matched_keywords TEXT[],
+user_id VARCHAR(64),
+session_id VARCHAR(64),
+created_at TIMESTAMPDEFAULTNOW());
+每次过滤触发时，写入该表，以备审计。
+五、敏感词库的维护
+敏感词库应包含：
+政治敏感词（可从公开渠道获取基础库）
+医药行业特殊违禁词（如违禁药品、虚假宣传用语）
+企业内部敏感词（如特定产品代号、未公开价格）
+建议：
+存储在PostgreSQL表中，支持动态更新
+定期与法务/合规团队同步，进行增删
+六、与现有技术栈的关系
+七、算法备案材料中如何描述
+在备案文档的“安全防护机制”章节，可写为：
+系统采用输入输出双重过滤机制：
+输入过滤：基于AC自动机与语义分类模型，在用户查询进入检索前拦截敏感问题，命中后返回预设拒绝信息，不进入检索与生成流程。
+输出过滤：对LLM生成的答案再次进行敏感词精确匹配与语义违规检测，发现违规时替换为安全回答。
+审计追溯：所有过滤行为均记录至数据库，包含用户标识、触发词、拦截时间，满足算法备案的可追溯要求。
+八、总结：推荐方案
+这样既满足算法备案的合规要求，又与你的LangChain+PostgreSQL架构无缝融合。如果需要，我可以进一步提供敏感词库的行业基础库获取渠道或微调分类模型的训练数据构建方法。
+附：NLI（自然语言推理）模型
+是实现引用溯源与幻觉检测的核心组件，下面说明它在整体架构中的位置。
+一、NLI 模型的作用与定位
+在实施优先级中，NLI 属于 Phase 3（高级推理与信任），不是基础版必须的，但若要达到高准确率（>90%）和合规要求（金融、医疗），则必不可少。
+二、NLI 模型选型
+推荐：cross-encoder/nli-deberta-v3-base，作为后处理步骤调用。
+三、NLI 模型配置与集成
+3.1 模型加载
+python
+from sentence_transformers import CrossEncoder
+# 加载 NLI 模型（Cross-Encoder 格式）
+nli_model = CrossEncoder('cross-encoder/nli-deberta-v3-base')
+defverify_entailment(premise:str, hypothesis:str)->bool:
+"""
+判断 premise（检索文档）是否能蕴含 hypothesis（生成句子）
+返回 True 表示支持，False 表示不支持
+"""
+pairs =[[premise, hypothesis]]
+scores = nli_model.predict(pairs)# 输出 [entailment_prob, neutral_prob, contradiction_prob]
+# 通常取第一维（蕴含概率）> 阈值则认为支持
+return scores[0][0]>0.7
+3.2 引用溯源与幻觉检测流程
+import refrom sentence_transformers import CrossEncoderfrom typing import List, Dict
+# 加载 NLI 模型（全局单例）
+_nli_model = CrossEncoder('cross-encoder/nli-deberta-v3-base')
+defsplit_sentences(text:str)-> List[str]:
+"""中文分句，保留标点"""
+return[s.strip()for s in re.split(r'(?<=[。！？])', text)if s.strip()]
+defcontains_factual_claim(sentence:str)->bool:
+"""判断是否包含事实性陈述"""
+patterns =[r'\d+',r'第\d+条',r'必须|应当|不得|禁止',r'万元|%|天|年']
+returnany(re.search(p, sentence)for p in patterns)
+defget_entailment_prob(premise:str, hypothesis:str)->float:
+"""返回蕴含概率（0~1）"""
+scores = _nli_model.predict([[premise, hypothesis]])
+return scores[0][0]# entailment 概率
+defattribute_and_filter(answer:str, retrieved_docs: List[Dict])-> Dict:
+"""
+retrieved_docs: list of dict with keys 'id', 'content'
+"""
+sentences = split_sentences(answer)
+final_sentences =[]
+citations =[]
+unverified =[]
+for sent in sentences:
+# 1. 相似度预筛选：取 Top-3 候选文档（此处简化，实际可用 embedding 相似度）
+# 假设 retrieved_docs 已经按相关性排序，直接取前 3
+candidates = retrieved_docs[:3]
+best_doc =None
+best_prob =0.0
+for doc in candidates:
+prob = get_entailment_prob(doc['content'], sent)
+if prob > best_prob:
+best_prob = prob
+best_doc = doc
+if best_doc and best_prob >0.7:
+final_sentences.append(sent)
+citations.append({
+"sentence": sent,
+"source":{
+"doc_id": best_doc['id'],
+"content": best_doc['content'][:200],
+},
+"confidence":round(best_prob,2)
+})
+else:
+if contains_factual_claim(sent):
+# 高危幻觉：丢弃
+continue
+else:
+# 低危：保留并标记
+marked_sent =f"{sent} ⚠️[未找到直接依据]"
+final_sentences.append(marked_sent)
+unverified.append({
+"sentence": sent,
+"reason":"无法在检索文档中找到依据"
+})
+return{
+"filtered_answer":" ".join(final_sentences),# 用空格分隔
+"citations": citations,
+"unverified": unverified
+}
+3.3 与 LangChain 集成（作为后处理回调）
+python
+classNLIVerificationHandler(BaseCallbackHandler):
+def__init__(self, retriever):
+self.retriever = retriever
+defon_llm_end(self, response,**kwargs):
+answer = response.generations[0][0].text
+# 获取本次检索的文档（需要从上下文中传递）
+retrieved_docs = kwargs.get("retrieved_docs",[])
+verified = attribute_and_filter(answer, retrieved_docs)
+# 修改返回内容
+response.generations[0][0].text = verified["filtered_answer"]
+# 可将 citations 存入额外字段
+return response
+四、性能与成本考虑
+建议：仅对高价值查询（如涉及金额、条款、合规）启用全量验证；普通查询可只用轻量级规则或跳过。
+附：权限隔离
+是一个重要的安全与合规组件，尤其是在医药流通领域（不同分行、角色数据隔离）。下面明确权限隔离的实施阶段、技术方案与配置细节。
+一、权限隔离的实施阶段
+最佳实践：在 Phase 1 完成后，立即实施最小可行权限隔离（基于 metadata 的简单过滤），确保系统可以安全地给不同角色使用。复杂权限（如 RLS、多租户）可在 Phase 2 或 Phase 3 完善。
+二、权限隔离技术方案
+2.1 核心思路
+文档入库时：为每个 chunk 的 metadata 字段添加权限标签（如 branch、security_level、department）。
+检索时：根据当前用户的权限，在向量检索和 BM25 检索的 SQL 中添加 WHERE 条件进行过滤。
+一个具体的例子（医药流通场景）
+1.假设你有一份文档：阿莫西林胶囊说明书.pdf，属于租户 上海浦东分行，安全级别 2。
+2.分块后得到两个 chunk：
+3.入库：
+对每个 chunk 的 content 调用嵌入模型 → 得到向量 [0.12, -0.34, ...]
+存入 documents 表（包含 content, embedding, metadata）。
+4.检索：
+用户 张三（租户=上海浦东分行，security_level=2）查询：“阿莫西林怎么吃？”
+检索器生成查询向量，然后执行 SQL：
+sql
+SELECT content FROM documentsWHERE embedding <=> query_vector <0.8
+AND metadata->>'branch'IN('上海浦东分行','公共')
+AND(metadata->>'security_level')::int<=2LIMIT5
+结果中只会返回属于该租户且安全级别允许的 chunk（这里就是 chunk 2）
+2.2 数据库表结构补充
+sql
+-- 在 documents 表中已有 metadata JSONB 字段，示例内容：-- {"branch": "上海浦东分行", "security_level": 2, "department": "对公业务部", "creator": "user123"}
+-- 为常用权限字段创建索引，加速过滤查询
+CREATEINDEX idx_metadata_branch ON documents ((metadata->>'branch'));CREATEINDEX idx_metadata_security_level ON documents ((metadata->>'security_level'));
+2.3 用户权限上下文（JWT Token 示例）
+json
+{
+"user_id":"emp_20041",
+"branch":"上海浦东分行",
+"security_level":2,
+"role":"client_manager",
+"departments":["对公业务部"]}
+2.4 检索时添加权限过滤
+向量检索（LangChain PGVector 过滤语法）
+python
+# 构建过滤条件
+filter_condition ={
+"branch":{"$in":["上海浦东分行","公共"]},
+"security_level":{"$lte":2}}
+results = vectorstore.similarity_search_with_score(
+query,
+k=20,
+filter=filter_condition)
+BM25 检索（PostgreSQL 查询中加 WHERE）
+python
+复制下载
+cur.execute("""
+SELECT id, content, metadata
+FROM documents
+WHERE tsv @@ plainto_tsquery('chinese', %s)
+AND (metadata->>'branch' IN (%s, '公共'))
+AND (metadata->>'security_level')::int <= %s
+ORDER BY ts_rank(tsv, query) DESC
+LIMIT %s
+""",(query, user_branch, user_security_level, top_k))
+2.5 进阶：PostgreSQL 行级安全（RLS）
+对于更高安全要求，可在数据库层强制行级安全，即使应用层忘记加过滤也能隔离。
+sql
+复制下载
+-- 启用 RLSALTERTABLE documents ENABLEROWLEVEL SECURITY;
+-- 创建策略（假设使用 session 变量传递用户信息）CREATE POLICY branch_isolation ON documents
+USING((metadata->>'branch')= current_setting('app.current_branch')
+OR(metadata->>'branch')='公共');
+-- 应用层每次连接时设置SETLOCAL app.current_branch ='上海浦东分行';
+三、配置清单（权限隔离）
+四、实施步骤（最小可行版）
+准备权限元数据：为现有文档批量添加 branch 和 security_level（如默认 branch='公共', security_level=1）。
+修改检索代码：在 HybridRetriever 中接收 user_branch 和 user_security_level 参数，并传递给底层检索器。
+单元测试：使用不同权限的用户查询，验证是否只能看到授权数据。
+性能测试：确认添加过滤条件后检索延迟增加不超过 10%。
+4.1 LangChain 自定义检索器（支持权限过滤）
+在应用层实现混合检索 + 权限过滤（通过 SQL WHERE），替换 LangChain 默认检索器
+python
+import jsonimport psycopg2from typing import List, Dict, Any, Optionalfrom langchain.schema import BaseRetriever, Documentfrom langchain.vectorstores import PGVectorfrom langchain.embeddings import HuggingFaceEmbeddingsfrom sentence_transformers import CrossEncoderimport jieba
+classPermissionAwareHybridRetriever(BaseRetriever):
+"""
+支持权限过滤的混合检索器（向量 + BM25 + 可选重排序）
+"""
+def__init__(
+self,
+pg_conn_string:str,
+vectorstore: PGVector,
+user_branch:str,
+user_security_level:int,
+user_departments: List[str]=None,
+alpha:float=0.5,
+rrf_k:int=60,
+candidate_k:int=20,
+enable_reranking:bool=False,
+):
+super().__init__()
+self.pg_conn_string = pg_conn_string
+self.vectorstore = vectorstore
+self.user_branch = user_branch
+self.user_security_level = user_security_level
+self.user_departments = user_departments or[]
+self.alpha = alpha
+self.rrf_k = rrf_k
+self.candidate_k = candidate_k
+self.enable_reranking = enable_reranking
+if enable_reranking:
+self.reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+def_get_relevant_documents(self, query:str)-> List[Document]:
+"""执行混合检索并返回 Document 列表"""
+# 1. BM25 检索（带权限过滤）
+bm25_results = self._bm25_search(query)
+# 2. 向量检索（带权限过滤）
+vector_results = self._vector_search(query)
+# 3. RRF 融合
+fused_ids = self._rrf_fusion(bm25_results, vector_results)
+# 4. 获取完整文档内容
+docs = self._fetch_documents_by_ids(fused_ids[:5])# 返回 Top5
+# 5. 可选重排序
+if self.enable_reranking andlen(docs)>1:
+docs = self._rerank(query, docs)
+return docs
+def_bm25_search(self, query:str)-> List[Dict]:
+"""PostgreSQL 全文检索 BM25，带权限过滤"""
+conn = psycopg2.connect(self.pg_conn_string)
+cur = conn.cursor()
+# 构建权限过滤条件
+filter_sql = self._build_permission_filter_sql()
+sql =f"""
+SELECT id, content, metadata,
+ts_rank(tsv, plainto_tsquery('chinese', %s)) AS score
+FROM documents
+WHERE tsv @@ plainto_tsquery('chinese', %s)
+AND {filter_sql}
+ORDER BY score DESC
+LIMIT %s
+"""
+cur.execute(sql,(query, query, self.candidate_k))
+rows = cur.fetchall()
+cur.close()
+conn.close()
+return[{"id": row[0],"content": row[1],"metadata": row[2],"score": row[3]}for row in rows]
+def_vector_search(self, query:str)-> List[Dict]:
+"""pgvector 向量检索，带权限过滤"""
+# 构建 LangChain 兼容的 filter 条件
+filter_condition ={
+"branch":{"$in":[self.user_branch,"公共"]},
+"security_level":{"$lte": self.user_security_level}
+}
+if self.user_departments:
+filter_condition["department"]={"$in": self.user_departments +["公共"]}
+results = self.vectorstore.similarity_search_with_score(
+query,
+k=self.candidate_k,
+filter=filter_condition
+)
+# 转换为统一格式
+return[
+{
+"id": doc.metadata.get("id"),
+"content": doc.page_content,
+"metadata": doc.metadata,
+"score": score
+}
+for doc, score in results
+]
+def_rrf_fusion(self, bm25_results, vector_results)-> List[int]:
+"""加权 RRF 融合，返回文档 ID 列表（按融合分降序）"""
+scores ={}
+for rank, item inenumerate(bm25_results):
+doc_id = item["id"]
+scores[doc_id]= scores.get(doc_id,0)+ self.alpha /(self.rrf_k + rank +1)
+for rank, item inenumerate(vector_results):
+doc_id = item["id"]
+scores[doc_id]= scores.get(doc_id,0)+(1- self.alpha)/(self.rrf_k + rank +1)
+sorted_ids =sorted(scores.items(), key=lambda x: x[1], reverse=True)
+return[doc_id for doc_id, _ in sorted_ids]
+def_fetch_documents_by_ids(self, doc_ids: List[int])-> List[Document]:
+"""根据 ID 列表从数据库获取完整 Document 对象"""
+ifnot doc_ids:
+return[]
+conn = psycopg2.connect(self.pg_conn_string)
+cur = conn.cursor()
+cur.execute(
+"SELECT id, content, metadata FROM documents WHERE id = ANY(%s)",
+(doc_ids,)
+)
+rows = cur.fetchall()
+cur.close()
+conn.close()
+# 按原始顺序返回
+id_to_doc ={row[0]:(row[1], row[2])for row in rows}
+docs =[]
+for doc_id in doc_ids:
+if doc_id in id_to_doc:
+content, metadata = id_to_doc[doc_id]
+docs.append(Document(page_content=content, metadata=metadata))
+return docs
+def_rerank(self, query:str, docs: List[Document])-> List[Document]:
+"""使用 Cross-Encoder 重排序"""
+pairs =[[query, doc.page_content]for doc in docs]
+scores = self.reranker.predict(pairs)
+sorted_idx =sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+return[docs[i]for i in sorted_idx]
+def_build_permission_filter_sql(self)->str:
+"""生成 PostgreSQL WHERE 子句的权限条件"""
+conditions =[
+f"(metadata->>'branch' IN ('{self.user_branch}', '公共'))",
+f"(metadata->>'security_level')::int <= {self.user_security_level}"
+]
+if self.user_departments:
+dept_list ="', '".join(self.user_departments +["公共"])
+conditions.append(f"(metadata->>'department') IN ('{dept_list}')")
+return" AND ".join(conditions)
+使用示例
+python
+复制下载
+# 初始化嵌入模型
+embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-large-zh-v1.5")
+# 初始化向量存储
+vectorstore = PGVector(
+connection_string="postgresql://user:pass@localhost/db",
+embedding_function=embeddings,
+collection_name="documents")
+# 创建权限感知检索器（假设用户为上海浦东分行，安全级别2）
+retriever = PermissionAwareHybridRetriever(
+pg_conn_string="postgresql://user:pass@localhost/db",
+vectorstore=vectorstore,
+user_branch="上海浦东分行",
+user_security_level=2,
+user_departments=["对公业务部"],
+alpha=0.5,# 可根据网格搜索结果调整
+rrf_k=60,
+candidate_k=20,
+enable_reranking=True)
+# 在 LangChain 链中使用from langchain.chains import RetrievalQA
+qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
+answer = qa_chain.run("查询药品库存")
+4.2 PostgreSQL RLS 配置脚本
+以下脚本为 documents 表启用行级安全，并创建基于 branch 和 security_level 的策略。
+sql
+-- 1. 启用 RLSALTERTABLE documents ENABLEROWLEVEL SECURITY;
+-- 2. 创建策略：用户只能看到自己分行或公共的文档，且安全级别不超过自己的级别CREATE POLICY branch_security_policy ON documents
+USING(
+(metadata->>'branch'= current_setting('app.current_branch',true)
+OR metadata->>'branch'='公共')
+AND(metadata->>'security_level')::int<= current_setting('app.current_security_level',true)::int
+);
+-- 3. （可选）为部门级隔离添加策略（假设 metadata 中有 department 字段）CREATE POLICY department_security_policy ON documents
+USING(
+metadata->>'department'=ANY(
+string_to_array(current_setting('app.user_departments',true),',')
+)
+OR metadata->>'department'='公共'
+);
+-- 4. 确保策略生效（可选：禁用默认的公共访问）ALTERTABLE documents FORCEROWLEVEL SECURITY;
+-- 5. 创建辅助函数，简化会话变量设置CREATEORREPLACEFUNCTION set_user_context(
+branch text,
+security_level int,
+departments text[]DEFAULT'{}')RETURNS void AS $$BEGIN
+PERFORM set_config('app.current_branch', branch,false);
+PERFORM set_config('app.current_security_level', security_level::text,false);
+PERFORM set_config('app.user_departments', array_to_string(departments,','),false);END;
+$$ LANGUAGE plpgsql;
+应用层使用 RLS 的示例
+python
+# 在每次数据库连接（或每个请求）开始时，设置会话变量
+conn = psycopg2.connect(CONN_STRING)
+cur = conn.cursor()
+cur.execute("SELECT set_user_context(%s, %s, %s)",("上海浦东分行",2,["对公业务部"]))# 之后的所有查询（包括 BM25 和向量检索）都会自动受到 RLS 限制
+cur.execute("SELECT * FROM documents")# 只返回用户有权限的行
+注意事项：
+RLS 策略中的 current_setting(..., true) 第二个参数 true 表示如果变量未设置则返回 NULL，避免报错。
+向量检索（pgvector 的 <=> 等操作）同样受 RLS 影响，因为 RLS 是基于行的。
+如果使用 LangChain 的 PGVector，它内部执行的 SQL 会自动继承 RLS 策略，无需修改代码。
+附：向量库审计日志的实施方案
+向量库的审计日志有一些特别之处，主要是因为它记录的不是普通的数据查询，而是高维向量的相似度搜索——这和你记录 SQL 查询的审计日志有很大不同。下面详细说明。
+一、向量库审计日志的「特别」之处
+1.1 与普通数据库审计日志的对比
+1.2 向量库审计特有的挑战
+挑战一：查询内容不可读
+用户提交的不是“查询药品库存”这样的自然语言，而是一个 1024 维的浮点数向量（如 [0.12, -0.34, 0.56, ...]）。直接记录这个向量毫无意义，而且存储成本高。
+解决方案：记录向量的哈希值（如 SHA-256），而不是原始向量。同时，如果有条件，可以一并存储用户原始的查询文本（如果你在应用中保留了这个文本）。
+挑战二：检索结果是相似度排名
+返回的结果不是“找到 3 条记录”，而是“找到 20 条相似记录，相似度分别为 0.95, 0.89, 0.76...”。这些结果会随着向量库更新而变化，审计时难以复现。
+解决方案：不仅记录返回的文档 ID 列表，还要记录相似度分数和向量索引的版本号（或向量库的快照时间戳）。
+挑战三：潜在的隐私泄露
+向量嵌入可能隐含敏感信息。例如，从患者病历生成的向量，理论上可以通过逆向工程推断出部分病情信息。GDPR 等法规要求对此类风险进行评估和控制。
+解决方案：对审计日志中的敏感信息进行匿名化或哈希处理，确保日志本身不构成数据泄露。
+二、实施方法
+结合你的 LangChain + PostgreSQL 技术栈，以下是完整的审计日志实施方案。
+2.1 审计日志表设计
+sql
+-- 向量检索审计日志表CREATETABLE vector_search_audit (
+id BIGSERIAL PRIMARYKEY,
+-- 谁
+user_id VARCHAR(64)NOTNULL,
+user_branch VARCHAR(100),
+user_security_level INT,
+session_id VARCHAR(64),
+-- 查了什么（查询相关信息）
+query_text TEXT,-- 原始查询文本（如有）
+query_embedding_hash VARCHAR(64),-- 向量的 SHA-256 哈希
+query_top_k INT,-- 请求的 Top-K 值
+similarity_threshold FLOAT,-- 相似度阈值（如有）
+-- 检索过程
+retrieval_strategy VARCHAR(32),-- 'hybrid' / 'vector_only' / 'bm25_only'
+candidate_count INT,-- 候选集大小
+alpha FLOAT,-- RRF 融合权重（如使用混合检索）
+-- 返回结果
+result_doc_ids INTEGER[],-- 返回的文档 ID 列表
+result_scores FLOAT[],-- 对应的相似度分数
+result_count INT,-- 实际返回数量
+-- 上下文信息
+request_id UUID,-- 全链路追踪 ID
+client_ip INET,
+user_agent TEXT,
+-- 响应信息
+response_time_ms INT,
+statusVARCHAR(20),-- 'success' / 'blocked' / 'error'
+error_message TEXT,
+-- 审计元数据
+created_at TIMESTAMPDEFAULTNOW(),
+retention_until DATE-- 保留截止日期（满足合规要求）);
+-- 索引（加速审计查询）
+CREATEINDEX idx_audit_user_time ON vector_search_audit(user_id, created_at);CREATEINDEX idx_audit_time ON vector_search_audit(created_at);CREATEINDEX idx_audit_request_id ON vector_search_audit(request_id);
+-- 分区（按月分区，便于数据生命周期管理）-- 建议使用 PostgreSQL 内置分区表
+2.2 在 LangChain 检索器中集成审计
+python
+import hashlibimport uuidfrom datetime import datetimefrom typing import List, Optionalfrom langchain.schema import BaseRetriever, Documentimport asyncio
+classAuditedHybridRetriever(BaseRetriever):
+"""带审计日志的混合检索器"""
+def__init__(self, retriever: BaseRetriever, audit_conn_string:str):
+super().__init__()
+self.retriever = retriever
+self.audit_conn = psycopg2.connect(audit_conn_string)
+def_get_relevant_documents(self, query:str,**kwargs)-> List[Document]:
+# 生成请求 ID（全链路追踪）
+request_id =str(uuid.uuid4())
+# 从上下文中获取用户信息（需通过 callbacks 或 kwargs 传递）
+user_id = kwargs.get("user_id","anonymous")
+user_branch = kwargs.get("user_branch","公共")
+user_security_level = kwargs.get("user_security_level",1)
+# 记录开始时间
+start_time = datetime.now()
+# 计算查询向量的哈希（用于审计，便于检测相同/相似查询）
+# 实际使用时，你需要获取 embedding 模型生成的向量
+query_embedding = self._get_query_embedding(query)
+embedding_hash = hashlib.sha256(query_embedding.tobytes()).hexdigest()
+try:
+# 执行检索
+docs = self.retriever.get_relevant_documents(query,**kwargs)
+# 计算响应时间
+response_time_ms =int((datetime.now()- start_time).total_seconds()*1000)
+# 提取结果信息
+result_ids =[doc.metadata.get('id', i)for i, doc inenumerate(docs)]
+result_scores =[doc.metadata.get('score',0.0)for doc in docs]
+# 异步写入审计日志（避免阻塞主流程）
+self._log_audit_async(
+request_id=request_id,
+user_id=user_id,
+user_branch=user_branch,
+user_security_level=user_security_level,
+query_text=query,
+query_embedding_hash=embedding_hash,
+result_doc_ids=result_ids,
+result_scores=result_scores,
+response_time_ms=response_time_ms,
+status='success'
+)
+return docs
+except Exception as e:
+# 记录失败情况
+response_time_ms =int((datetime.now()- start_time).total_seconds()*1000)
+self._log_audit_async(
+request_id=request_id,
+user_id=user_id,
+user_branch=user_branch,
+user_security_level=user_security_level,
+query_text=query,
+query_embedding_hash=embedding_hash,
+response_time_ms=response_time_ms,
+status='error',
+error_message=str(e)
+)
+raise
+def_log_audit_async(self,**audit_data):
+"""异步写入审计日志（使用独立连接池或后台任务）"""
+# 方式1：使用 asyncio.create_task 异步执行
+# 方式2：写入消息队列，由消费者处理
+# 方式3：同步写入（如对性能要求不高）
+pass
+2.3 在 LangChain 回调中集成
+LangChain 提供了 BaseCallbackHandler，可以在检索链的各个阶段插入审计逻辑：
+python
+from langchain.callbacks.base import BaseCallbackHandlerfrom langchain.schema import LLMResult
+classAuditCallbackHandler(BaseCallbackHandler):
+"""审计日志回调处理器"""
+def__init__(self, audit_service):
+self.audit_service = audit_service
+defon_retriever_start(self, serialized, query,**kwargs):
+"""检索开始时记录"""
+self.audit_service.start_query(query, kwargs.get("user_id"))
+defon_retriever_end(self, documents,**kwargs):
+"""检索结束时记录结果"""
+self.audit_service.record_results(documents)
+defon_llm_start(self, serialized, prompts,**kwargs):
+"""LLM 生成开始"""
+pass
+defon_llm_end(self, response: LLMResult,**kwargs):
+"""LLM 生成结束，可记录生成的答案与引用的映射关系"""
+pass
+2.4 权限校验与审计的结合
+在检索时，权限校验和审计日志应当联动：
+python
+defsearch_with_permission_and_audit(query, user_token):
+"""带权限校验和审计的检索"""
+# 1. 权限校验
+ifnot has_permission(user_token, resource='vector_search'):
+log_audit(
+user_id=user_token.user_id,
+action='search',
+status='denied',
+reason='insufficient_permission'
+)
+raise PermissionError("无权执行向量检索")
+# 2. 执行检索（内部会记录检索详情）
+results = retriever.get_relevant_documents(query, user_token=user_token)
+# 3. 审计日志已在检索器中自动记录
+return results
+2.5 合规配置
+sql
+-- 设置审计日志保留策略（例如保留 180 天）
+CREATEORREPLACEFUNCTION purge_old_audit_logs()RETURNS void AS $$BEGIN
+DELETEFROM vector_search_audit
+WHERE created_at <NOW()-INTERVAL'180 days';END;
+$$ LANGUAGE plpgsql;
+-- 创建定时任务（使用 pg_cron 或外部调度器）-- 每天凌晨 3 点执行清理SELECT cron.schedule('purge-audit-logs','0 3 * * *','SELECT purge_old_audit_logs();');
+-- 审计日志表添加行级安全策略（仅审计管理员可访问）ALTERTABLE vector_search_audit ENABLEROWLEVEL SECURITY;CREATE POLICY audit_admin_only ON vector_search_audit
+USING(current_user='audit_admin');
+三、实施建议
+四、总结
+向量库审计日志的特殊性主要体现在：
+记录的不是 SQL，而是向量相似度搜索——需要记录向量哈希、Top-K、相似度分数等特有字段
+存在隐私风险——向量可能反推出敏感信息，需对日志中的敏感内容做匿名化处理
+审计结果难以复现——向量库会持续更新，需记录索引版本或时间快照
+实施方案的核心是在 LangChain 检索器中嵌入审计逻辑，配合 PostgreSQL 的结构化审计表，实现：
+谁（user_id）
+何时（timestamp）
+查了什么（query_text + embedding_hash）
+返回了什么（result_doc_ids + scores）
+花了多久（response_time_ms）
+成功还是失败（status）
+这样既能满足算法备案和合规审计的要求，又能在出现问题时快速定位和复现。
+附：LightRAG 深度整合进 LangChain + PostgreSQL
+核心是将 LightRAG 封装为 LangChain 的自定义检索器。该方案利用 LightRAG 的知识图谱增强检索能力，同时保留 LangChain 的链式处理和 Agent 优势，并将 PostgreSQL 作为向量和图存储的共享后端。
+1. 环境准备与存储后端配置
+1.1 安装 LightRAG 和必要依赖
+bash
+# 安装带 API 支持的 LightRAG（推荐）
+pip install"lightrag-hku[api]"
+# 或从源码安装（获取最新功能）git clone https://github.com/HKUDS/LightRAG.gitcd LightRAG
+pip install-e.
+1.2 配置 PostgreSQL + pgvector + Apache AGE
+LightRAG v1.3.1 版本已对 PostgreSQL AGE（Apache AGE 扩展）图存储进行重构优化，将其作为向量存储和图存储的统一后端。在现有 PostgreSQL 数据库上执行：
+sql
+-- 创建 AGE 扩展
+CREATE EXTENSION age;
+-- 加载 AGELOAD'age';SET search_path = ag_catalog,"$user",public;
+-- 创建图SELECT create_graph('lightrag_graph');
+1.3 LightRAG 初始化配置（与现有 PostgreSQL 整合）
+python
+import osimport asynciofrom lightrag import LightRAG, QueryParamfrom lightrag.llm import openai_complete_if_cachefrom lightrag.utils import EmbeddingFunc
+asyncdefinit_lightrag():
+# 配置工作目录
+working_dir ="./lightrag_data"
+# 初始化 LightRAG，指定 PostgreSQL 存储后端
+rag = LightRAG(
+working_dir=working_dir,
+# 图存储：PostgreSQL AGE
+graph_storage="PGStorage",# 或 "Neo4JStorage"
+# 向量存储：pgvector
+vector_storage="PGVectorStorage",
+# 键值存储：PGKVStorage
+kv_storage="PGKVStorage",
+# 嵌入函数配置
+embedding_func=EmbeddingFunc(
+embedding_dim=1024,
+max_token_size=8192,
+func=lambda texts: get_embeddings(texts)# 复用你的嵌入模型
+),
+# LLM 函数配置（复用你现有的）
+llm_model_func=openai_complete_if_cache
+)
+# 异步初始化存储
+await rag.initialize_storages()
+return rag
+说明：LightRAG 支持多种存储后端组合，可根据实际需求选择：
+图存储：PGStorage（PostgreSQL AGE）、Neo4JStorage（Neo4j）、NetworkX（默认）
+向量存储：PGVectorStorage、MilvusStorage、FaissStorage
+键值存储：PGKVStorage、RedisStorage
+2. 构建 LangChain 检索器封装
+2.1 自定义检索器类
+python
+from typing import List, Optionalfrom langchain_core.retrievers import BaseRetrieverfrom langchain_core.documents import Documentfrom langchain_core.callbacks import CallbackManagerForRetrieverRunfrom lightrag import LightRAG, QueryParam
+classLightRAGRetriever(BaseRetriever):
+"""将 LightRAG 封装为 LangChain 兼容的检索器"""
+rag: LightRAG
+mode:str="mix"# 检索模式: naive, local, global, hybrid, mix
+top_k:int=5
+only_need_context:bool=False
+def_get_relevant_documents(
+self,
+query:str,
+*,
+run_manager: CallbackManagerForRetrieverRun
+)-> List[Document]:
+"""同步检索实现（LangChain 要求）"""
+import asyncio
+try:
+loop = asyncio.get_event_loop()
+except RuntimeError:
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+# 执行 LightRAG 检索
+result = loop.run_until_complete(
+self.rag.aquery(
+query,
+param=QueryParam(
+mode=self.mode,
+only_need_context=self.only_need_context,
+top_k=self.top_k
+)
+)
+)
+# 转换为 LangChain Document 格式
+documents =[]
+ifisinstance(result,dict):
+chunks = result.get("chunks",[])
+for chunk in chunks:
+documents.append(Document(
+page_content=chunk.get("content",""),
+metadata={
+"source": chunk.get("source",""),
+"score": chunk.get("score",0.0),
+"chunk_id": chunk.get("chunk_id")
+}
+))
+return documents
+asyncdefaget_relevant_documents(
+self,
+query:str,
+*,
+run_manager: CallbackManagerForRetrieverRun
+)-> List[Document]:
+"""异步检索实现"""
+result =await self.rag.aquery(
+query,
+param=QueryParam(
+mode=self.mode,
+only_need_context=self.only_need_context,
+top_k=self.top_k
+)
+)
+documents =[]
+ifisinstance(result,dict):
+chunks = result.get("chunks",[])
+for chunk in chunks:
+documents.append(Document(
+page_content=chunk.get("content",""),
+metadata=chunk.get("metadata",{})
+))
+return documents
+参考：LightRAG as a LangChain Retriever-2
+3. 索引与检索流程实现
+3.1 文档入库流程
+python
+asyncdefindex_documents(rag: LightRAG, documents: List[str], ids: List[str]=None):
+"""
+批量索引文档
+docs: 文档内容列表
+ids: 文档 ID 列表（可选）
+"""
+for i, doc inenumerate(documents):
+doc_id = ids[i]if ids and i <len(ids)elseNone
+await rag.ainsert(doc, doc_id=doc_id)
+print(f"Indexed document {i+1}/{len(documents)}")
+LightRAG 在索引时会自动：
+将文档切分为合适的块
+提取实体和关系，构建知识图谱-
+生成向量嵌入并存储到向量库
+建立双层索引（低层实体关系 + 高层社区聚类）-18
+3.2 检索模式选择
+4. 与现有 RAG 系统的无缝集成
+4.1 方案一：双检索器并行融合（推荐）
+python
+classEnsembleRetriever:
+"""并行融合现有混合检索器和 LightRAG 检索器"""
+def__init__(self, hybrid_retriever, lightrag_retriever, weights=(0.5,0.5)):
+self.hybrid_retriever = hybrid_retriever   # 你现有的检索器
+self.lightrag_retriever = lightrag_retriever
+self.weights = weights
+defget_relevant_documents(self, query:str)-> List[Document]:
+# 并行执行两种检索
+hybrid_docs = self.hybrid_retriever.get_relevant_documents(query)
+lightrag_docs = self.lightrag_retriever.get_relevant_documents(query)
+# 加权融合
+all_docs ={}
+for doc in hybrid_docs:
+all_docs[doc.metadata.get("id")]=(doc, self.weights[0])
+for doc in lightrag_docs:
+doc_id = doc.metadata.get("id")
+if doc_id in all_docs:
+existing_doc, weight = all_docs[doc_id]
+# 合并权重，取更相关的
+if weight < self.weights[1]:
+all_docs[doc_id]=(doc, self.weights[1])
+else:
+all_docs[doc_id]=(doc, self.weights[1])
+return[doc for doc, _ insorted(all_docs.values(), key=lambda x: x[1], reverse=True)]
+4.2 方案二：LightRAG 作为主检索器
+python
+from langchain.chains import RetrievalQAfrom langchain_openai import ChatOpenAI
+# 初始化 LightRAG 检索器
+lightrag_retriever = LightRAGRetriever(
+rag=rag,
+mode="mix",# 推荐使用 mix 模式
+top_k=5)
+# 构建 LangChain QA Chain
+qa_chain = RetrievalQA.from_chain_type(
+llm=ChatOpenAI(model="gpt-4o-mini"),
+retriever=lightrag_retriever,
+chain_type="stuff",
+return_source_documents=True)
+# 执行问答
+response = qa_chain.invoke({"query":"药品库存周转率的影响因素有哪些？"})
+5. 性能监控与优化策略
+5.1 Token 追踪与成本控制
+LightRAG v1.3.1 新增了 TokenTracker 组件，用于追踪每次 LLM 调用的 token 消耗：
+python
+from lightrag.utils import TokenTracker
+asyncdefquery_with_tracking(rag: LightRAG, query:str):
+with TokenTracker()as tracker:
+result =await rag.aquery(query)
+print(f"Token 消耗: {tracker.total_tokens}")
+return result
+5.2 性能调优参数
+python
+# 初始化时调优参数
+rag = LightRAG(
+working_dir="./lightrag_data",
+embedding_batch_num=32,# 嵌入批处理大小
+embedding_func_max_async=4,# 最大并发数
+chunk_token_size=1024,# 分块大小
+chunk_overlap_token_size=200# 分块重叠大小)
+5.3 缓存策略
+LightRAG 内置 LLM 响应缓存（键值存储），可减少重复查询的 token 消耗。复用数据库配置即可：
+python
+# 启用缓存（使用 PostgreSQL KV 存储）
+rag = LightRAG(
+kv_storage="PGKVStorage",# 自动缓存 LLM 响应
+# ...)
+6. 总结：LightRAG vs 其他方案
+LightRAG 的优势在于低门槛、低成本、与 PostgreSQL 生态无缝整合，非常适合作为你现有 RAG 系统的图谱增强层逐步引入。
+附：超越乐享的五大定制化策略
+1. 领域自适应Embedding与检索调优
+乐享使用通用Embedding模型。我们可以针对业务数据微调Embedding模型，使向量空间更贴合领域语义。
+实施：
+收集业务语料（如保险合同、技术文档）构建领域词典。
+使用 sentence-transformers 或 BGE 基座，在领域标注数据上继续训练（对比学习）。
+效果：在专有名词、内部术语的召回率上可提升5~10个百分点。
+同时，我们的混合检索参数（RRF k值、BM25的k1/b、加权alpha）通过网格搜索+标注验证集持续优化，而乐享的参数是固定的。这意味着我们能在特定数据集上达到理论最优。
+2. 精细化知识图谱构建（元数据场景）
+乐享的知识图谱是通用构建。我们可以针对业务元数据（如表、字段、业务术语）手工+LLM构建高精度图谱，并赋予权重（热度、依赖度）。
+实施：
+实体：表、字段、业务术语、同义词、指标。
+关系：表-包含-字段、字段-对应-术语、同义词-等价。
+存储：PostgreSQL + pgvector + 关系表（或Neo4j）。
+检索时图谱检索与向量检索融合，提升多实体关联查询的准确率。
+货拉拉案例已证明：图谱增强使准确率从55%提升到78%，远超通用RAG。
+3. 严格可信度机制（NLI+引用溯源）
+乐享提供答案溯源，但未公开幻觉检测深度。我们可以用NLI模型逐句验证，将未验证的高危事实性陈述直接删除，大幅降低幻觉风险。
+实施：
+后处理归因：对每句与Top-3文档计算相似度+NLI蕴含验证。
+对高危幻觉（含数字、条款编号）且未验证的句子直接剔除。
+返回结构化JSON，前端交互展示引用，让用户看到证据。
+在金融、医疗等高风险场景，这种“可信度优先”的机制比乐享的通用溯源更可靠。
+4. Agentic复杂推理能力
+乐享主要面向单轮问答。我们可以构建Agentic RAG，让系统自主规划多步检索、工具选择、迭代查询。
+实施：
+条件式单步：高置信度问题跳过检索，节省成本。
+迭代检索：对复杂问题，检索→评估→再检索，直到信息充足。
+工具路由：根据问题类型选择向量库、SQL、API。
+在跨表关联、多步计算等场景，Agentic RAG能给出乐享无法实现的深度答案。
+5. 数据驱动的持续优化闭环
+建立Badcase运营闭环：三路收集→自动四分类→修复验证→回归测试→灰度发布，让系统每周进化。
+实施：
+收集：用户差评、客服工单、自动质量检测（检索相关性、忠实度、关键信息完整性）。
+分类：LLM自动归因（检索失败、幻觉生成、路由错误、知识缺失）。
+修复：针对性优化（分块、参数、Prompt、知识补充）。
+验证：回归测试确保核心指标不下降。
+这套机制能持续提升准确率，货拉拉案例中6个月从76%提升到89%，且趋势向上。

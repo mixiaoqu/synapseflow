@@ -29,23 +29,25 @@ def _coerce_string_list(value: Any) -> list[str]:
 
 
 @functools.lru_cache(maxsize=128)
-def _load_embed_page_config_data(project_code: str, app_code: str) -> dict[str, Any]:
-    data = load_embed_app_pages_raw(project_code, app_code)
+def _load_embed_page_config_data(product_code: str, project_code: str, app_code: str) -> dict[str, Any]:
+    data = load_embed_app_pages_raw(product_code, project_code, app_code)
     return data if isinstance(data, dict) else {}
 
 
 def get_embed_page_config(
+    product_code: str | None,
     project_code: str | None,
     app_code: str | None,
     page_type: str | None,
 ) -> EmbedPageConfig | None:
+    product_key = _normalize_key(product_code)
     project_key = _normalize_key(project_code)
     app_key = _normalize_key(app_code)
     page_key = _normalize_key(page_type)
-    if not project_key or not app_key or not page_key:
+    if not product_key or not project_key or not app_key or not page_key:
         return None
 
-    data = _load_embed_page_config_data(project_key, app_key)
+    data = _load_embed_page_config_data(product_key, project_key, app_key)
     pages = data.get("pages") if isinstance(data, dict) else None
     if not isinstance(pages, dict):
         return None

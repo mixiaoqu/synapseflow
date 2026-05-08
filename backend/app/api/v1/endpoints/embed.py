@@ -121,6 +121,7 @@ def _resolve_page_config(
     page_type: str | None,
 ) -> EmbedPageConfig | None:
     return get_embed_page_config(
+        runtime.product.code,
         runtime.project.code,
         runtime.app.code,
         page_type,

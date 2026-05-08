@@ -7,7 +7,6 @@ import {
   BarChart3,
   BookOpen,
   Bot,
-  Box,
   Building2,
   CheckSquare,
   ChevronDown,
@@ -47,8 +46,7 @@ const menuGroups = [
   {
     title: "业务核心",
     items: [
-      { href: "/admin/products", title: "产品管理", icon: Box },
-      { href: "/admin/projects", title: "项目管理", icon: FolderKanban },
+      { href: "/admin/projects", title: "产品项目管理", icon: FolderKanban },
       { href: "/admin/documents", title: "知识库管理", icon: BookOpen },
       { href: "/admin/assistants", title: "助手管理", icon: Bot },
     ],
