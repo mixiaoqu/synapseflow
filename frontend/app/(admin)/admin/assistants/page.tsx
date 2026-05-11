@@ -90,7 +90,7 @@ function toFormState(assistant: AssistantProfile): AssistantFormState {
   return {
     name: assistant.name,
     slug: assistant.slug,
-    knowledge_base_id: assistant.knowledge_base_id,
+    knowledge_base_id: assistant.knowledge_base_id ?? null,
     category_id: assistant.category_id ?? null,
     description: assistant.description ?? "",
     welcome_message: assistant.welcome_message ?? "",
