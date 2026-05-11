@@ -359,6 +359,10 @@ export default function ProjectDetailsPage() {
         code: app.code,
         description: app.description ?? null,
         default_assistant_id: app.default_assistant_id ?? null,
+        bindings: app.bindings.map((binding) => ({
+          knowledge_base_id: binding.knowledge_base_id,
+          knowledge_base_branch_id: binding.knowledge_base_branch_id,
+        })),
         is_active: !app.is_active,
       });
       toast.success(app.is_active ? "应用已停用" : "应用已启用");
