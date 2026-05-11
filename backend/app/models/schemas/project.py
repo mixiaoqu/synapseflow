@@ -41,11 +41,22 @@ class ProjectResponse(BaseModel):
     updated_at: datetime
 
 
+class ProjectAppKnowledgeBaseBranchBinding(BaseModel):
+    knowledge_base_id: int = Field(..., gt=0)
+    knowledge_base_branch_id: int = Field(..., gt=0)
+
+
+class ProjectAppKnowledgeBaseBranchBindingResponse(ProjectAppKnowledgeBaseBranchBinding):
+    knowledge_base_name: str | None = None
+    knowledge_base_branch_name: str | None = None
+
+
 class ProjectAppCreate(BaseModel):
     code: str = Field(..., min_length=1, max_length=120)
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
     default_assistant_id: int | None = Field(default=None, gt=0)
+    bindings: list[ProjectAppKnowledgeBaseBranchBinding] = Field(default_factory=list, min_length=1)
     is_active: bool = True
 
 
@@ -54,6 +65,7 @@ class ProjectAppUpdate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
     default_assistant_id: int | None = Field(default=None, gt=0)
+    bindings: list[ProjectAppKnowledgeBaseBranchBinding] = Field(default_factory=list, min_length=1)
     is_active: bool = True
 
 
@@ -67,8 +79,7 @@ class ProjectAppResponse(BaseModel):
     description: str | None = None
     default_assistant_id: int | None = None
     default_assistant_name: str | None = None
-    knowledge_base_id: int | None = None
-    knowledge_base_name: str | None = None
+    bindings: list[ProjectAppKnowledgeBaseBranchBindingResponse] = Field(default_factory=list)
     is_active: bool
     created_at: datetime
     updated_at: datetime

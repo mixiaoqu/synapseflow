@@ -54,9 +54,16 @@ import {
   assistantsApi,
   type AssistantSummary,
 } from "@/lib/api/assistants";
+import {
+  listKnowledgeBaseBranches,
+  listKnowledgeBases,
+  type KnowledgeBaseBranch,
+  type KnowledgeBaseWithCount,
+} from "@/lib/api/knowledgeBases";
 import { productsApi, type ProductResponse } from "@/lib/api/products";
 import {
   projectsApi,
+  type ProjectAppKnowledgeBaseBranchBinding,
   type ProjectAppEmbedPreviewResponse,
   type ProjectAppPayload,
   type ProjectAppResponse,
@@ -77,6 +84,10 @@ interface AppFormState {
   code: string;
   description: string;
   default_assistant_id: number | null;
+  bindings: Array<{
+    knowledge_base_id: string;
+    knowledge_base_branch_id: string;
+  }>;
   is_active: boolean;
 }
 
@@ -85,6 +96,7 @@ const EMPTY_APP_FORM: AppFormState = {
   code: "",
   description: "",
   default_assistant_id: null,
+  bindings: [{ knowledge_base_id: "", knowledge_base_branch_id: "" }],
   is_active: true,
 };
 
@@ -128,16 +140,30 @@ function toAppForm(app: ProjectAppResponse): AppFormState {
     code: app.code,
     description: app.description ?? "",
     default_assistant_id: app.default_assistant_id ?? null,
+    bindings:
+      app.bindings.length > 0
+        ? app.bindings.map((item) => ({
+            knowledge_base_id: String(item.knowledge_base_id),
+            knowledge_base_branch_id: String(item.knowledge_base_branch_id),
+          }))
+        : [{ knowledge_base_id: "", knowledge_base_branch_id: "" }],
     is_active: app.is_active,
   };
 }
 
 function toAppPayload(form: AppFormState): ProjectAppPayload {
+  const bindings: ProjectAppKnowledgeBaseBranchBinding[] = form.bindings
+    .filter((item) => item.knowledge_base_id && item.knowledge_base_branch_id)
+    .map((item) => ({
+      knowledge_base_id: Number(item.knowledge_base_id),
+      knowledge_base_branch_id: Number(item.knowledge_base_branch_id),
+    }));
   return {
     name: form.name.trim(),
     code: form.code.trim(),
     description: form.description.trim() || null,
     default_assistant_id: form.default_assistant_id,
+    bindings,
     is_active: form.is_active,
   };
 }
@@ -157,6 +183,8 @@ export default function ProjectDetailsPage() {
   const [apps, setApps] = useState<ProjectAppResponse[]>([]);
   const [products, setProducts] = useState<ProductResponse[]>([]);
   const [assistants, setAssistants] = useState<AssistantSummary[]>([]);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseWithCount[]>([]);
+  const [branchOptions, setBranchOptions] = useState<Record<number, KnowledgeBaseBranch[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
@@ -181,21 +209,67 @@ export default function ProjectDetailsPage() {
     setLoading(true);
     try {
       const nextProject = await projectsApi.get(projectId);
-      const [nextApps, nextAssistants, nextProducts] = await Promise.all([
+      const [nextApps, nextAssistants, nextProducts, nextKnowledgeBases] = await Promise.all([
         projectsApi.listApps(projectId),
         assistantsApi.list({ team_id: nextProject.team_id, active_only: true }),
         productsApi.list({ team_id: nextProject.team_id }),
+        listKnowledgeBases(nextProject.team_id),
       ]);
       setProject(nextProject);
       setApps(nextApps);
       setAssistants(nextAssistants);
       setProducts(nextProducts);
+      setKnowledgeBases(nextKnowledgeBases);
+      const branchEntries = await Promise.all(
+        nextKnowledgeBases.map(async (kb) => [kb.id, await listKnowledgeBaseBranches(kb.id)] as const),
+      );
+      setBranchOptions(Object.fromEntries(branchEntries));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "加载项目详情失败");
     } finally {
       setLoading(false);
     }
   }, [projectId]);
+
+  const addBindingRow = () => {
+    setAppForm((current) => ({
+      ...current,
+      bindings: [...current.bindings, { knowledge_base_id: "", knowledge_base_branch_id: "" }],
+    }));
+  };
+
+  const updateBindingRow = (
+    index: number,
+    patch: Partial<{ knowledge_base_id: string; knowledge_base_branch_id: string }>,
+  ) => {
+    setAppForm((current) => ({
+      ...current,
+      bindings: current.bindings.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              knowledge_base_id:
+                patch.knowledge_base_id !== undefined ? patch.knowledge_base_id : item.knowledge_base_id,
+              knowledge_base_branch_id:
+                patch.knowledge_base_id !== undefined
+                  ? ""
+                  : patch.knowledge_base_branch_id !== undefined
+                    ? patch.knowledge_base_branch_id
+                    : item.knowledge_base_branch_id,
+            }
+          : item,
+      ),
+    }));
+  };
+
+  const removeBindingRow = (index: number) => {
+    setAppForm((current) => ({
+      ...current,
+      bindings:
+        current.bindings.length <= 1
+          ? [{ knowledge_base_id: "", knowledge_base_branch_id: "" }]
+          : current.bindings.filter((_, itemIndex) => itemIndex !== index),
+    }));
+  };
 
   useEffect(() => {
     void loadData();
@@ -557,8 +631,12 @@ Content-Type: application/json
                       </Button>
                     )}
                   </div>
-                  <div className="col-span-2 truncate text-sm text-slate-500">
-                    {app.knowledge_base_name || "--"}
+                  <div className="col-span-2 text-sm text-slate-500">
+                    {app.bindings.length > 0
+                      ? app.bindings
+                          .map((item) => `${item.knowledge_base_name || "知识库"} / ${item.knowledge_base_branch_name || "版本"}`)
+                          .join("、")
+                      : app.knowledge_base_name || "--"}
                   </div>
                   <div className="col-span-1">
                     <span
@@ -730,6 +808,66 @@ Content-Type: application/json
                 }
                 placeholder="例如：销售小程序"
               />
+            </div>
+            <div className="grid gap-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-slate-700">知识库版本绑定</label>
+                <Button type="button" variant="outline" size="sm" onClick={addBindingRow}>
+                  新增绑定
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {appForm.bindings.map((binding, index) => {
+                  const branchList = branchOptions[Number(binding.knowledge_base_id) || 0] || [];
+                  return (
+                    <div key={`${index}-${binding.knowledge_base_id}`} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                      <select
+                        value={binding.knowledge_base_id}
+                        onChange={(event) =>
+                          updateBindingRow(index, { knowledge_base_id: event.target.value })
+                        }
+                        className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-50"
+                      >
+                        <option value="">选择知识库</option>
+                        {knowledgeBases.map((kb) => (
+                          <option key={kb.id} value={kb.id}>
+                            {kb.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={binding.knowledge_base_branch_id}
+                        onChange={(event) =>
+                          updateBindingRow(index, { knowledge_base_branch_id: event.target.value })
+                        }
+                        className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-50"
+                        disabled={!binding.knowledge_base_id}
+                      >
+                        <option value="">选择版本</option>
+                        {branchList
+                          .filter((branch) => branch.is_active)
+                          .map((branch) => (
+                            <option key={branch.id} value={branch.id}>
+                              {branch.name} / {branch.code}
+                            </option>
+                          ))}
+                      </select>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeBindingRow(index)}
+                        className="h-10 w-10"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-slate-500">
+                一个应用可以绑定多个知识库，但同一个知识库只能选择一个版本。
+              </p>
             </div>
             <div className="grid gap-2">
               <label className="text-sm font-medium text-slate-700">应用编码</label>

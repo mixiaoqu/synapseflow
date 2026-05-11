@@ -190,7 +190,7 @@ function toFormState(assistant: AssistantProfile): AssistantFormState {
     rule_template: assistant.rule_template ?? "",
     suggested_prompts_text: assistant.suggested_prompts.join("\n"),
     is_active: assistant.is_active,
-    knowledge_base_id: assistant.knowledge_base_id,
+    knowledge_base_id: assistant.knowledge_base_id ?? null,
     category_id: assistant.category_id ?? null,
     sort_order: assistant.sort_order,
   };
@@ -204,7 +204,7 @@ function parseSuggestedPrompts(value: string): string[] {
 }
 
 function toPayload(form: AssistantFormState, teamId: number): AssistantUpsertPayload {
-  if (form.knowledge_base_id == null) {
+  if (false) {
     throw new Error("请先选择知识库");
   }
 
@@ -212,8 +212,6 @@ function toPayload(form: AssistantFormState, teamId: number): AssistantUpsertPay
     name: form.name.trim(),
     slug: form.slug.trim(),
     current_team_id: teamId,
-    knowledge_base_id: form.knowledge_base_id,
-    category_id: form.category_id,
     description: form.description.trim() || null,
     welcome_message: form.welcome_message.trim() || null,
     placeholder_text: form.placeholder_text.trim() || null,
@@ -408,7 +406,7 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
       include_unpublished: true,
     };
   }, [form, teamId]);
-  const previewReady = teamId != null && form.knowledge_base_id != null;
+  const previewReady = teamId != null;
 
   useEffect(() => {
     if (teamId == null) {

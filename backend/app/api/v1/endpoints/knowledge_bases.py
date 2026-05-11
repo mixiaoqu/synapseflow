@@ -7,6 +7,9 @@ from app.api.dependencies.auth import require_content_roles
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.knowledge_base import (
+    KnowledgeBaseBranchCreate,
+    KnowledgeBaseBranchResponse,
+    KnowledgeBaseBranchUpdate,
     KnowledgeBaseCreate,
     KnowledgeBaseRecentDocument,
     KnowledgeBaseResponse,
@@ -37,6 +40,30 @@ def _resolve_knowledge_base_status(
     if indexed_document_count > 0 or unindexed_document_count <= 0:
         return "available"
     return "error"
+
+
+def _normalize_branch_code(code: str) -> str:
+    normalized = (code or "").strip().lower()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Branch code cannot be empty")
+    return normalized
+
+
+def _to_branch_response(record) -> KnowledgeBaseBranchResponse:
+    branch = record.branch
+    return KnowledgeBaseBranchResponse(
+        id=branch.id,
+        knowledge_base_id=branch.knowledge_base_id,
+        code=branch.code,
+        name=branch.name,
+        description=branch.description,
+        is_active=branch.is_active,
+        created_by_user_id=branch.created_by_user_id,
+        created_at=branch.created_at,
+        updated_at=branch.updated_at,
+        bound_app_count=record.bound_app_count,
+        document_count=record.document_count,
+    )
 
 
 @router.get("", response_model=list[KnowledgeBaseWithCount])
@@ -137,4 +164,109 @@ async def delete_knowledge_base(
     ok = await repo.delete(knowledge_base_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
+    return {"message": "Deleted successfully"}
+
+
+@router.get("/{knowledge_base_id}/branches", response_model=list[KnowledgeBaseBranchResponse])
+async def list_knowledge_base_branches(
+    knowledge_base_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    knowledge_base = await repo.get_by_id(knowledge_base_id)
+    if knowledge_base is None:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    return [_to_branch_response(item) for item in await repo.list_branches(knowledge_base_id)]
+
+
+@router.post("/{knowledge_base_id}/branches", response_model=KnowledgeBaseBranchResponse)
+async def create_knowledge_base_branch(
+    knowledge_base_id: int,
+    body: KnowledgeBaseBranchCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    knowledge_base = await repo.get_by_id(knowledge_base_id)
+    if knowledge_base is None:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    code = _normalize_branch_code(body.code)
+    if await repo.branch_code_exists(knowledge_base_id=knowledge_base_id, code=code):
+        raise HTTPException(status_code=400, detail="Branch code already exists")
+    branch = await repo.create_branch(
+        knowledge_base_id=knowledge_base_id,
+        code=code,
+        name=body.name,
+        description=body.description,
+        is_active=body.is_active,
+    )
+    record = await repo.get_branch_with_counts(branch.id)
+    if record is None:
+        raise HTTPException(status_code=500, detail="Knowledge base branch creation failed")
+    return _to_branch_response(record)
+
+
+@router.put(
+    "/{knowledge_base_id}/branches/{branch_id}",
+    response_model=KnowledgeBaseBranchResponse,
+)
+async def update_knowledge_base_branch(
+    knowledge_base_id: int,
+    branch_id: int,
+    body: KnowledgeBaseBranchUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    branch_record = await repo.get_branch_with_counts(branch_id)
+    if branch_record is None or branch_record.branch.knowledge_base_id != knowledge_base_id:
+        raise HTTPException(status_code=404, detail="Knowledge base branch not found")
+    code = _normalize_branch_code(body.code)
+    if await repo.branch_code_exists(
+        knowledge_base_id=knowledge_base_id,
+        code=code,
+        exclude_id=branch_id,
+    ):
+        raise HTTPException(status_code=400, detail="Branch code already exists")
+    if not body.is_active and branch_record.bound_app_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Branch is currently bound by project apps and cannot be deactivated",
+        )
+    await repo.update_branch(
+        branch_record.branch,
+        code=code,
+        name=body.name,
+        description=body.description,
+        is_active=body.is_active,
+    )
+    refreshed = await repo.get_branch_with_counts(branch_id)
+    if refreshed is None:
+        raise HTTPException(status_code=500, detail="Knowledge base branch update failed")
+    return _to_branch_response(refreshed)
+
+
+@router.delete("/{knowledge_base_id}/branches/{branch_id}")
+async def delete_knowledge_base_branch(
+    knowledge_base_id: int,
+    branch_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    branch_record = await repo.get_branch_with_counts(branch_id)
+    if branch_record is None or branch_record.branch.knowledge_base_id != knowledge_base_id:
+        raise HTTPException(status_code=404, detail="Knowledge base branch not found")
+    if branch_record.bound_app_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Branch is currently bound by project apps and cannot be deleted",
+        )
+    if await repo.branch_document_count(branch_id) > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Branch still has documents and cannot be deleted",
+        )
+    await repo.delete_branch(branch_record.branch)
     return {"message": "Deleted successfully"}

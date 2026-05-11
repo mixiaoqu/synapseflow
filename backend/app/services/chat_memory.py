@@ -42,6 +42,7 @@ class ChatSessionSummaryRecord:
     external_user_name: str | None
     team_id: int | None
     knowledge_base_id: int | None
+    knowledge_base_branch_ids: list[int]
     knowledge_base_name: str | None
     assistant_id: int | None
     assistant_name: str | None
@@ -83,6 +84,7 @@ class ChatMemoryStore(Protocol):
         external_user_name: str | None = None,
         team_id: int | None,
         knowledge_base_id: int | None,
+        knowledge_base_branch_ids: list[int] | None,
         assistant_id: int | None,
         category_id: int | None,
         user_message: str,
@@ -189,6 +191,7 @@ class DatabaseChatMemoryStore:
         external_user_name: str | None = None,
         team_id: int | None,
         knowledge_base_id: int | None,
+        knowledge_base_branch_ids: list[int] | None,
         assistant_id: int | None,
         category_id: int | None,
         user_message: str,
@@ -215,6 +218,7 @@ class DatabaseChatMemoryStore:
             session.external_user_name = external_user_name
             session.team_id = team_id
             session.knowledge_base_id = knowledge_base_id
+            session.knowledge_base_branch_ids = list(knowledge_base_branch_ids or [])
             session.assistant_id = assistant_id
             session.category_id = category_id
             session.updated_at = utc_now()
@@ -343,6 +347,7 @@ class DatabaseChatMemoryStore:
                 external_user_name=summary.external_user_name,
                 team_id=summary.team_id,
                 knowledge_base_id=summary.knowledge_base_id,
+                knowledge_base_branch_ids=list(summary.knowledge_base_branch_ids or []),
                 knowledge_base_name=summary.knowledge_base_name,
                 assistant_id=summary.assistant_id,
                 assistant_name=summary.assistant_name,
@@ -503,6 +508,7 @@ class DatabaseChatMemoryStore:
             external_user_name=session.external_user_name,
             team_id=session.team_id,
             knowledge_base_id=session.knowledge_base_id,
+            knowledge_base_branch_ids=list(session.knowledge_base_branch_ids or []),
             knowledge_base_name=kb_name,
             assistant_id=session.assistant_id,
             assistant_name=assistant_name,

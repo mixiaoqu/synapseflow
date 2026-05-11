@@ -7,7 +7,7 @@ export interface AssistantSummary {
   slug: string;
   team_id: number;
   team_name?: string | null;
-  knowledge_base_id: number;
+  knowledge_base_id?: number | null;
   knowledge_base_name?: string | null;
   category_id?: number | null;
   category_name?: string | null;
@@ -44,7 +44,7 @@ export interface AssistantUpsertPayload {
   name: string;
   slug: string;
   current_team_id: number;
-  knowledge_base_id: number;
+  knowledge_base_id?: number | null;
   category_id?: number | null;
   description?: string | null;
   welcome_message?: string | null;
@@ -74,7 +74,7 @@ export interface AssistantPreviewRequest {
   query: string;
   name?: string | null;
   current_team_id: number;
-  knowledge_base_id: number;
+  knowledge_base_id?: number | null;
   category_id?: number | null;
   welcome_message?: string | null;
   placeholder_text?: string | null;
@@ -102,14 +102,10 @@ export interface AssistantModelOptionsResponse {
 export const assistantsApi = {
   list: (filters?: {
     team_id?: number | null;
-    knowledge_base_id?: number | null;
     active_only?: boolean;
   }) => {
     const params = new URLSearchParams();
     if (filters?.team_id != null) params.set("team_id", String(filters.team_id));
-    if (filters?.knowledge_base_id != null) {
-      params.set("knowledge_base_id", String(filters.knowledge_base_id));
-    }
     if (filters?.active_only) params.set("active_only", "true");
     return apiClient.get<AssistantSummary[]>(
       `/api/v1/assistants${params.size > 0 ? `?${params.toString()}` : ""}`,
@@ -118,13 +114,9 @@ export const assistantsApi = {
 
   listAvailable: (filters?: {
     team_id?: number | null;
-    knowledge_base_id?: number | null;
   }) => {
     const params = new URLSearchParams();
     if (filters?.team_id != null) params.set("team_id", String(filters.team_id));
-    if (filters?.knowledge_base_id != null) {
-      params.set("knowledge_base_id", String(filters.knowledge_base_id));
-    }
     return apiClient.get<AssistantAvailabilityResponse>(
       `/api/v1/assistants/available${params.size > 0 ? `?${params.toString()}` : ""}`,
     );

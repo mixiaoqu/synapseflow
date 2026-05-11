@@ -78,6 +78,7 @@ async def _knowledge_base_has_documents(
     *,
     team_id: int | None,
     knowledge_base_id: int,
+    knowledge_base_branch_ids: list[int] | None,
     category_id: int | None,
     user_id: int | None,
     document_statuses: list[str] | None,
@@ -93,6 +94,8 @@ async def _knowledge_base_has_documents(
             ),
             Document.index_status == INDEX_STATUS_INDEXED,
         )
+        if knowledge_base_branch_ids:
+            stmt = stmt.where(Document.knowledge_base_branch_id.in_(knowledge_base_branch_ids))
         if team_id is not None:
             stmt = stmt.join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id).where(
                 KnowledgeBase.team_id == team_id
@@ -186,6 +189,7 @@ async def _retrieve_candidate_rows(
     query: str,
     team_id: int | None,
     knowledge_base_id: int | None,
+    knowledge_base_branch_ids: list[int] | None,
     category_id: int | None,
     user_id: int | None,
     retrieval_mode: str,
@@ -209,6 +213,7 @@ async def _retrieve_candidate_rows(
                 user_id=user_id,
                 team_id=team_id,
                 knowledge_base_id=knowledge_base_id,
+                knowledge_base_branch_ids=knowledge_base_branch_ids,
                 category_id=category_id,
                 document_statuses=document_statuses,
                 retrieval_version_mode=retrieval_version_mode,
@@ -223,6 +228,7 @@ async def _retrieve_candidate_rows(
                 user_id=user_id,
                 team_id=team_id,
                 knowledge_base_id=knowledge_base_id,
+                knowledge_base_branch_ids=knowledge_base_branch_ids,
                 category_id=category_id,
                 document_statuses=document_statuses,
                 retrieval_version_mode=retrieval_version_mode,
@@ -233,6 +239,7 @@ async def _retrieve_candidate_rows(
         has_documents = await _knowledge_base_has_documents(
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
+            knowledge_base_branch_ids=knowledge_base_branch_ids,
             category_id=category_id,
             user_id=user_id,
             document_statuses=document_statuses,
@@ -519,6 +526,7 @@ async def run_kb_retrieval(
     query: str,
     team_id: int | None,
     knowledge_base_id: int | None,
+    knowledge_base_branch_ids: list[int] | None = None,
     category_id: int | None = None,
     log_prefix: str = "[KB Retrieval]",
     user_id: int | None = None,
@@ -551,6 +559,7 @@ async def run_kb_retrieval(
         query=query,
         team_id=team_id,
         knowledge_base_id=knowledge_base_id,
+        knowledge_base_branch_ids=knowledge_base_branch_ids,
         category_id=category_id,
         user_id=user_id,
         retrieval_mode=resolved_mode,
@@ -612,6 +621,7 @@ async def run_multi_query_kb_retrieval(
     retrieval_queries: list[str],
     team_id: int | None,
     knowledge_base_id: int | None,
+    knowledge_base_branch_ids: list[int] | None = None,
     category_id: int | None = None,
     log_prefix: str = "[KB Retrieval]",
     user_id: int | None = None,
@@ -634,6 +644,7 @@ async def run_multi_query_kb_retrieval(
             query=queries[0] if queries else query,
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
+            knowledge_base_branch_ids=knowledge_base_branch_ids,
             category_id=category_id,
             log_prefix=log_prefix,
             user_id=user_id,
@@ -676,6 +687,7 @@ async def run_multi_query_kb_retrieval(
                 query=item,
                 team_id=team_id,
                 knowledge_base_id=knowledge_base_id,
+                knowledge_base_branch_ids=knowledge_base_branch_ids,
                 category_id=category_id,
                 user_id=user_id,
                 retrieval_mode=resolved_mode,

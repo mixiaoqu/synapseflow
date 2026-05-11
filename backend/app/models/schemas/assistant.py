@@ -33,8 +33,6 @@ class AssistantProfileCreate(AssistantPromptConfigMixin):
     name: str = Field(..., min_length=1, max_length=100)
     slug: str = Field(..., min_length=1, max_length=120)
     current_team_id: int = Field(..., gt=0)
-    knowledge_base_id: int = Field(..., gt=0)
-    category_id: int | None = Field(default=None, gt=0)
 
 
 class AssistantProfileUpdate(AssistantPromptConfigMixin):
@@ -43,8 +41,6 @@ class AssistantProfileUpdate(AssistantPromptConfigMixin):
     name: str = Field(..., min_length=1, max_length=100)
     slug: str = Field(..., min_length=1, max_length=120)
     current_team_id: int = Field(..., gt=0)
-    knowledge_base_id: int = Field(..., gt=0)
-    category_id: int | None = Field(default=None, gt=0)
 
 
 class AssistantPreviewRequest(AssistantPromptConfigMixin):
@@ -52,8 +48,6 @@ class AssistantPreviewRequest(AssistantPromptConfigMixin):
 
     query: str = Field(..., min_length=1, description="Preview question")
     current_team_id: int = Field(..., gt=0)
-    knowledge_base_id: int = Field(..., gt=0)
-    category_id: int | None = Field(default=None, gt=0)
     name: str | None = Field(default=None, max_length=100)
     include_unpublished: bool = Field(
         default=True,
@@ -71,10 +65,6 @@ class AssistantProfileSummary(BaseModel):
     slug: str
     team_id: int
     team_name: str | None = None
-    knowledge_base_id: int
-    knowledge_base_name: str | None = None
-    category_id: int | None = None
-    category_name: str | None = None
     created_by_user_id: int | None = None
     created_by_name: str | None = None
     description: str | None = None

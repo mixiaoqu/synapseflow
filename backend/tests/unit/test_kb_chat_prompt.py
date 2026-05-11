@@ -34,3 +34,26 @@ def test_kb_chat_prompt_includes_assistant_layers_without_dropping_base_rules():
     assert "no_hits" in prompt
     assert "Do not fabricate facts" in prompt
     assert "Knowledge-base context" in prompt
+
+
+def test_kb_chat_prompt_keeps_readable_chinese_constraints_and_page_context_labels():
+    prompt = build_kb_chat_answer_prompt(
+        "如何关联子账号？",
+        "在主账号详情页点击添加账号关联。",
+        page_config={
+            "page_name": "账号详情",
+            "page_description": "用于查看和维护账号资料",
+            "assistant_intro": "可咨询账号相关问题",
+        },
+        page_context={"page_type": "account-detail"},
+        retrieval_status="ok",
+    )
+
+    assert "资料中没有提到" in prompt
+    assert "根据现有资料无法确定" in prompt
+    assert "页面名称：账号详情" in prompt
+    assert "页面标识：account-detail" in prompt
+    assert "页面说明：用于查看和维护账号资料" in prompt
+    assert "助手入口说明：可咨询账号相关问题" in prompt
+    assert "以上信息描述用户提问时所在的业务环境" in prompt
+    assert "按内容选择清晰的排版" in prompt

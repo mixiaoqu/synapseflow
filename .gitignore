@@ -128,3 +128,6 @@ agent-transcripts/
 *.key
 !*.pub
 backend/langgraph.env.example
+
+# claude
+.claude/

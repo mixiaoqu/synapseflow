@@ -93,3 +93,19 @@ def test_generate_kb_chat_answer_text_short_circuits_out_of_scope_without_llm():
     )
 
     assert answer == KB_OUT_OF_SCOPE_REPLY
+
+
+def test_fixed_chitchat_and_boundary_replies_are_readable_chinese():
+    assert KB_CHITCHAT_GREETING_REPLY == (
+        "你好，我主要负责回答当前知识库中的制度、流程、规则和文档内容。"
+        "你可以继续问我相关问题。"
+    )
+    assert KB_CHITCHAT_THANKS_REPLY == "不客气，我可以继续帮你查询当前知识库里的内容。"
+    assert KB_CHITCHAT_GENERIC_REPLY == (
+        "你好，我主要负责回答当前知识库相关问题，例如制度、流程、规则和文档内容。"
+        "你可以继续问我相关问题。"
+    )
+    assert KB_OUT_OF_SCOPE_REPLY == (
+        "我主要负责回答当前知识库相关问题，例如制度、流程、规则和文档内容。"
+        "当前这个请求不属于知识库问答范围，你可以继续问我知识库里的内容。"
+    )

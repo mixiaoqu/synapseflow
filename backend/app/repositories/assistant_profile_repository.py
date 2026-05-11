@@ -10,9 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     AssistantProfile,
     ChatSession,
-    DocumentCategory,
     KbChatLog,
-    KnowledgeBase,
     Team,
     User,
 )
@@ -25,8 +23,6 @@ class AssistantProfileRecord:
 
     assistant: AssistantProfile
     team_name: str | None
-    knowledge_base_name: str | None
-    category_name: str | None
     created_by_name: str | None
 
 
@@ -39,7 +35,7 @@ class AssistantDependencyRecord:
 
 
 class AssistantProfileRepository:
-    """Persist assistant profiles with knowledge-base scoped visibility."""
+    """Persist assistant profiles with team-scoped visibility."""
 
     def __init__(self, db: AsyncSession, user_id: int):
         self.db = db
@@ -50,25 +46,19 @@ class AssistantProfileRepository:
             select(
                 AssistantProfile,
                 Team.name.label("team_name"),
-                KnowledgeBase.name.label("knowledge_base_name"),
-                DocumentCategory.name.label("category_name"),
                 func.coalesce(User.full_name, User.username).label("created_by_name"),
             )
             .join(Team, Team.id == AssistantProfile.team_id)
-            .join(KnowledgeBase, KnowledgeBase.id == AssistantProfile.knowledge_base_id)
-            .outerjoin(DocumentCategory, DocumentCategory.id == AssistantProfile.category_id)
             .outerjoin(User, User.id == AssistantProfile.created_by_user_id)
             .where(accessible_assistant_profile_condition(self.user_id))
         )
 
     @staticmethod
     def _to_record(row) -> AssistantProfileRecord:
-        assistant, team_name, knowledge_base_name, category_name, created_by_name = row
+        assistant, team_name, created_by_name = row
         return AssistantProfileRecord(
             assistant=assistant,
             team_name=team_name,
-            knowledge_base_name=knowledge_base_name,
-            category_name=category_name,
             created_by_name=created_by_name,
         )
 
@@ -76,14 +66,11 @@ class AssistantProfileRepository:
         self,
         *,
         team_id: int | None = None,
-        knowledge_base_id: int | None = None,
         active_only: bool = False,
     ) -> list[AssistantProfileRecord]:
         stmt = self._base_stmt()
         if team_id is not None:
             stmt = stmt.where(AssistantProfile.team_id == team_id)
-        if knowledge_base_id is not None:
-            stmt = stmt.where(AssistantProfile.knowledge_base_id == knowledge_base_id)
         if active_only:
             stmt = stmt.where(AssistantProfile.is_active.is_(True))
         stmt = stmt.order_by(

@@ -26,6 +26,7 @@ class DocumentCreate(BaseModel):
     content: str = Field(..., description="Document content")
     document_type: str | None = Field(None, description="Document type such as txt/md/pdf/docx")
     knowledge_base_id: int | None = Field(None, description="Owning knowledge base id")
+    knowledge_base_branch_id: int = Field(..., description="Owning knowledge base branch id")
     category_id: int | None = Field(None, description="Owning category id")
     source_path: str | None = Field(None, description="Original relative source path")
 
@@ -45,6 +46,8 @@ class DocumentResponse(BaseModel):
     is_latest: bool = True
     is_live: bool = False
     knowledge_base_id: int | None = Field(None, description="Owning knowledge base id")
+    knowledge_base_branch_id: int | None = Field(None, description="Owning knowledge base branch id")
+    knowledge_base_branch_name: str | None = Field(None, description="Owning knowledge base branch name")
     category_id: int | None = Field(None, description="Owning category id")
     category_name: str | None = Field(None, description="Owning category name")
     source_path: str | None = Field(None, description="Original relative source path")
@@ -78,6 +81,8 @@ class DocumentListItem(BaseModel):
     index_error: str | None = None
     indexed_at: datetime | None = None
     knowledge_base_id: int | None = None
+    knowledge_base_branch_id: int | None = None
+    knowledge_base_branch_name: str | None = None
     knowledge_base_name: str | None = None
     category_id: int | None = None
     category_name: str | None = None

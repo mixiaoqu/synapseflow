@@ -1,36 +1,26 @@
 "use client";
 
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  AlertTriangle,
-  Database,
-  FileText,
-  Loader2,
-  MoreHorizontal,
-  PencilLine,
-  Plus,
-  Search,
-  Trash2,
-  UploadCloud,
-  X,
-} from "lucide-react";
+import { AlertTriangle, Database, Loader2, PencilLine, Plus, Search, UploadCloud, X } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
+import { AdminPage } from "@/components/admin/layout/AdminPage";
 import { useTeamScope } from "@/components/team-scope/TeamScopeProvider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  uploadDocument,
-  uploadDocumentsBatch,
-} from "@/lib/api/documents";
+import { KnowledgeBaseStatusSummary } from "@/features/documents/components/KnowledgeBaseStatusSummary";
+import { KnowledgeBaseWorkbenchCard } from "@/features/documents/components/KnowledgeBaseWorkbenchCard";
+import { uploadDocument, uploadDocumentsBatch } from "@/lib/api/documents";
 import {
   createKnowledgeBase,
+  createKnowledgeBaseBranch,
   deleteKnowledgeBase,
+  listKnowledgeBaseBranches,
   listKnowledgeBases,
   updateKnowledgeBase,
+  type KnowledgeBaseBranch,
   type KnowledgeBaseWithCount,
 } from "@/lib/api/knowledgeBases";
 import { cn } from "@/lib/utils";
@@ -39,136 +29,6 @@ const ACCEPT_FILES = ".txt,.md,.pdf,.docx";
 const SUPPORTED_EXTENSIONS = new Set([".txt", ".md", ".pdf", ".docx"]);
 const MAX_SIZE = 10 * 1024 * 1024;
 const MAX_BATCH = 500;
-
-type KnowledgeBaseCardTone = "danger" | "warning" | "review" | "info" | "success" | "muted";
-type KnowledgeBaseCardAction = "failed" | "indexing" | "pending_review" | "submittable" | "upload";
-
-const cardToneMeta: Record<
-  KnowledgeBaseCardTone,
-  {
-    border: string;
-    stripe: string;
-    chip: string;
-    headline: string;
-    shadow?: string;
-  }
-> = {
-  danger: {
-    border: "border-rose-300",
-    stripe: "bg-rose-500",
-    chip: "border-rose-200 bg-rose-50 text-rose-700",
-    headline: "text-rose-700",
-    shadow: "shadow-rose-100",
-  },
-  warning: {
-    border: "border-amber-300",
-    stripe: "bg-amber-500",
-    chip: "border-amber-200 bg-amber-50 text-amber-700",
-    headline: "text-amber-700",
-  },
-  review: {
-    border: "border-orange-300",
-    stripe: "bg-orange-500",
-    chip: "border-orange-200 bg-orange-50 text-orange-700",
-    headline: "text-orange-700",
-  },
-  info: {
-    border: "border-blue-300",
-    stripe: "bg-blue-500",
-    chip: "border-blue-200 bg-blue-50 text-blue-700",
-    headline: "text-blue-700",
-  },
-  success: {
-    border: "border-emerald-300",
-    stripe: "bg-emerald-500",
-    chip: "border-emerald-200 bg-emerald-50 text-emerald-700",
-    headline: "text-emerald-700",
-  },
-  muted: {
-    border: "border-slate-200",
-    stripe: "bg-slate-300",
-    chip: "border-slate-200 bg-slate-100 text-slate-600",
-    headline: "text-slate-600",
-  },
-};
-
-function formatDateTime(value?: string | null) {
-  if (!value) return "暂无";
-  return new Date(value).toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
-function getIndexingCount(knowledgeBase: KnowledgeBaseWithCount) {
-  return knowledgeBase.queued_document_count + knowledgeBase.processing_document_count;
-}
-
-function getCardSummary(knowledgeBase: KnowledgeBaseWithCount): {
-  label: string;
-  headline: string;
-  tone: KnowledgeBaseCardTone;
-  action: KnowledgeBaseCardAction;
-  actionLabel: string;
-} {
-  const indexingCount = getIndexingCount(knowledgeBase);
-
-  if (knowledgeBase.failed_document_count > 0) {
-    return {
-      label: `索引失败 ${knowledgeBase.failed_document_count}`,
-      headline: `${knowledgeBase.failed_document_count} 篇文档索引失败`,
-      tone: "danger",
-      action: "failed",
-      actionLabel: "查看失败",
-    };
-  }
-  if (indexingCount > 0) {
-    return {
-      label: `索引中 ${indexingCount}`,
-      headline: `${indexingCount} 篇文档正在索引`,
-      tone: "warning",
-      action: "indexing",
-      actionLabel: "查看进度",
-    };
-  }
-  if (knowledgeBase.pending_review_document_count > 0) {
-    return {
-      label: `待审核 ${knowledgeBase.pending_review_document_count}`,
-      headline: `${knowledgeBase.pending_review_document_count} 篇文档待审核`,
-      tone: "review",
-      action: "pending_review",
-      actionLabel: "审核文档",
-    };
-  }
-  if (knowledgeBase.submittable_document_count > 0) {
-    return {
-      label: `可提交审核 ${knowledgeBase.submittable_document_count}`,
-      headline: `${knowledgeBase.submittable_document_count} 篇文档可提交审核`,
-      tone: "info",
-      action: "submittable",
-      actionLabel: "提交审核",
-    };
-  }
-  if (knowledgeBase.published_document_count > 0) {
-    return {
-      label: `已发布 ${knowledgeBase.published_document_count}`,
-      headline: `${knowledgeBase.published_document_count} 篇文档已发布`,
-      tone: "success",
-      action: "upload",
-      actionLabel: "上传文档",
-    };
-  }
-  return {
-    label: "空知识库",
-    headline: "还没有文档",
-    tone: "muted",
-    action: "upload",
-    actionLabel: "上传文档",
-  };
-}
 
 type ConfirmDialogState = {
   open: boolean;
@@ -185,6 +45,7 @@ function validateFiles(files: File[] | FileList) {
   const acceptedBeforeCap: File[] = [];
   let invalidTypeCount = 0;
   let oversizeCount = 0;
+
   for (const file of allFiles) {
     const ext = "." + (file.name.split(".").pop()?.toLowerCase() || "");
     if (!SUPPORTED_EXTENSIONS.has(ext)) {
@@ -197,6 +58,7 @@ function validateFiles(files: File[] | FileList) {
     }
     acceptedBeforeCap.push(file);
   }
+
   return {
     accepted: acceptedBeforeCap,
     invalidTypeCount,
@@ -220,24 +82,37 @@ export default function DocumentsPage() {
   } = useTeamScope();
 
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseWithCount[]>([]);
+  const [branchOptions, setBranchOptions] = useState<Record<number, KnowledgeBaseBranch[]>>({});
   const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState<number | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
   const [loadingKnowledgeBases, setLoadingKnowledgeBases] = useState(false);
+
   const [creatingKnowledgeBase, setCreatingKnowledgeBase] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createDescription, setCreateDescription] = useState("");
+
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingKnowledgeBaseId, setEditingKnowledgeBaseId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [savingKnowledgeBase, setSavingKnowledgeBase] = useState(false);
+
+  const [createBranchModalOpen, setCreateBranchModalOpen] = useState(false);
+  const [createBranchKnowledgeBaseId, setCreateBranchKnowledgeBaseId] = useState<number | null>(null);
+  const [createBranchCode, setCreateBranchCode] = useState("");
+  const [createBranchName, setCreateBranchName] = useState("");
+  const [createBranchDescription, setCreateBranchDescription] = useState("");
+  const [creatingBranch, setCreatingBranch] = useState(false);
+
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [uploadCollectionId, setUploadCollectionId] = useState<number | null>(null);
+  const [uploadBranchId, setUploadBranchId] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [deletingKnowledgeBaseId, setDeletingKnowledgeBaseId] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
+
+  const [deletingKnowledgeBaseId, setDeletingKnowledgeBaseId] = useState<number | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
     open: false,
     title: "",
@@ -254,22 +129,42 @@ export default function DocumentsPage() {
       [item.name, item.description || ""].some((value) => value.toLowerCase().includes(q)),
     );
   }, [keyword, knowledgeBases]);
+
   const uploadTargetKnowledgeBase = useMemo(
     () => knowledgeBases.find((item) => item.id === uploadCollectionId) ?? null,
     [knowledgeBases, uploadCollectionId],
+  );
+  const uploadTargetBranches = useMemo(
+    () => (uploadCollectionId ? branchOptions[uploadCollectionId] ?? [] : []),
+    [branchOptions, uploadCollectionId],
+  );
+  const uploadTargetBranch = useMemo(
+    () => uploadTargetBranches.find((item) => item.id === uploadBranchId) ?? null,
+    [uploadBranchId, uploadTargetBranches],
+  );
+  const uploadActiveBranches = useMemo(
+    () => uploadTargetBranches.filter((item) => item.is_active),
+    [uploadTargetBranches],
   );
 
   const loadKnowledgeBases = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (selectedTeamId == null) {
       setKnowledgeBases([]);
+      setBranchOptions({});
       setSelectedKnowledgeBaseId(null);
       setUploadCollectionId(null);
+      setUploadBranchId(null);
       return;
     }
+
     if (!silent) setLoadingKnowledgeBases(true);
     try {
       const list = await listKnowledgeBases(selectedTeamId);
+      const branchEntries = await Promise.all(
+        list.map(async (item) => [item.id, await listKnowledgeBaseBranches(item.id)] as const),
+      );
       setKnowledgeBases(list);
+      setBranchOptions(Object.fromEntries(branchEntries));
       setSelectedKnowledgeBaseId((prev) =>
         prev && list.some((item) => item.id === prev) ? prev : list[0]?.id ?? null,
       );
@@ -278,10 +173,12 @@ export default function DocumentsPage() {
       );
     } catch {
       if (!silent) {
-        toast.error("加载知识库失败");
+        toast.error("知识库列表加载失败");
         setKnowledgeBases([]);
+        setBranchOptions({});
         setSelectedKnowledgeBaseId(null);
         setUploadCollectionId(null);
+        setUploadBranchId(null);
       }
     } finally {
       if (!silent) setLoadingKnowledgeBases(false);
@@ -300,6 +197,19 @@ export default function DocumentsPage() {
     }, 8000);
     return () => window.clearTimeout(timer);
   }, [knowledgeBases, loadKnowledgeBases]);
+
+  useEffect(() => {
+    if (!uploadCollectionId) {
+      setUploadBranchId(null);
+      return;
+    }
+    const branches = branchOptions[uploadCollectionId] ?? [];
+    setUploadBranchId((prev) =>
+      prev && branches.some((item) => item.id === prev)
+        ? prev
+        : (branches.find((item) => item.is_active)?.id ?? null),
+    );
+  }, [branchOptions, uploadCollectionId]);
 
   const closeConfirmDialog = () => {
     setConfirmDialog((prev) => ({
@@ -324,10 +234,26 @@ export default function DocumentsPage() {
   };
 
   const openCreateModal = () => {
-    if (selectedTeamId == null) return toast.error("请先选择团队");
+    if (selectedTeamId == null) {
+      toast.error("请先选择团队");
+      return;
+    }
     setCreateName("");
     setCreateDescription("");
     setCreateModalOpen(true);
+  };
+
+  const openCreateBranchModal = (knowledgeBaseId?: number) => {
+    const targetId = knowledgeBaseId ?? selectedKnowledgeBaseId ?? knowledgeBases[0]?.id ?? null;
+    if (!targetId) {
+      toast.error("请先选择知识库");
+      return;
+    }
+    setCreateBranchKnowledgeBaseId(targetId);
+    setCreateBranchCode("");
+    setCreateBranchName("");
+    setCreateBranchDescription("");
+    setCreateBranchModalOpen(true);
   };
 
   const openEditModal = (knowledgeBase: KnowledgeBaseWithCount) => {
@@ -339,8 +265,14 @@ export default function DocumentsPage() {
 
   const openUploadModal = (knowledgeBaseId?: number) => {
     const targetId = knowledgeBaseId ?? selectedKnowledgeBaseId ?? knowledgeBases[0]?.id ?? null;
-    if (!targetId) return toast.error("请先创建知识库，再上传文档");
+    if (!targetId) {
+      toast.error("请先选择知识库");
+      return;
+    }
     setUploadCollectionId(targetId);
+    const branches = branchOptions[targetId] ?? [];
+    const firstActiveBranch = branches.find((item) => item.is_active) ?? null;
+    setUploadBranchId(firstActiveBranch?.id ?? null);
     setDragOver(false);
     setUploadModalOpen(true);
   };
@@ -385,20 +317,43 @@ export default function DocumentsPage() {
       setEditModalOpen(false);
       await loadKnowledgeBases();
     } catch (error: unknown) {
-      toast.error((error as { message?: string }).message || "更新失败");
+      toast.error((error as { message?: string }).message || "更新知识库失败");
     } finally {
       setSavingKnowledgeBase(false);
     }
   };
 
+  const handleCreateBranch = async () => {
+    if (!createBranchKnowledgeBaseId || !createBranchCode.trim() || !createBranchName.trim()) {
+      return;
+    }
+    setCreatingBranch(true);
+    try {
+      await createKnowledgeBaseBranch(createBranchKnowledgeBaseId, {
+        code: createBranchCode.trim(),
+        name: createBranchName.trim(),
+        description: createBranchDescription.trim() || null,
+        is_active: true,
+      });
+      toast.success("版本已创建");
+      setCreateBranchModalOpen(false);
+      await loadKnowledgeBases();
+      setUploadCollectionId(createBranchKnowledgeBaseId);
+    } catch (error: unknown) {
+      toast.error((error as { message?: string }).message || "创建版本失败");
+    } finally {
+      setCreatingBranch(false);
+    }
+  };
+
   const handleDeleteKnowledgeBase = (knowledgeBase: KnowledgeBaseWithCount) => {
     openConfirmDialog({
-      title: "删除这个知识库？",
-      description: `“${knowledgeBase.name}”会被删除，文档会从知识库解绑。此操作不可恢复。`,
+      title: "删除知识库",
+      description: `删除后将移除“${knowledgeBase.name}”及其关联文档记录，请确认。`,
       contextRows: [
-        { label: "当前团队", value: activeTeam?.name || "未选择团队" },
-        { label: "目标知识库", value: knowledgeBase.name },
-        { label: "包含文档", value: `${knowledgeBase.document_count} 篇` },
+        { label: "团队", value: activeTeam?.name || "未选择团队" },
+        { label: "知识库", value: knowledgeBase.name },
+        { label: "文档总数", value: `${knowledgeBase.document_count}` },
       ],
       confirmLabel: "确认删除",
       tone: "danger",
@@ -409,7 +364,7 @@ export default function DocumentsPage() {
           toast.success("知识库已删除");
           await loadKnowledgeBases();
         } catch (error: unknown) {
-          toast.error((error as { message?: string }).message || "删除失败");
+          toast.error((error as { message?: string }).message || "删除知识库失败");
         } finally {
           setDeletingKnowledgeBaseId(null);
         }
@@ -420,35 +375,44 @@ export default function DocumentsPage() {
   const uploadFiles = async (files: File[] | FileList | null) => {
     if (!files || files.length === 0) return;
     if (files.length > MAX_BATCH) {
-      toast.error(`单次最多上传 ${MAX_BATCH} 个文件，请减少文件数量后重试`);
+      toast.error(`单次最多上传 ${MAX_BATCH} 个文件`);
       return;
     }
 
     const { accepted, invalidTypeCount, oversizeCount } = validateFiles(files);
-    if (accepted.length === 0) return toast.error("没有符合要求的文件，请检查格式或大小限制");
+    if (accepted.length === 0) {
+      toast.error("没有可上传的文件，请检查格式与大小限制");
+      return;
+    }
+
+    if (!uploadBranchId) {
+      toast.error("请先选择版本");
+      return;
+    }
 
     setUploading(true);
     try {
       const knowledgeBaseId =
         uploadCollectionId && uploadCollectionId > 0 ? uploadCollectionId : undefined;
       const sourcePaths = getSourcePaths(accepted);
+
       if (accepted.length === 1) {
-        await uploadDocument(accepted[0], knowledgeBaseId, {
+        await uploadDocument(accepted[0], knowledgeBaseId, uploadBranchId, {
           sourcePath: sourcePaths?.[0] ?? null,
         });
       } else {
-        await uploadDocumentsBatch(accepted, knowledgeBaseId, {
+        await uploadDocumentsBatch(accepted, knowledgeBaseId, uploadBranchId, {
           sourcePaths,
         });
       }
 
       const notes: string[] = [];
-      if (invalidTypeCount > 0) notes.push(`${invalidTypeCount} 个格式不支持`);
-      if (oversizeCount > 0) notes.push(`${oversizeCount} 个超过 10MB`);
+      if (invalidTypeCount > 0) notes.push(`${invalidTypeCount} 个文件格式不支持`);
+      if (oversizeCount > 0) notes.push(`${oversizeCount} 个文件超过 10MB`);
       toast.success(
         notes.length
-          ? `已上传 ${accepted.length} 个文件，并加入索引队列，${notes.join("，")}`
-          : `已上传 ${accepted.length} 个文件，并加入索引队列`,
+          ? `已上传 ${accepted.length} 个文件，已跳过：${notes.join("，")}`
+          : `已上传 ${accepted.length} 个文件`,
       );
       setUploadModalOpen(false);
       await loadKnowledgeBases();
@@ -471,348 +435,137 @@ export default function DocumentsPage() {
   };
 
   const isLoading = teamsLoading || loadingKnowledgeBases;
-  const hasKnowledgeBases = knowledgeBases.length > 0;
+  const headerDescription = activeTeam
+    ? "管理您的企业知识库与文档资产，按工作台方式进入版本与内容管理。"
+    : "选择团队后查看当前范围内的知识库工作台。";
 
   return (
-    <div className="flex min-h-full flex-col bg-gray-50 text-slate-900">
+    <div className="min-h-full bg-slate-50 text-slate-900">
       <Toaster position="top-right" richColors />
-      <header className="px-4 pt-6 sm:px-6">
-        <div className="mx-auto max-w-[1700px]">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-            <div>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-900">团队知识库</h1>
-              <p className="mt-1 text-sm text-slate-500">
-                {activeTeam
-                  ? `${activeTeam.name} · ${knowledgeBases.length} 个知识库`
-                  : "正在加载团队信息..."}
+
+      <AdminPage className="px-6 py-8 sm:px-6 lg:px-8">
+        <section className="mx-auto max-w-7xl">
+          <div className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">
+                Knowledge Assets
               </p>
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+                知识库工作台
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-500">{headerDescription}</p>
             </div>
 
-            <div className="flex w-full max-w-[820px] flex-col gap-2 lg:flex-row lg:items-center">
-              <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-end lg:w-auto">
+              <div className="relative w-full sm:w-[320px]">
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
                   value={searchInput}
                   onChange={(event) => setSearchInput(event.target.value)}
                   onKeyDown={(event) => event.key === "Enter" && setKeyword(searchInput.trim())}
                   placeholder="搜索知识库名称或描述"
-                  className="h-11 rounded-xl border-slate-200 bg-white pl-10 text-slate-800 placeholder:text-slate-400"
+                  className="h-12 rounded-full border-slate-200 bg-white pl-11 pr-4"
                 />
               </div>
               <Button
                 variant="outline"
                 onClick={() => setKeyword(searchInput.trim())}
-                className="h-11 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                className="h-12 rounded-full border-slate-200 bg-white px-5"
               >
                 搜索
               </Button>
               <Button
-                variant="outline"
                 onClick={openCreateModal}
-                className="h-11 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                className="h-12 rounded-full bg-slate-900 px-5 text-white hover:bg-slate-800"
               >
                 <Plus className="mr-2 h-4 w-4" />
                 新建知识库
               </Button>
-              <Button
-                onClick={() => openUploadModal()}
-                disabled={!hasKnowledgeBases}
-                className="h-11 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300"
-              >
-                <UploadCloud className="mr-2 h-4 w-4" />
-                上传文档
-              </Button>
             </div>
           </div>
 
-          {!hasKnowledgeBases && !isLoading ? (
-            <p className="mt-4 text-sm text-amber-700">
-              当前团队还没有知识库。先创建知识库，再上传文档会更顺畅。
-            </p>
-          ) : null}
-        </div>
-      </header>
-      <main className="flex-1 px-4 pb-8 pt-4 sm:px-6">
-        <section className="mx-auto max-w-[1700px]">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
-            <span>{isLoading ? "正在同步团队与知识库内容..." : `共找到 ${displayedKnowledgeBases.length} 个知识库`}</span>
-            <span>{activeTeam?.name || "未选择团队"}</span>
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm">
+            <div className="flex flex-wrap items-center gap-3">
+              <span>{isLoading ? "正在同步团队与知识库数据..." : `共找到 ${displayedKnowledgeBases.length} 个知识库`}</span>
+              <span className="hidden text-slate-300 sm:inline">/</span>
+              <span>{activeTeam?.name || "未选择团队"}</span>
+            </div>
+            {keyword ? (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setSearchInput("");
+                  setKeyword("");
+                }}
+                className="rounded-full px-0 text-slate-500 hover:bg-transparent hover:text-slate-900"
+              >
+                清空筛选
+              </Button>
+            ) : null}
           </div>
 
-          {displayedKnowledgeBases.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center shadow-sm">
-              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
-                <Database className="h-8 w-8" />
-              </div>
-              <h2 className="mt-5 text-2xl font-semibold text-slate-900">
-                {keyword ? "没有找到匹配的知识库" : "还没有知识库"}
-              </h2>
-              <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500">
-                {keyword
-                  ? "可以尝试更换关键词，或者直接新建一个知识库。"
-                  : "先创建一个知识库，再上传文档、建立索引并进入详细工作区。"}
-              </p>
-              <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-                <Button onClick={openCreateModal} className="rounded-xl bg-blue-600 text-white hover:bg-blue-700">
-                  <Plus className="mr-2 h-4 w-4" />
-                  新建知识库
-                </Button>
-                {keyword ? (
-                  <Button variant="outline" className="rounded-xl border-slate-200" onClick={() => {
+        {displayedKnowledgeBases.length === 0 ? (
+          <section className="rounded-3xl border border-slate-200 bg-white px-6 py-14 text-center shadow-sm">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+              <Database className="h-8 w-8" />
+            </div>
+            <h2 className="mt-5 text-2xl font-semibold text-slate-900">
+              {keyword ? "没有匹配的知识库" : "当前还没有知识库"}
+            </h2>
+            <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500">
+              {keyword
+                ? "请调整搜索关键词，或清空筛选后查看全部知识库。"
+                : "先创建知识库，再上传文档和维护版本，后续详情页管理链路保持不变。"}
+            </p>
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+              <Button onClick={openCreateModal} className="rounded-full bg-slate-900 px-5 text-white hover:bg-slate-800">
+                <Plus className="mr-2 h-4 w-4" />
+                新建知识库
+              </Button>
+              {keyword ? (
+                <Button
+                  variant="outline"
+                  className="rounded-full border-slate-200"
+                  onClick={() => {
                     setSearchInput("");
                     setKeyword("");
-                  }}>
-                    清空搜索
-                  </Button>
-                ) : null}
-              </div>
+                  }}
+                >
+                  清空筛选
+                </Button>
+              ) : null}
             </div>
-          ) : (
-            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {displayedKnowledgeBases.map((knowledgeBase) => {
-                const active = selectedKnowledgeBaseId === knowledgeBase.id;
-                const indexingCount = getIndexingCount(knowledgeBase);
-                const cardSummary = getCardSummary(knowledgeBase);
-                const tone = cardToneMeta[cardSummary.tone];
-                const runPrimaryAction = () => {
-                  setSelectedKnowledgeBaseId(knowledgeBase.id);
-                  if (cardSummary.action === "upload") {
-                    openUploadModal(knowledgeBase.id);
-                    return;
-                  }
-                  if (
-                    cardSummary.action === "pending_review" ||
-                    cardSummary.action === "submittable"
-                  ) {
-                    const filter =
-                      cardSummary.action === "pending_review" ? "pending_review" : "draft";
-                    router.push(`/admin/review?filter=${filter}`);
-                    return;
-                  }
-                  openKnowledgeBase(knowledgeBase.id);
-                };
-
-                return (
-                  <div
-                    key={knowledgeBase.id}
-                    className={cn(
-                      "group relative flex h-full min-h-[300px] flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-md",
-                      active ? "ring-4 ring-blue-50" : "",
-                      tone.border,
-                      tone.shadow,
-                    )}
-                  >
-                    <div className={cn("absolute inset-y-0 left-0 w-1", tone.stripe)} />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedKnowledgeBaseId(knowledgeBase.id);
-                        openKnowledgeBase(knowledgeBase.id);
-                      }}
-                      className="flex flex-1 flex-col text-left outline-none"
-                    >
-                      <div className="flex flex-1 flex-col p-5 pl-6">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <span className="inline-flex text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                              知识库
-                            </span>
-                            <h3 className="mt-2 truncate text-lg font-bold text-slate-900 transition-colors group-hover:text-blue-700">
-                              {knowledgeBase.name}
-                            </h3>
-                          </div>
-                          <div
-                            className={cn(
-                              "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
-                              tone.chip,
-                            )}
-                          >
-                            {cardSummary.tone === "danger" ? (
-                              <AlertTriangle className="h-3.5 w-3.5" />
-                            ) : cardSummary.tone === "warning" ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : cardSummary.tone === "muted" ? (
-                              <FileText className="h-3.5 w-3.5" />
-                            ) : (
-                              <span className={cn("h-2 w-2 rounded-full", tone.stripe)} />
-                            )}
-                            {cardSummary.label}
-                          </div>
-                        </div>
-                        <p className="mt-1.5 line-clamp-2 text-sm text-slate-500">
-                          {knowledgeBase.description || "围绕单个主题集中组织文档、检索与问答。"}
-                        </p>
-
-                        <div className="mt-5">
-                          <p className={cn("text-lg font-semibold", tone.headline)}>
-                            {cardSummary.headline}
-                          </p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            最近上传 {formatDateTime(knowledgeBase.last_uploaded_at)}
-                          </p>
-                        </div>
-
-                        <div className="mt-5 grid grid-cols-3 gap-2">
-                          {[
-                            {
-                              label: "可提交审核",
-                              value: knowledgeBase.submittable_document_count,
-                              className: "text-blue-700",
-                            },
-                            {
-                              label: "待审核",
-                              value: knowledgeBase.pending_review_document_count,
-                              className: "text-orange-700",
-                            },
-                            {
-                              label: "已发布",
-                              value: knowledgeBase.published_document_count,
-                              className: "text-emerald-700",
-                            },
-                            {
-                              label: "索引中",
-                              value: indexingCount,
-                              className: "text-amber-700",
-                            },
-                            {
-                              label: "失败",
-                              value: knowledgeBase.failed_document_count,
-                              className: "text-rose-700",
-                            },
-                            {
-                              label: "总文档",
-                              value: knowledgeBase.document_count,
-                              className: "text-slate-700",
-                            },
-                          ].map((item) => (
-                            <div key={item.label} className="rounded-xl bg-slate-50 px-3 py-2">
-                              <p className="truncate text-[11px] font-medium text-slate-400">
-                                {item.label}
-                              </p>
-                              <p className={cn("mt-1 text-base font-semibold", item.className)}>
-                                {item.value}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </button>
-
-                    <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-white px-4 py-3 pl-5">
-                      <div className="flex items-center gap-2 text-xs text-slate-400">
-                        <span>更新于 {formatDateTime(knowledgeBase.updated_at)}</span>
-                        {indexingCount > 0 && (
-                          <span className="flex items-center gap-1 text-amber-600">
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            处理中...
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <Button
-                          size="sm"
-                          className={cn(
-                            "h-8 rounded-lg px-3 text-xs text-white",
-                            cardSummary.tone === "danger"
-                              ? "bg-rose-600 hover:bg-rose-700"
-                              : cardSummary.tone === "warning" || cardSummary.tone === "review"
-                                ? "bg-amber-600 hover:bg-amber-700"
-                                : cardSummary.tone === "info"
-                                  ? "bg-blue-600 hover:bg-blue-700"
-                                  : "bg-slate-900 hover:bg-slate-800",
-                          )}
-                          onClick={runPrimaryAction}
-                        >
-                          {cardSummary.action === "upload" ? (
-                            <UploadCloud className="mr-1.5 h-4 w-4" />
-                          ) : null}
-                          {cardSummary.actionLabel}
-                        </Button>
-                        {cardSummary.action !== "upload" ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 rounded-lg border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedKnowledgeBaseId(knowledgeBase.id);
-                              openUploadModal(knowledgeBase.id);
-                            }}
-                          >
-                            <UploadCloud className="mr-1.5 h-4 w-4" />
-                            上传
-                          </Button>
-                        ) : null}
-
-                        <DropdownMenu.Root>
-                          <DropdownMenu.Trigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 rounded-lg px-0 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                              onClick={(e) => e.stopPropagation()}
-                              aria-label="更多操作"
-                            >
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenu.Trigger>
-                          <DropdownMenu.Portal>
-                            <DropdownMenu.Content
-                              side="bottom"
-                              align="end"
-                              sideOffset={8}
-                              className="z-50 min-w-[160px] rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-xl"
-                            >
-                              <DropdownMenu.Item
-                                onSelect={() => openEditModal(knowledgeBase)}
-                                className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100"
-                              >
-                                <PencilLine className="h-4 w-4" />
-                                编辑知识库
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Item
-                                onSelect={() =>
-                                  void navigator.clipboard
-                                    .writeText(String(knowledgeBase.id))
-                                    .then(() => toast.success("知识库 ID 已复制"))
-                                    .catch(() => toast.error("复制失败"))
-                                }
-                                className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-slate-700 outline-none transition-colors hover:bg-slate-100 focus:bg-slate-100"
-                              >
-                                <FileText className="h-4 w-4" />
-                                复制知识库 ID
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Separator className="my-1 h-px bg-slate-200" />
-                              <DropdownMenu.Item
-                                onSelect={() => handleDeleteKnowledgeBase(knowledgeBase)}
-                                disabled={deletingKnowledgeBaseId === knowledgeBase.id}
-                                className={cn(
-                                  "flex select-none items-center gap-2 rounded-lg px-3 py-2 outline-none transition-colors",
-                                  deletingKnowledgeBaseId === knowledgeBase.id
-                                    ? "cursor-not-allowed text-rose-300"
-                                    : "cursor-pointer text-rose-600 hover:bg-rose-50 focus:bg-rose-50",
-                                )}
-                              >
-                                {deletingKnowledgeBaseId === knowledgeBase.id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Trash2 className="h-4 w-4" />
-                                )}
-                                删除知识库
-                              </DropdownMenu.Item>
-                            </DropdownMenu.Content>
-                          </DropdownMenu.Portal>
-                        </DropdownMenu.Root>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          </section>
+        ) : (
+          <section className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {displayedKnowledgeBases.map((knowledgeBase) => (
+              <KnowledgeBaseWorkbenchCard
+                key={knowledgeBase.id}
+                knowledgeBase={knowledgeBase}
+                branches={branchOptions[knowledgeBase.id] ?? []}
+                active={selectedKnowledgeBaseId === knowledgeBase.id}
+                deleting={deletingKnowledgeBaseId === knowledgeBase.id}
+                onOpen={(item) => {
+                  setSelectedKnowledgeBaseId(item.id);
+                  openKnowledgeBase(item.id);
+                }}
+                onUpload={(item) => {
+                  setSelectedKnowledgeBaseId(item.id);
+                  openUploadModal(item.id);
+                }}
+                onEdit={openEditModal}
+                onCreateBranch={(item) => {
+                  setSelectedKnowledgeBaseId(item.id);
+                  openCreateBranchModal(item.id);
+                }}
+                onDelete={handleDeleteKnowledgeBase}
+              />
+            ))}
+          </section>
+        )}
         </section>
-      </main>
+      </AdminPage>
+
       {createModalOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
@@ -825,11 +578,8 @@ export default function DocumentsPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-semibold text-slate-900">新建知识库</h3>
-                <p className="hidden">
-                  为当前团队创建一个新的知识库，后续可以继续上传文档并进入详细工作区。
-                </p>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  选择目标知识库后上传文件。
+                  创建后即可进入详情页继续上传文档、管理版本和处理内容状态。
                 </p>
               </div>
               <Button
@@ -854,7 +604,7 @@ export default function DocumentsPage() {
                 <Input
                   value={createName}
                   onChange={(event) => setCreateName(event.target.value)}
-                  placeholder="例如：产品文档、实施规范、培训资料"
+                  placeholder="例如：售后 FAQ、产品手册、运营规范"
                   className="h-11 rounded-xl border-slate-200"
                 />
               </div>
@@ -863,12 +613,16 @@ export default function DocumentsPage() {
                 <Textarea
                   value={createDescription}
                   onChange={(event) => setCreateDescription(event.target.value)}
-                  placeholder="简要说明这个知识库会包含什么内容，方便团队后续搜索和管理。"
+                  placeholder="描述知识库的用途、适用范围或文档来源。"
                   className="min-h-[120px] rounded-xl border-slate-200"
                 />
               </div>
               <div className="flex items-center justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={() => !creatingKnowledgeBase && setCreateModalOpen(false)} className="rounded-xl border-slate-200">
+                <Button
+                  variant="outline"
+                  onClick={() => !creatingKnowledgeBase && setCreateModalOpen(false)}
+                  className="rounded-xl border-slate-200"
+                >
                   取消
                 </Button>
                 <Button
@@ -888,6 +642,7 @@ export default function DocumentsPage() {
           </div>
         </div>
       ) : null}
+
       {editModalOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
@@ -901,7 +656,7 @@ export default function DocumentsPage() {
               <div>
                 <h3 className="text-xl font-semibold text-slate-900">编辑知识库</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  可以更新知识库名称和概述，方便团队后续识别和管理。
+                  更新名称和描述，不影响现有文档、版本和详情页管理链路。
                 </p>
               </div>
               <Button
@@ -926,16 +681,16 @@ export default function DocumentsPage() {
                 <Input
                   value={editName}
                   onChange={(event) => setEditName(event.target.value)}
-                  placeholder="例如：产品文档、实施规范、培训资料"
+                  placeholder="例如：售后 FAQ、产品手册、运营规范"
                   className="h-11 rounded-xl border-slate-200"
                 />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">知识库概述</label>
+                <label className="mb-2 block text-sm font-medium text-slate-700">知识库描述</label>
                 <Textarea
                   value={editDescription}
                   onChange={(event) => setEditDescription(event.target.value)}
-                  placeholder="补充这个知识库包含的内容范围，方便团队理解。"
+                  placeholder="描述知识库的用途、适用范围或文档来源。"
                   className="min-h-[120px] rounded-xl border-slate-200"
                 />
               </div>
@@ -964,6 +719,103 @@ export default function DocumentsPage() {
           </div>
         </div>
       ) : null}
+
+      {createBranchModalOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
+          onClick={() => !creatingBranch && setCreateBranchModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-semibold text-slate-900">新建版本</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  版本用于区分不同内容范围，上传文档时会绑定到所选版本。
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => !creatingBranch && setCreateBranchModalOpen(false)}
+                className="rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">知识库</label>
+                <select
+                  value={createBranchKnowledgeBaseId ?? ""}
+                  onChange={(event) =>
+                    setCreateBranchKnowledgeBaseId(event.target.value ? Number(event.target.value) : null)
+                  }
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                >
+                  {knowledgeBases.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">版本标识</label>
+                <Input
+                  value={createBranchCode}
+                  onChange={(event) => setCreateBranchCode(event.target.value)}
+                  placeholder="例如：v2.9.3 / customer-a"
+                  className="h-11 rounded-xl border-slate-200"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">版本名称</label>
+                <Input
+                  value={createBranchName}
+                  onChange={(event) => setCreateBranchName(event.target.value)}
+                  placeholder="例如：五月发布版本"
+                  className="h-11 rounded-xl border-slate-200"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">版本描述</label>
+                <Textarea
+                  value={createBranchDescription}
+                  onChange={(event) => setCreateBranchDescription(event.target.value)}
+                  placeholder="补充这个版本的用途、范围或所属客户。"
+                  className="min-h-[100px] rounded-xl border-slate-200"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => !creatingBranch && setCreateBranchModalOpen(false)}
+                  className="rounded-xl border-slate-200"
+                >
+                  取消
+                </Button>
+                <Button
+                  onClick={() => void handleCreateBranch()}
+                  disabled={creatingBranch || !createBranchKnowledgeBaseId || !createBranchCode.trim() || !createBranchName.trim()}
+                  className="rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  {creatingBranch ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Plus className="mr-2 h-4 w-4" />
+                  )}
+                  创建版本
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {confirmDialog.open ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
@@ -976,9 +828,7 @@ export default function DocumentsPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-semibold text-slate-900">{confirmDialog.title}</h3>
-                <p className="mt-2 text-sm leading-6 text-slate-500">
-                  {confirmDialog.description}
-                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">{confirmDialog.description}</p>
                 {confirmDialog.contextRows?.length ? (
                   <div className="mt-4 space-y-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm">
                     {confirmDialog.contextRows.map((row) => (
@@ -1020,6 +870,7 @@ export default function DocumentsPage() {
           </div>
         </div>
       ) : null}
+
       {uploadModalOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
@@ -1033,7 +884,7 @@ export default function DocumentsPage() {
               <div>
                 <h3 className="text-xl font-semibold text-slate-900">上传文档</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  选择目标知识库后上传，系统会自动提取文本并加入索引队列。
+                  选择知识库和版本后，可拖拽上传或选择单文件、文件夹批量导入。
                 </p>
               </div>
               <Button
@@ -1049,20 +900,21 @@ export default function DocumentsPage() {
             <div className="mt-5 space-y-4">
               <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm sm:grid-cols-2">
                 <div>
-                  <p className="text-xs text-slate-500">目标团队</p>
+                  <p className="text-xs text-slate-500">团队</p>
                   <p className="mt-1 truncate font-medium text-slate-800">
                     {activeTeam?.name || "未选择团队"}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500">目标知识库</p>
+                  <p className="text-xs text-slate-500">知识库</p>
                   <p className="mt-1 truncate font-medium text-slate-800">
                     {uploadTargetKnowledgeBase?.name || "未选择知识库"}
                   </p>
                 </div>
               </div>
+
               <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">目标知识库</label>
+                <label className="mb-2 block text-sm font-medium text-slate-700">知识库</label>
                 <select
                   value={uploadCollectionId ?? ""}
                   onChange={(event) =>
@@ -1078,6 +930,41 @@ export default function DocumentsPage() {
                 </select>
               </div>
 
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">版本</label>
+                <select
+                  value={uploadBranchId ?? ""}
+                  onChange={(event) =>
+                    setUploadBranchId(event.target.value ? Number(event.target.value) : null)
+                  }
+                  disabled={uploadActiveBranches.length === 0}
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                >
+                  <option value="">请选择版本</option>
+                  {uploadActiveBranches.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} / {item.code}
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500">
+                  <span>
+                    {uploadActiveBranches.length === 0
+                      ? "当前知识库没有可用版本，请先创建版本。"
+                      : uploadTargetBranch
+                        ? `当前上传到：${uploadTargetBranch.name}`
+                        : "请选择一个版本"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openCreateBranchModal(uploadCollectionId ?? undefined)}
+                    className="font-medium text-blue-600 hover:text-blue-700"
+                  >
+                    新建版本
+                  </button>
+                </div>
+              </div>
+
               <div
                 onDragOver={(event) => {
                   event.preventDefault();
@@ -1090,7 +977,7 @@ export default function DocumentsPage() {
                   dragOver
                     ? "border-blue-300 bg-blue-50/70"
                     : "border-slate-300 bg-slate-50 hover:border-slate-400 hover:bg-slate-100",
-                  uploading && "pointer-events-none opacity-70",
+                  (uploading || uploadActiveBranches.length === 0) && "pointer-events-none opacity-70",
                 )}
               >
                 <input
@@ -1109,19 +996,43 @@ export default function DocumentsPage() {
                   className="hidden"
                   {...({ webkitdirectory: "true", directory: "true" } as Record<string, string>)}
                 />
+
                 {uploading ? (
                   <div className="inline-flex items-center gap-2 text-slate-600">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    正在上传并加入索引队列...
+                    正在上传并创建索引任务...
                   </div>
+                ) : uploadActiveBranches.length === 0 ? (
+                  <>
+                    <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
+                    <p className="mt-4 text-base font-medium text-slate-700">
+                      当前没有可用版本，暂时无法上传文档
+                    </p>
+                    <p className="mt-2 text-sm text-slate-500">
+                      先创建版本，再为对应版本上传文件。
+                    </p>
+                    <div className="mt-5">
+                      <Button
+                        type="button"
+                        className="rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openCreateBranchModal(uploadCollectionId ?? undefined);
+                        }}
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        新建版本
+                      </Button>
+                    </div>
+                  </>
                 ) : (
                   <>
                     <UploadCloud className="mx-auto h-8 w-8 text-slate-500" />
                     <p className="mt-4 text-base font-medium text-slate-700">
-                      拖拽文档到这里，或点击选择文件
+                      拖拽文件到这里，或选择文件、文件夹上传
                     </p>
                     <p className="mt-2 text-sm text-slate-500">
-                      支持 txt / md / pdf / docx，单文件最大 10MB，单次最多 {MAX_BATCH} 个文件
+                      支持 txt / md / pdf / docx，单文件不超过 10MB，单次最多 {MAX_BATCH} 个文件。
                     </p>
                     <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
                       <Button
@@ -1148,8 +1059,12 @@ export default function DocumentsPage() {
                       </Button>
                     </div>
                   </>
-                  )}
-                </div>
+                )}
+              </div>
+
+              {uploadTargetKnowledgeBase ? (
+                <KnowledgeBaseStatusSummary knowledgeBase={uploadTargetKnowledgeBase} />
+              ) : null}
             </div>
           </div>
         </div>
