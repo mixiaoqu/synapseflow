@@ -30,6 +30,8 @@ venv/
 ENV/
 env/
 .uv/
+AISYN.md
+.trae
 
 # 环境变量
 .env
