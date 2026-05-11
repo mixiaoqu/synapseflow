@@ -5,8 +5,9 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AssistantProfile, Product, Project, ProjectApp
+from app.db.models import AssistantProfile, KnowledgeBaseBranch, Product, Project, ProjectApp
 from app.models.schemas.project import (
+    ProjectAppKnowledgeBaseBranchBindingResponse,
     ProjectAppCreate,
     ProjectAppResponse,
     ProjectAppUpdate,
@@ -15,6 +16,7 @@ from app.models.schemas.project import (
     ProjectUpdate,
 )
 from app.repositories.project_repository import (
+    ProjectAppBindingRecord,
     ProjectAppRecord,
     ProjectAppRuntimeRecord,
     ProjectRecord,
@@ -43,6 +45,17 @@ class ProjectService:
         if not code:
             raise HTTPException(status_code=400, detail="Code cannot be empty")
         return code
+
+    @staticmethod
+    def _to_binding_response(
+        binding: ProjectAppBindingRecord,
+    ) -> ProjectAppKnowledgeBaseBranchBindingResponse:
+        return ProjectAppKnowledgeBaseBranchBindingResponse(
+            knowledge_base_id=binding.knowledge_base_id,
+            knowledge_base_name=binding.knowledge_base_name,
+            knowledge_base_branch_id=binding.knowledge_base_branch_id,
+            knowledge_base_branch_name=binding.knowledge_base_branch_name,
+        )
 
     @staticmethod
     def _to_project_response(record: ProjectRecord) -> ProjectResponse:
@@ -74,8 +87,7 @@ class ProjectService:
             description=app.description,
             default_assistant_id=app.default_assistant_id,
             default_assistant_name=record.assistant_name,
-            knowledge_base_id=record.knowledge_base_id,
-            knowledge_base_name=record.knowledge_base_name,
+            bindings=[ProjectService._to_binding_response(binding) for binding in record.bindings],
             is_active=app.is_active,
             created_at=app.created_at,
             updated_at=app.updated_at,
@@ -110,6 +122,57 @@ class ProjectService:
                 detail="Assistant does not belong to the project team",
             )
         return assistant
+
+    async def _validate_bindings(
+        self,
+        *,
+        project: Project,
+        bindings: list,
+    ) -> list[tuple[int, int]]:
+        if not bindings:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one knowledge base branch binding is required",
+            )
+        normalized: list[tuple[int, int]] = []
+        seen_knowledge_base_ids: set[int] = set()
+        for item in bindings:
+            knowledge_base_id = int(item.knowledge_base_id)
+            knowledge_base_branch_id = int(item.knowledge_base_branch_id)
+            if knowledge_base_id in seen_knowledge_base_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Only one branch can be selected per knowledge base",
+                )
+            branch = await self.db.get(KnowledgeBaseBranch, knowledge_base_branch_id)
+            if branch is None:
+                raise HTTPException(status_code=404, detail="Knowledge base branch not found")
+            if branch.knowledge_base_id != knowledge_base_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Knowledge base branch does not belong to the selected knowledge base",
+                )
+            if not branch.is_active:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Inactive knowledge base branch cannot be bound",
+                )
+            seen_knowledge_base_ids.add(knowledge_base_id)
+            normalized.append((knowledge_base_id, knowledge_base_branch_id))
+        if normalized:
+            from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
+
+            kb_repository = KnowledgeBaseRepository(self.db, user_id=self.user_id)
+            for knowledge_base_id, _ in normalized:
+                knowledge_base = await kb_repository.get_by_id(knowledge_base_id)
+                if knowledge_base is None:
+                    raise HTTPException(status_code=404, detail="Knowledge base not found")
+                if knowledge_base.team_id != project.team_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Knowledge base does not belong to the project team",
+                    )
+        return normalized
 
     async def list_projects(self, *, team_id: int | None = None) -> list[ProjectResponse]:
         if team_id is not None:
@@ -233,6 +296,10 @@ class ProjectService:
             project=project,
             assistant_id=payload.default_assistant_id,
         )
+        normalized_bindings = await self._validate_bindings(
+            project=project,
+            bindings=payload.bindings,
+        )
         app = ProjectApp(
             project_id=project_id,
             code=code,
@@ -241,7 +308,7 @@ class ProjectService:
             default_assistant_id=payload.default_assistant_id,
             is_active=payload.is_active,
         )
-        await self.repository.create_app(app)
+        await self.repository.create_app(app, bindings=normalized_bindings)
         record = await self.repository.get_app_record(app.id)
         if record is None:
             raise HTTPException(status_code=500, detail="Project app creation failed")
@@ -273,12 +340,16 @@ class ProjectService:
             project=project,
             assistant_id=payload.default_assistant_id,
         )
+        normalized_bindings = await self._validate_bindings(
+            project=project,
+            bindings=payload.bindings,
+        )
         app.code = code
         app.name = payload.name.strip()
         app.description = self._normalize_optional_text(payload.description)
         app.default_assistant_id = payload.default_assistant_id
         app.is_active = payload.is_active
-        await self.repository.update_app(app)
+        await self.repository.update_app(app, bindings=normalized_bindings)
         record = await self.repository.get_app_record(app.id)
         if record is None:
             raise HTTPException(status_code=500, detail="Project app update failed")

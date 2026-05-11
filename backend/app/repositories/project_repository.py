@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AssistantProfile, KnowledgeBase, Product, Project, ProjectApp, Team
+from app.db.models import (
+    AssistantProfile,
+    KnowledgeBase,
+    KnowledgeBaseBranch,
+    Product,
+    Project,
+    ProjectApp,
+    ProjectAppKnowledgeBaseBranch,
+    Team,
+)
 
 
 @dataclass(slots=True)
@@ -20,11 +29,18 @@ class ProjectRecord:
 
 
 @dataclass(slots=True)
+class ProjectAppBindingRecord:
+    knowledge_base_id: int
+    knowledge_base_name: str | None
+    knowledge_base_branch_id: int
+    knowledge_base_branch_name: str | None
+
+
+@dataclass(slots=True)
 class ProjectAppRecord:
     app: ProjectApp
     assistant_name: str | None
-    knowledge_base_id: int | None
-    knowledge_base_name: str | None
+    bindings: list[ProjectAppBindingRecord] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -33,7 +49,7 @@ class ProjectAppRuntimeRecord:
     project: Project
     app: ProjectApp
     assistant: AssistantProfile
-    knowledge_base_name: str | None
+    bindings: list[ProjectAppBindingRecord] = field(default_factory=list)
 
 
 class ProjectRepository:
@@ -133,51 +149,81 @@ class ProjectRepository:
         await self.db.delete(project)
         await self.db.commit()
 
-    async def list_apps(self, *, project_id: int) -> list[ProjectAppRecord]:
+    async def _list_bindings_for_apps(
+        self,
+        app_ids: list[int],
+    ) -> dict[int, list[ProjectAppBindingRecord]]:
+        if not app_ids:
+            return {}
         stmt = (
             select(
-                ProjectApp,
-                AssistantProfile.name,
-                AssistantProfile.knowledge_base_id,
+                ProjectAppKnowledgeBaseBranch.project_app_id,
+                ProjectAppKnowledgeBaseBranch.knowledge_base_id,
                 KnowledgeBase.name,
+                ProjectAppKnowledgeBaseBranch.knowledge_base_branch_id,
+                KnowledgeBaseBranch.name,
             )
+            .join(
+                KnowledgeBase,
+                KnowledgeBase.id == ProjectAppKnowledgeBaseBranch.knowledge_base_id,
+            )
+            .join(
+                KnowledgeBaseBranch,
+                KnowledgeBaseBranch.id == ProjectAppKnowledgeBaseBranch.knowledge_base_branch_id,
+            )
+            .where(ProjectAppKnowledgeBaseBranch.project_app_id.in_(app_ids))
+            .order_by(
+                ProjectAppKnowledgeBaseBranch.project_app_id.asc(),
+                ProjectAppKnowledgeBaseBranch.id.asc(),
+            )
+        )
+        rows = (await self.db.execute(stmt)).all()
+        mapping: dict[int, list[ProjectAppBindingRecord]] = {}
+        for app_id, kb_id, kb_name, branch_id, branch_name in rows:
+            mapping.setdefault(int(app_id), []).append(
+                ProjectAppBindingRecord(
+                    knowledge_base_id=int(kb_id),
+                    knowledge_base_name=kb_name,
+                    knowledge_base_branch_id=int(branch_id),
+                    knowledge_base_branch_name=branch_name,
+                )
+            )
+        return mapping
+
+    async def list_apps(self, *, project_id: int) -> list[ProjectAppRecord]:
+        stmt = (
+            select(ProjectApp, AssistantProfile.name)
             .outerjoin(AssistantProfile, AssistantProfile.id == ProjectApp.default_assistant_id)
-            .outerjoin(KnowledgeBase, KnowledgeBase.id == AssistantProfile.knowledge_base_id)
             .where(ProjectApp.project_id == project_id)
             .order_by(ProjectApp.created_at.desc(), ProjectApp.id.desc())
         )
         rows = (await self.db.execute(stmt)).all()
+        app_ids = [app.id for app, _ in rows]
+        bindings_map = await self._list_bindings_for_apps(app_ids)
         return [
             ProjectAppRecord(
                 app=app,
                 assistant_name=assistant_name,
-                knowledge_base_id=knowledge_base_id,
-                knowledge_base_name=knowledge_base_name,
+                bindings=bindings_map.get(app.id, []),
             )
-            for app, assistant_name, knowledge_base_id, knowledge_base_name in rows
+            for app, assistant_name in rows
         ]
 
     async def get_app_record(self, app_id: int) -> ProjectAppRecord | None:
         stmt = (
-            select(
-                ProjectApp,
-                AssistantProfile.name,
-                AssistantProfile.knowledge_base_id,
-                KnowledgeBase.name,
-            )
+            select(ProjectApp, AssistantProfile.name)
             .outerjoin(AssistantProfile, AssistantProfile.id == ProjectApp.default_assistant_id)
-            .outerjoin(KnowledgeBase, KnowledgeBase.id == AssistantProfile.knowledge_base_id)
             .where(ProjectApp.id == app_id)
         )
         row = (await self.db.execute(stmt)).one_or_none()
         if row is None:
             return None
-        app, assistant_name, knowledge_base_id, knowledge_base_name = row
+        app, assistant_name = row
+        bindings_map = await self._list_bindings_for_apps([app.id])
         return ProjectAppRecord(
             app=app,
             assistant_name=assistant_name,
-            knowledge_base_id=knowledge_base_id,
-            knowledge_base_name=knowledge_base_name,
+            bindings=bindings_map.get(app.id, []),
         )
 
     async def get_app(self, app_id: int) -> ProjectApp | None:
@@ -202,13 +248,50 @@ class ProjectRepository:
             stmt = stmt.where(ProjectApp.id != exclude_id)
         return bool((await self.db.execute(stmt)).scalar() or 0)
 
-    async def create_app(self, app: ProjectApp) -> ProjectApp:
+    async def replace_app_bindings(
+        self,
+        *,
+        app_id: int,
+        bindings: list[tuple[int, int]],
+    ) -> None:
+        existing_stmt = select(ProjectAppKnowledgeBaseBranch).where(
+            ProjectAppKnowledgeBaseBranch.project_app_id == app_id
+        )
+        existing_rows = list((await self.db.execute(existing_stmt)).scalars().all())
+        for row in existing_rows:
+            await self.db.delete(row)
+        if existing_rows:
+            await self.db.flush()
+        for knowledge_base_id, knowledge_base_branch_id in bindings:
+            self.db.add(
+                ProjectAppKnowledgeBaseBranch(
+                    project_app_id=app_id,
+                    knowledge_base_id=knowledge_base_id,
+                    knowledge_base_branch_id=knowledge_base_branch_id,
+                )
+            )
+        await self.db.flush()
+
+    async def create_app(
+        self,
+        app: ProjectApp,
+        *,
+        bindings: list[tuple[int, int]],
+    ) -> ProjectApp:
         self.db.add(app)
+        await self.db.flush()
+        await self.replace_app_bindings(app_id=app.id, bindings=bindings)
         await self.db.commit()
         await self.db.refresh(app)
         return app
 
-    async def update_app(self, app: ProjectApp) -> ProjectApp:
+    async def update_app(
+        self,
+        app: ProjectApp,
+        *,
+        bindings: list[tuple[int, int]],
+    ) -> ProjectApp:
+        await self.replace_app_bindings(app_id=app.id, bindings=bindings)
         await self.db.commit()
         await self.db.refresh(app)
         return app
@@ -216,6 +299,9 @@ class ProjectRepository:
     async def delete_app(self, app: ProjectApp) -> None:
         await self.db.delete(app)
         await self.db.commit()
+
+    async def _load_runtime_bindings(self, app_id: int) -> list[ProjectAppBindingRecord]:
+        return (await self._list_bindings_for_apps([app_id])).get(app_id, [])
 
     async def get_runtime_by_codes(
         self,
@@ -226,11 +312,10 @@ class ProjectRepository:
         active_only: bool = True,
     ) -> ProjectAppRuntimeRecord | None:
         stmt = (
-            select(Product, Project, ProjectApp, AssistantProfile, KnowledgeBase.name)
+            select(Product, Project, ProjectApp, AssistantProfile)
             .join(Project, Project.product_id == Product.id)
             .join(ProjectApp, ProjectApp.project_id == Project.id)
             .join(AssistantProfile, AssistantProfile.id == ProjectApp.default_assistant_id)
-            .outerjoin(KnowledgeBase, KnowledgeBase.id == AssistantProfile.knowledge_base_id)
             .where(
                 Product.code == self.normalize_code(product_code),
                 Project.code == self.normalize_code(project_code),
@@ -247,13 +332,13 @@ class ProjectRepository:
         row = (await self.db.execute(stmt)).one_or_none()
         if row is None:
             return None
-        product, project, app, assistant, knowledge_base_name = row
+        product, project, app, assistant = row
         return ProjectAppRuntimeRecord(
             product=product,
             project=project,
             app=app,
             assistant=assistant,
-            knowledge_base_name=knowledge_base_name,
+            bindings=await self._load_runtime_bindings(app.id),
         )
 
     async def get_runtime_by_app_id(
@@ -263,11 +348,10 @@ class ProjectRepository:
         active_only: bool = True,
     ) -> ProjectAppRuntimeRecord | None:
         stmt = (
-            select(Product, Project, ProjectApp, AssistantProfile, KnowledgeBase.name)
+            select(Product, Project, ProjectApp, AssistantProfile)
             .join(Project, Project.product_id == Product.id)
             .join(ProjectApp, ProjectApp.project_id == Project.id)
             .join(AssistantProfile, AssistantProfile.id == ProjectApp.default_assistant_id)
-            .outerjoin(KnowledgeBase, KnowledgeBase.id == AssistantProfile.knowledge_base_id)
             .where(ProjectApp.id == project_app_id)
         )
         if active_only:
@@ -280,11 +364,11 @@ class ProjectRepository:
         row = (await self.db.execute(stmt)).one_or_none()
         if row is None:
             return None
-        product, project, app, assistant, knowledge_base_name = row
+        product, project, app, assistant = row
         return ProjectAppRuntimeRecord(
             product=product,
             project=project,
             app=app,
             assistant=assistant,
-            knowledge_base_name=knowledge_base_name,
+            bindings=await self._load_runtime_bindings(app.id),
         )

@@ -40,6 +40,7 @@ class KbChatLogRecord:
     team_id: int | None
     team_name: str | None
     knowledge_base_id: int | None
+    knowledge_base_branch_ids: list[int]
     knowledge_base_name: str | None
     assistant_id: int | None
     assistant_name: str | None
@@ -109,6 +110,7 @@ class KbChatLogRepository:
         external_user_id: str | None = None,
         external_user_name: str | None = None,
         knowledge_base_id: int | None,
+        knowledge_base_branch_ids: list[int] | None,
         assistant_id: int | None,
         category_id: int | None,
         query: str,
@@ -127,6 +129,7 @@ class KbChatLogRepository:
             external_user_id=external_user_id,
             external_user_name=external_user_name,
             knowledge_base_id=knowledge_base_id,
+            knowledge_base_branch_ids=list(knowledge_base_branch_ids or []),
             assistant_id=assistant_id,
             category_id=category_id,
             query=query,
@@ -252,6 +255,7 @@ class KbChatLogRepository:
                     team_id=knowledge_base.team_id if knowledge_base else None,
                     team_name=team_name,
                     knowledge_base_id=item.knowledge_base_id,
+                    knowledge_base_branch_ids=list(item.knowledge_base_branch_ids or []),
                     knowledge_base_name=knowledge_base.name if knowledge_base else None,
                     assistant_id=item.assistant_id,
                     assistant_name=assistant_name,
@@ -609,6 +613,7 @@ class KbChatLogRepository:
             external_user_id=item.external_user_id,
             external_user_name=item.external_user_name,
             knowledge_base_id=item.knowledge_base_id,
+            knowledge_base_branch_ids=list(item.knowledge_base_branch_ids or []),
             knowledge_base_name=knowledge_base_name,
             assistant_id=item.assistant_id,
             assistant_name=assistant_name,

@@ -1,12 +1,19 @@
 """Knowledge-base repository."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Document, KnowledgeBase
+from app.db.models import (
+    Document,
+    KnowledgeBase,
+    KnowledgeBaseBranch,
+    ProjectAppKnowledgeBaseBranch,
+)
 from app.repositories.access_scope import accessible_knowledge_base_condition
 from app.repositories.index_job_repository import IndexJobRepository
 from app.services.document_index_state import (
@@ -57,6 +64,13 @@ class KnowledgeBaseSummaryRecord:
     last_document_updated_at: datetime | None
     last_uploaded_at: datetime | None
     recent_documents: list[KnowledgeBaseRecentDocumentRecord]
+
+
+@dataclass(slots=True)
+class KnowledgeBaseBranchRecord:
+    branch: KnowledgeBaseBranch
+    bound_app_count: int
+    document_count: int
 
 
 class KnowledgeBaseRepository:
@@ -130,8 +144,7 @@ class KnowledgeBaseRepository:
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
         stmt = stmt.group_by(KnowledgeBase.id).order_by(KnowledgeBase.created_at.desc())
-        result = await self.db.execute(stmt)
-        rows = result.all()
+        rows = (await self.db.execute(stmt)).all()
         knowledge_base_ids = [knowledge_base.id for knowledge_base, *_ in rows]
         recent_docs_map = await self._list_recent_documents(knowledge_base_ids)
         return [
@@ -281,7 +294,7 @@ class KnowledgeBaseRepository:
         return knowledge_base
 
     async def delete(self, knowledge_base_id: int) -> bool:
-        """Delete a knowledge base together with its documents."""
+        """Delete a knowledge base together with its documents and branches."""
         knowledge_base = await self.get_by_id(knowledge_base_id)
         if not knowledge_base:
             return False
@@ -294,6 +307,163 @@ class KnowledgeBaseRepository:
                 Document.knowledge_base_id == knowledge_base_id,
             )
         )
+        await self.db.execute(
+            delete(KnowledgeBaseBranch).where(
+                KnowledgeBaseBranch.knowledge_base_id == knowledge_base_id,
+            )
+        )
         await self.db.delete(knowledge_base)
         await self.db.commit()
         return True
+
+    async def list_branches(self, knowledge_base_id: int) -> list[KnowledgeBaseBranchRecord]:
+        stmt = (
+            select(
+                KnowledgeBaseBranch,
+                func.count(func.distinct(ProjectAppKnowledgeBaseBranch.project_app_id)).label(
+                    "bound_app_count"
+                ),
+                func.count(func.distinct(Document.id)).label("document_count"),
+            )
+            .outerjoin(
+                ProjectAppKnowledgeBaseBranch,
+                ProjectAppKnowledgeBaseBranch.knowledge_base_branch_id == KnowledgeBaseBranch.id,
+            )
+            .outerjoin(
+                Document,
+                (Document.knowledge_base_branch_id == KnowledgeBaseBranch.id)
+                & (Document.is_current.is_(True)),
+            )
+            .where(KnowledgeBaseBranch.knowledge_base_id == knowledge_base_id)
+            .group_by(KnowledgeBaseBranch.id)
+            .order_by(KnowledgeBaseBranch.created_at.desc(), KnowledgeBaseBranch.id.desc())
+        )
+        rows = (await self.db.execute(stmt)).all()
+        return [
+            KnowledgeBaseBranchRecord(
+                branch=branch,
+                bound_app_count=int(bound_app_count or 0),
+                document_count=int(document_count or 0),
+            )
+            for branch, bound_app_count, document_count in rows
+        ]
+
+    async def get_branch(self, branch_id: int) -> KnowledgeBaseBranch | None:
+        stmt = (
+            select(KnowledgeBaseBranch)
+            .join(KnowledgeBase, KnowledgeBase.id == KnowledgeBaseBranch.knowledge_base_id)
+            .where(
+                KnowledgeBaseBranch.id == branch_id,
+                accessible_knowledge_base_condition(self.user_id, KnowledgeBase),
+            )
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def get_branch_with_counts(self, branch_id: int) -> KnowledgeBaseBranchRecord | None:
+        stmt = (
+            select(
+                KnowledgeBaseBranch,
+                func.count(func.distinct(ProjectAppKnowledgeBaseBranch.project_app_id)).label(
+                    "bound_app_count"
+                ),
+                func.count(func.distinct(Document.id)).label("document_count"),
+            )
+            .join(KnowledgeBase, KnowledgeBase.id == KnowledgeBaseBranch.knowledge_base_id)
+            .outerjoin(
+                ProjectAppKnowledgeBaseBranch,
+                ProjectAppKnowledgeBaseBranch.knowledge_base_branch_id == KnowledgeBaseBranch.id,
+            )
+            .outerjoin(
+                Document,
+                (Document.knowledge_base_branch_id == KnowledgeBaseBranch.id)
+                & (Document.is_current.is_(True)),
+            )
+            .where(
+                KnowledgeBaseBranch.id == branch_id,
+                accessible_knowledge_base_condition(self.user_id, KnowledgeBase),
+            )
+            .group_by(KnowledgeBaseBranch.id)
+        )
+        row = (await self.db.execute(stmt)).one_or_none()
+        if row is None:
+            return None
+        branch, bound_app_count, document_count = row
+        return KnowledgeBaseBranchRecord(
+            branch=branch,
+            bound_app_count=int(bound_app_count or 0),
+            document_count=int(document_count or 0),
+        )
+
+    async def branch_code_exists(
+        self,
+        *,
+        knowledge_base_id: int,
+        code: str,
+        exclude_id: int | None = None,
+    ) -> bool:
+        stmt = (
+            select(func.count())
+            .select_from(KnowledgeBaseBranch)
+            .where(
+                KnowledgeBaseBranch.knowledge_base_id == knowledge_base_id,
+                KnowledgeBaseBranch.code == code,
+            )
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(KnowledgeBaseBranch.id != exclude_id)
+        return bool((await self.db.execute(stmt)).scalar() or 0)
+
+    async def create_branch(
+        self,
+        *,
+        knowledge_base_id: int,
+        code: str,
+        name: str,
+        description: str | None,
+        is_active: bool,
+    ) -> KnowledgeBaseBranch:
+        branch = KnowledgeBaseBranch(
+            knowledge_base_id=knowledge_base_id,
+            code=code,
+            name=name.strip(),
+            description=(description or "").strip() or None,
+            is_active=is_active,
+            created_by_user_id=self.user_id,
+        )
+        self.db.add(branch)
+        await self.db.commit()
+        await self.db.refresh(branch)
+        return branch
+
+    async def update_branch(
+        self,
+        branch: KnowledgeBaseBranch,
+        *,
+        code: str,
+        name: str,
+        description: str | None,
+        is_active: bool,
+    ) -> KnowledgeBaseBranch:
+        branch.code = code
+        branch.name = name.strip()
+        branch.description = (description or "").strip() or None
+        branch.is_active = is_active
+        await self.db.commit()
+        await self.db.refresh(branch)
+        return branch
+
+    async def delete_branch(self, branch: KnowledgeBaseBranch) -> None:
+        await self.db.delete(branch)
+        await self.db.commit()
+
+    async def branch_document_count(self, branch_id: int) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(Document)
+            .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
+            .where(
+                Document.knowledge_base_branch_id == branch_id,
+                accessible_knowledge_base_condition(self.user_id, KnowledgeBase),
+            )
+        )
+        return int((await self.db.execute(stmt)).scalar() or 0)

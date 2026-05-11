@@ -23,6 +23,7 @@ router = APIRouter()
 async def upload_document(
     file: UploadFile = File(..., description="Document file"),
     knowledge_base_id: int | None = Form(None, description="Owning knowledge base id"),
+    knowledge_base_branch_id: int | None = Form(None, description="Owning knowledge base branch id"),
     category_id: int | None = Form(None, description="Owning category id"),
     source_path: str | None = Form(None, description="Original relative source path"),
     db: AsyncSession = Depends(get_db),
@@ -33,6 +34,7 @@ async def upload_document(
         user_id=current_user.id,
         file=file,
         knowledge_base_id=knowledge_base_id,
+        knowledge_base_branch_id=knowledge_base_branch_id,
         category_id=category_id,
         source_path=source_path,
     )
@@ -42,6 +44,7 @@ async def upload_document(
 async def upload_documents_batch(
     files: list[UploadFile] = File(..., description="Document files"),
     knowledge_base_id: int | None = Form(None, description="Owning knowledge base id"),
+    knowledge_base_branch_id: int | None = Form(None, description="Owning knowledge base branch id"),
     category_id: int | None = Form(None, description="Owning category id"),
     source_paths: list[str] | None = Form(
         None,
@@ -55,6 +58,7 @@ async def upload_documents_batch(
         user_id=current_user.id,
         files=files,
         knowledge_base_id=knowledge_base_id,
+        knowledge_base_branch_id=knowledge_base_branch_id,
         category_id=category_id,
         source_paths=source_paths,
     )
@@ -91,6 +95,7 @@ async def list_documents(
     keyword: str | None = None,
     team_id: int | None = Query(None, description="Filter by team id"),
     knowledge_base_id: int | None = Query(None, description="Filter by knowledge base"),
+    knowledge_base_branch_id: int | None = Query(None, description="Filter by knowledge base branch"),
     category_id: int | None = Query(None, description="Filter by category"),
     status: str | None = Query(None, description="Filter by lifecycle status"),
     db: AsyncSession = Depends(get_db),
@@ -104,6 +109,7 @@ async def list_documents(
         keyword=keyword,
         team_id=team_id,
         knowledge_base_id=knowledge_base_id,
+        knowledge_base_branch_id=knowledge_base_branch_id,
         category_id=category_id,
         status=status,
     )

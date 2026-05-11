@@ -3,13 +3,7 @@
 from sqlalchemy import exists, or_, select
 from sqlalchemy.orm import aliased
 
-from app.db.models import (
-    AssistantProfile,
-    Document,
-    KnowledgeBase,
-    KnowledgeBaseMember,
-    TeamMember,
-)
+from app.db.models import AssistantProfile, Document, KnowledgeBase, KnowledgeBaseMember, TeamMember
 
 
 def accessible_knowledge_base_condition(user_id: int, kb_entity=KnowledgeBase):
@@ -56,14 +50,15 @@ def accessible_document_condition(user_id: int):
 
 def accessible_assistant_profile_condition(user_id: int, assistant_entity=AssistantProfile):
     """Return a predicate for assistants visible to the given user."""
-
-    kb_alias = aliased(KnowledgeBase)
-    return exists(
-        select(1)
-        .select_from(kb_alias)
-        .where(
-            kb_alias.id == assistant_entity.knowledge_base_id,
-            accessible_knowledge_base_condition(user_id, kb_alias),
-        )
-        .correlate(assistant_entity)
+    return or_(
+        assistant_entity.created_by_user_id == user_id,
+        exists(
+            select(1)
+            .select_from(TeamMember)
+            .where(
+                TeamMember.team_id == assistant_entity.team_id,
+                TeamMember.user_id == user_id,
+            )
+            .correlate(assistant_entity)
+        ),
     )

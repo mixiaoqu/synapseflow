@@ -125,6 +125,35 @@ class KnowledgeBase(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class KnowledgeBaseBranch(Base):
+    """One long-lived customer/content branch under a knowledge base."""
+
+    __tablename__ = "knowledge_base_branches"
+    __table_args__ = (
+        UniqueConstraint("knowledge_base_id", "code", name="uq_knowledge_base_branches_kb_code"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    code = Column(String(120), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class KnowledgeBaseMember(Base):
     """Optional per-knowledge-base membership overrides."""
 
@@ -241,6 +270,40 @@ class ProjectApp(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class ProjectAppKnowledgeBaseBranch(Base):
+    """One project application binding to one branch per knowledge base."""
+
+    __tablename__ = "project_app_knowledge_base_branches"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_app_id",
+            "knowledge_base_id",
+            name="uq_project_app_kb_branches_app_kb",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    project_app_id = Column(
+        Integer,
+        ForeignKey("project_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    knowledge_base_branch_id = Column(
+        Integer,
+        ForeignKey("knowledge_base_branches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+
+
 class DocumentCategory(Base):
     """Knowledge-base scoped document category."""
 
@@ -279,6 +342,12 @@ class Document(Base):
         Integer,
         ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
+    )
+    knowledge_base_branch_id = Column(
+        Integer,
+        ForeignKey("knowledge_base_branches.id", ondelete="RESTRICT"),
+        nullable=False,
         index=True,
     )
     category_id = Column(
@@ -443,6 +512,7 @@ class ChatSession(Base):
         nullable=True,
         index=True,
     )
+    knowledge_base_branch_ids = Column(JSON, nullable=False, default=list)
     assistant_id = Column(
         Integer,
         ForeignKey("assistant_profiles.id", ondelete="SET NULL"),
@@ -502,6 +572,7 @@ class KbChatLog(Base):
         nullable=True,
         index=True,
     )
+    knowledge_base_branch_ids = Column(JSON, nullable=False, default=list)
     assistant_id = Column(
         Integer,
         ForeignKey("assistant_profiles.id", ondelete="SET NULL"),

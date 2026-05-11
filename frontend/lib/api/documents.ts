@@ -21,6 +21,8 @@ export type DocumentListItem = {
   index_error: string | null;
   indexed_at: string | null;
   knowledge_base_id: number | null;
+  knowledge_base_branch_id: number | null;
+  knowledge_base_branch_name: string | null;
   knowledge_base_name: string | null;
   category_id: number | null;
   category_name: string | null;
@@ -45,6 +47,8 @@ export type DocumentDetail = {
   is_latest: boolean;
   is_live: boolean;
   knowledge_base_id: number | null;
+  knowledge_base_branch_id: number | null;
+  knowledge_base_branch_name: string | null;
   category_id: number | null;
   category_name: string | null;
   source_path: string | null;
@@ -121,6 +125,7 @@ export async function listDocuments(params: {
   keyword?: string | null;
   team_id?: number | null;
   knowledge_base_id?: number | null;
+  knowledge_base_branch_id?: number | null;
   category_id?: number | null;
   status?: DocumentLifecycleStatus | null;
 }): Promise<{
@@ -138,6 +143,9 @@ export async function listDocuments(params: {
   }
   if (params.knowledge_base_id !== undefined && params.knowledge_base_id !== null) {
     sp.set("knowledge_base_id", String(params.knowledge_base_id));
+  }
+  if (params.knowledge_base_branch_id !== undefined && params.knowledge_base_branch_id !== null) {
+    sp.set("knowledge_base_branch_id", String(params.knowledge_base_branch_id));
   }
   if (params.category_id !== undefined && params.category_id !== null) {
     sp.set("category_id", String(params.category_id));
@@ -168,6 +176,7 @@ export async function getDocumentVersions(docId: number): Promise<DocumentVersio
 export async function uploadDocument(
   file: File,
   knowledgeBaseId?: number | null,
+  knowledgeBaseBranchId?: number | null,
   options?: {
     categoryId?: number | null;
     sourcePath?: string | null;
@@ -177,6 +186,9 @@ export async function uploadDocument(
   form.append("file", file);
   if (knowledgeBaseId != null && knowledgeBaseId > 0) {
     form.append("knowledge_base_id", String(knowledgeBaseId));
+  }
+  if (knowledgeBaseBranchId != null && knowledgeBaseBranchId > 0) {
+    form.append("knowledge_base_branch_id", String(knowledgeBaseBranchId));
   }
   if (options?.categoryId != null && options.categoryId > 0) {
     form.append("category_id", String(options.categoryId));
@@ -190,6 +202,7 @@ export async function uploadDocument(
 export async function uploadDocumentsBatch(
   files: File[],
   knowledgeBaseId?: number | null,
+  knowledgeBaseBranchId?: number | null,
   options?: {
     categoryId?: number | null;
     sourcePaths?: Array<string | null | undefined>;
@@ -199,6 +212,9 @@ export async function uploadDocumentsBatch(
   for (const f of files) form.append("files", f);
   if (knowledgeBaseId != null && knowledgeBaseId > 0) {
     form.append("knowledge_base_id", String(knowledgeBaseId));
+  }
+  if (knowledgeBaseBranchId != null && knowledgeBaseBranchId > 0) {
+    form.append("knowledge_base_branch_id", String(knowledgeBaseBranchId));
   }
   if (options?.categoryId != null && options.categoryId > 0) {
     form.append("category_id", String(options.categoryId));
@@ -214,6 +230,7 @@ export async function createDocumentFromContent(body: {
   content: string;
   document_type?: string;
   knowledge_base_id?: number | null;
+  knowledge_base_branch_id: number;
   category_id?: number | null;
   source_path?: string | null;
 }): Promise<DocumentDetail> {

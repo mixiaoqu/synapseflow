@@ -107,16 +107,10 @@ function toPayload(
   form: AssistantFormState,
   currentTeamId: number,
 ): AssistantUpsertPayload {
-  if (form.knowledge_base_id == null) {
-    throw new Error("请先选择知识库");
-  }
-
   return {
     name: form.name.trim(),
     slug: form.slug.trim(),
     current_team_id: currentTeamId,
-    knowledge_base_id: form.knowledge_base_id,
-    category_id: form.category_id,
     description: form.description.trim() || null,
     welcome_message: form.welcome_message.trim() || null,
     placeholder_text: form.placeholder_text.trim() || null,

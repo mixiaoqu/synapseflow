@@ -29,8 +29,6 @@ from app.repositories.assistant_profile_repository import (
     AssistantProfileRecord,
     AssistantProfileRepository,
 )
-from app.repositories.document_category_repository import DocumentCategoryRepository
-from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 from app.repositories.team_repository import TeamRepository
 from app.services.document_lifecycle import (
     PREVIEW_ASK_DOCUMENT_STATUSES,
@@ -48,8 +46,6 @@ class AssistantService:
         self.user_id = user_id
         self.repository = AssistantProfileRepository(db, user_id=user_id)
         self.team_repository = TeamRepository(db, user_id=user_id)
-        self.knowledge_base_repository = KnowledgeBaseRepository(db, user_id=user_id)
-        self.category_repository = DocumentCategoryRepository(db, user_id=user_id)
 
     @staticmethod
     def _normalize_optional_text(value: str | None) -> str | None:
@@ -97,10 +93,6 @@ class AssistantService:
             slug=assistant.slug,
             team_id=assistant.team_id,
             team_name=record.team_name,
-            knowledge_base_id=assistant.knowledge_base_id,
-            knowledge_base_name=record.knowledge_base_name,
-            category_id=assistant.category_id,
-            category_name=record.category_name,
             created_by_user_id=assistant.created_by_user_id,
             created_by_name=record.created_by_name,
             description=assistant.description,
@@ -146,48 +138,22 @@ class AssistantService:
             raise HTTPException(status_code=404, detail="One or more assistants were not found")
         return records
 
-    async def _validate_scope(
+    async def _validate_team_scope(
         self,
         *,
         current_team_id: int,
-        knowledge_base_id: int,
-        category_id: int | None,
-    ) -> tuple[object, object | None]:
+    ) -> None:
         if not await self.team_repository.can_access_team(current_team_id):
             raise HTTPException(status_code=403, detail="Team access denied")
-
-        knowledge_base = await self.knowledge_base_repository.get_by_id(knowledge_base_id)
-        if knowledge_base is None:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
-        if knowledge_base.team_id != current_team_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Knowledge base does not belong to the current team",
-            )
-
-        category = None
-        if category_id is not None:
-            category = await self.category_repository.get_by_id(category_id)
-            if category is None:
-                raise HTTPException(status_code=404, detail="Category not found")
-            if category.knowledge_base_id != knowledge_base_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Category does not belong to the selected knowledge base",
-                )
-
-        return knowledge_base, category
 
     async def list_profiles(
         self,
         *,
         team_id: int | None = None,
-        knowledge_base_id: int | None = None,
         active_only: bool = False,
     ) -> list[AssistantProfileSummary]:
         records = await self.repository.list_profiles(
             team_id=team_id,
-            knowledge_base_id=knowledge_base_id,
             active_only=active_only,
         )
         return [self._to_summary(record) for record in records]
@@ -196,11 +162,9 @@ class AssistantService:
         self,
         *,
         team_id: int | None = None,
-        knowledge_base_id: int | None = None,
     ) -> AssistantAvailabilityResponse:
         items = await self.list_profiles(
             team_id=team_id,
-            knowledge_base_id=knowledge_base_id,
             active_only=True,
         )
         return AssistantAvailabilityResponse(items=items)
@@ -229,11 +193,7 @@ class AssistantService:
         return self._to_response(record)
 
     async def create_profile(self, payload: AssistantProfileCreate) -> AssistantProfileResponse:
-        knowledge_base, _ = await self._validate_scope(
-            current_team_id=payload.current_team_id,
-            knowledge_base_id=payload.knowledge_base_id,
-            category_id=payload.category_id,
-        )
+        await self._validate_team_scope(current_team_id=payload.current_team_id)
 
         slug = self._normalize_slug(payload.slug)
         if await self.repository.slug_exists(slug):
@@ -242,9 +202,9 @@ class AssistantService:
         assistant = AssistantProfile(
             name=payload.name.strip(),
             slug=slug,
-            team_id=knowledge_base.team_id,
-            knowledge_base_id=payload.knowledge_base_id,
-            category_id=payload.category_id,
+            team_id=payload.current_team_id,
+            knowledge_base_id=None,
+            category_id=None,
             created_by_user_id=self.user_id,
             description=self._normalize_optional_text(payload.description),
             welcome_message=self._normalize_optional_text(payload.welcome_message),
@@ -271,11 +231,7 @@ class AssistantService:
         if record is None:
             raise HTTPException(status_code=404, detail="Assistant not found")
 
-        knowledge_base, _ = await self._validate_scope(
-            current_team_id=payload.current_team_id,
-            knowledge_base_id=payload.knowledge_base_id,
-            category_id=payload.category_id,
-        )
+        await self._validate_team_scope(current_team_id=payload.current_team_id)
 
         slug = self._normalize_slug(payload.slug)
         if await self.repository.slug_exists(slug, exclude_id=assistant_id):
@@ -284,9 +240,9 @@ class AssistantService:
         assistant = record.assistant
         assistant.name = payload.name.strip()
         assistant.slug = slug
-        assistant.team_id = knowledge_base.team_id
-        assistant.knowledge_base_id = payload.knowledge_base_id
-        assistant.category_id = payload.category_id
+        assistant.team_id = payload.current_team_id
+        assistant.knowledge_base_id = None
+        assistant.category_id = None
         assistant.description = self._normalize_optional_text(payload.description)
         assistant.welcome_message = self._normalize_optional_text(payload.welcome_message)
         assistant.placeholder_text = self._normalize_optional_text(payload.placeholder_text)
@@ -311,11 +267,7 @@ class AssistantService:
         return self._to_dependency_usage(assistant_id, usage)
 
     async def preview_profile(self, payload: AssistantPreviewRequest):
-        knowledge_base, _ = await self._validate_scope(
-            current_team_id=payload.current_team_id,
-            knowledge_base_id=payload.knowledge_base_id,
-            category_id=payload.category_id,
-        )
+        await self._validate_team_scope(current_team_id=payload.current_team_id)
         allowed_statuses = (
             list(PREVIEW_ASK_DOCUMENT_STATUSES)
             if payload.include_unpublished
@@ -323,9 +275,11 @@ class AssistantService:
         )
         runtime_request = SimpleNamespace(
             query=payload.query.strip(),
-            team_id=knowledge_base.team_id,
-            knowledge_base_id=payload.knowledge_base_id,
-            category_id=payload.category_id,
+            team_id=payload.current_team_id,
+            knowledge_base_id=None,
+            knowledge_base_ids=[],
+            knowledge_base_branch_ids=[],
+            category_id=None,
             assistant_id=None,
             assistant_name=self._normalize_optional_text(payload.name) or "预览助手",
             assistant_welcome_message=self._normalize_optional_text(payload.welcome_message),

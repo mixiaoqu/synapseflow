@@ -102,9 +102,7 @@ export function AssistantTestChat({
   const hasDraftScope =
     draft != null &&
     Number.isFinite(draft.current_team_id) &&
-    draft.current_team_id > 0 &&
-    Number.isFinite(draft.knowledge_base_id) &&
-    draft.knowledge_base_id > 0;
+    draft.current_team_id > 0;
   const canSubmit =
     submitLoading === false &&
     (hasDraftScope || (!draft && assistant != null && Number.isFinite(assistant.id)));

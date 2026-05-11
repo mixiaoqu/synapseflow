@@ -35,9 +35,21 @@ export interface ProjectAppResponse {
   default_assistant_name?: string | null;
   knowledge_base_id?: number | null;
   knowledge_base_name?: string | null;
+  bindings: ProjectAppKnowledgeBaseBranchBindingResponse[];
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface ProjectAppKnowledgeBaseBranchBinding {
+  knowledge_base_id: number;
+  knowledge_base_branch_id: number;
+}
+
+export interface ProjectAppKnowledgeBaseBranchBindingResponse
+  extends ProjectAppKnowledgeBaseBranchBinding {
+  knowledge_base_name?: string | null;
+  knowledge_base_branch_name?: string | null;
 }
 
 export interface ProjectAppPayload {
@@ -45,6 +57,7 @@ export interface ProjectAppPayload {
   name: string;
   description?: string | null;
   default_assistant_id?: number | null;
+  bindings: ProjectAppKnowledgeBaseBranchBinding[];
   is_active: boolean;
 }
 

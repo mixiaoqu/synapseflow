@@ -42,8 +42,10 @@ def _build_runtime_request(
         query=query,
         session_id=session_id,
         team_id=assistant.team_id,
-        knowledge_base_id=assistant.knowledge_base_id,
-        category_id=assistant.category_id,
+        knowledge_base_id=None,
+        knowledge_base_ids=[],
+        knowledge_base_branch_ids=[],
+        category_id=None,
         assistant_id=assistant.id,
         assistant_name=assistant.name,
         assistant_welcome_message=assistant.welcome_message,
@@ -58,7 +60,6 @@ def _build_runtime_request(
 @router.get("", response_model=list[AssistantProfileSummary])
 async def list_assistants(
     team_id: int | None = Query(None),
-    knowledge_base_id: int | None = Query(None),
     active_only: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
@@ -66,7 +67,6 @@ async def list_assistants(
     service = AssistantService(db, user_id=current_user.id)
     return await service.list_profiles(
         team_id=team_id,
-        knowledge_base_id=knowledge_base_id,
         active_only=active_only,
     )
 
@@ -104,14 +104,12 @@ async def bulk_action_assistants(
 @router.get("/available", response_model=AssistantAvailabilityResponse)
 async def list_available_assistants(
     team_id: int | None = Query(None),
-    knowledge_base_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     service = AssistantService(db, user_id=current_user.id)
     return await service.list_available(
         team_id=team_id,
-        knowledge_base_id=knowledge_base_id,
     )
 
 

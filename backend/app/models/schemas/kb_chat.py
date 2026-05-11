@@ -12,6 +12,8 @@ class KbChatRequest(BaseModel):
     query: str = Field(..., description="User question")
     team_id: Optional[int] = Field(None, description="Limit retrieval to one team")
     knowledge_base_id: Optional[int] = Field(None, description="Limit retrieval to one KB")
+    knowledge_base_ids: List[int] = Field(default_factory=list, description="Bound KB ids")
+    knowledge_base_branch_ids: List[int] = Field(default_factory=list, description="Bound KB branch ids")
     category_id: Optional[int] = Field(None, description="Limit retrieval to one category")
     assistant_id: Optional[int] = Field(None, description="Assistant profile id")
     session_id: Optional[str] = Field(None, description="Optional session id")
@@ -72,6 +74,7 @@ class KbChatSessionSummary(BaseModel):
     external_user_name: Optional[str] = Field(None, description="External enterprise user name")
     team_id: Optional[int] = Field(None, description="Selected team id")
     knowledge_base_id: Optional[int] = Field(None, description="Selected knowledge base id")
+    knowledge_base_branch_ids: List[int] = Field(default_factory=list, description="Selected branch ids")
     knowledge_base_name: Optional[str] = Field(None, description="Selected knowledge base name")
     assistant_id: Optional[int] = Field(None, description="Selected assistant id")
     assistant_name: Optional[str] = Field(None, description="Selected assistant name")
@@ -130,6 +133,7 @@ class KbChatLogItem(BaseModel):
     team_id: int | None = None
     team_name: str | None = None
     knowledge_base_id: int | None = None
+    knowledge_base_branch_ids: List[int] = Field(default_factory=list)
     knowledge_base_name: str | None = None
     assistant_id: int | None = None
     assistant_name: str | None = None

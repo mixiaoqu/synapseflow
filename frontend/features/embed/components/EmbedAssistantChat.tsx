@@ -14,7 +14,6 @@ import {
   ThumbsDown,
   ThumbsUp,
   User,
-  X,
   Zap,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -135,10 +134,6 @@ export function EmbedAssistantChat() {
     }
   };
 
-  const requestClose = () => {
-    window.parent?.postMessage({ type: "synapseflow.embed.close" }, "*");
-  };
-
   if (isInitializing) {
     return (
       <div className="flex h-[100dvh] w-full flex-col items-center justify-center gap-4 bg-white">
@@ -179,21 +174,12 @@ export function EmbedAssistantChat() {
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex shrink-0 items-center">
           <EmbedSessionHistoryPanel
             currentSessionId={currentSessionId}
             onSelectSession={(sessionId) => void handleSelectSession(sessionId)}
             onNewSession={handleNewSession}
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={requestClose}
-            className="h-8 w-8 rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-            title="关闭"
-          >
-            <X className="h-4 w-4" />
-          </Button>
         </div>
       </header>
 
