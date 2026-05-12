@@ -18,6 +18,7 @@ from .loader import (
 from .schemas import (
     AppConfig,
     EmbeddingConfig,
+    GraphConfig,
     IndexingBatchConfig,
     LoggingConfig,
     LoggingFileConfig,
@@ -112,6 +113,23 @@ class ConfigRegistry:
             version=app.get("version", "0.1.0"),
             description=app.get("description", "Agent collaboration system built with LangGraph"),
             api_v1_str=app.get("api_v1_str", "/api/v1"),
+        )
+
+    @functools.lru_cache(maxsize=1)
+    def get_graph_config(self) -> GraphConfig:
+        """Get graph-indexing config from `config/app.yaml` plus runtime flags."""
+        data = load_app_raw()
+        graph = data.get("graph", {}) or {}
+        return GraphConfig(
+            enabled=bool(settings.GRAPH_ENABLED),
+            indexing_enabled=bool(settings.GRAPH_INDEXING_ENABLED),
+            provider=str(graph.get("provider", "neo4j")),
+            uri=settings.GRAPH_URI,
+            username=settings.GRAPH_USERNAME,
+            password=settings.GRAPH_PASSWORD,
+            database=settings.GRAPH_DATABASE,
+            llm_model_role=str(graph.get("llm_model_role", "graph_extract")),
+            extraction_max_chars=max(1, int(graph.get("extraction_max_chars", 3200))),
         )
 
     @functools.lru_cache(maxsize=None)

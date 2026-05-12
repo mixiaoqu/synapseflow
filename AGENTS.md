@@ -229,3 +229,45 @@ When updating this file:
 - Verify workflow claims against `backend/app/agents/runtime/factory.py` and `backend/langgraph.json`.
 - Verify frontend route claims against `frontend/app`.
 - Keep commands consistent with `backend/pyproject.toml`, `frontend/package.json`, `docker-compose.yml`, and the lockfiles.
+
+## 代码风格统一规则
+
+- 本仓库采用“AGENTS.md 定底线，`docs/development/code-style.md` 定细则”的双文档方式统一多人和多 AI 的代码风格。
+- 在修改代码前，先阅读与改动范围直接相关的现有实现，优先延续当前文件和当前层级已经存在的风格，不要自行发明新模式。
+
+### 命名
+
+- Python 文件、函数、变量统一使用 `snake_case`；类、Schema、Service、Repository 使用 `PascalCase`；常量使用全大写下划线。
+- TypeScript/React 组件、类型、接口、枚举使用 `PascalCase`；函数、变量、hook 使用 `camelCase`；hook 必须以 `use` 开头。
+- 布尔命名必须体现判断语义，优先使用 `is_`、`has_`、`can_`、`should_` 或 `is`、`has`、`can`、`should` 前缀。
+- 命名优先表达业务含义，避免新增含糊命名和随意缩写；已有核心缩写如 `kb` 可以沿用，但不要继续扩散新的自定义缩写。
+
+### 分层
+
+- 后端遵循 `api -> application -> services -> repositories` 分层：`api` 只处理请求响应，`application` 负责编排用例流程，`services` 提供可复用领域能力，`repositories` 只负责数据访问。
+- 前端遵循 `app / components / hooks / lib/api / features` 分层：页面负责装配，组件负责展示，hook 负责状态与交互编排，接口请求统一收敛到 `lib/api`。
+- 新代码优先放入现有层级，不要为单次需求随意新增目录类别。
+- 如果一个文件同时承担接口编排、领域能力和数据访问三种职责，应优先拆分，而不是继续叠加。
+
+### 注释
+
+- 注释只解释原因、约束、兼容性和边界，不解释表面动作。
+- 默认少注释；中文注释必须使用 UTF-8，并与代码保持同步。
+- 禁止新增“设置变量”“发送请求”之类的废话注释，也不要保留“先这样，后面再改”这类无结论注释。
+
+### 前端写法
+
+- 页面文件和业务组件不要直接散落裸 `fetch`；接口调用统一通过 `frontend/lib/api` 封装。
+- 展示组件优先保持“输入 props，输出 UI”，复杂交互和流程状态优先下沉到 hook。
+- 不要新增“万能组件”或没有拆分计划的巨型 hook；当组件同时承担请求、复杂状态、数据转换和渲染职责时，应主动拆分。
+
+### 后端写法
+
+- 路由层保持薄，避免在 endpoint 中直接写主业务流程、复杂查询拼装或跨服务编排。
+- `application service` 面向一个用例组织流程，`domain service` 面向一种能力提供复用，不要混用职责。
+- `repository` 不承载业务决策；如果代码在“编排一次流程”和“提供一种能力”之间摇摆，前者放 `application`，后者放 `services`。
+
+### 自检
+
+- 新增或修改代码前，先判断这段代码属于哪一层、是否沿用了该层现有模式、命名是否体现业务含义。
+- 如需细则、正反例和拆分建议，查看 [docs/development/code-style.md](docs/development/code-style.md)。

@@ -42,6 +42,24 @@ services:
       timeout: 5s
       retries: 5
 
+  neo4j:
+    image: neo4j:5-community
+    container_name: synapseflow-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-synapseflow123}
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - synapseflow-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
   reranker:
     image: synapseflow-reranker:latest
     build:
@@ -89,6 +107,12 @@ services:
       - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
       - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:3000}
       - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-60}
+      - GRAPH_ENABLED=${GRAPH_ENABLED:-false}
+      - GRAPH_INDEXING_ENABLED=${GRAPH_INDEXING_ENABLED:-false}
+      - GRAPH_URI=${GRAPH_URI:-bolt://neo4j:7687}
+      - GRAPH_USERNAME=${GRAPH_USERNAME:-neo4j}
+      - GRAPH_PASSWORD=${GRAPH_PASSWORD:-synapseflow123}
+      - GRAPH_DATABASE=${GRAPH_DATABASE:-neo4j}
     ports:
       - "8000:8000"
     volumes:
@@ -123,6 +147,12 @@ services:
       - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
       - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:3000}
       - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-60}
+      - GRAPH_ENABLED=${GRAPH_ENABLED:-false}
+      - GRAPH_INDEXING_ENABLED=${GRAPH_INDEXING_ENABLED:-false}
+      - GRAPH_URI=${GRAPH_URI:-bolt://neo4j:7687}
+      - GRAPH_USERNAME=${GRAPH_USERNAME:-neo4j}
+      - GRAPH_PASSWORD=${GRAPH_PASSWORD:-synapseflow123}
+      - GRAPH_DATABASE=${GRAPH_DATABASE:-neo4j}
     volumes:
       - ./backend:/app
       - backend_venv:/app/.venv
@@ -162,6 +192,7 @@ services:
 
 volumes:
   postgres_data:
+  neo4j_data:
   backend_venv:
   backend_hf_cache:
   backend_previews:

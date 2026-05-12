@@ -16,6 +16,7 @@ from app.db.models import (
 )
 from app.repositories.access_scope import accessible_knowledge_base_condition
 from app.repositories.index_job_repository import IndexJobRepository
+from app.services.graph_store import get_graph_store
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
     INDEX_STATUS_INDEXED,
@@ -298,10 +299,24 @@ class KnowledgeBaseRepository:
         knowledge_base = await self.get_by_id(knowledge_base_id)
         if not knowledge_base:
             return False
+        document_ids = [
+            int(document_id)
+            for document_id in (
+                await self.db.execute(
+                    select(Document.id).where(
+                        Document.knowledge_base_id == knowledge_base_id,
+                    )
+                )
+            ).scalars().all()
+        ]
         await IndexJobRepository(self.db, user_id=self.user_id).cancel_active_jobs_for_knowledge_base(
             knowledge_base_id=knowledge_base_id,
             error_message="Knowledge base was deleted before indexing finished",
         )
+        store = get_graph_store()
+        for document_id in document_ids:
+            await store.delete_document_graph(document_id=document_id)
+        await store.prune_orphan_entities()
         await self.db.execute(
             delete(Document).where(
                 Document.knowledge_base_id == knowledge_base_id,

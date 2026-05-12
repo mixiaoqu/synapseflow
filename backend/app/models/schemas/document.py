@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.utils.time import serialize_utc_datetime
 
 DocumentIndexStatus = Literal["queued", "processing", "indexed", "failed"]
+GraphIndexStatus = Literal["queued", "processing", "indexed", "failed"]
 DocumentLifecycleStatus = Literal[
     "draft",
     "pending_review",
@@ -59,6 +60,9 @@ class DocumentResponse(BaseModel):
     index_status: DocumentIndexStatus = "queued"
     index_error: str | None = None
     indexed_at: datetime | None = None
+    graph_index_status: GraphIndexStatus = "queued"
+    graph_index_error: str | None = None
+    graph_indexed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -80,6 +84,9 @@ class DocumentListItem(BaseModel):
     index_status: DocumentIndexStatus = "queued"
     index_error: str | None = None
     indexed_at: datetime | None = None
+    graph_index_status: GraphIndexStatus = "queued"
+    graph_index_error: str | None = None
+    graph_indexed_at: datetime | None = None
     knowledge_base_id: int | None = None
     knowledge_base_branch_id: int | None = None
     knowledge_base_branch_name: str | None = None

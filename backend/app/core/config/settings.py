@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     RERANK_API_URL: str = "http://localhost:8012"
     RERANK_API_KEY: str = ""
 
+    GRAPH_ENABLED: bool = False
+    GRAPH_INDEXING_ENABLED: bool = False
+    GRAPH_URI: str = "bolt://localhost:7687"
+    GRAPH_USERNAME: str = "neo4j"
+    GRAPH_PASSWORD: str = ""
+    GRAPH_DATABASE: str = "neo4j"
+
     PREVIEW_DIR: str = "./previews"
     UPLOAD_DIR: str = "./uploads"
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024

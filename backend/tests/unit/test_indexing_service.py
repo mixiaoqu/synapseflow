@@ -317,9 +317,20 @@ def test_prepare_batch_candidates_skips_terminal_and_already_indexed_docs(monkey
         processing_ids.append(document_id)
         return True
 
+    class FakeChunkRepository:
+        def __init__(self, db):
+            pass
+
+        async def count_child_chunks_for_document(self, document_id):
+            return 2
+
     monkeypatch.setattr(
         "app.application.indexing_service.IndexJobRepository",
         FakeIndexJobRepository,
+    )
+    monkeypatch.setattr(
+        "app.application.indexing_service.DocumentChunkRepository",
+        FakeChunkRepository,
     )
     monkeypatch.setattr(indexing_service, "_get_documents_for_ids", fake_get_documents_for_ids)
     monkeypatch.setattr(indexing_service, "_get_document", fake_get_document)
@@ -408,5 +419,155 @@ def test_run_document_batch_index_reuses_prepared_chunks(monkeypatch):
     assert captured["commit"] is False
     prepared_docs = captured["prepared_docs"]
     assert prepared_docs[0][0] == 1
-    assert prepared_docs[0][1][0].display_text == "prepared body"
+    assert prepared_docs[0][1] == "original content should not be rechunked"
+    assert prepared_docs[0][2] == "Doc 1"
     assert db.commits == 1
+
+
+def test_run_document_index_marks_graph_indexed_after_vector_success(monkeypatch):
+    doc = SimpleNamespace(
+        id=7,
+        content_hash="hash-7",
+        content="content",
+        title="Doc 7",
+    )
+    captured = {}
+
+    async def fake_get_document(db, document_id):
+        return doc
+
+    async def fake_mark_processing(db, *, document_id, expected_content_hash):
+        return True
+
+    async def fake_set_job_document_status(db, **kwargs):
+        return None
+
+    async def fake_index_document(db, doc_id, content, title, *, commit):
+        assert doc_id == 7
+        assert commit is False
+        return 4
+
+    async def fake_get_document_hash(db, document_id):
+        return "hash-7"
+
+    async def fake_set_graph_processing(db, *, document_id, expected_content_hash):
+        captured["graph_processing"] = (document_id, expected_content_hash)
+
+    async def fake_run_graph_index(db, *, document_id, title):
+        captured["graph_index"] = (document_id, title)
+        return {"chunks": 2, "entities": 3, "mentions": 3, "relations": 1}
+
+    async def fake_mark_graph_indexed(db, *, document_id, expected_content_hash):
+        captured["graph_indexed"] = (document_id, expected_content_hash)
+
+    class DummyExecuteResult:
+        rowcount = 1
+
+    class DummyDB:
+        def __init__(self) -> None:
+            self.commits = 0
+
+        async def execute(self, stmt):
+            return DummyExecuteResult()
+
+        async def commit(self):
+            self.commits += 1
+
+        async def rollback(self):
+            return None
+
+    monkeypatch.setattr(indexing_service, "_get_document", fake_get_document)
+    monkeypatch.setattr(indexing_service, "_mark_processing", fake_mark_processing)
+    monkeypatch.setattr(indexing_service, "_set_job_document_status", fake_set_job_document_status)
+    monkeypatch.setattr("app.application.indexing_service.index_document", fake_index_document)
+    monkeypatch.setattr(indexing_service, "_get_document_hash", fake_get_document_hash)
+    monkeypatch.setattr(indexing_service, "_graph_indexing_enabled", lambda: True)
+    monkeypatch.setattr(indexing_service, "_set_graph_processing", fake_set_graph_processing)
+    monkeypatch.setattr(indexing_service, "_run_graph_index", fake_run_graph_index)
+    monkeypatch.setattr(indexing_service, "_mark_graph_indexed", fake_mark_graph_indexed)
+
+    count = asyncio.run(
+        indexing_service._run_document_index(
+            DummyDB(),
+            document_id=7,
+            expected_content_hash="hash-7",
+            job_id=1,
+        )
+    )
+
+    assert count == 4
+    assert captured["graph_processing"] == (7, "hash-7")
+    assert captured["graph_index"] == (7, "Doc 7")
+    assert captured["graph_indexed"] == (7, "hash-7")
+
+
+def test_run_document_index_marks_graph_failed_without_failing_vector_success(monkeypatch):
+    doc = SimpleNamespace(
+        id=8,
+        content_hash="hash-8",
+        content="content",
+        title="Doc 8",
+    )
+    captured = {}
+
+    async def fake_get_document(db, document_id):
+        return doc
+
+    async def fake_mark_processing(db, *, document_id, expected_content_hash):
+        return True
+
+    async def fake_set_job_document_status(db, **kwargs):
+        return None
+
+    async def fake_index_document(db, doc_id, content, title, *, commit):
+        return 2
+
+    async def fake_get_document_hash(db, document_id):
+        return "hash-8"
+
+    async def fake_set_graph_processing(db, *, document_id, expected_content_hash):
+        captured["graph_processing"] = True
+
+    async def fake_run_graph_index(db, *, document_id, title):
+        raise RuntimeError("graph unavailable")
+
+    async def fake_mark_graph_failed(db, *, document_id, expected_content_hash, error_message):
+        captured["graph_failed"] = (document_id, expected_content_hash, error_message)
+
+    class DummyExecuteResult:
+        rowcount = 1
+
+    class DummyDB:
+        async def execute(self, stmt):
+            return DummyExecuteResult()
+
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    monkeypatch.setattr(indexing_service, "_get_document", fake_get_document)
+    monkeypatch.setattr(indexing_service, "_mark_processing", fake_mark_processing)
+    monkeypatch.setattr(indexing_service, "_set_job_document_status", fake_set_job_document_status)
+    monkeypatch.setattr("app.application.indexing_service.index_document", fake_index_document)
+    monkeypatch.setattr(indexing_service, "_get_document_hash", fake_get_document_hash)
+    monkeypatch.setattr(indexing_service, "_graph_indexing_enabled", lambda: True)
+    monkeypatch.setattr(indexing_service, "_set_graph_processing", fake_set_graph_processing)
+    monkeypatch.setattr(indexing_service, "_run_graph_index", fake_run_graph_index)
+    monkeypatch.setattr(indexing_service, "_mark_graph_failed", fake_mark_graph_failed)
+
+    count = asyncio.run(
+        indexing_service._run_document_index(
+            DummyDB(),
+            document_id=8,
+            expected_content_hash="hash-8",
+            job_id=1,
+        )
+    )
+
+    assert count == 2
+    assert captured["graph_processing"] is True
+    assert captured["graph_failed"][0] == 8
+    assert captured["graph_failed"][1] == "hash-8"
+    assert "graph unavailable" in captured["graph_failed"][2]

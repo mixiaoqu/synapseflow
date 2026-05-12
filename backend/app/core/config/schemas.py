@@ -10,6 +10,19 @@ class AppConfig:
 
 
 @dataclass(frozen=True)
+class GraphConfig:
+    enabled: bool
+    indexing_enabled: bool
+    provider: str
+    uri: str
+    username: str
+    password: str
+    database: str
+    llm_model_role: str
+    extraction_max_chars: int
+
+
+@dataclass(frozen=True)
 class ModelConfig:
     key: str
     model: str

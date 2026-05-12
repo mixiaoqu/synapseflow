@@ -50,6 +50,15 @@ model_assets:
     streaming: true
     max_tokens: 4096
 
+  deepseek-v4-flash:
+    type: chat
+    provider: moyu
+    model: deepseek-v4-flash
+    name:  DeepSeek V4 Flash
+    request_timeout: 180
+    streaming: true
+    max_tokens: 4096
+
   qwen3-6-flash:
     type: chat
     provider: moyu
@@ -61,6 +70,6 @@ model_assets:
 
 system_roles:
   planner: deepseek-v3-2
-  analysis: deepseek-v3-2
+  analysis: deepseek-v4-flash
   generation: deepseek-v3-2
   tool: deepseek-v3-2

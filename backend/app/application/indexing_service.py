@@ -25,8 +25,15 @@ from app.services.document_index_state import (
     INDEX_STATUS_PROCESSING,
     INDEX_STATUS_QUEUED,
 )
+from app.services.graph_index_state import (
+    GRAPH_INDEX_STATUS_FAILED,
+    GRAPH_INDEX_STATUS_INDEXED,
+    GRAPH_INDEX_STATUS_PROCESSING,
+    GRAPH_INDEX_STATUS_QUEUED,
+)
 from app.services.document_indexer import (
     index_document,
+    index_document_graph,
     index_prepared_documents_batch,
 )
 from app.services.index_job_state import (
@@ -73,6 +80,11 @@ class IndexingService:
     @staticmethod
     def _truncate_error(error: Exception) -> str:
         return str(error).strip()[:MAX_INDEX_ERROR_LENGTH] or error.__class__.__name__
+
+    @staticmethod
+    def _graph_indexing_enabled() -> bool:
+        graph_cfg = config_registry.get_graph_config()
+        return bool(graph_cfg.enabled and graph_cfg.indexing_enabled)
 
     @staticmethod
     async def _get_document(db: AsyncSession, document_id: int) -> Document | None:
@@ -374,6 +386,9 @@ class IndexingService:
             .values(
                 index_status=INDEX_STATUS_PROCESSING,
                 index_error=None,
+                graph_index_status=GRAPH_INDEX_STATUS_QUEUED,
+                graph_index_error=None,
+                graph_indexed_at=None,
             )
         )
         if not result.rowcount:
@@ -396,13 +411,90 @@ class IndexingService:
                 Document.id == document_id,
                 Document.content_hash == expected_content_hash,
             )
+                .values(
+                    index_status=INDEX_STATUS_FAILED,
+                    index_error=error_message,
+                    indexed_at=None,
+                )
+        )
+        await db.commit()
+
+    async def _set_graph_processing(
+        self,
+        db: AsyncSession,
+        *,
+        document_id: int,
+        expected_content_hash: str,
+    ) -> None:
+        await db.execute(
+            update(Document)
+            .where(
+                Document.id == document_id,
+                Document.content_hash == expected_content_hash,
+            )
             .values(
-                index_status=INDEX_STATUS_FAILED,
-                index_error=error_message,
-                indexed_at=None,
+                graph_index_status=GRAPH_INDEX_STATUS_PROCESSING,
+                graph_index_error=None,
             )
         )
         await db.commit()
+
+    async def _mark_graph_failed(
+        self,
+        db: AsyncSession,
+        *,
+        document_id: int,
+        expected_content_hash: str,
+        error_message: str,
+    ) -> None:
+        await db.execute(
+            update(Document)
+            .where(
+                Document.id == document_id,
+                Document.content_hash == expected_content_hash,
+            )
+            .values(
+                graph_index_status=GRAPH_INDEX_STATUS_FAILED,
+                graph_index_error=error_message,
+                graph_indexed_at=None,
+            )
+        )
+        await db.commit()
+
+    async def _mark_graph_indexed(
+        self,
+        db: AsyncSession,
+        *,
+        document_id: int,
+        expected_content_hash: str,
+    ) -> None:
+        await db.execute(
+            update(Document)
+            .where(
+                Document.id == document_id,
+                Document.content_hash == expected_content_hash,
+            )
+            .values(
+                graph_index_status=GRAPH_INDEX_STATUS_INDEXED,
+                graph_index_error=None,
+                graph_indexed_at=utc_now(),
+            )
+        )
+        await db.commit()
+
+    async def _run_graph_index(
+        self,
+        db: AsyncSession,
+        *,
+        document_id: int,
+        title: str | None,
+    ) -> dict[str, int]:
+        return await index_document_graph(
+            db,
+            document_id=document_id,
+            title=title,
+            commit=False,
+        )
 
     async def _run_document_index(
         self,
@@ -529,6 +621,33 @@ class IndexingService:
                 status=INDEX_JOB_DOCUMENT_STATUS_INDEXED,
                 indexed_at=indexed_at,
             )
+            if self._graph_indexing_enabled():
+                await self._set_graph_processing(
+                    db,
+                    document_id=doc.id,
+                    expected_content_hash=expected_content_hash,
+                )
+                try:
+                    await self._run_graph_index(
+                        db,
+                        document_id=doc.id,
+                        title=doc.title,
+                    )
+                    await self._mark_graph_indexed(
+                        db,
+                        document_id=doc.id,
+                        expected_content_hash=expected_content_hash,
+                    )
+                except Exception as exc:
+                    await db.rollback()
+                    error_message = self._truncate_error(exc)
+                    await self._mark_graph_failed(
+                        db,
+                        document_id=doc.id,
+                        expected_content_hash=expected_content_hash,
+                        error_message=error_message,
+                    )
+                    logger.warning("Graph indexing failed doc_id={}: {}", doc.id, exc)
             logger.info("Indexed document doc_id={} chunks={}", doc.id, count)
             return count
         except Exception as exc:
@@ -841,6 +960,39 @@ class IndexingService:
                     refresh_job=False,
                 )
             await repo.refresh_job_state(job_id=job_id)
+
+        if self._graph_indexing_enabled():
+            for item in batch:
+                document_id = int(item["document_id"])
+                expected_content_hash = str(item["expected_content_hash"])
+                if document_id not in finalized_counts:
+                    continue
+                await self._set_graph_processing(
+                    db,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                )
+                try:
+                    await self._run_graph_index(
+                        db,
+                        document_id=document_id,
+                        title=item.get("title"),
+                    )
+                    await self._mark_graph_indexed(
+                        db,
+                        document_id=document_id,
+                        expected_content_hash=expected_content_hash,
+                    )
+                except Exception as exc:
+                    await db.rollback()
+                    error_message = self._truncate_error(exc)
+                    await self._mark_graph_failed(
+                        db,
+                        document_id=document_id,
+                        expected_content_hash=expected_content_hash,
+                        error_message=error_message,
+                    )
+                    logger.warning("Graph indexing failed doc_id={}: {}", document_id, exc)
         return finalized_counts
 
     async def index_document_task(
@@ -1000,6 +1152,9 @@ class IndexingService:
             doc.index_status = INDEX_STATUS_QUEUED
             doc.index_error = None
             doc.indexed_at = None
+            doc.graph_index_status = GRAPH_INDEX_STATUS_QUEUED
+            doc.graph_index_error = None
+            doc.graph_indexed_at = None
         await db.commit()
         for doc in docs:
             await db.refresh(doc)
@@ -1042,6 +1197,9 @@ class IndexingService:
         doc.index_status = INDEX_STATUS_QUEUED
         doc.index_error = None
         doc.indexed_at = None
+        doc.graph_index_status = GRAPH_INDEX_STATUS_QUEUED
+        doc.graph_index_error = None
+        doc.graph_indexed_at = None
         await db.commit()
         await db.refresh(doc)
         job_id = await self.enqueue_document_job(

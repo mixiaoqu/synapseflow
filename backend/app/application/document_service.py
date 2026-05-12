@@ -38,6 +38,7 @@ from app.services.document_lifecycle import (
     DOC_STATUS_PUBLISHED,
 )
 from app.services.document_indexer import persist_document_chunk_plan, prepare_document_chunk_plan
+from app.services.graph_store import get_graph_store
 from app.services.sensitive_word_service import get_sensitive_word_service
 from app.services.vector_store import delete_by_document_id
 from app.utils.document_parse import (
@@ -54,6 +55,20 @@ MAX_BATCH_UPLOAD_FILES = 500
 
 class DocumentService:
     """Coordinates document CRUD and delegates indexing orchestration."""
+
+    @staticmethod
+    async def _delete_graph_for_documents(docs: Sequence[Document]) -> None:
+        if not docs:
+            return
+        store = get_graph_store()
+        seen_ids: set[int] = set()
+        for doc in docs:
+            document_id = int(doc.id)
+            if document_id in seen_ids:
+                continue
+            seen_ids.add(document_id)
+            await store.delete_document_graph(document_id=document_id)
+        await store.prune_orphan_entities()
 
     @staticmethod
     def _is_current_document(doc: Document) -> bool:
@@ -1018,6 +1033,7 @@ class DocumentService:
         docs = await repo.get_by_ids(ids)
         root_ids = {getattr(doc, "root_id", None) or doc.id for doc in docs}
         chain_docs = await repo.get_chain_by_root_ids(root_ids)
+        await self._delete_graph_for_documents(chain_docs)
         deleted = await repo.delete_chain(chain_docs)
         logger.info("Batch deleted documents ids={} deleted={}", ids, deleted)
         return {"message": f"Deleted {deleted} documents", "deleted": deleted}
@@ -1040,6 +1056,7 @@ class DocumentService:
 
         root_id = getattr(doc, "root_id", None) or doc.id
         chain_docs = await repo.get_chain_by_root_ids({root_id})
+        await self._delete_graph_for_documents(chain_docs)
         await repo.delete_chain(chain_docs)
         logger.info("Deleted document id={} chain_size={}", doc_id, len(chain_docs))
         return {"message": "Deleted successfully"}

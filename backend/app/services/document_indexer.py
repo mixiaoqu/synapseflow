@@ -9,10 +9,16 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config.registry import config_registry
 from app.db.models import Document, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.services.embedding import embed_documents
+from app.services.graph_extraction import extract_chunk_graph
+from app.services.graph_indexer import GraphIndexer
+from app.services.graph_models import GraphChunkRecord
+from app.services.graph_normalizer import normalize_chunk_graph
+from app.services.graph_store import get_graph_store
 from app.services.semantic_chunk import DocumentChunkPlan, VectorIndexChunk, build_chunk_plan, build_vector_index_chunks, plan_text_chunks
 from app.services.vector_store import add_document_chunks, delete_by_document_id
 from app.utils.document_parse import ParsedDocument
@@ -187,6 +193,55 @@ async def index_prepared_documents_batch(
     if commit:
         await db.commit()
     return counts
+
+
+async def index_document_graph(
+    db: AsyncSession,
+    document_id: int,
+    title: str | None = None,
+    *,
+    commit: bool = True,
+) -> dict[str, int]:
+    graph_cfg = config_registry.get_graph_config()
+    if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
+        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+
+    repository = DocumentChunkRepository(db)
+    child_rows = await repository.get_child_chunks_for_document(document_id)
+    store = get_graph_store()
+    indexer = GraphIndexer(store)
+    summary = {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+
+    await store.delete_document_graph(document_id=document_id)
+
+    for row in child_rows:
+        chunk = GraphChunkRecord(
+            document_id=document_id,
+            document_chunk_id=int(row.id),
+            document_title=title,
+            section_path=row.section_path,
+        )
+        extracted = await extract_chunk_graph(
+            chunk=chunk,
+            chunk_text=row.content or "",
+        )
+        normalized = normalize_chunk_graph(
+            chunk=chunk,
+            entities=extracted.entities,
+            relations=extracted.relations,
+        )
+        counts = await indexer.index_chunk_graph(
+            chunk=chunk,
+            entities=normalized.entities,
+            relations=normalized.relations,
+        )
+        for key, value in counts.items():
+            summary[key] += value
+
+    await store.prune_orphan_entities()
+    if commit:
+        await db.commit()
+    return summary
 
 
 def _chunked(
