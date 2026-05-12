@@ -36,6 +36,7 @@ AISYN.md
 # 环境变量
 .env
 .env.prod
+.env.test
 .env.local
 backend/.env
 backend/langgraph.env
