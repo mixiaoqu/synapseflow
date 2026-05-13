@@ -95,7 +95,8 @@ const TEMPLATE_PRESETS: Record<
     name: "企业 IT 帮助台助手",
     slug: "it-helpdesk",
     description: "解答员工常见的设备、网络、账号和办公软件问题。",
-    welcome_message: "你好，我可以协助你排查办公设备、网络、账号和常用软件问题。",
+    welcome_message:
+      "你好，我可以协助你排查办公设备、网络、账号和常用软件问题。",
     placeholder_text: "描述你遇到的 IT 问题...",
     persona_prompt:
       "你是一名企业 IT 帮助台数字员工。回答要清晰、分步骤，信息不足时先询问设备、系统、网络环境和错误提示。",
@@ -112,7 +113,8 @@ const TEMPLATE_PRESETS: Record<
     name: "法务合同审查助手",
     slug: "legal-review",
     description: "辅助审查标准合同条款，提示常见风险和需要人工确认的事项。",
-    welcome_message: "你好，我可以帮你初步梳理合同条款风险和需要法务确认的问题。",
+    welcome_message:
+      "你好，我可以帮你初步梳理合同条款风险和需要法务确认的问题。",
     placeholder_text: "输入合同条款或审查问题...",
     persona_prompt:
       "你是一名法务合同审查数字员工。回答要谨慎、结构化，区分事实、风险提示和需要人工法务确认的事项。",
@@ -129,7 +131,8 @@ const TEMPLATE_PRESETS: Record<
     name: "新员工入职向导",
     slug: "onboarding-guide",
     description: "引导新员工了解报到流程、福利政策和常见行政事项。",
-    welcome_message: "欢迎加入团队，我可以帮你了解入职流程、福利和常见行政事项。",
+    welcome_message:
+      "欢迎加入团队，我可以帮你了解入职流程、福利和常见行政事项。",
     placeholder_text: "询问入职流程、福利或行政问题...",
     persona_prompt:
       "你是一名新员工入职向导。语气友好、准确，优先给出可执行步骤和相关材料位置。",
@@ -203,7 +206,10 @@ function parseSuggestedPrompts(value: string): string[] {
     .filter(Boolean);
 }
 
-function toPayload(form: AssistantFormState, teamId: number): AssistantUpsertPayload {
+function toPayload(
+  form: AssistantFormState,
+  teamId: number,
+): AssistantUpsertPayload {
   if (false) {
     throw new Error("请先选择知识库");
   }
@@ -268,8 +274,12 @@ function CollapsibleSection({
               <Icon className="h-4 w-4" />
             </span>
             <span className="min-w-0">
-              <CardTitle className="text-base font-semibold text-slate-900">{title}</CardTitle>
-              <span className="mt-1 block truncate text-xs text-slate-500">{description}</span>
+              <CardTitle className="text-base font-semibold text-slate-900">
+                {title}
+              </CardTitle>
+              <span className="mt-1 block truncate text-xs text-slate-500">
+                {description}
+              </span>
             </span>
           </button>
           {action}
@@ -279,16 +289,29 @@ function CollapsibleSection({
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
             title={open ? "折叠" : "展开"}
           >
-            <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 transition-transform",
+                open && "rotate-180",
+              )}
+            />
           </button>
         </div>
       </CardHeader>
-      {open ? <CardContent className="space-y-5 p-4">{children}</CardContent> : null}
+      {open ? (
+        <CardContent className="space-y-5 p-4">{children}</CardContent>
+      ) : null}
     </Card>
   );
 }
 
-function FieldLabel({ children, required }: { children: ReactNode; required?: boolean }) {
+function FieldLabel({
+  children,
+  required,
+}: {
+  children: ReactNode;
+  required?: boolean;
+}) {
   return (
     <label className="text-sm font-medium text-slate-700">
       {children}
@@ -323,14 +346,19 @@ function PromptCodeTextarea({
     const computed = window.getComputedStyle(textarea);
     const lineHeight = Number.parseFloat(computed.lineHeight) || 24;
     const borderY =
-      Number.parseFloat(computed.borderTopWidth) + Number.parseFloat(computed.borderBottomWidth);
+      Number.parseFloat(computed.borderTopWidth) +
+      Number.parseFloat(computed.borderBottomWidth);
     const minHeight = lineHeight * minRows + borderY;
     const maxHeight = lineHeight * maxRows + borderY;
 
     textarea.style.height = "auto";
-    const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+    const nextHeight = Math.min(
+      Math.max(textarea.scrollHeight, minHeight),
+      maxHeight,
+    );
     textarea.style.height = `${nextHeight}px`;
-    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+    textarea.style.overflowY =
+      textarea.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [maxRows, minRows, value]);
 
   return (
@@ -361,7 +389,10 @@ function PromptCodeTextarea({
   );
 }
 
-export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProps) {
+export function AssistantWorkbench({
+  mode,
+  assistantId,
+}: AssistantWorkbenchProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { teamId, selectedTeam } = useTeamScope();
@@ -369,22 +400,30 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
 
   const [assistant, setAssistant] = useState<AssistantProfile | null>(null);
   const [form, setForm] = useState<AssistantFormState>(() => createEmptyForm());
-  const [baseline, setBaseline] = useState(() => createSignature(createEmptyForm()));
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseWithCount[]>([]);
+  const [baseline, setBaseline] = useState(() =>
+    createSignature(createEmptyForm()),
+  );
+  const [knowledgeBases, setKnowledgeBases] = useState<
+    KnowledgeBaseWithCount[]
+  >([]);
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [modelOptions, setModelOptions] = useState<AssistantModelOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [openSections, setOpenSections] = useState<Record<SectionKey, boolean>>({
-    basic: true,
-    behavior: true,
-    experience: true,
-  });
+  const [openSections, setOpenSections] = useState<Record<SectionKey, boolean>>(
+    {
+      basic: true,
+      behavior: true,
+      experience: true,
+    },
+  );
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
 
   const isExisting = assistant != null;
   const dirty = createSignature(form) !== baseline;
-  const selectedKnowledgeBase = knowledgeBases.find((item) => item.id === form.knowledge_base_id);
+  const selectedKnowledgeBase = knowledgeBases.find(
+    (item) => item.id === form.knowledge_base_id,
+  );
   const selectedModel =
     modelOptions.find((item) => item.key === form.llm_model_key) ?? null;
 
@@ -421,7 +460,9 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
         const [kbItems, modelOptionsResponse, detail] = await Promise.all([
           listKnowledgeBases(teamId),
           assistantsApi.listModelOptions(),
-          mode === "edit" && assistantId ? assistantsApi.get(assistantId) : Promise.resolve(null),
+          mode === "edit" && assistantId
+            ? assistantsApi.get(assistantId)
+            : Promise.resolve(null),
         ]);
 
         setKnowledgeBases(kbItems);
@@ -444,7 +485,9 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
         setForm(nextForm);
         setBaseline(createSignature(createEmptyForm()));
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "加载助手配置失败");
+        toast.error(
+          error instanceof Error ? error.message : "加载助手配置失败",
+        );
       } finally {
         setLoading(false);
       }
@@ -472,7 +515,10 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
   };
 
   const toggleSection = (section: SectionKey) => {
-    setOpenSections((current) => ({ ...current, [section]: !current[section] }));
+    setOpenSections((current) => ({
+      ...current,
+      [section]: !current[section],
+    }));
   };
 
   const applyPreset = (presetId: string) => {
@@ -487,7 +533,11 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
       is_active: current.is_active,
       sort_order: current.sort_order,
     }));
-    setOpenSections((current) => ({ ...current, behavior: true, experience: true }));
+    setOpenSections((current) => ({
+      ...current,
+      behavior: true,
+      experience: true,
+    }));
     toast.success("预设模板已导入");
     window.setTimeout(() => setActivePresetId(null), 900);
   };
@@ -505,10 +555,10 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
       toast.error("请填写助手标识");
       return;
     }
-    if (form.knowledge_base_id == null) {
-      toast.error("请选择知识库");
-      return;
-    }
+    // if (form.knowledge_base_id == null) {
+    //   toast.error("请选择知识库");
+    //   return;
+    // }
 
     setSaving(true);
     try {
@@ -521,9 +571,9 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
       setForm(nextForm);
       setBaseline(createSignature(nextForm));
       toast.success(isExisting ? "助手配置已保存" : "助手已创建");
-
       if (!isExisting) {
-        router.replace(`/admin/assistants/${saved.id}/edit`);
+        // router.replace(`/admin/assistants/${saved.id}/edit`); 保存完为啥又回编辑页面了？现调整为跳转到助手列表页面
+        router.replace(`/admin/assistants`);
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败");
@@ -570,7 +620,8 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
                 )}
               </div>
               <p className="mt-1 truncate text-xs text-slate-500">
-                {selectedTeam?.name ?? "未选择团队"} · {selectedKnowledgeBase?.name ?? "未绑定知识库"}
+                {selectedTeam?.name ?? "未选择团队"} ·{" "}
+                {selectedKnowledgeBase?.name ?? "未绑定知识库"}
               </p>
             </div>
           </div>
@@ -595,7 +646,11 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
               disabled={saving || teamId == null}
               className="h-10 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 px-4 text-white shadow-sm shadow-emerald-500/20 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-emerald-500/25"
             >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
               保存
             </Button>
           </div>
@@ -609,7 +664,9 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
               <div className="border-b border-emerald-100/70 bg-gradient-to-r from-emerald-50 to-teal-50 px-4 py-3">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-emerald-600" />
-                  <h2 className="text-sm font-semibold text-slate-900">推荐模板</h2>
+                  <h2 className="text-sm font-semibold text-slate-900">
+                    推荐模板
+                  </h2>
                 </div>
               </div>
               <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -682,7 +739,10 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
                     const nextName = event.target.value;
                     setForm((current) => {
                       const next = { ...current, name: nextName };
-                      if (!current.slug || current.slug === slugify(current.name)) {
+                      if (
+                        !current.slug ||
+                        current.slug === slugify(current.name)
+                      ) {
                         next.slug = slugify(nextName);
                       }
                       return next;
@@ -708,7 +768,9 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
               <Textarea
                 rows={3}
                 value={form.description}
-                onChange={(event) => updateForm({ description: event.target.value })}
+                onChange={(event) =>
+                  updateForm({ description: event.target.value })
+                }
                 className="min-h-[96px] rounded-lg border-slate-200 text-sm"
                 placeholder="一句话说明这个助手适合回答什么问题"
               />
@@ -716,12 +778,14 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <FieldLabel required>关联知识库</FieldLabel>
+                <FieldLabel>关联知识库</FieldLabel>
                 <select
                   value={form.knowledge_base_id ?? ""}
                   onChange={(event) =>
                     updateForm({
-                      knowledge_base_id: event.target.value ? Number(event.target.value) : null,
+                      knowledge_base_id: event.target.value
+                        ? Number(event.target.value)
+                        : null,
                       category_id: null,
                     })
                   }
@@ -742,7 +806,9 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
                   disabled={form.knowledge_base_id == null}
                   onChange={(event) =>
                     updateForm({
-                      category_id: event.target.value ? Number(event.target.value) : null,
+                      category_id: event.target.value
+                        ? Number(event.target.value)
+                        : null,
                     })
                   }
                   className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition-all focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
@@ -779,7 +845,10 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
                 <DropdownMenuContent align="end" className="w-56">
                   <DropdownMenuLabel>预设模板</DropdownMenuLabel>
                   {Object.entries(TEMPLATE_PRESETS).map(([key, preset]) => (
-                    <DropdownMenuItem key={key} onSelect={() => applyPreset(key)}>
+                    <DropdownMenuItem
+                      key={key}
+                      onSelect={() => applyPreset(key)}
+                    >
                       {preset.title}
                     </DropdownMenuItem>
                   ))}
@@ -826,7 +895,9 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
               <Textarea
                 rows={3}
                 value={form.welcome_message}
-                onChange={(event) => updateForm({ welcome_message: event.target.value })}
+                onChange={(event) =>
+                  updateForm({ welcome_message: event.target.value })
+                }
                 className="rounded-lg border-slate-200 text-sm"
                 placeholder="用户打开问答窗口时看到的第一句话"
               />
@@ -835,7 +906,9 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
               <FieldLabel>输入框提示</FieldLabel>
               <Input
                 value={form.placeholder_text}
-                onChange={(event) => updateForm({ placeholder_text: event.target.value })}
+                onChange={(event) =>
+                  updateForm({ placeholder_text: event.target.value })
+                }
                 className="h-11 rounded-lg border-slate-200"
                 placeholder="例如：输入你的问题，按 Enter 发送"
               />
@@ -845,9 +918,13 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
               <Textarea
                 rows={5}
                 value={form.suggested_prompts_text}
-                onChange={(event) => updateForm({ suggested_prompts_text: event.target.value })}
+                onChange={(event) =>
+                  updateForm({ suggested_prompts_text: event.target.value })
+                }
                 className="resize-y rounded-lg border-slate-200 text-sm"
-                placeholder={"每行一个推荐问题\n例如：\n如何申请退换货？\n发票如何开具？"}
+                placeholder={
+                  "每行一个推荐问题\n例如：\n如何申请退换货？\n发票如何开具？"
+                }
               />
             </div>
           </CollapsibleSection>
@@ -898,11 +975,8 @@ export function AssistantWorkbench({ mode, assistantId }: AssistantWorkbenchProp
                     </p>
                   </div>
                   <div className="mt-3 rounded-lg border border-emerald-100 bg-white px-3 py-2 text-xs leading-5 text-slate-500">
-                    助手问答优先使用当前绑定的模型资产。未选择时，后端回退到系统默认的
-                    {" "}
-                    generation
-                    {" "}
-                    映射。
+                    助手问答优先使用当前绑定的模型资产。未选择时，后端回退到系统默认的{" "}
+                    generation 映射。
                   </div>
                 </div>
               </CardContent>
