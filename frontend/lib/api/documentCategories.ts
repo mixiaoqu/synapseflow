@@ -11,9 +11,13 @@ export interface DocumentCategory {
 
 export async function listDocumentCategories(
   knowledgeBaseId: number,
+  knowledgeBaseBranchId?: number,
 ): Promise<DocumentCategory[]> {
   const sp = new URLSearchParams();
   sp.set("knowledge_base_id", String(knowledgeBaseId));
+  if (knowledgeBaseBranchId != null) {
+    sp.set("knowledge_base_branch_id", String(knowledgeBaseBranchId));
+  }
   return apiClient.get(`/api/v1/document-categories?${sp.toString()}`);
 }
 

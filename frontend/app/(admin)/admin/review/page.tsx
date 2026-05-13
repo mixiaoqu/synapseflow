@@ -33,8 +33,6 @@ import {
   type DocumentListItem,
 } from "@/lib/api/documents";
 
-const FETCH_PAGE_SIZE = 100;
-
 function isReviewFilter(value: string | null): value is ReviewFilter {
   return Boolean(value && REVIEW_FILTER_ORDER.includes(value as ReviewFilter));
 }
@@ -70,24 +68,63 @@ function mergeUpdatedDocuments(
   );
 }
 
+type ReviewSummary = Record<ReviewFilter, number>;
+
+const EMPTY_SUMMARY: ReviewSummary = {
+  all: 0,
+  draft: 0,
+  pending_review: 0,
+  published: 0,
+};
+
 function AdminReviewPageContent() {
   const searchParams = useSearchParams();
   const { teamId, selectedTeam, teamsLoading } = useTeamScope();
 
   const [items, setItems] = useState<DocumentListItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<ReviewSummary>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<ReviewFilter>("pending_review");
   const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [busyIds, setBusyIds] = useState<number[]>([]);
   const [runningBatchAction, setRunningBatchAction] = useState<ReviewAction | null>(null);
   const [previewDocumentId, setPreviewDocumentId] = useState<number | null>(null);
 
+  const loadSummary = useCallback(async () => {
+    if (teamId == null) {
+      setSummary(EMPTY_SUMMARY);
+      return;
+    }
+
+    try {
+      const [all, draft, pendingReview, published] = await Promise.all([
+        listDocuments({ page: 1, page_size: 1, team_id: teamId }),
+        listDocuments({ page: 1, page_size: 1, team_id: teamId, status: "draft" }),
+        listDocuments({ page: 1, page_size: 1, team_id: teamId, status: "pending_review" }),
+        listDocuments({ page: 1, page_size: 1, team_id: teamId, status: "published" }),
+      ]);
+
+      setSummary({
+        all: all.total,
+        draft: draft.total,
+        pending_review: pendingReview.total,
+        published: published.total,
+      });
+    } catch {
+      setSummary(EMPTY_SUMMARY);
+    }
+  }, [teamId]);
+
   const loadDocuments = useCallback(
     async (silent = false) => {
       if (teamId == null) {
         setItems([]);
+        setTotal(0);
         setSelectedIds([]);
         setLoading(false);
         setRefreshing(false);
@@ -101,23 +138,16 @@ function AdminReviewPageContent() {
       }
 
       try {
-        const loadedItems: DocumentListItem[] = [];
-        let page = 1;
-        let total = 0;
+        const response = await listDocuments({
+          page,
+          page_size: pageSize,
+          team_id: teamId,
+          keyword: searchQuery.trim() || undefined,
+          status: activeFilter === "all" ? undefined : activeFilter,
+        });
 
-        do {
-          const response = await listDocuments({
-            page,
-            page_size: FETCH_PAGE_SIZE,
-            team_id: teamId,
-          });
-
-          loadedItems.push(...response.items);
-          total = response.total;
-          page += 1;
-        } while (loadedItems.length < total);
-
-        setItems(sortReviewDocuments(loadedItems));
+        setItems(sortReviewDocuments(response.items));
+        setTotal(response.total);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "加载审核列表失败");
       } finally {
@@ -125,13 +155,8 @@ function AdminReviewPageContent() {
         setRefreshing(false);
       }
     },
-    [teamId],
+    [activeFilter, page, pageSize, searchQuery, teamId],
   );
-
-  useEffect(() => {
-    if (teamsLoading) return;
-    void loadDocuments();
-  }, [loadDocuments, teamsLoading]);
 
   useEffect(() => {
     const filter = searchParams.get("filter");
@@ -141,33 +166,32 @@ function AdminReviewPageContent() {
   }, [searchParams]);
 
   useEffect(() => {
+    setPage(1);
+  }, [activeFilter, searchQuery, teamId]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [activeFilter, page, pageSize, searchQuery, teamId]);
+
+  useEffect(() => {
+    if (page !== 1 && total > 0 && (page - 1) * pageSize >= total) {
+      setPage(Math.max(1, Math.ceil(total / pageSize)));
+    }
+  }, [page, pageSize, total]);
+
+  useEffect(() => {
+    if (teamsLoading) return;
+    void loadSummary();
+  }, [loadSummary, teamsLoading]);
+
+  useEffect(() => {
+    if (teamsLoading) return;
+    void loadDocuments();
+  }, [loadDocuments, teamsLoading]);
+
+  useEffect(() => {
     setSelectedIds((current) => current.filter((id) => items.some((item) => item.id === id)));
   }, [items]);
-
-  const summary = useMemo(
-    () => ({
-      all: items.length,
-      draft: items.filter((item) => item.status === "draft").length,
-      pending_review: items.filter((item) => item.status === "pending_review").length,
-      published: items.filter((item) => item.status === "published").length,
-    }),
-    [items],
-  );
-
-  const filteredItems = useMemo(() => {
-    const keyword = searchQuery.trim().toLowerCase();
-
-    return items.filter((item) => {
-      const matchesFilter = activeFilter === "all" || item.status === activeFilter;
-      const matchesKeyword =
-        keyword.length === 0 ||
-        item.title.toLowerCase().includes(keyword) ||
-        (item.knowledge_base_name ?? "").toLowerCase().includes(keyword) ||
-        (item.category_name ?? "").toLowerCase().includes(keyword);
-
-      return matchesFilter && matchesKeyword;
-    });
-  }, [activeFilter, items, searchQuery]);
 
   const selectedItems = useMemo(
     () => items.filter((item) => selectedIds.includes(item.id)),
@@ -209,10 +233,9 @@ function AdminReviewPageContent() {
   );
 
   const allVisibleSelected =
-    filteredItems.length > 0 &&
-    filteredItems.every((item) => selectedIds.includes(item.id));
+    items.length > 0 && items.every((item) => selectedIds.includes(item.id));
   const partiallySelected =
-    filteredItems.some((item) => selectedIds.includes(item.id)) && !allVisibleSelected;
+    items.some((item) => selectedIds.includes(item.id)) && !allVisibleSelected;
 
   const withBusyIds = useCallback(
     async <T,>(documentIds: number[], work: () => Promise<T>): Promise<T> => {
@@ -233,6 +256,8 @@ function AdminReviewPageContent() {
           const updates = await runReviewAction(documentId, action);
           setItems((current) => mergeUpdatedDocuments(current, updates));
           setSelectedIds((current) => current.filter((id) => id !== documentId));
+          void loadDocuments(true);
+          void loadSummary();
           toast.success(reviewActionMeta[action].successMessage);
           return true;
         } catch (error) {
@@ -241,7 +266,7 @@ function AdminReviewPageContent() {
         }
       });
     },
-    [withBusyIds],
+    [loadDocuments, loadSummary, withBusyIds],
   );
 
   const runBatchAction = useCallback(
@@ -279,6 +304,8 @@ function AdminReviewPageContent() {
           setSelectedIds((current) =>
             current.filter((id) => !succeeded.some((detail) => detail.id === id)),
           );
+          void loadDocuments(true);
+          void loadSummary();
         }
 
         const fullySucceededCount = results.filter(
@@ -303,7 +330,7 @@ function AdminReviewPageContent() {
 
       setRunningBatchAction(null);
     },
-    [selectedItems, withBusyIds],
+    [loadDocuments, loadSummary, selectedItems, withBusyIds],
   );
 
   return (
@@ -417,7 +444,7 @@ function AdminReviewPageContent() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
-              <span>当前列表共 {filteredItems.length} 条</span>
+              <span>当前结果共 {total} 条</span>
               {(searchQuery || selectedIds.length > 0) && (
                 <Button
                   type="button"
@@ -448,11 +475,19 @@ function AdminReviewPageContent() {
           ) : null}
 
           <ReviewTable
-            items={filteredItems}
+            items={items}
             loading={loading}
+            total={total}
+            page={page}
+            pageSize={pageSize}
             selectedIds={selectedIds}
             allVisibleSelected={allVisibleSelected}
             partiallySelected={partiallySelected}
+            onPageChange={setPage}
+            onPageSizeChange={(value) => {
+              setPageSize(value);
+              setPage(1);
+            }}
             onToggleSelect={(documentId, checked) => {
               setSelectedIds((current) =>
                 checked
@@ -463,13 +498,13 @@ function AdminReviewPageContent() {
             onToggleSelectAll={(checked) => {
               if (!checked) {
                 setSelectedIds((current) =>
-                  current.filter((id) => !filteredItems.some((item) => item.id === id)),
+                  current.filter((id) => !items.some((item) => item.id === id)),
                 );
                 return;
               }
 
               setSelectedIds((current) =>
-                Array.from(new Set([...current, ...filteredItems.map((item) => item.id)])),
+                Array.from(new Set([...current, ...items.map((item) => item.id)])),
               );
             }}
             onOpenDocument={(item) => setPreviewDocumentId(item.id)}

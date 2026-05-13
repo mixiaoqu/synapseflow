@@ -16,7 +16,6 @@ import {
   Brain,
   Copy,
   Database,
-  FileText,
   Loader2,
   MoreHorizontal,
   Power,
@@ -814,15 +813,7 @@ export default function AdminAssistantsPage() {
                                 </button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-44">
-                                <DropdownMenuLabel>更多操作</DropdownMenuLabel>
-                                <DropdownMenuItem
-                                  onSelect={() =>
-                                    router.push(`/admin/qa-quality?assistant_id=${assistant.id}`)
-                                  }
-                                >
-                                  <FileText className="h-4 w-4" />
-                                  查看日志
-                                </DropdownMenuItem>
+                                <DropdownMenuLabel>更多操作</DropdownMenuLabel>
                                 <DropdownMenuItem
                                   onSelect={() => void handleDuplicate(assistant.id)}
                                 >
@@ -888,3 +879,4 @@ export default function AdminAssistantsPage() {
     </>
   );
 }
+

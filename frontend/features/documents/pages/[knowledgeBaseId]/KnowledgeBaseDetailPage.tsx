@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, LibraryBig, Loader2, RefreshCcw, Search, UploadCloud, X } from "lucide-react";
 import { Toaster, toast } from "sonner";
@@ -32,8 +32,6 @@ const ACCEPT_FILES = ".txt,.md,.pdf,.docx";
 const SUPPORTED_EXTENSIONS = [".txt", ".md", ".pdf", ".docx"];
 const MAX_SIZE = 10 * 1024 * 1024;
 const MAX_BATCH = 500;
-const BRANCH_CATEGORY_BASELINE_PAGE_SIZE = 500;
-
 type ConfirmDialogState = {
   open: boolean;
   title: string;
@@ -91,7 +89,7 @@ function KnowledgeBaseDetailPageContent() {
   const [kb, setKb] = useState<KnowledgeBaseWithCount | null>(null);
   const [branches, setBranches] = useState<KnowledgeBaseBranch[]>([]);
   const [allCategories, setAllCategories] = useState<DocumentCategory[]>([]);
-  const [branchCategoryIds, setBranchCategoryIds] = useState<number[]>([]);
+  const [branchCategories, setBranchCategories] = useState<DocumentCategory[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<number | null>(branchIdFromQuery);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(categoryIdFromQuery);
   const [focusedDocumentId, setFocusedDocumentId] = useState<number | null>(documentIdFromQuery);
@@ -128,11 +126,6 @@ function KnowledgeBaseDetailPageContent() {
   const activeBranch = branches.find((item) => item.id === selectedBranchId) ?? null;
   const uploadBranch = branches.find((item) => item.id === uploadBranchId) ?? null;
   const uploadCategory = allCategories.find((item) => item.id === uploadCategoryId) ?? null;
-
-  const branchCategories = useMemo(() => {
-    const branchCategoryIdSet = new Set(branchCategoryIds);
-    return allCategories.filter((item) => branchCategoryIdSet.has(item.id));
-  }, [allCategories, branchCategoryIds]);
 
   const activeCategory = branchCategories.find((item) => item.id === selectedCategoryId) ?? null;
   const pageTitle = activeCategory?.name || "全部文档";
@@ -239,7 +232,7 @@ function KnowledgeBaseDetailPageContent() {
     if (!Number.isFinite(kbId) || kbId <= 0) {
       setBranches([]);
       setAllCategories([]);
-      setBranchCategoryIds([]);
+      setBranchCategories([]);
       setSelectedBranchId(null);
       setSelectedCategoryId(null);
       setUploadBranchId(null);
@@ -290,7 +283,7 @@ function KnowledgeBaseDetailPageContent() {
         if (!cancelled) {
           setBranches([]);
           setAllCategories([]);
-          setBranchCategoryIds([]);
+          setBranchCategories([]);
           setSelectedBranchId(null);
           setSelectedCategoryId(null);
           setUploadBranchId(null);
@@ -369,7 +362,7 @@ function KnowledgeBaseDetailPageContent() {
 
   useEffect(() => {
     if (!Number.isFinite(kbId) || kbId <= 0 || selectedBranchId == null) {
-      setBranchCategoryIds([]);
+      setBranchCategories([]);
       return;
     }
 
@@ -377,28 +370,13 @@ function KnowledgeBaseDetailPageContent() {
 
     const run = async () => {
       try {
-        const result = await listDocuments({
-          page: 1,
-          page_size: BRANCH_CATEGORY_BASELINE_PAGE_SIZE,
-          knowledge_base_id: kbId,
-          knowledge_base_branch_id: selectedBranchId,
-          team_id: teamId ?? undefined,
-        });
+        const result = await listDocumentCategories(kbId, selectedBranchId);
 
         if (cancelled) return;
-
-        const nextCategoryIds = Array.from(
-          new Set(
-            result.items
-              .map((item) => item.category_id)
-              .filter((item): item is number => item != null),
-          ),
-        );
-
-        setBranchCategoryIds(nextCategoryIds);
+        setBranchCategories(result);
       } catch (error) {
         if (cancelled) return;
-        setBranchCategoryIds([]);
+        setBranchCategories([]);
         toast.error(error instanceof Error ? error.message : "加载当前版本分类失败");
       }
     };
@@ -408,7 +386,7 @@ function KnowledgeBaseDetailPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [kbId, reloadToken, selectedBranchId, teamId]);
+  }, [kbId, reloadToken, selectedBranchId]);
 
   useEffect(() => {
     if (selectedCategoryId == null) return;

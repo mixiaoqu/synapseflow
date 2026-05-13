@@ -41,7 +41,6 @@ frontend/
 - `app/(admin)/admin/documents/page.tsx`
 - `app/(admin)/admin/assistants/page.tsx`
 - `app/(admin)/admin/review/page.tsx`
-- `app/(admin)/admin/qa-quality/page.tsx`
 - `app/(admin)/admin/sensitive-words/page.tsx`
 - `app/(admin)/admin/teams/page.tsx`
 - `app/(admin)/admin/users/page.tsx`

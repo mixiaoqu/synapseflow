@@ -1,10 +1,9 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { Suspense, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  BarChart3,
   BookOpen,
   Bot,
   Building2,
@@ -39,9 +38,7 @@ const AVATAR_PALETTES = [
 const menuGroups = [
   {
     title: "概览",
-    items: [
-      { href: "/admin", title: "后台首页", icon: Home },
-    ],
+    items: [{ href: "/admin", title: "后台首页", icon: Home }],
   },
   {
     title: "业务核心",
@@ -59,10 +56,9 @@ const menuGroups = [
     ],
   },
   {
-    title: "合规与质检",
+    title: "合规与审核",
     items: [
       { href: "/admin/review", title: "审核发布", icon: CheckSquare },
-      { href: "/admin/qa-quality", title: "问答质检", icon: BarChart3 },
       { href: "/admin/sensitive-words", title: "敏感词管理", icon: ShieldAlert },
     ],
   },
@@ -103,7 +99,7 @@ function roleBadge(role: string) {
 
 function SessionLoadingScreen() {
   return (
-      <div className="flex h-[100dvh] min-h-0 items-center justify-center bg-gray-950 text-white">
+    <div className="flex h-[100dvh] min-h-0 items-center justify-center bg-gray-950 text-white">
       <div className="rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-sm">
         正在恢复管理后台...
       </div>
@@ -271,4 +267,3 @@ export default function AdminLayout({
     </Suspense>
   );
 }
-

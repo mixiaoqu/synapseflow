@@ -30,15 +30,22 @@ import {
 interface ReviewTableProps {
   items: DocumentListItem[];
   loading: boolean;
+  total: number;
+  page: number;
+  pageSize: number;
   selectedIds: number[];
   allVisibleSelected: boolean;
   partiallySelected: boolean;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
   onToggleSelect: (documentId: number, checked: boolean) => void;
   onToggleSelectAll: (checked: boolean) => void;
   onOpenDocument: (item: DocumentListItem) => void;
   onRunAction: (documentId: number, action: ReviewAction) => void;
   busyIds: number[];
 }
+
+const PAGE_SIZE_OPTIONS = [20, 50, 100];
 
 function isBusy(documentId: number, busyIds: number[]): boolean {
   return busyIds.includes(documentId);
@@ -47,15 +54,24 @@ function isBusy(documentId: number, busyIds: number[]): boolean {
 export function ReviewTable({
   items,
   loading,
+  total,
+  page,
+  pageSize,
   selectedIds,
   allVisibleSelected,
   partiallySelected,
+  onPageChange,
+  onPageSizeChange,
   onToggleSelect,
   onToggleSelectAll,
   onOpenDocument,
   onRunAction,
   busyIds,
 }: ReviewTableProps) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const pageStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const pageEnd = total === 0 ? 0 : Math.min(page * pageSize, total);
+
   return (
     <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
       <Table>
@@ -225,6 +241,53 @@ export function ReviewTable({
           )}
         </TableBody>
       </Table>
+
+      <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
+        <p>
+          显示 {pageStart}-{pageEnd} / 共 {total} 条
+        </p>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="inline-flex items-center gap-2">
+            <span>每页</span>
+            <select
+              value={pageSize}
+              onChange={(event) => onPageSizeChange(Number(event.target.value))}
+              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            >
+              {PAGE_SIZE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-full border-slate-200"
+              onClick={() => onPageChange(Math.max(1, page - 1))}
+              disabled={page <= 1}
+            >
+              上一页
+            </Button>
+            <span className="text-slate-600">
+              第 {page} / {totalPages} 页
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-full border-slate-200"
+              onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+              disabled={page >= totalPages}
+            >
+              下一页
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
