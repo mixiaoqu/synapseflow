@@ -32,7 +32,6 @@ class KbChatResponse(BaseModel):
     answer: str = Field(..., description="Answer content")
     answer_text: str = Field(..., description="Answer content for end-user rendering")
     answer_status: str = Field("answered", description="Answer confidence/result state")
-    confidence_level: str | None = Field(None, description="Optional confidence band")
     backend_citations: List[Dict[str, Any]] = Field(
         default_factory=list,
         description="Retrieved citations retained for admin QA",

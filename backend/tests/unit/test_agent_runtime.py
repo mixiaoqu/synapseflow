@@ -67,7 +67,20 @@ def test_graph_registry_exposes_known_workflows():
     if importlib.util.find_spec("langgraph") is None:
         return
 
-    assert get_graph_definition("kb_chat").node_ids == ("plan_query", "retrieve", "answer")
+    assert get_graph_definition("kb_chat").node_ids == (
+        "plan_query",
+        "rewrite_query",
+        "retrieve",
+        "answer",
+    )
+    assert get_graph_definition("kb_chat_v2").node_ids == (
+        "plan_query",
+        "rewrite_query",
+        "retrieve",
+        "evaluate",
+        "answer",
+    )
 
     compiled = build_graph("kb_chat")
     assert compiled is not None
+    assert build_graph("kb_chat_v2") is not None

@@ -35,20 +35,18 @@ async def add_document_chunks(
     chunks: List[VectorIndexChunk],
     vectors: List[List[float]],
     *,
-    document_chunk_ids: Sequence[int] | None = None,
+    document_chunk_ids: Sequence[int],
     commit: bool = True,
 ) -> int:
     """Insert chunk embeddings for a document."""
     if not chunks or len(chunks) != len(vectors):
         return 0
+    if len(document_chunk_ids) != len(chunks):
+        raise ValueError("document_chunk_ids must match chunk count")
     rows = [
         Embedding(
             document_id=document_id,
-            document_chunk_id=(
-                int(document_chunk_ids[i])
-                if document_chunk_ids is not None and i < len(document_chunk_ids)
-                else None
-            ),
+            document_chunk_id=int(document_chunk_ids[i]),
             chunk_text=chunk.display_text,
             search_text=chunk.search_text,
             chunk_index=int(chunk.metadata.get("chunk_index", i)),
@@ -97,7 +95,7 @@ def _build_ranked_row(
     search_text: str | None,
     document_id: int,
     chunk_index: int,
-    document_chunk_id: int | None,
+    document_chunk_id: int,
     raw_metadata: object,
     document_title: str | None,
     row_category_id: int | None,
@@ -108,7 +106,7 @@ def _build_ranked_row(
     lexical_source: str | None = None,
 ) -> dict:
     metadata = dict(raw_metadata or {})
-    metadata["document_chunk_id"] = int(document_chunk_id) if document_chunk_id is not None else None
+    metadata["document_chunk_id"] = int(document_chunk_id)
     metadata["category_id"] = int(row_category_id) if row_category_id is not None else None
     metadata["category_name"] = category_name
     metadata["source_path"] = source_path
@@ -118,7 +116,7 @@ def _build_ranked_row(
         "search_text": search_text or chunk_text,
         "document_id": int(document_id),
         "chunk_index": int(chunk_index),
-        "document_chunk_id": int(document_chunk_id) if document_chunk_id is not None else None,
+        "document_chunk_id": int(document_chunk_id),
         "metadata": metadata,
         "distance": float(distance) if distance is not None else None,
         "document_title": document_title or "Unknown document",
@@ -233,11 +231,7 @@ def _copy_ranked_row(row: dict) -> dict:
         "search_text": row.get("search_text", row["chunk_text"]),
         "document_id": int(row["document_id"]),
         "chunk_index": int(row["chunk_index"]),
-        "document_chunk_id": (
-            int(row["document_chunk_id"])
-            if row.get("document_chunk_id") is not None
-            else None
-        ),
+        "document_chunk_id": int(row["document_chunk_id"]),
         "metadata": dict(row.get("metadata") or {}),
         "distance": (
             float(row["distance"])

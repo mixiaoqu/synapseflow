@@ -87,8 +87,8 @@ def test_user_kb_rewrite_query_node_uses_llm_plan(monkeypatch):
     result = asyncio.run(user_kb_rewrite_query_node(state))
 
     assert result["retrieval_queries"][1] == "generation model config"
-    assert result["rewrite_meta"]["mode"] == "llm"
-    assert result["rewrite_meta"]["query_count"] == 3
+    assert result["rewrite_trace"]["engine"] == "llm"
+    assert result["rewrite_trace"]["query_count"] == 3
     assert captured["mode"] == "llm"
     assert captured["max_queries"] == 3
     assert captured["strategies"] == ["multi_aspect_split", "terminology_normalization"]
@@ -166,4 +166,4 @@ def test_user_kb_retrieve_node_skips_when_plan_disables_retrieval():
 
     assert result["kb_retrieval_status"] == "skipped"
     assert result["retrieved_docs"] == []
-    assert result["retrieval_funnel"]["mode"] == "skipped"
+    assert result["kb_retrieval_status"] == "skipped"

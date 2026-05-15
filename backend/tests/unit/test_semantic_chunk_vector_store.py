@@ -122,3 +122,32 @@ def test_add_document_chunks_stores_document_chunk_relationships():
     assert row.document_chunk_id == document_chunk_ids[0]
     assert row.chunk_index == vector_chunks[0].metadata["chunk_index"]
     assert row.metadata_["document_chunk_id"] == document_chunk_ids[0]
+
+
+def test_add_document_chunks_rejects_mismatched_document_chunk_ids():
+    parsed = ParsedDocument(
+        title="System Design Notes",
+        blocks=[
+            ParsedBlock(type="heading", text="Parent", level=1),
+            ParsedBlock(type="paragraph", text="Rendered body " * 40),
+        ],
+    )
+    plan = build_chunk_plan(parsed, document_title=parsed.title)
+    vector_chunks = build_vector_index_chunks(plan, document_id=7)
+    db = _DummyDB()
+
+    try:
+        asyncio.run(
+            add_document_chunks(
+                db,
+                7,
+                vector_chunks,
+                [[0.1, 0.2] for _ in vector_chunks],
+                document_chunk_ids=[],
+                commit=False,
+            )
+        )
+    except ValueError as exc:
+        assert "document_chunk_ids" in str(exc)
+    else:  # pragma: no cover - defensive
+        raise AssertionError("expected add_document_chunks to reject mismatched ids")

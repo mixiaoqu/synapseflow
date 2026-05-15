@@ -142,13 +142,14 @@ class FakeChatMemoryStore:
                 session_id="session-1",
                 title="What is LangGraph?",
                 preview="LangGraph helps compose flows.",
+                product_id=None,
                 project_id=None,
                 project_app_id=None,
                 external_user_id=None,
                 external_user_name=None,
-                source=None,
                 team_id=2,
                 knowledge_base_id=9,
+                knowledge_base_branch_ids=[],
                 knowledge_base_name="Product Docs",
                 assistant_id=5,
                 assistant_name="Project Assistant",
@@ -163,13 +164,14 @@ class FakeChatMemoryStore:
             session_id="session-1",
             title="What is LangGraph?",
             preview="LangGraph helps compose flows.",
+            product_id=None,
             project_id=None,
             project_app_id=None,
             external_user_id=None,
             external_user_name=None,
-            source=None,
             team_id=2,
             knowledge_base_id=9,
+            knowledge_base_branch_ids=[],
             knowledge_base_name="Product Docs",
             assistant_id=5,
             assistant_name="Project Assistant",
@@ -215,13 +217,14 @@ class FakeChatMemoryStore:
         *,
         user_id: int,
         session_id: str,
+        product_id: int | None = None,
         project_id: int | None = None,
         project_app_id: int | None = None,
         external_user_id: str | None = None,
         external_user_name: str | None = None,
-        source: str | None = None,
         team_id: int | None,
         knowledge_base_id: int | None,
+        knowledge_base_branch_ids: list[int] | None = None,
         assistant_id: int | None,
         category_id: int | None,
         user_message: str,
@@ -232,13 +235,14 @@ class FakeChatMemoryStore:
             {
                 "user_id": user_id,
                 "session_id": session_id,
+                "product_id": product_id,
                 "project_id": project_id,
                 "project_app_id": project_app_id,
                 "external_user_id": external_user_id,
                 "external_user_name": external_user_name,
-                "source": source,
                 "team_id": team_id,
                 "knowledge_base_id": knowledge_base_id,
+                "knowledge_base_branch_ids": knowledge_base_branch_ids or [],
                 "assistant_id": assistant_id,
                 "category_id": category_id,
                 "user_message": user_message,
@@ -366,7 +370,10 @@ def test_kb_chat_invoke_uses_graph_result():
         }
     ]
     assert memory_store.save_calls[0]["assistant_message"] == "LangGraph helps compose flows."
-    assert memory_store.save_calls[0]["assistant_metadata"]["retrieval_funnel"]["query_count"] == 2
+    assert memory_store.save_calls[0]["assistant_metadata"]["retrieval_queries"] == [
+        "What is LangGraph?",
+        "LangGraph basics",
+    ]
 
 
 def test_kb_chat_stream_emits_standardized_envelopes():
@@ -413,18 +420,10 @@ def test_kb_chat_stream_emits_standardized_envelopes():
     assert payloads[-1]["data"]["session_id"]
     assert memory_store.load_calls[0]["session_id"] == payloads[-1]["data"]["session_id"]
     assert memory_store.save_calls[0]["assistant_message"] == "LangGraph helps compose flows."
-    assert (
-        memory_store.save_calls[0]["assistant_metadata"]["retrieval_funnel"]["stages"][0][
-            "chunk_count"
-        ]
-        == 7
-    )
-    assert (
-        memory_store.save_calls[0]["assistant_metadata"]["retrieval_funnel"]["stages"][1][
-            "chunk_count"
-        ]
-        == 5
-    )
+    assert memory_store.save_calls[0]["assistant_metadata"]["retrieval_queries"] == [
+        "What is LangGraph?",
+        "LangGraph basics",
+    ]
     assert graph.last_state["session_id"] == payloads[-1]["data"]["session_id"]
 
 
@@ -517,6 +516,30 @@ def test_kb_chat_build_initial_state_keeps_category_id():
     assert state["chat_history"] == []
     assert state["allowed_document_statuses"] == list(VISIBLE_ASK_DOCUMENT_STATUSES)
     assert state["retrieval_version_mode"] == RETRIEVAL_VERSION_LIVE
+
+
+def test_kb_chat_service_can_build_v2_initial_state():
+    service = KbChatService(
+        llm_factory=lambda: None,
+        graph=FakeKbChatGraph(),
+        memory_store=SimpleNamespace(),
+        workflow_id="kb_chat_v2",
+    )
+    request = SimpleNamespace(
+        query="How is Prescription Flow related to Payment?",
+        knowledge_base_id=3,
+        category_id=7,
+        session_id="session-v2",
+    )
+
+    state = service.build_initial_state(request, user_id=99)
+
+    assert state["metadata"]["workflow"] == "kb_chat_v2"
+    assert state["workflow_id"] == "kb_chat_v2"
+    assert state["question_type"] is None
+    assert state["text_queries"] == []
+    assert state["candidate_entities"] == []
+    assert state["retrieval_evaluation"] == {}
 
 
 def test_kb_chat_build_initial_state_keeps_assistant_context():
@@ -689,14 +712,16 @@ def test_build_log_detail_response_serializes_nested_records():
         id=1,
         user_id=2,
         session_id="session-1",
+        product_id=None,
+        product_name=None,
         project_id=None,
         project_name=None,
         project_app_id=None,
         project_app_name=None,
         external_user_id=None,
         external_user_name=None,
-        source=None,
         knowledge_base_id=9,
+        knowledge_base_branch_ids=[],
         knowledge_base_name="Product Docs",
         assistant_id=5,
         assistant_name="Project Assistant",

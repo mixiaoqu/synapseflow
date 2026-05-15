@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     GRAPH_USERNAME: str = "neo4j"
     GRAPH_PASSWORD: str = ""
     GRAPH_DATABASE: str = "neo4j"
+    KB_CHAT_WORKFLOW: str = "kb_chat_v2"
 
     PREVIEW_DIR: str = "./previews"
     UPLOAD_DIR: str = "./uploads"

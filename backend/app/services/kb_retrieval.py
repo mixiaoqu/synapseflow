@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from time import perf_counter
 from typing import Any, Callable
 
 from loguru import logger
@@ -321,17 +322,63 @@ async def _finalize_ranked_rows(
     results: list[dict[str, Any]],
     rerank_enabled: bool,
     final_top_k: int,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    candidate_count = len(results)
+    rerank_latency_ms = 0
+    rerank_top_docs_changed = False
+    pre_rerank_top_ids = [
+        row.get("document_chunk_id") for row in list(results)[:final_top_k] if row.get("document_chunk_id") is not None
+    ]
+    pre_rerank_top_rows = list(results)[:final_top_k]
     if rerank_enabled and results:
         logger.debug(
             "[KB Retrieval] preparing rerank | candidates={} keep={}",
             len(results),
             final_top_k,
         )
+        started_at = perf_counter()
         results = await rerank(query, results, top_k=final_top_k)
+        rerank_latency_ms = int((perf_counter() - started_at) * 1000)
+        post_rerank_top_ids = [
+            row.get("document_chunk_id") for row in list(results)[:final_top_k] if row.get("document_chunk_id") is not None
+        ]
+        rerank_top_docs_changed = pre_rerank_top_ids != post_rerank_top_ids
     else:
         results = results[:final_top_k]
-    return _apply_retrieval_thresholds(results, rerank_enabled=rerank_enabled)
+        post_rerank_top_rows = list(results)[:final_top_k]
+    if rerank_enabled:
+        post_rerank_top_rows = list(results)[:final_top_k]
+    else:
+        post_rerank_top_rows = pre_rerank_top_rows
+
+    pre_rank_map = {
+        row.get("document_chunk_id"): index + 1
+        for index, row in enumerate(pre_rerank_top_rows)
+        if row.get("document_chunk_id") is not None
+    }
+    top_changes: list[dict[str, Any]] = []
+    for index, row in enumerate(post_rerank_top_rows[:3], start=1):
+        chunk_id = row.get("document_chunk_id")
+        if chunk_id is None:
+            continue
+        previous_rank = pre_rank_map.get(chunk_id, "-")
+        top_changes.append(
+            {
+                "title": row.get("document_title") or "Unknown document",
+                "new_rank": index,
+                "old_rank": previous_rank,
+            }
+        )
+    filtered = _apply_retrieval_thresholds(results, rerank_enabled=rerank_enabled)
+    return filtered, {
+        "rerank_enabled": rerank_enabled,
+        "candidate_count": candidate_count,
+        "post_rerank_count": len(results),
+        "final_count": len(filtered),
+        "latency_ms": rerank_latency_ms,
+        "top_docs_changed": rerank_top_docs_changed,
+        "top_changes": top_changes,
+    }
 
 
 async def _expand_results_with_parent_context(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -543,6 +590,7 @@ async def run_kb_retrieval(
 ) -> dict[str, Any]:
     """Retrieve KB chunks and return prompt-ready state."""
 
+    started_at = perf_counter()
     rag = config_registry.get_rag_config().retrieval
     resolved_mode = str(retrieval_mode or ("hybrid" if rag.hybrid_enabled else "vector")).lower()
     resolved_recall_k = recall_k if recall_k is not None else rag.k_first
@@ -555,6 +603,7 @@ async def run_kb_retrieval(
     )
     resolved_rerank = settings.RERANK_ENABLED if rerank_enabled is None else bool(rerank_enabled)
 
+    text_started_at = perf_counter()
     results, has_documents = await _retrieve_candidate_rows(
         query=query,
         team_id=team_id,
@@ -568,6 +617,7 @@ async def run_kb_retrieval(
         document_statuses=document_statuses,
         retrieval_version_mode=retrieval_version_mode,
     )
+    text_retrieval_latency_ms = int((perf_counter() - text_started_at) * 1000)
     raw_count = len(results)
     if progress_callback is not None and resolved_rerank and results:
         progress_callback(
@@ -577,7 +627,7 @@ async def run_kb_retrieval(
                 "candidate_count": raw_count,
             }
         )
-    results = await _finalize_ranked_rows(
+    results, rerank_trace = await _finalize_ranked_rows(
         query=query,
         results=results,
         rerank_enabled=resolved_rerank,
@@ -599,7 +649,7 @@ async def run_kb_retrieval(
                 "retrieved_count": len(results),
             }
         )
-    return await _build_retrieval_output(
+    output = await _build_retrieval_output(
         results=results,
         has_documents=has_documents,
         knowledge_base_id=knowledge_base_id,
@@ -613,6 +663,14 @@ async def run_kb_retrieval(
         context_budget=context_budget,
         retrieval_funnel=retrieval_funnel,
     )
+    output["retrieval_trace"] = {
+        "text_retrieval_latency_ms": text_retrieval_latency_ms,
+        "total_latency_ms": int((perf_counter() - started_at) * 1000),
+        "rerank": rerank_trace,
+        "raw_candidate_count": raw_count,
+        "query_count": 1,
+    }
+    return output
 
 
 async def run_multi_query_kb_retrieval(
@@ -638,6 +696,7 @@ async def run_multi_query_kb_retrieval(
 ) -> dict[str, Any]:
     """Retrieve KB chunks from multiple rewritten queries and fuse them with RRF."""
 
+    started_at = perf_counter()
     queries = _dedupe_queries(retrieval_queries or [query])
     if len(queries) <= 1:
         output = await run_kb_retrieval(
@@ -681,6 +740,7 @@ async def run_multi_query_kb_retrieval(
     )
 
     logger.debug("{} multi-query retrieval using queries={}", log_prefix, queries)
+    text_started_at = perf_counter()
     batches = await asyncio.gather(
         *[
             _retrieve_candidate_rows(
@@ -699,6 +759,7 @@ async def run_multi_query_kb_retrieval(
             for item in queries
         ]
     )
+    text_retrieval_latency_ms = int((perf_counter() - text_started_at) * 1000)
 
     rankings = [rows for rows, _ in batches]
     query_stats = [
@@ -722,7 +783,7 @@ async def run_multi_query_kb_retrieval(
                 "candidate_count": len(fused_results),
             }
         )
-    results = await _finalize_ranked_rows(
+    results, rerank_trace = await _finalize_ranked_rows(
         query=query,
         results=fused_results,
         rerank_enabled=resolved_rerank,
@@ -759,4 +820,12 @@ async def run_multi_query_kb_retrieval(
         retrieval_funnel=retrieval_funnel,
     )
     output["retrieval_queries"] = queries
+    output["retrieval_trace"] = {
+        "text_retrieval_latency_ms": text_retrieval_latency_ms,
+        "total_latency_ms": int((perf_counter() - started_at) * 1000),
+        "rerank": rerank_trace,
+        "raw_candidate_count": recalled_count,
+        "merged_candidate_count": len(fused_results),
+        "query_count": len(queries),
+    }
     return output

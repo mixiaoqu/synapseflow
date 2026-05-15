@@ -21,13 +21,18 @@ class GraphDefinition:
 
 
 def _build_registry() -> dict[str, GraphDefinition]:
-    from app.agents.graphs import create_kb_chat_graph
+    from app.agents.graphs import create_kb_chat_graph, create_kb_chat_v2_graph
 
     return {
         "kb_chat": GraphDefinition(
             graph_id="kb_chat",
             factory=create_kb_chat_graph,
-            node_ids=("plan_query", "retrieve", "answer"),
+            node_ids=("plan_query", "rewrite_query", "retrieve", "answer"),
+        ),
+        "kb_chat_v2": GraphDefinition(
+            graph_id="kb_chat_v2",
+            factory=create_kb_chat_v2_graph,
+            node_ids=("plan_query", "rewrite_query", "retrieve", "evaluate", "answer"),
         ),
     }
 
