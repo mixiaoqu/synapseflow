@@ -36,6 +36,8 @@ class GraphStore(Protocol):
         self,
         *,
         entity_names: list[str],
+        knowledge_base_id: int,
+        team_id: int,
         limit: int,
     ) -> list[dict[str, Any]]: ...
 
@@ -70,6 +72,8 @@ class NullGraphStore:
         self,
         *,
         entity_names: list[str],
+        knowledge_base_id: int,
+        team_id: int,
         limit: int,
     ) -> list[dict[str, Any]]:
         return []
@@ -116,10 +120,14 @@ class Neo4jGraphStore:
         await self._run(
             """
             MERGE (c:Chunk {document_chunk_id: $document_chunk_id})
-            SET c.document_id = $document_id,
+            SET c.team_id = $team_id,
+                c.knowledge_base_id = $knowledge_base_id,
+                c.document_id = $document_id,
                 c.document_title = $document_title,
                 c.section_path = $section_path
             """,
+            team_id=chunk.team_id,
+            knowledge_base_id=chunk.knowledge_base_id,
             document_chunk_id=chunk.document_chunk_id,
             document_id=chunk.document_id,
             document_title=chunk.document_title,
@@ -151,9 +159,13 @@ class Neo4jGraphStore:
             MATCH (e:Entity {normalized_name: $normalized_name})
             MATCH (c:Chunk {document_chunk_id: $document_chunk_id})
             MERGE (e)-[r:MENTIONED_IN {document_chunk_id: $document_chunk_id}]->(c)
-            SET r.document_id = $document_id
+            SET r.team_id = $team_id,
+                r.knowledge_base_id = $knowledge_base_id,
+                r.document_id = $document_id
             """,
             normalized_name=normalized_name,
+            team_id=chunk.team_id,
+            knowledge_base_id=chunk.knowledge_base_id,
             document_chunk_id=chunk.document_chunk_id,
             document_id=chunk.document_id,
         )
@@ -169,9 +181,13 @@ class Neo4jGraphStore:
                 relation_type: $relation_type,
                 document_chunk_id: $document_chunk_id
             }]->(target)
-            SET r.document_id = $document_id,
+            SET r.team_id = $team_id,
+                r.knowledge_base_id = $knowledge_base_id,
+                r.document_id = $document_id,
                 r.evidence = $evidence
             """,
+            team_id=relation.team_id,
+            knowledge_base_id=relation.knowledge_base_id,
             source_normalized_name=relation.source_normalized_name,
             target_normalized_name=relation.target_normalized_name,
             relation_type=relation.relation_type,
@@ -193,6 +209,8 @@ class Neo4jGraphStore:
         self,
         *,
         entity_names: list[str],
+        knowledge_base_id: int,
+        team_id: int,
         limit: int,
     ) -> list[dict[str, Any]]:
         normalized_names = [" ".join(item.split()).strip().casefold() for item in entity_names]
@@ -212,7 +230,11 @@ class Neo4jGraphStore:
              rel,
              other
         WHERE chunk IS NOT NULL
+          AND chunk.knowledge_base_id = $knowledge_base_id
+          AND chunk.team_id = $team_id
         RETURN DISTINCT
+             chunk.knowledge_base_id AS knowledge_base_id,
+             chunk.team_id AS team_id,
              chunk.document_id AS document_id,
              chunk.document_chunk_id AS document_chunk_id,
              chunk.document_title AS document_title,
@@ -223,7 +245,13 @@ class Neo4jGraphStore:
         LIMIT $limit
         """
         async with self._driver.session(database=self._database) as session:
-            result = await session.run(query, entity_names=normalized_names, limit=max(1, limit))
+            result = await session.run(
+                query,
+                entity_names=normalized_names,
+                knowledge_base_id=knowledge_base_id,
+                team_id=team_id,
+                limit=max(1, limit),
+            )
             rows: list[dict[str, Any]] = []
             async for record in result:
                 rows.append(dict(record))

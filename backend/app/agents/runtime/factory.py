@@ -32,7 +32,7 @@ def _build_registry() -> dict[str, GraphDefinition]:
         "kb_chat_v2": GraphDefinition(
             graph_id="kb_chat_v2",
             factory=create_kb_chat_v2_graph,
-            node_ids=("plan_query", "rewrite_query", "retrieve", "evaluate", "answer"),
+            node_ids=("route", "plan", "rewrite_query", "retrieve", "evaluate", "answer"),
         ),
     }
 

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class GraphChunkRecord:
+    team_id: int
+    knowledge_base_id: int
     document_id: int
     document_chunk_id: int
     document_title: str | None
@@ -26,6 +28,8 @@ class GraphEntityRecord:
 
 @dataclass(frozen=True, slots=True)
 class GraphRelationRecord:
+    team_id: int
+    knowledge_base_id: int
     document_id: int
     document_chunk_id: int
     source_normalized_name: str

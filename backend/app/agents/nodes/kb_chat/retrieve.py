@@ -12,6 +12,8 @@ from app.agents.states import KbChatState
 from app.services.chat_memory import format_chat_history
 from app.services.kb_retrieval import run_kb_retrieval, run_multi_query_kb_retrieval
 
+MIN_CONTEXT_CHUNKS = 8
+
 
 def _coerce_positive_int(value: Any, *, default: int, minimum: int = 0) -> int:
     try:
@@ -51,8 +53,8 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
     final_top_k = _coerce_positive_int(retrieval_cfg.get("final_top_k"), default=6, minimum=1)
     llm_reference_top_k = _coerce_positive_int(
         retrieval_cfg.get("llm_reference_top_k"),
-        default=4,
-        minimum=1,
+        default=MIN_CONTEXT_CHUNKS,
+        minimum=MIN_CONTEXT_CHUNKS,
     )
     context_budget = _coerce_positive_int(
         retrieval_cfg.get("context_budget"),

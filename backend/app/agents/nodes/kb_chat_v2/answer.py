@@ -94,6 +94,16 @@ def _template_answer(state: dict[str, Any]) -> tuple[str | None, str | None]:
         suffix = f" 例如：{', '.join(examples[:3])}。" if examples else ""
         return f"你指的是哪个具体实体或模块？{suffix}", "clarification_needed"
     if next_action == "no_answer":
+        retrieved_docs = list(state.get("retrieved_docs") or [])
+        retrieval_trace = dict(state.get("retrieval_trace") or {})
+        final_hits = retrieval_trace.get("final_hits")
+        if retrieved_docs:
+            return None, None
+        try:
+            if final_hits is not None and int(final_hits) > 0:
+                return None, None
+        except (TypeError, ValueError):
+            pass
         return KB_V2_NO_ANSWER_REPLY, "empty"
     return None, None
 
@@ -112,7 +122,9 @@ def _build_prompt(state: dict[str, Any]) -> str:
         assistant_suggested_prompts=list(state.get("assistant_suggested_prompts") or []),
         page_config=dict(state.get("page_config") or {}),
         page_context=dict(state.get("page_context") or {}),
-        retrieval_status=state.get("kb_retrieval_status") or "ok",
+        evidence_status=str(
+            (state.get("retrieval_evaluation") or {}).get("status") or "sufficient"
+        ),
     )
 
 

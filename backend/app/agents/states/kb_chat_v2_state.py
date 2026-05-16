@@ -31,9 +31,10 @@ class KbChatV2State(BaseAgentContext, total=False):
     retrieval_version_mode: str
 
     question_type: Optional[str]
-    retrieval_label: Optional[str]
+    retrieval_complexity: Optional[str]
     retrieval_required: bool
-    planning_reason: str
+    route_reason: str
+    route_trace: Dict[str, Any]
     text_queries: List[str]
     candidate_entities: List[str]
     plan_trace: Dict[str, Any]
@@ -47,6 +48,5 @@ class KbChatV2State(BaseAgentContext, total=False):
     answer_status: str
     answer_trace: Dict[str, Any]
 
-    retrieval_plan: Dict[str, Any]
+    retrieval_execution_plan: Dict[str, Any]
     retrieval_queries: List[str]
-    kb_retrieval_status: Optional[str]

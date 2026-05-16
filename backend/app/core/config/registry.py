@@ -26,6 +26,7 @@ from .schemas import (
     RagChunkConfig,
     RagConfig,
     RagRetrievalConfig,
+    RagRetrievalProfileConfig,
     RerankConfig,
 )
 from .settings import settings
@@ -33,6 +34,23 @@ from .settings import settings
 
 class ConfigRegistry:
     """Provides parsed, cached configuration objects."""
+
+    @staticmethod
+    def _build_retrieval_profile(raw: dict[str, Any], defaults: dict[str, Any]) -> RagRetrievalProfileConfig:
+        merged = {**defaults, **(raw or {})}
+        return RagRetrievalProfileConfig(
+            recall_k=max(1, int(merged.get("recall_k", defaults["recall_k"]))),
+            lexical_k=max(0, int(merged.get("lexical_k", defaults["lexical_k"]))),
+            graph_limit=max(0, int(merged.get("graph_limit", defaults["graph_limit"]))),
+            final_top_k=max(1, int(merged.get("final_top_k", defaults["final_top_k"]))),
+            llm_reference_top_k=(
+                max(1, int(merged["llm_reference_top_k"]))
+                if merged.get("llm_reference_top_k") is not None
+                else None
+            ),
+            context_budget=max(0, int(merged.get("context_budget", defaults["context_budget"]))),
+            rerank_enabled=bool(merged.get("rerank_enabled", defaults["rerank_enabled"])),
+        )
 
     @staticmethod
     def _get_provider_record(data: dict[str, Any], provider_id: str) -> dict[str, Any]:
@@ -175,6 +193,40 @@ class ConfigRegistry:
         data = load_embedding_raw()
         chunk = data.get("chunk", {}) or {}
         retrieval = data.get("retrieval", {}) or {}
+        profile_defaults = {
+            "fast": {
+                "recall_k": 18,
+                "lexical_k": 12,
+                "graph_limit": 6,
+                "final_top_k": 8,
+                "llm_reference_top_k": 8,
+                "context_budget": 8000,
+                "rerank_enabled": False,
+            },
+            "standard": {
+                "recall_k": 32,
+                "lexical_k": 24,
+                "graph_limit": 10,
+                "final_top_k": 10,
+                "llm_reference_top_k": 10,
+                "context_budget": 12000,
+                "rerank_enabled": False,
+            },
+            "broad": {
+                "recall_k": 40,
+                "lexical_k": 32,
+                "graph_limit": 12,
+                "final_top_k": 12,
+                "llm_reference_top_k": 12,
+                "context_budget": 15000,
+                "rerank_enabled": False,
+            },
+        }
+        raw_profiles = retrieval.get("profiles", {}) or {}
+        parsed_profiles = {
+            name: self._build_retrieval_profile(raw_profiles.get(name, {}) or {}, defaults)
+            for name, defaults in profile_defaults.items()
+        }
 
         return RagConfig(
             chunk=RagChunkConfig(
@@ -211,6 +263,7 @@ class ConfigRegistry:
                 rrf_k=int(retrieval.get("rrf_k", 60)),
                 hybrid_pool_limit=int(retrieval.get("hybrid_pool_limit", 64)),
                 kb_context_max_chars=int(retrieval.get("kb_context_max_chars", 12000)),
+                profiles=parsed_profiles,
             ),
         )
 

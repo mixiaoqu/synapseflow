@@ -104,7 +104,6 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
         return {
             "retrieved_docs": [],
             "context": "",
-            "kb_retrieval_status": "ok",
         }
 
     monkeypatch.setattr(retrieve_module, "run_multi_query_kb_retrieval", fake_multi_query_retrieval)
@@ -135,7 +134,7 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
     }
     result = asyncio.run(user_kb_retrieve_node(state))
 
-    assert result["kb_retrieval_status"] == "ok"
+    assert result["retrieval_trace"]["empty_reason"] == "no_hits"
     assert result["retrieval_queries"] == [
         "How do I configure the generation model?",
         "generation model config",
@@ -145,7 +144,7 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
     assert captured["knowledge_base_id"] == 9
     assert captured["category_id"] == 4
     assert captured["result_limit"] == 6
-    assert captured["llm_reference_top_k"] == 4
+    assert captured["llm_reference_top_k"] == 6
     assert captured["context_budget"] == 9000
     assert captured["document_statuses"] == ["published"]
     assert captured["retrieval_mode"] == "hybrid"
@@ -164,6 +163,6 @@ def test_user_kb_retrieve_node_skips_when_plan_disables_retrieval():
 
     result = asyncio.run(user_kb_retrieve_node(state))
 
-    assert result["kb_retrieval_status"] == "skipped"
+    assert result["retrieval_trace"]["graph"]["empty_reason"] == "skipped"
     assert result["retrieved_docs"] == []
-    assert result["kb_retrieval_status"] == "skipped"
+    assert result["retrieval_trace"]["final_hits"] == 0

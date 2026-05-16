@@ -2,15 +2,19 @@ import asyncio
 from types import SimpleNamespace
 
 from app.agents.graphs.kb_chat_v2_graph import create_kb_chat_v2_graph
+from app.agents.nodes.kb_chat_v2.analyze import (
+    build_kb_chat_v2_execution_plan,
+    kb_chat_v2_analyze_node,
+)
 from app.agents.nodes.kb_chat_v2.answer import (
     KB_V2_CHITCHAT_REPLY,
     KB_V2_NO_ANSWER_REPLY,
     build_kb_chat_v2_answer_text,
 )
 from app.agents.nodes.kb_chat_v2.evaluate import evaluate_retrieval_evidence
-from app.agents.nodes.kb_chat_v2.plan_query import kb_chat_v2_plan_query_node
 from app.agents.nodes.kb_chat_v2.retrieve import _doc_key, _merge_text_and_graph_docs
 from app.agents.nodes.kb_chat_v2.rewrite_query import build_kb_chat_v2_rewrite
+from app.agents.nodes.kb_chat_v2.route import kb_chat_v2_route_node
 
 
 class FakeJsonLlm:
@@ -24,16 +28,36 @@ class FakeJsonLlm:
             raise self.content
         return SimpleNamespace(content=self.content)
 
+    async def astream(self, prompt: str):
+        self.prompts.append(prompt)
+        if isinstance(self.content, Exception):
+            raise self.content
+        yield SimpleNamespace(content=str(self.content))
+
 
 class UnexpectedAnswerLlm:
-    async def ainvoke(self, prompt: str):  # pragma: no cover - should not be called
+    async def ainvoke(self, prompt: str):  # pragma: no cover
         raise AssertionError("answer LLM should not be called")
+
+
+class FakeAnswerLlm:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.prompts: list[str] = []
+
+    async def ainvoke(self, prompt: str):
+        self.prompts.append(prompt)
+        return SimpleNamespace(content=self.content)
+
+    async def astream(self, prompt: str):
+        self.prompts.append(prompt)
+        yield SimpleNamespace(content=self.content)
 
 
 def test_kb_chat_v2_graph_routes_chitchat_directly_to_answer():
     graph = create_kb_chat_v2_graph(
         planner_llm_factory=lambda: FakeJsonLlm(
-            '{"question_type":"chitchat","retrieval_label":"fast",'
+            '{"question_type":"chitchat","retrieval_complexity":"fast",'
             '"retrieval_required":false,"reason":"Greeting."}'
         ),
         answer_llm_factory=lambda: UnexpectedAnswerLlm(),
@@ -59,10 +83,10 @@ def test_kb_chat_v2_graph_routes_chitchat_directly_to_answer():
     assert result["answer"] == KB_V2_CHITCHAT_REPLY
 
 
-def test_kb_chat_v2_plan_uses_new_taxonomy_and_label():
+def test_kb_chat_v2_graph_builds_execution_plan():
     graph = create_kb_chat_v2_graph(
         planner_llm_factory=lambda: FakeJsonLlm(
-            '{"question_type":"procedural_lookup","retrieval_label":"broad",'
+            '{"question_type":"procedural_lookup","retrieval_complexity":"broad",'
             '"retrieval_required":true,"reason":"The user asks for an end-to-end process."}'
         ),
         answer_llm_factory=lambda: FakeJsonLlm("Grounded answer."),
@@ -81,9 +105,10 @@ def test_kb_chat_v2_plan_uses_new_taxonomy_and_label():
     )
 
     assert result["question_type"] == "procedural_lookup"
-    assert result["retrieval_label"] == "broad"
+    assert result["retrieval_complexity"] == "broad"
     assert result["retrieval_required"] is True
-    assert result["retrieval_plan"]["plan_name"] == "procedural_lookup"
+    assert result["retrieval_execution_plan"]["context"]["final_top_k"] == 12
+    assert result["retrieval_execution_plan"]["channels"]["graph"]["limit"] == 12
 
 
 def test_kb_chat_v2_rewrite_extracts_queries_and_candidate_entities():
@@ -93,8 +118,12 @@ def test_kb_chat_v2_rewrite_extracts_queries_and_candidate_entities():
             chat_history=[],
             memory_summary=None,
             page_context={},
-            question_type="relationship_lookup",
-            retrieval_label="standard",
+            rewrite_plan={
+                "question_type": "relationship_lookup",
+                "retrieval_complexity": "standard",
+                "max_queries": 3,
+                "strategies": ["query_compaction", "relationship_focus"],
+            },
         )
     )
 
@@ -106,21 +135,43 @@ def test_kb_chat_v2_rewrite_extracts_queries_and_candidate_entities():
     assert result["rewrite_trace"]["policy"] == "relationship_lookup"
 
 
-def test_kb_chat_v2_rewrite_uses_label_to_control_query_count():
+def test_kb_chat_v2_execution_plan_maps_complexity():
+    plan = build_kb_chat_v2_execution_plan(
+        question_type="summary_lookup",
+        retrieval_required=True,
+        retrieval_complexity="broad",
+    )
+
+    assert plan["rewrite"]["max_queries"] == 5
+    assert plan["channels"]["vector"]["recall_k"] == 40
+    assert plan["channels"]["lexical"]["recall_k"] == 32
+    assert plan["rerank"]["top_k"] == 12
+    assert plan["context"]["budget_chars"] == 15000
+
+
+def test_kb_chat_v2_analyze_node_merges_route_and_plan():
     result = asyncio.run(
-        build_kb_chat_v2_rewrite(
-            "Summarize the refund system design and key modules.",
-            chat_history=[],
-            memory_summary=None,
-            page_context={},
-            question_type="summary_lookup",
-            retrieval_label="broad",
+        kb_chat_v2_analyze_node(
+            {
+                "query": "How does the refund flow work end to end?",
+                "chat_history": [],
+                "memory_summary": None,
+                "page_context": {},
+                "page_config": {},
+            },
+            llm_factory=lambda: FakeJsonLlm(
+                '{"question_type":"procedural_lookup","retrieval_complexity":"broad",'
+                '"retrieval_required":true,"reason":"The user asks for an end-to-end process."}'
+            ),
         )
     )
 
-    assert 1 <= len(result["text_queries"]) <= 3
-    assert result["rewrite_trace"]["policy"] == "summary_lookup"
-    assert result["rewrite_trace"]["retrieval_label"] == "broad"
+    assert result["question_type"] == "procedural_lookup"
+    assert result["retrieval_required"] is True
+    assert result["retrieval_execution_plan"]["rewrite"]["max_queries"] == 4
+    assert result["retrieval_execution_plan"]["channels"]["graph"]["limit"] == 12
+    assert "route_trace" in result
+    assert "plan_trace" in result
 
 
 def test_kb_chat_v2_evaluate_uses_llm_judge_for_sufficient_evidence():
@@ -135,7 +186,7 @@ def test_kb_chat_v2_evaluate_uses_llm_judge_for_sufficient_evidence():
             {
                 "query": "How are A and B related?",
                 "question_type": "relationship_lookup",
-                "retrieval_label": "standard",
+                "retrieval_complexity": "standard",
                 "text_queries": ["A B relation"],
                 "candidate_entities": ["A", "B"],
                 "retrieved_docs": [{"content": "A depends on B.", "metadata": {}}],
@@ -151,7 +202,7 @@ def test_kb_chat_v2_evaluate_uses_llm_judge_for_sufficient_evidence():
     assert "retrieved evidence" in llm.prompts[0].lower()
 
 
-def test_kb_chat_v2_evaluate_falls_back_to_insufficient_on_llm_error():
+def test_kb_chat_v2_evaluate_falls_back_to_sufficient_on_llm_error():
     result = asyncio.run(
         evaluate_retrieval_evidence(
             {
@@ -164,32 +215,13 @@ def test_kb_chat_v2_evaluate_falls_back_to_insufficient_on_llm_error():
         )
     )
 
-    assert result["status"] == "insufficient"
-    assert result["next_action"] == "insufficient"
+    assert result["status"] == "sufficient"
+    assert result["next_action"] == "answer"
     assert result["diagnostic"]["failure_stage"] == "evaluate"
 
 
-def test_kb_chat_v2_answer_uses_llm_for_insufficient_evidence():
-    answer = asyncio.run(
-        build_kb_chat_v2_answer_text(
-            {
-                "query": "How are A and B related?",
-                "context": "A mentions B in one workflow step.",
-                "retrieval_evaluation": {
-                    "status": "insufficient",
-                    "next_action": "insufficient",
-                    "reason": "Related fragments do not state the relation.",
-                },
-            },
-            llm_factory=lambda: FakeJsonLlm("This is a cautious answer grounded in evidence."),
-        )
-    )
-
-    assert answer == "This is a cautious answer grounded in evidence."
-
-
 def test_kb_chat_v2_answer_templates_no_answer_without_answer_llm():
-    answer = asyncio.run(
+    answer, _trace = asyncio.run(
         build_kb_chat_v2_answer_text(
             {
                 "query": "How are A and B related?",
@@ -206,8 +238,36 @@ def test_kb_chat_v2_answer_templates_no_answer_without_answer_llm():
     assert answer == KB_V2_NO_ANSWER_REPLY
 
 
+def test_kb_chat_v2_answer_uses_llm_when_no_answer_has_retrieved_docs():
+    llm = FakeAnswerLlm("根据已召回内容，[可选商品] 表示可以附加选择的商品。")
+
+    answer, _trace = asyncio.run(
+        build_kb_chat_v2_answer_text(
+            {
+                "query": "看到处方模板库显示[可选商品]时，应该怎么理解？",
+                "retrieved_docs": [
+                    {
+                        "content": "[可选商品] 表示可以按业务需要追加选择的商品。",
+                        "metadata": {"document_title": "处方模板说明"},
+                    }
+                ],
+                "context": "[1] 处方模板说明\n[可选商品] 表示可以按业务需要追加选择的商品。",
+                "retrieval_evaluation": {
+                    "status": "empty",
+                    "next_action": "no_answer",
+                    "reason": "No usable evidence.",
+                },
+            },
+            llm_factory=lambda: llm,
+        )
+    )
+
+    assert answer == "根据已召回内容，[可选商品] 表示可以附加选择的商品。"
+    assert llm.prompts
+
+
 def test_kb_chat_v2_answer_templates_clarification_without_answer_llm():
-    answer = asyncio.run(
+    answer, _trace = asyncio.run(
         build_kb_chat_v2_answer_text(
             {
                 "query": "How are they related?",
@@ -224,7 +284,7 @@ def test_kb_chat_v2_answer_templates_clarification_without_answer_llm():
         )
     )
 
-    assert "具体实体或模块" in answer
+    assert "实体或模块" in answer
     assert "Order module" in answer
 
 
@@ -269,14 +329,14 @@ def test_kb_chat_v2_doc_key_requires_document_chunk_id():
         _doc_key({"metadata": {"document_id": 1, "chunk_index": 7}})
     except ValueError as exc:
         assert "document_chunk_id" in str(exc)
-    else:  # pragma: no cover - defensive
+    else:
         raise AssertionError("expected _doc_key to reject missing document_chunk_id")
 
 
-def test_kb_chat_v2_plan_query_raises_when_planner_fails():
+def test_kb_chat_v2_route_raises_when_planner_fails():
     try:
         asyncio.run(
-            kb_chat_v2_plan_query_node(
+            kb_chat_v2_route_node(
                 {
                     "query": "How does payment work?",
                     "chat_history": [],
@@ -288,6 +348,6 @@ def test_kb_chat_v2_plan_query_raises_when_planner_fails():
             )
         )
     except RuntimeError as exc:
-        assert "plan_query failed" in str(exc)
-    else:  # pragma: no cover - defensive
-        raise AssertionError("expected plan_query node to fail explicitly")
+        assert "route failed" in str(exc)
+    else:
+        raise AssertionError("expected route node to fail explicitly")

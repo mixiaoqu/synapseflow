@@ -50,8 +50,14 @@ class FakeKbChatGraph:
                     },
                 }
             ],
-            "kb_retrieval_status": "ok",
             "retrieval_queries": ["What is LangGraph?", "LangGraph basics"],
+            "retrieval_trace": {
+                "text": {"text_hits": 1},
+                "graph": {"graph_hits": 0, "empty_reason": "no_hits"},
+                "final_hits": 1,
+                "empty_reason": None,
+                "final_context_docs": 1,
+            },
             "retrieval_funnel": {
                 "mode": "hybrid",
                 "query_count": 2,
@@ -88,8 +94,14 @@ class FakeKbChatGraph:
                             },
                         }
                     ],
-                    "kb_retrieval_status": "ok",
                     "retrieval_queries": ["What is LangGraph?", "LangGraph basics"],
+                    "retrieval_trace": {
+                        "text": {"text_hits": 1},
+                        "graph": {"graph_hits": 0, "empty_reason": "no_hits"},
+                        "final_hits": 1,
+                        "empty_reason": None,
+                        "final_context_docs": 1,
+                    },
                     "retrieval_funnel": {
                         "mode": "hybrid",
                         "query_count": 2,
@@ -452,9 +464,6 @@ def test_kb_chat_invoke_blocks_sensitive_query_before_graph_runs():
     assert response.retrieved_docs == []
     assert graph.last_state is None
     assert memory_store.save_calls[0]["assistant_metadata"]["answer_status"] == "blocked"
-    assert (
-        memory_store.save_calls[0]["assistant_metadata"]["retrieval_status"] == "blocked_sensitive"
-    )
     assert sensitive_service.calls == [
         {
             "scene": "query",

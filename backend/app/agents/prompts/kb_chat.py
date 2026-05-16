@@ -17,7 +17,7 @@ def build_kb_chat_answer_prompt(
     assistant_suggested_prompts: list[str] | None = None,
     page_config: dict | None = None,
     page_context: dict | None = None,
-    retrieval_status: str = "",
+    evidence_status: str = "",
 ) -> str:
     """Build the prompt for the end-user knowledge-base chat flow."""
 
@@ -29,7 +29,7 @@ def build_kb_chat_answer_prompt(
     placeholder_block = assistant_placeholder_text.strip() or "(none)"
     persona_block = assistant_persona_prompt.strip() or "(none)"
     rule_block = assistant_rule_template.strip() or "(none)"
-    retrieval_status_block = retrieval_status.strip() or "ok"
+    evidence_status_block = evidence_status.strip() or "sufficient"
     suggested_prompt_lines = [
         f"- {item.strip()}"
         for item in (assistant_suggested_prompts or [])
@@ -66,7 +66,7 @@ Base constraints:
 4. Do not reveal internal implementation details such as API routes, field names, variable names, or database tables.
 5. If the answer is procedural, organize it into clear, user-facing steps.
 6. Always preserve the configured assistant persona and response rules, even when the knowledge base is insufficient.
-7. If retrieval status is not "ok", do not invent facts. Give a helpful answer in Chinese that clearly states the limitation while still following the configured assistant style.
+7. If evidence status is not "sufficient", do not invent facts. Give a helpful answer in Chinese that clearly states the limitation while still following the configured assistant style.
 8. 按内容选择清晰的排版：对比、价格、权限、状态、字段说明优先用 Markdown 表格；操作流程、设置步骤用编号步骤；注意事项、限制条件用简短项目符号；信息少于 2 项时不强行使用表格。
 [Assistant persona]
 {persona_block}
@@ -92,8 +92,8 @@ Base constraints:
 [Recent chat history]
 {history_block}
 
-[Retrieval status]
-{retrieval_status_block}
+[Evidence evaluation]
+{evidence_status_block}
 
 [Knowledge-base context]
 {clean_context.strip()}

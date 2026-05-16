@@ -39,6 +39,8 @@ def test_extract_chunk_graph_parses_llm_json_into_records():
             return FakeResponse()
 
     chunk = GraphChunkRecord(
+        team_id=1,
+        knowledge_base_id=2,
         document_id=1,
         document_chunk_id=10,
         document_title="系统说明",
@@ -70,6 +72,8 @@ def test_extract_chunk_graph_returns_empty_result_on_invalid_json():
             return FakeResponse()
 
     chunk = GraphChunkRecord(
+        team_id=1,
+        knowledge_base_id=2,
         document_id=2,
         document_chunk_id=20,
         document_title="空结果",
@@ -86,4 +90,3 @@ def test_extract_chunk_graph_returns_empty_result_on_invalid_json():
 
     assert result.entities == []
     assert result.relations == []
-

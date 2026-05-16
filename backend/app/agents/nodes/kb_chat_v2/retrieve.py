@@ -12,16 +12,6 @@ from app.services.kb_graph_retrieval import run_kb_graph_retrieval
 from app.services.kb_retrieval import run_kb_retrieval, run_multi_query_kb_retrieval
 
 
-def _get_retrieve_profile(retrieval_label: str | None) -> dict[str, int]:
-    label = str(retrieval_label or "standard").strip().lower()
-    profiles = {
-        "fast": {"final_top_k": 5, "recall_k": 12, "lexical_k": 8, "context_budget": 4000},
-        "standard": {"final_top_k": 8, "recall_k": 24, "lexical_k": 16, "context_budget": 9000},
-        "broad": {"final_top_k": 10, "recall_k": 32, "lexical_k": 24, "context_budget": 11000},
-    }
-    return profiles.get(label, profiles["standard"])
-
-
 def _doc_key(doc: dict[str, Any]) -> tuple[Any, ...]:
     metadata = dict(doc.get("metadata") or {})
     document_chunk_id = metadata.get("document_chunk_id")
@@ -82,16 +72,15 @@ def _build_context(docs: list[dict[str, Any]]) -> str:
 async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
     stream_writer = get_optional_stream_writer()
     if state.get("retrieval_required") is False:
-        trace = {
-            "text": {"skipped": True, "text_hits": 0},
-            "graph": {"graph_used": False, "graph_hits": 0, "empty_reason": "skipped"},
-            "final_hits": 0,
-        }
         return {
             "retrieved_docs": [],
             "context": "",
-            "retrieval_trace": trace,
-            "kb_retrieval_status": "skipped",
+            "retrieval_trace": {
+                "text": {"skipped": True, "text_hits": 0},
+                "graph": {"graph_used": False, "graph_hits": 0, "empty_reason": "skipped"},
+                "final_hits": 0,
+                "empty_reason": "skipped",
+            },
         }
 
     emit_progress(
@@ -106,11 +95,21 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
         for item in list(state.get("text_queries") or [])
         if str(item or "").strip()
     ] or [query]
-    profile = _get_retrieve_profile(state.get("retrieval_label"))
-    final_top_k = profile["final_top_k"]
-    recall_k = profile["recall_k"]
-    lexical_k = profile["lexical_k"]
-    context_budget = profile["context_budget"]
+
+    execution_plan = dict(state.get("retrieval_execution_plan") or {})
+    channels = dict(execution_plan.get("channels") or {})
+    vector_plan = dict(channels.get("vector") or {})
+    lexical_plan = dict(channels.get("lexical") or {})
+    graph_plan = dict(channels.get("graph") or {})
+    rerank_plan = dict(execution_plan.get("rerank") or {})
+    context_plan = dict(execution_plan.get("context") or {})
+    final_top_k = int(context_plan.get("final_top_k") or 8)
+    llm_reference_top_k = int(context_plan.get("llm_reference_top_k") or final_top_k)
+    recall_k = int(vector_plan.get("recall_k") or final_top_k)
+    lexical_k = int(lexical_plan.get("recall_k") or final_top_k)
+    graph_limit = int(graph_plan.get("limit") or final_top_k)
+    context_budget = int(context_plan.get("budget_chars") or 9000)
+    rerank_enabled = bool(rerank_plan.get("enabled", True))
 
     common_kwargs = {
         "team_id": state.get("team_id"),
@@ -120,14 +119,14 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
         "log_prefix": "[User KB Retrieval V2]",
         "user_id": state.get("user_id"),
         "result_limit": final_top_k,
-        "llm_reference_top_k": final_top_k,
+        "llm_reference_top_k": llm_reference_top_k,
         "context_budget": context_budget,
         "document_statuses": state.get("allowed_document_statuses"),
         "retrieval_version_mode": state.get("retrieval_version_mode"),
         "retrieval_mode": "hybrid",
         "recall_k": recall_k,
         "lexical_k": lexical_k,
-        "rerank_enabled": True,
+        "rerank_enabled": rerank_enabled,
     }
     if len(text_queries) > 1:
         text_result = await run_multi_query_kb_retrieval(
@@ -140,7 +139,9 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
 
     graph_result = await run_kb_graph_retrieval(
         candidate_entities=list(state.get("candidate_entities") or []),
-        limit=final_top_k,
+        knowledge_base_id=int(state.get("knowledge_base_id") or 0),
+        team_id=int(state.get("team_id") or 0),
+        limit=graph_limit,
     )
     merge_started_at = perf_counter()
     text_docs = list(text_result.get("retrieved_docs") or [])
@@ -159,7 +160,7 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
         "text": {
             "text_query_count": len(text_queries),
             "text_hits": len(text_docs),
-            "status": text_result.get("kb_retrieval_status"),
+            "empty_reason": None if text_docs else text_result.get("kb_retrieval_status") or "no_hits",
             "funnel": text_result.get("retrieval_funnel"),
             "latency_ms": text_trace.get("text_retrieval_latency_ms"),
             "raw_candidate_count": text_trace.get("raw_candidate_count"),
@@ -171,16 +172,24 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
         "rerank": rerank_trace,
         "final_hits": final_hits,
         "empty_reason": None if final_hits else "no_hits",
-        "retrieval_label": state.get("retrieval_label"),
+        "retrieval_complexity": state.get("retrieval_complexity"),
+        "execution_plan": execution_plan,
         "total_latency_ms": text_trace.get("total_latency_ms"),
         "merge_latency_ms": merge_latency_ms,
-        "text_evidence_count": len([doc for doc in merged_docs if (doc.get("metadata") or {}).get("source") != "graph"]),
-        "graph_evidence_count": len([doc for doc in merged_docs if (doc.get("metadata") or {}).get("source") in {"graph", "text_graph"}]),
+        "text_evidence_count": len(
+            [doc for doc in merged_docs if (doc.get("metadata") or {}).get("source") != "graph"]
+        ),
+        "graph_evidence_count": len(
+            [
+                doc
+                for doc in merged_docs
+                if (doc.get("metadata") or {}).get("source") in {"graph", "text_graph"}
+            ]
+        ),
         "final_context_docs": len(merged_docs),
     }
     return {
         "retrieved_docs": merged_docs,
         "context": context,
         "retrieval_trace": trace,
-        "kb_retrieval_status": "ok" if final_hits else text_result.get("kb_retrieval_status", "no_hits"),
     }

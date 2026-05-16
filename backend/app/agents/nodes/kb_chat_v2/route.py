@@ -1,4 +1,4 @@
-"""Planning node for kb_chat_v2."""
+"""Route node for kb_chat_v2."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ ALLOWED_QUESTION_TYPES = {
     "chitchat",
     "out_of_scope",
 }
-ALLOWED_RETRIEVAL_LABELS = {"fast", "standard", "broad"}
+ALLOWED_RETRIEVAL_COMPLEXITIES = {"fast", "standard", "broad"}
 
 
 def _coerce_text(content: Any) -> str:
@@ -67,7 +67,7 @@ You classify one user turn for a knowledge-base QA workflow.
 Return JSON only:
 {{
   "question_type": "entity_lookup",
-  "retrieval_label": "standard",
+  "retrieval_complexity": "standard",
   "retrieval_required": true,
   "reason": "short reason"
 }}
@@ -82,7 +82,7 @@ Allowed question_type values:
 - chitchat
 - out_of_scope
 
-Allowed retrieval_label values:
+Allowed retrieval_complexity values:
 - fast
 - standard
 - broad
@@ -96,7 +96,7 @@ Rules:
 - Use procedural_lookup for process, steps, setup, or handling questions.
 - Use compare_lookup for explicit differences, tradeoffs, or comparisons.
 - Use summary_lookup for broad overviews or multi-aspect summaries.
-- retrieval_label indicates retrieval scope and complexity, not question type.
+- retrieval_complexity indicates retrieval scope and complexity, not question type.
 - Prefer fast for precise single-target lookups.
 - Prefer broad for overviews, multi-aspect comparisons, or complex follow-ups.
 
@@ -113,7 +113,8 @@ User question:
 {query.strip()}
 """.strip()
 
-async def build_kb_chat_v2_plan(
+
+async def build_kb_chat_v2_route(
     query: str,
     *,
     chat_history: list[dict[str, Any]] | None = None,
@@ -124,7 +125,7 @@ async def build_kb_chat_v2_plan(
     if not query.strip():
         return {
             "question_type": "out_of_scope",
-            "retrieval_label": "fast",
+            "retrieval_complexity": "fast",
             "retrieval_required": False,
             "reason": "Empty query.",
         }
@@ -153,51 +154,21 @@ async def build_kb_chat_v2_plan(
     elif not retrieval_required:
         retrieval_required = True
 
-    retrieval_label = _normalize_choice(
-        parsed.get("retrieval_label"),
-        ALLOWED_RETRIEVAL_LABELS,
+    retrieval_complexity = _normalize_choice(
+        parsed.get("retrieval_complexity"),
+        ALLOWED_RETRIEVAL_COMPLEXITIES,
         "standard",
     )
     return {
         "question_type": question_type,
-        "retrieval_label": retrieval_label,
+        "retrieval_complexity": retrieval_complexity,
         "retrieval_required": retrieval_required,
         "reason": _compact_text(str(parsed.get("reason") or ""), limit=240)
-        or "V2 planner selected a route.",
+        or "V2 router selected the route.",
     }
 
 
-def _legacy_plan_from_v2(plan: dict[str, Any]) -> dict[str, Any]:
-    question_type = str(plan.get("question_type") or "entity_lookup")
-    retrieval_required = bool(plan.get("retrieval_required"))
-    retrieval_label = str(plan.get("retrieval_label") or "standard")
-
-    if not retrieval_required:
-        response_mode = "chitchat" if question_type == "chitchat" else "out_of_scope"
-        return {
-            "plan_name": question_type,
-            "reason": plan.get("reason"),
-            "retrieval_required": False,
-            "retrieval_label": retrieval_label,
-            "rewrite": {"enabled": False, "max_queries": 0, "policy": "skip"},
-            "retrieval": {"mode": "none", "final_top_k": 0, "context_budget": 0},
-            "answer": {"response_mode": response_mode, "grounded_only": False},
-        }
-
-    top_k = {"fast": 5, "standard": 8, "broad": 10}.get(retrieval_label, 8)
-    budget = {"fast": 4000, "standard": 9000, "broad": 11000}.get(retrieval_label, 9000)
-    return {
-        "plan_name": question_type,
-        "reason": plan.get("reason"),
-        "retrieval_required": True,
-        "retrieval_label": retrieval_label,
-        "rewrite": {"enabled": True, "max_queries": {"fast": 1, "standard": 2, "broad": 3}.get(retrieval_label, 2), "policy": question_type},
-        "retrieval": {"mode": "hybrid_graph", "final_top_k": top_k, "context_budget": budget},
-        "answer": {"response_mode": "grounded", "grounded_only": True},
-    }
-
-
-async def kb_chat_v2_plan_query_node(
+async def kb_chat_v2_route_node(
     state: KbChatV2State,
     *,
     llm_factory: Callable[[], Any] | None = None,
@@ -205,15 +176,15 @@ async def kb_chat_v2_plan_query_node(
     stream_writer = get_optional_stream_writer()
     emit_progress(
         stream_writer,
-        node_id="plan_query",
-        stage="planning",
+        node_id="route",
+        stage="route",
         message="正在理解你的问题",
     )
     page_context = dict(state.get("page_context") or {})
     page_config = dict(state.get("page_config") or {})
     started_at = perf_counter()
     try:
-        plan = await build_kb_chat_v2_plan(
+        route = await build_kb_chat_v2_route(
             str(state.get("query") or ""),
             chat_history=list(state.get("chat_history") or []),
             memory_summary=state.get("memory_summary"),
@@ -221,32 +192,13 @@ async def kb_chat_v2_plan_query_node(
             llm_factory=llm_factory,
         )
     except Exception as exc:
-        logger.exception("kb_chat_v2 plan_query failed")
-        raise RuntimeError("kb_chat_v2 plan_query failed") from exc
-    latency_ms = int((perf_counter() - started_at) * 1000)
+        logger.exception("kb_chat_v2 route failed")
+        raise RuntimeError("kb_chat_v2 route failed") from exc
 
-    result = {
-        **plan,
-        "planning_reason": plan.get("reason", ""),
-        "retrieval_plan": _legacy_plan_from_v2(plan),
-        "plan_trace": {"latency_ms": latency_ms},
+    return {
+        "question_type": route["question_type"],
+        "retrieval_complexity": route["retrieval_complexity"],
+        "retrieval_required": route["retrieval_required"],
+        "route_reason": route["reason"],
+        "route_trace": {"latency_ms": int((perf_counter() - started_at) * 1000)},
     }
-    if plan.get("retrieval_required") is False:
-        trace = {
-            "text": {"skipped": True, "text_hits": 0},
-            "graph": {"graph_used": False, "graph_hits": 0, "empty_reason": "skipped"},
-            "final_hits": 0,
-        }
-        result.update(
-            {
-                "text_queries": [],
-                "candidate_entities": [],
-                "rewrite_trace": {"used": False, "engine": "skip", "query_count": 0},
-                "retrieval_trace": trace,
-                "retrieval_queries": [],
-                "retrieved_docs": [],
-                "context": "",
-                "kb_retrieval_status": "skipped",
-            }
-        )
-    return result

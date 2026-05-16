@@ -13,8 +13,8 @@ from app.agents.common.streaming import emit_progress, get_optional_stream_write
 from app.agents.states import KbChatV2State
 from app.core.llm import get_llm_for_analysis
 
-ALLOWED_STATUSES = {"sufficient", "insufficient", "empty", "clarification_needed"}
-ALLOWED_ACTIONS = {"answer", "insufficient", "no_answer", "clarify"}
+ALLOWED_STATUSES = {"sufficient", "empty", "clarification_needed"}
+ALLOWED_ACTIONS = {"answer", "no_answer", "clarify"}
 
 
 def _coerce_text(content: Any) -> str:
@@ -36,8 +36,8 @@ def _safe_json(value: Any, *, limit: int = 7000) -> str:
 
 def _fallback_evaluation(reason: str) -> dict[str, Any]:
     return {
-        "status": "insufficient",
-        "next_action": "insufficient",
+        "status": "sufficient",
+        "next_action": "answer",
         "reason": reason,
         "diagnostic": {
             "failure_stage": "evaluate",
@@ -59,8 +59,8 @@ Return JSON only:
   "clarification_need": null
 }}
 
-Allowed status values: sufficient, insufficient, empty, clarification_needed.
-Allowed next_action values: answer, insufficient, no_answer, clarify.
+Allowed status values: sufficient, empty, clarification_needed.
+Allowed next_action values: answer, no_answer, clarify.
 
 Rules:
 - Judge only from retrieved evidence, graph evidence, and context.
@@ -68,7 +68,6 @@ Rules:
 - Do not produce the final user-facing answer.
 - If evidence directly supports an answer, use sufficient/answer.
 - If there are no useful hits, use empty/no_answer.
-- If evidence is related but does not directly answer, use insufficient/insufficient.
 - If the question lacks a core entity or has unresolved references, use clarification_needed/clarify.
 
 Question:
@@ -77,8 +76,8 @@ Question:
 Question type:
 {state.get("question_type") or ""}
 
-Retrieval label:
-{state.get("retrieval_label") or ""}
+Retrieval complexity:
+{state.get("retrieval_complexity") or ""}
 
 Text queries:
 {_safe_json(state.get("text_queries") or [])}
@@ -101,13 +100,13 @@ def _normalize_evaluation(parsed: dict[str, Any]) -> dict[str, Any]:
     status = str(parsed.get("status") or "").strip().lower()
     next_action = str(parsed.get("next_action") or "").strip().lower()
     if status not in ALLOWED_STATUSES:
-        status = "insufficient"
+        status = "sufficient"
     if next_action not in ALLOWED_ACTIONS:
         next_action = {
             "sufficient": "answer",
             "empty": "no_answer",
             "clarification_needed": "clarify",
-        }.get(status, "insufficient")
+        }.get(status, "answer")
     diagnostic = parsed.get("diagnostic")
     if not isinstance(diagnostic, dict):
         diagnostic = {"failure_stage": "unknown", "details": ""}
@@ -135,7 +134,7 @@ async def evaluate_retrieval_evidence(
         return _normalize_evaluation(parsed)
     except Exception as exc:
         logger.warning("kb_chat_v2 evaluate failed: {}", exc)
-        return _fallback_evaluation("Evidence evaluation failed; answer generation was blocked.")
+        return _fallback_evaluation("Evidence evaluation failed; answer generation continues.")
 
 
 async def kb_chat_v2_evaluate_node(

@@ -8,6 +8,8 @@ from app.services.graph_normalizer import normalize_chunk_graph
 
 def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
     chunk = GraphChunkRecord(
+        team_id=1,
+        knowledge_base_id=2,
         document_id=1,
         document_chunk_id=11,
         document_title="配置",
@@ -44,6 +46,8 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
     ]
     relations = [
         GraphRelationRecord(
+            team_id=1,
+            knowledge_base_id=2,
             document_id=1,
             document_chunk_id=11,
             source_normalized_name="postgresql",
@@ -65,6 +69,8 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
 
 def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
     chunk = GraphChunkRecord(
+        team_id=1,
+        knowledge_base_id=2,
         document_id=2,
         document_chunk_id=22,
         document_title="组件关系",
@@ -92,6 +98,8 @@ def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
     ]
     relations = [
         GraphRelationRecord(
+            team_id=1,
+            knowledge_base_id=2,
             document_id=2,
             document_chunk_id=22,
             source_normalized_name="projectapp",

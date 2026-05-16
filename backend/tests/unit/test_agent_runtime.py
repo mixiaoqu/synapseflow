@@ -74,7 +74,8 @@ def test_graph_registry_exposes_known_workflows():
         "answer",
     )
     assert get_graph_definition("kb_chat_v2").node_ids == (
-        "plan_query",
+        "route",
+        "plan",
         "rewrite_query",
         "retrieve",
         "evaluate",

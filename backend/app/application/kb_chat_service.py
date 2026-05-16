@@ -1,4 +1,4 @@
-"""Application service for end-user knowledge-base chat."""
+﻿"""Application service for end-user knowledge-base chat."""
 
 from __future__ import annotations
 
@@ -133,7 +133,7 @@ class KbChatService(BaseAgentService):
                 ),
                 "chat_history": history,
                 "memory_summary": memory_summary,
-                "retrieval_plan": {},
+                "retrieval_execution_plan": {},
                 "retrieval_queries": [],
                 "allowed_document_statuses": list(
                     getattr(request, "allowed_document_statuses", None)
@@ -145,16 +145,16 @@ class KbChatService(BaseAgentService):
                 "retrieved_docs": [],
                 "context": "",
                 "answer": "",
-                "kb_retrieval_status": None,
             },
         )
         if self._workflow_id == "kb_chat_v2":
             state.update(
                 {
                     "question_type": None,
-                    "retrieval_label": "standard",
+                    "retrieval_complexity": "standard",
                     "retrieval_required": True,
-                    "planning_reason": "",
+                    "route_reason": "",
+                    "route_trace": {},
                     "text_queries": [],
                     "candidate_entities": [],
                     "plan_trace": {},
@@ -248,10 +248,9 @@ class KbChatService(BaseAgentService):
                 "answer_status": answer_status,
                 "log_id": log_id,
                 "workflow_id": state.get("workflow_id") or (state.get("metadata") or {}).get("workflow"),
-                "retrieval_status": state.get("kb_retrieval_status"),
-                "retrieval_plan": (
-                    dict(state.get("retrieval_plan") or {})
-                    if isinstance(state.get("retrieval_plan"), dict)
+                "retrieval_execution_plan": (
+                    dict(state.get("retrieval_execution_plan") or {})
+                    if isinstance(state.get("retrieval_execution_plan"), dict)
                     else None
                 ),
                 "retrieval_queries": list(state.get("retrieval_queries") or []),
@@ -306,10 +305,12 @@ class KbChatService(BaseAgentService):
 
     @staticmethod
     def _node_progress_message(node_id: str) -> str:
-        if node_id == "plan_query":
+        if node_id == "route":
             return "正在理解问题..."
+        if node_id == "plan":
+            return "正在生成检索方案..."
         if node_id == "rewrite_query":
-            return "正在优化检索问题..."
+            return "正在整理检索问题..."
         if node_id == "retrieve":
             return "正在检索知识库..."
         if node_id == "evaluate":
@@ -317,22 +318,27 @@ class KbChatService(BaseAgentService):
         if node_id == "answer":
             return "正在生成回答..."
         return "正在处理..."
-
     @staticmethod
     def _node_summary(node_id: str, state: dict[str, Any]) -> dict[str, Any]:
-        if node_id == "plan_query":
-            retrieval_plan = state.get("retrieval_plan") or {}
-            if isinstance(retrieval_plan, dict):
+        if node_id == "route":
+            return {
+                "question_type": state.get("question_type"),
+                "retrieval_required": state.get("retrieval_required"),
+                "retrieval_complexity": state.get("retrieval_complexity"),
+                "reason": state.get("route_reason"),
+            }
+        if node_id == "plan":
+            retrieval_execution_plan = state.get("retrieval_execution_plan") or {}
+            if isinstance(retrieval_execution_plan, dict):
                 return {
-                    "plan_name": retrieval_plan.get("plan_name"),
-                    "retrieval_required": retrieval_plan.get("retrieval_required"),
-                    "retrieval_label": state.get("retrieval_label")
-                    or retrieval_plan.get("retrieval_label"),
-                    "rewrite_policy": ((retrieval_plan.get("rewrite") or {}).get("policy")),
-                    "retrieval_mode": ((retrieval_plan.get("retrieval") or {}).get("mode")),
-                    "reason": retrieval_plan.get("reason"),
+                    "retrieval_required": state.get("retrieval_required"),
+                    "retrieval_complexity": state.get("retrieval_complexity"),
+                    "rewrite_enabled": ((retrieval_execution_plan.get("rewrite") or {}).get("enabled")),
+                    "vector_recall_k": (((retrieval_execution_plan.get("channels") or {}).get("vector") or {}).get("recall_k")),
+                    "lexical_recall_k": (((retrieval_execution_plan.get("channels") or {}).get("lexical") or {}).get("recall_k")),
+                    "graph_limit": (((retrieval_execution_plan.get("channels") or {}).get("graph") or {}).get("limit")),
                 }
-            return {"retrieval_plan": None}
+            return {"retrieval_execution_plan": None}
         if node_id == "rewrite_query":
             rewrite_trace = state.get("rewrite_trace") or {}
             return {
@@ -344,14 +350,11 @@ class KbChatService(BaseAgentService):
         if node_id == "retrieve":
             return {
                 "retrieved_count": len(state.get("retrieved_docs", [])),
-                "kb_retrieval_status": state.get("kb_retrieval_status"),
+                "empty_reason": ((state.get("retrieval_trace") or {}).get("empty_reason")),
                 "query_count": len(
                     state.get("retrieval_queries", []) or state.get("text_queries", []) or []
                 ),
-                "retrieval_mode": (
-                    ((state.get("retrieval_plan") or {}).get("retrieval") or {}).get("mode")
-                    or "hybrid_graph"
-                ),
+                "retrieval_mode": "hybrid_graph",
             }
         if node_id == "evaluate":
             evaluation = state.get("retrieval_evaluation") or {}
@@ -368,11 +371,12 @@ class KbChatService(BaseAgentService):
     def _resolve_answer_status(result: dict[str, Any]) -> str:
         if isinstance(result.get("answer_status"), str) and result.get("answer_status"):
             return str(result["answer_status"])
-        retrieval_status = result.get("kb_retrieval_status")
-        if retrieval_status == "blocked_sensitive":
-            return "blocked"
-        if retrieval_status in {"empty_collection", "empty_knowledge_base", "no_hits"}:
-            return "insufficient"
+        evaluation = dict(result.get("retrieval_evaluation") or {})
+        evaluation_status = str(evaluation.get("status") or "").strip().lower()
+        if evaluation_status == "sufficient":
+            return "answered"
+        if evaluation_status in {"insufficient", "empty", "clarification_needed"}:
+            return evaluation_status
         if result.get("answer"):
             return "answered"
         return "partial"
@@ -419,7 +423,7 @@ class KbChatService(BaseAgentService):
             "1. 问题理解\n"
             "- question_type: {}\n"
             "- retrieval_required: {}\n"
-            "- retrieval_label: {}\n"
+            "- retrieval_complexity: {}\n"
             "- reason: {}\n"
             "- latency_ms: {}\n"
             "\n"
@@ -456,7 +460,7 @@ class KbChatService(BaseAgentService):
             "- 文本证据: {}\n"
             "- 图谱补充证据: {}\n"
             "- final_context_docs: {}\n"
-            "- kb_retrieval_status: {}\n"
+            "- empty_reason: {}\n"
             "- latency_ms: {}\n"
             "\n"
             "7. 证据评估\n"
@@ -486,8 +490,8 @@ class KbChatService(BaseAgentService):
             or "-",
             result.get("question_type") or state.get("question_type"),
             result.get("retrieval_required") if result.get("retrieval_required") is not None else state.get("retrieval_required"),
-            result.get("retrieval_label") or state.get("retrieval_label"),
-            result.get("planning_reason") or result.get("reason") or state.get("planning_reason"),
+            result.get("retrieval_complexity") or state.get("retrieval_complexity"),
+            result.get("route_reason") or result.get("reason") or state.get("route_reason"),
             plan_trace.get("latency_ms", 0),
             str(result.get("query") or state.get("query") or ""),
             "\n".join(
@@ -515,13 +519,14 @@ class KbChatService(BaseAgentService):
             retrieval_trace.get("text_evidence_count", 0),
             retrieval_trace.get("graph_evidence_count", 0),
             retrieval_trace.get("final_context_docs", retrieval_trace.get("final_hits", 0)),
-            result.get("kb_retrieval_status"),
+            retrieval_trace.get("empty_reason"),
             retrieval_trace.get("merge_latency_ms", 0),
             evaluation.get("status"),
             evaluation.get("next_action"),
             evaluation.get("reason"),
             evaluate_trace.get("latency_ms", 0),
             result.get("answer_status"),
+            answer_trace.get("confidence") or "-",
             answer_trace.get("latency_ms", 0),
             total_latency_ms,
             result.get("feedback_value") or "(none)",
@@ -584,7 +589,7 @@ class KbChatService(BaseAgentService):
             "1. 问题理解\n"
             "- question_type: {}\n"
             "- retrieval_required: {}\n"
-            "- retrieval_label: {}\n"
+            "- retrieval_complexity: {}\n"
             "- reason: {}\n"
             "- latency_ms: {}\n"
             "\n"
@@ -621,7 +626,7 @@ class KbChatService(BaseAgentService):
             "- 文本证据: {}\n"
             "- 图谱补充证据: {}\n"
             "- final_context_docs: {}\n"
-            "- kb_retrieval_status: {}\n"
+            "- empty_reason: {}\n"
             "- latency_ms: {}\n"
             "\n"
             "7. 证据评估\n"
@@ -653,10 +658,10 @@ class KbChatService(BaseAgentService):
             result.get("retrieval_required")
             if result.get("retrieval_required") is not None
             else state.get("retrieval_required"),
-            result.get("retrieval_label") or state.get("retrieval_label") or "-",
-            result.get("planning_reason")
+            result.get("retrieval_complexity") or state.get("retrieval_complexity") or "-",
+            result.get("route_reason")
             or result.get("reason")
-            or state.get("planning_reason")
+            or state.get("route_reason")
             or "-",
             int(plan_trace.get("latency_ms") or 0),
             str(result.get("query") or state.get("query") or ""),
@@ -700,13 +705,14 @@ class KbChatService(BaseAgentService):
                 or retrieval_trace.get("final_hits")
                 or 0
             ),
-            result.get("kb_retrieval_status") or "-",
+            retrieval_trace.get("empty_reason") or "-",
             int(retrieval_trace.get("merge_latency_ms") or 0),
             evaluation.get("status") or "-",
             evaluation.get("next_action") or "-",
             evaluation.get("reason") or "-",
             int(evaluate_trace.get("latency_ms") or 0),
             result.get("answer_status") or "-",
+            answer_trace.get("confidence") or "-",
             int(answer_trace.get("latency_ms") or 0),
             total_latency_ms,
             result.get("feedback_value") or "(none)",
@@ -740,7 +746,7 @@ class KbChatService(BaseAgentService):
                     query=str(state.get("query") or ""),
                     answer_text=str(result.get("answer") or ""),
                     answer_status=self._resolve_answer_status(result),
-                    retrieval_status=result.get("kb_retrieval_status"),
+                    retrieval_status=None,
                     retrieved_count=len(result.get("retrieved_docs", []) or []),
                     latency_ms=latency_ms,
                 )
@@ -765,11 +771,11 @@ class KbChatService(BaseAgentService):
             **state,
             "answer": answer,
             "retrieved_docs": [],
-            "kb_retrieval_status": "blocked_sensitive",
-            "retrieval_plan": {},
+            "retrieval_execution_plan": {},
             "retrieval_queries": [],
             "context": "",
             "matched_sensitive_words": list(check_result.matched_words),
+            "answer_status": "blocked",
         }
 
     async def _check_sensitive_query(

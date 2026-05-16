@@ -32,6 +32,8 @@ def _normalize_graph_row(row: dict[str, Any], rank: int) -> dict[str, Any]:
     content = str(row.get("chunk_text") or row.get("evidence") or "").strip()
     metadata = {
         "source": "graph",
+        "team_id": row.get("team_id"),
+        "knowledge_base_id": row.get("knowledge_base_id"),
         "document_id": row.get("document_id"),
         "document_chunk_id": row.get("document_chunk_id"),
         "document_title": row.get("document_title") or "Graph evidence",
@@ -49,6 +51,8 @@ def _normalize_graph_row(row: dict[str, Any], rank: int) -> dict[str, Any]:
 async def run_kb_graph_retrieval(
     *,
     candidate_entities: list[str] | None,
+    knowledge_base_id: int,
+    team_id: int,
     store: GraphStore | None = None,
     enabled: bool | None = None,
     limit: int = 8,
@@ -73,7 +77,12 @@ async def run_kb_graph_retrieval(
 
     try:
         resolved_store = store or get_graph_store(require_indexing=False)
-        rows = await resolved_store.search_related_evidence(entity_names=entities, limit=limit)
+        rows = await resolved_store.search_related_evidence(
+            entity_names=entities,
+            knowledge_base_id=knowledge_base_id,
+            team_id=team_id,
+            limit=limit,
+        )
     except Exception as exc:
         logger.warning("KB graph retrieval failed: {}", exc)
         return {

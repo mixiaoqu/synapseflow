@@ -4,7 +4,9 @@ from app.services.kb_graph_retrieval import run_kb_graph_retrieval
 
 
 class FakeGraphStore:
-    async def search_related_evidence(self, *, entity_names, limit):
+    async def search_related_evidence(self, *, entity_names, knowledge_base_id, team_id, limit):
+        assert knowledge_base_id == 7
+        assert team_id == 3
         return [
             {
                 "document_id": 10,
@@ -20,7 +22,7 @@ class FakeGraphStore:
 
 
 class FailingGraphStore:
-    async def search_related_evidence(self, *, entity_names, limit):
+    async def search_related_evidence(self, *, entity_names, knowledge_base_id, team_id, limit):
         raise RuntimeError("neo4j unavailable")
 
 
@@ -28,6 +30,8 @@ def test_run_kb_graph_retrieval_returns_normalized_docs_and_trace():
     result = asyncio.run(
         run_kb_graph_retrieval(
             candidate_entities=["Prescription Flow", "Payment"],
+            knowledge_base_id=7,
+            team_id=3,
             store=FakeGraphStore(),
             enabled=True,
         )
@@ -47,6 +51,8 @@ def test_run_kb_graph_retrieval_degrades_when_disabled():
     result = asyncio.run(
         run_kb_graph_retrieval(
             candidate_entities=["Prescription Flow"],
+            knowledge_base_id=7,
+            team_id=3,
             store=FakeGraphStore(),
             enabled=False,
         )
@@ -61,6 +67,8 @@ def test_run_kb_graph_retrieval_degrades_on_store_error():
     result = asyncio.run(
         run_kb_graph_retrieval(
             candidate_entities=["Prescription Flow"],
+            knowledge_base_id=7,
+            team_id=3,
             store=FailingGraphStore(),
             enabled=True,
         )

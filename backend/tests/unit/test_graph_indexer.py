@@ -10,6 +10,8 @@ from app.services.graph_models import (
 
 def test_graph_models_expose_minimal_document_and_chunk_fields():
     chunk = GraphChunkRecord(
+        team_id=7,
+        knowledge_base_id=8,
         document_id=12,
         document_chunk_id=34,
         document_title="部署说明",
@@ -25,6 +27,8 @@ def test_graph_models_expose_minimal_document_and_chunk_fields():
         evidence="结果写入 PostgreSQL",
     )
     relation = GraphRelationRecord(
+        team_id=7,
+        knowledge_base_id=8,
         document_id=12,
         document_chunk_id=34,
         source_normalized_name="projectapp",
@@ -34,6 +38,8 @@ def test_graph_models_expose_minimal_document_and_chunk_fields():
     )
 
     assert chunk.document_id == 12
+    assert chunk.team_id == 7
+    assert chunk.knowledge_base_id == 8
     assert entity.display_name == "PostgreSQL"
     assert relation.relation_type == "USES"
 
@@ -56,6 +62,8 @@ def test_graph_indexer_writes_chunk_entities_and_relations():
 
     indexer = GraphIndexer(FakeStore())
     chunk = GraphChunkRecord(
+        team_id=1,
+        knowledge_base_id=3,
         document_id=1,
         document_chunk_id=101,
         document_title="系统设计",
@@ -83,6 +91,8 @@ def test_graph_indexer_writes_chunk_entities_and_relations():
     ]
     relations = [
         GraphRelationRecord(
+            team_id=1,
+            knowledge_base_id=3,
             document_id=1,
             document_chunk_id=101,
             source_normalized_name="projectapp",
@@ -125,6 +135,8 @@ def test_graph_indexer_skips_relation_without_known_entities():
 
     indexer = GraphIndexer(FakeStore())
     chunk = GraphChunkRecord(
+        team_id=1,
+        knowledge_base_id=3,
         document_id=2,
         document_chunk_id=202,
         document_title="配置说明",
@@ -143,6 +155,8 @@ def test_graph_indexer_skips_relation_without_known_entities():
     ]
     relations = [
         GraphRelationRecord(
+            team_id=1,
+            knowledge_base_id=3,
             document_id=2,
             document_chunk_id=202,
             source_normalized_name="neo4j",
