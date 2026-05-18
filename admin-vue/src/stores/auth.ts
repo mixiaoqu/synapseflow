@@ -1,14 +1,14 @@
 import { defineStore } from "pinia";
 
 import { canAccessAdmin } from "@/shared/auth/roles";
-import { getCurrentUser, login } from "@/shared/api/auth";
-import type { CurrentUser, LoginPayload } from "@/shared/types/auth";
 import {
   clearAuthSession,
   getAccessToken,
   getStoredUser,
   setAuthSession,
-} from "@/shared/utils/session";
+} from "@/shared/auth/session";
+import { getCurrentUser, login } from "@/shared/api/auth";
+import type { CurrentUser, LoginPayload } from "@/shared/types/auth";
 
 interface AuthState {
   user: CurrentUser | null;
@@ -42,6 +42,7 @@ export const useAuthStore = defineStore("auth", {
       this.bootstrapping = true;
 
       try {
+        // 刷新页面后优先向后端确认当前 token 是否仍然有效，再回写本地用户信息。
         const user = await getCurrentUser();
         this.user = user;
         setAuthSession(token, user);
@@ -55,6 +56,7 @@ export const useAuthStore = defineStore("auth", {
     },
     async signIn(payload: LoginPayload) {
       const response = await login(payload);
+      // 登录成功后一次性落盘 token 和用户信息，后续路由守卫直接从 store 与 session 判断状态。
       setAuthSession(response.access_token, response.user);
       this.user = response.user;
       this.checked = true;

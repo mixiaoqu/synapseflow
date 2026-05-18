@@ -1,6 +1,7 @@
 const FALLBACK_API_BASE_URL = "http://localhost:8000/api/v1";
 const FALLBACK_TIMEOUT_MS = 15_000;
 
+// 统一清理末尾斜杠，避免接口路径拼接时出现双斜杠。
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
 }

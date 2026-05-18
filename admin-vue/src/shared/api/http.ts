@@ -5,9 +5,10 @@ import axios, {
 } from "axios";
 
 import { apiConfig } from "@/shared/api/config";
+import { clearAuthSession, getAccessToken } from "@/shared/auth/session";
 import { normalizeError } from "@/shared/utils/error";
-import { clearAuthSession, getAccessToken } from "@/shared/utils/session";
 
+// Axios 1.x 的 headers 在不同运行态下可能是对象或带 set 方法的实例，这里统一兼容。
 function setRequestHeader(config: InternalAxiosRequestConfig, key: string, value: string) {
   if (typeof config.headers.set === "function") {
     config.headers.set(key, value);
@@ -25,6 +26,7 @@ export const http = axios.create({
 http.interceptors.request.use((config) => {
   const token = getAccessToken();
 
+  // 统一在请求层注入后台 access token，业务代码不再重复处理鉴权头。
   if (token) {
     setRequestHeader(config, "Authorization", `Bearer ${token}`);
   }
@@ -37,6 +39,7 @@ http.interceptors.response.use(
   (error: unknown) => {
     const normalizedError = normalizeError(error);
 
+    // 401 统一视为会话失效，前端立即清空本地凭证，后续由路由守卫引导回登录页。
     if (normalizedError.status === 401) {
       clearAuthSession();
     }

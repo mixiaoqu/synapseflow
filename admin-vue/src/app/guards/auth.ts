@@ -3,6 +3,7 @@ import { ElMessage } from "element-plus";
 
 import { useAuthStore } from "@/stores/auth";
 
+// 登录跳转时保留原始目标地址，登录成功后可以回到用户最初访问的后台页面。
 function resolveRedirectTarget(to: RouteLocationNormalized) {
   return {
     path: "/login",
@@ -22,6 +23,7 @@ export function createAuthGuard(): NavigationGuardWithThis<undefined> {
   return async (to) => {
     const authStore = useAuthStore();
 
+    // 首次进入路由前先恢复本地会话，避免刷新后误判成未登录。
     if (!authStore.checked) {
       await authStore.bootstrap();
     }
