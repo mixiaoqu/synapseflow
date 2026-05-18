@@ -22,7 +22,12 @@ class Settings(BaseSettings):
     EMBED_TOKEN_EXPIRE_MINUTES: int = 60
     EMBED_FRONTEND_BASE_URL: str = ""
 
-    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    CORS_ORIGINS: str = (
+        "http://localhost:3000,"
+        "http://127.0.0.1:3000,"
+        "http://localhost:5174,"
+        "http://127.0.0.1:5174"
+    )
 
     DATABASE_URL: str = "postgresql+asyncpg://synapseflow:password@localhost:5432/synapseflow"
     REDIS_URL: str = "redis://localhost:6379/0"
