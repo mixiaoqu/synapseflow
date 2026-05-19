@@ -139,3 +139,8 @@ backend/langgraph.env.example
 # 其他
 闭环验收清单.md
 code-style.md
+
+
+# e2e
+e2e/
+.env.e2e
