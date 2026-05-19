@@ -2,7 +2,7 @@
 
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Database, Loader2, PencilLine, Plus, Search, UploadCloud, X } from "lucide-react";
+import { Database, Loader2, PencilLine, Plus, Search, UploadCloud, X } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
 import { AdminPage } from "@/components/admin/layout/AdminPage";
@@ -15,12 +15,9 @@ import { KnowledgeBaseWorkbenchCard } from "@/features/documents/components/Know
 import { uploadDocument, uploadDocumentsBatch } from "@/lib/api/documents";
 import {
   createKnowledgeBase,
-  createKnowledgeBaseBranch,
   deleteKnowledgeBase,
-  listKnowledgeBaseBranches,
   listKnowledgeBases,
   updateKnowledgeBase,
-  type KnowledgeBaseBranch,
   type KnowledgeBaseWithCount,
 } from "@/lib/api/knowledgeBases";
 import { cn } from "@/lib/utils";
@@ -82,7 +79,6 @@ export default function DocumentsPage() {
   } = useTeamScope();
 
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseWithCount[]>([]);
-  const [branchOptions, setBranchOptions] = useState<Record<number, KnowledgeBaseBranch[]>>({});
   const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState<number | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -99,16 +95,8 @@ export default function DocumentsPage() {
   const [editDescription, setEditDescription] = useState("");
   const [savingKnowledgeBase, setSavingKnowledgeBase] = useState(false);
 
-  const [createBranchModalOpen, setCreateBranchModalOpen] = useState(false);
-  const [createBranchKnowledgeBaseId, setCreateBranchKnowledgeBaseId] = useState<number | null>(null);
-  const [createBranchCode, setCreateBranchCode] = useState("");
-  const [createBranchName, setCreateBranchName] = useState("");
-  const [createBranchDescription, setCreateBranchDescription] = useState("");
-  const [creatingBranch, setCreatingBranch] = useState(false);
-
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [uploadCollectionId, setUploadCollectionId] = useState<number | null>(null);
-  const [uploadBranchId, setUploadBranchId] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -134,37 +122,18 @@ export default function DocumentsPage() {
     () => knowledgeBases.find((item) => item.id === uploadCollectionId) ?? null,
     [knowledgeBases, uploadCollectionId],
   );
-  const uploadTargetBranches = useMemo(
-    () => (uploadCollectionId ? branchOptions[uploadCollectionId] ?? [] : []),
-    [branchOptions, uploadCollectionId],
-  );
-  const uploadTargetBranch = useMemo(
-    () => uploadTargetBranches.find((item) => item.id === uploadBranchId) ?? null,
-    [uploadBranchId, uploadTargetBranches],
-  );
-  const uploadActiveBranches = useMemo(
-    () => uploadTargetBranches.filter((item) => item.is_active),
-    [uploadTargetBranches],
-  );
-
   const loadKnowledgeBases = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (selectedTeamId == null) {
       setKnowledgeBases([]);
-      setBranchOptions({});
       setSelectedKnowledgeBaseId(null);
       setUploadCollectionId(null);
-      setUploadBranchId(null);
       return;
     }
 
     if (!silent) setLoadingKnowledgeBases(true);
     try {
       const list = await listKnowledgeBases(selectedTeamId);
-      const branchEntries = await Promise.all(
-        list.map(async (item) => [item.id, await listKnowledgeBaseBranches(item.id)] as const),
-      );
       setKnowledgeBases(list);
-      setBranchOptions(Object.fromEntries(branchEntries));
       setSelectedKnowledgeBaseId((prev) =>
         prev && list.some((item) => item.id === prev) ? prev : list[0]?.id ?? null,
       );
@@ -175,10 +144,8 @@ export default function DocumentsPage() {
       if (!silent) {
         toast.error("知识库列表加载失败");
         setKnowledgeBases([]);
-        setBranchOptions({});
         setSelectedKnowledgeBaseId(null);
         setUploadCollectionId(null);
-        setUploadBranchId(null);
       }
     } finally {
       if (!silent) setLoadingKnowledgeBases(false);
@@ -197,19 +164,6 @@ export default function DocumentsPage() {
     }, 8000);
     return () => window.clearTimeout(timer);
   }, [knowledgeBases, loadKnowledgeBases]);
-
-  useEffect(() => {
-    if (!uploadCollectionId) {
-      setUploadBranchId(null);
-      return;
-    }
-    const branches = branchOptions[uploadCollectionId] ?? [];
-    setUploadBranchId((prev) =>
-      prev && branches.some((item) => item.id === prev)
-        ? prev
-        : (branches.find((item) => item.is_active)?.id ?? null),
-    );
-  }, [branchOptions, uploadCollectionId]);
 
   const closeConfirmDialog = () => {
     setConfirmDialog((prev) => ({
@@ -243,19 +197,6 @@ export default function DocumentsPage() {
     setCreateModalOpen(true);
   };
 
-  const openCreateBranchModal = (knowledgeBaseId?: number) => {
-    const targetId = knowledgeBaseId ?? selectedKnowledgeBaseId ?? knowledgeBases[0]?.id ?? null;
-    if (!targetId) {
-      toast.error("请先选择知识库");
-      return;
-    }
-    setCreateBranchKnowledgeBaseId(targetId);
-    setCreateBranchCode("");
-    setCreateBranchName("");
-    setCreateBranchDescription("");
-    setCreateBranchModalOpen(true);
-  };
-
   const openEditModal = (knowledgeBase: KnowledgeBaseWithCount) => {
     setEditingKnowledgeBaseId(knowledgeBase.id);
     setEditName(knowledgeBase.name);
@@ -270,9 +211,6 @@ export default function DocumentsPage() {
       return;
     }
     setUploadCollectionId(targetId);
-    const branches = branchOptions[targetId] ?? [];
-    const firstActiveBranch = branches.find((item) => item.is_active) ?? null;
-    setUploadBranchId(firstActiveBranch?.id ?? null);
     setDragOver(false);
     setUploadModalOpen(true);
   };
@@ -323,29 +261,6 @@ export default function DocumentsPage() {
     }
   };
 
-  const handleCreateBranch = async () => {
-    if (!createBranchKnowledgeBaseId || !createBranchCode.trim() || !createBranchName.trim()) {
-      return;
-    }
-    setCreatingBranch(true);
-    try {
-      await createKnowledgeBaseBranch(createBranchKnowledgeBaseId, {
-        code: createBranchCode.trim(),
-        name: createBranchName.trim(),
-        description: createBranchDescription.trim() || null,
-        is_active: true,
-      });
-      toast.success("版本已创建");
-      setCreateBranchModalOpen(false);
-      await loadKnowledgeBases();
-      setUploadCollectionId(createBranchKnowledgeBaseId);
-    } catch (error: unknown) {
-      toast.error((error as { message?: string }).message || "创建版本失败");
-    } finally {
-      setCreatingBranch(false);
-    }
-  };
-
   const handleDeleteKnowledgeBase = (knowledgeBase: KnowledgeBaseWithCount) => {
     openConfirmDialog({
       title: "删除知识库",
@@ -385,11 +300,6 @@ export default function DocumentsPage() {
       return;
     }
 
-    if (!uploadBranchId) {
-      toast.error("请先选择版本");
-      return;
-    }
-
     setUploading(true);
     try {
       const knowledgeBaseId =
@@ -397,11 +307,11 @@ export default function DocumentsPage() {
       const sourcePaths = getSourcePaths(accepted);
 
       if (accepted.length === 1) {
-        await uploadDocument(accepted[0], knowledgeBaseId, uploadBranchId, {
+        await uploadDocument(accepted[0], knowledgeBaseId, {
           sourcePath: sourcePaths?.[0] ?? null,
         });
       } else {
-        await uploadDocumentsBatch(accepted, knowledgeBaseId, uploadBranchId, {
+        await uploadDocumentsBatch(accepted, knowledgeBaseId, {
           sourcePaths,
         });
       }
@@ -436,7 +346,7 @@ export default function DocumentsPage() {
 
   const isLoading = teamsLoading || loadingKnowledgeBases;
   const headerDescription = activeTeam
-    ? "管理您的企业知识库与文档资产，按工作台方式进入版本与内容管理。"
+    ? "管理您的企业知识库与文档资产，按工作台方式进入文档、分类与内容管理。"
     : "选择团队后查看当前范围内的知识库工作台。";
 
   return (
@@ -515,7 +425,7 @@ export default function DocumentsPage() {
             <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500">
               {keyword
                 ? "请调整搜索关键词，或清空筛选后查看全部知识库。"
-                : "先创建知识库，再上传文档和维护版本，后续详情页管理链路保持不变。"}
+                : "先创建知识库，再上传文档和维护分类，后续可进入详情页处理索引与发布。"}
             </p>
             <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
               <Button onClick={openCreateModal} className="rounded-full bg-slate-900 px-5 text-white hover:bg-slate-800">
@@ -542,7 +452,6 @@ export default function DocumentsPage() {
               <KnowledgeBaseWorkbenchCard
                 key={knowledgeBase.id}
                 knowledgeBase={knowledgeBase}
-                branches={branchOptions[knowledgeBase.id] ?? []}
                 active={selectedKnowledgeBaseId === knowledgeBase.id}
                 deleting={deletingKnowledgeBaseId === knowledgeBase.id}
                 onOpen={(item) => {
@@ -554,10 +463,6 @@ export default function DocumentsPage() {
                   openUploadModal(item.id);
                 }}
                 onEdit={openEditModal}
-                onCreateBranch={(item) => {
-                  setSelectedKnowledgeBaseId(item.id);
-                  openCreateBranchModal(item.id);
-                }}
                 onDelete={handleDeleteKnowledgeBase}
               />
             ))}
@@ -579,7 +484,7 @@ export default function DocumentsPage() {
               <div>
                 <h3 className="text-xl font-semibold text-slate-900">新建知识库</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  创建后即可进入详情页继续上传文档、管理版本和处理内容状态。
+                  创建后即可进入详情页继续上传文档、管理分类和处理内容状态。
                 </p>
               </div>
               <Button
@@ -656,7 +561,7 @@ export default function DocumentsPage() {
               <div>
                 <h3 className="text-xl font-semibold text-slate-900">编辑知识库</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  更新名称和描述，不影响现有文档、版本和详情页管理链路。
+                  更新名称和描述，不影响现有文档、分类和详情页管理链路。
                 </p>
               </div>
               <Button
@@ -713,102 +618,6 @@ export default function DocumentsPage() {
                     <PencilLine className="mr-2 h-4 w-4" />
                   )}
                   保存修改
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {createBranchModalOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
-          onClick={() => !creatingBranch && setCreateBranchModalOpen(false)}
-        >
-          <div
-            className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-xl font-semibold text-slate-900">新建版本</h3>
-                <p className="mt-2 text-sm leading-6 text-slate-500">
-                  版本用于区分不同内容范围，上传文档时会绑定到所选版本。
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => !creatingBranch && setCreateBranchModalOpen(false)}
-                className="rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-
-            <div className="mt-5 space-y-4">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">知识库</label>
-                <select
-                  value={createBranchKnowledgeBaseId ?? ""}
-                  onChange={(event) =>
-                    setCreateBranchKnowledgeBaseId(event.target.value ? Number(event.target.value) : null)
-                  }
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                >
-                  {knowledgeBases.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">版本标识</label>
-                <Input
-                  value={createBranchCode}
-                  onChange={(event) => setCreateBranchCode(event.target.value)}
-                  placeholder="例如：v2.9.3 / customer-a"
-                  className="h-11 rounded-xl border-slate-200"
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">版本名称</label>
-                <Input
-                  value={createBranchName}
-                  onChange={(event) => setCreateBranchName(event.target.value)}
-                  placeholder="例如：五月发布版本"
-                  className="h-11 rounded-xl border-slate-200"
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">版本描述</label>
-                <Textarea
-                  value={createBranchDescription}
-                  onChange={(event) => setCreateBranchDescription(event.target.value)}
-                  placeholder="补充这个版本的用途、范围或所属客户。"
-                  className="min-h-[100px] rounded-xl border-slate-200"
-                />
-              </div>
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <Button
-                  variant="outline"
-                  onClick={() => !creatingBranch && setCreateBranchModalOpen(false)}
-                  className="rounded-xl border-slate-200"
-                >
-                  取消
-                </Button>
-                <Button
-                  onClick={() => void handleCreateBranch()}
-                  disabled={creatingBranch || !createBranchKnowledgeBaseId || !createBranchCode.trim() || !createBranchName.trim()}
-                  className="rounded-xl bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  {creatingBranch ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Plus className="mr-2 h-4 w-4" />
-                  )}
-                  创建版本
                 </Button>
               </div>
             </div>
@@ -884,7 +693,7 @@ export default function DocumentsPage() {
               <div>
                 <h3 className="text-xl font-semibold text-slate-900">上传文档</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  选择知识库和版本后，可拖拽上传或选择单文件、文件夹批量导入。
+                  选择知识库后，可拖拽上传或选择单文件、文件夹批量导入。
                 </p>
               </div>
               <Button
@@ -930,41 +739,6 @@ export default function DocumentsPage() {
                 </select>
               </div>
 
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">版本</label>
-                <select
-                  value={uploadBranchId ?? ""}
-                  onChange={(event) =>
-                    setUploadBranchId(event.target.value ? Number(event.target.value) : null)
-                  }
-                  disabled={uploadActiveBranches.length === 0}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                >
-                  <option value="">请选择版本</option>
-                  {uploadActiveBranches.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name} / {item.code}
-                    </option>
-                  ))}
-                </select>
-                <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500">
-                  <span>
-                    {uploadActiveBranches.length === 0
-                      ? "当前知识库没有可用版本，请先创建版本。"
-                      : uploadTargetBranch
-                        ? `当前上传到：${uploadTargetBranch.name}`
-                        : "请选择一个版本"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => openCreateBranchModal(uploadCollectionId ?? undefined)}
-                    className="font-medium text-blue-600 hover:text-blue-700"
-                  >
-                    新建版本
-                  </button>
-                </div>
-              </div>
-
               <div
                 onDragOver={(event) => {
                   event.preventDefault();
@@ -977,7 +751,7 @@ export default function DocumentsPage() {
                   dragOver
                     ? "border-blue-300 bg-blue-50/70"
                     : "border-slate-300 bg-slate-50 hover:border-slate-400 hover:bg-slate-100",
-                  (uploading || uploadActiveBranches.length === 0) && "pointer-events-none opacity-70",
+                  uploading && "pointer-events-none opacity-70",
                 )}
               >
                 <input
@@ -1002,29 +776,6 @@ export default function DocumentsPage() {
                     <Loader2 className="h-4 w-4 animate-spin" />
                     正在上传并创建索引任务...
                   </div>
-                ) : uploadActiveBranches.length === 0 ? (
-                  <>
-                    <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
-                    <p className="mt-4 text-base font-medium text-slate-700">
-                      当前没有可用版本，暂时无法上传文档
-                    </p>
-                    <p className="mt-2 text-sm text-slate-500">
-                      先创建版本，再为对应版本上传文件。
-                    </p>
-                    <div className="mt-5">
-                      <Button
-                        type="button"
-                        className="rounded-xl bg-blue-600 text-white hover:bg-blue-700"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openCreateBranchModal(uploadCollectionId ?? undefined);
-                        }}
-                      >
-                        <Plus className="mr-2 h-4 w-4" />
-                        新建版本
-                      </Button>
-                    </div>
-                  </>
                 ) : (
                   <>
                     <UploadCloud className="mx-auto h-8 w-8 text-slate-500" />

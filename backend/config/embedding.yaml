@@ -52,8 +52,34 @@ retrieval:
   # Minimum rerank score to keep. null disables rerank score filtering.
   rerank_threshold: null
   # Maximum retrieval results returned to application logic.
-  final_top_k: 12
+  final_top_k: 16
   # Maximum reference chunks sent into the LLM prompt.
-  llm_reference_top_k: 8
+  llm_reference_top_k: 10
   # Maximum prompt context characters assembled from KB chunks.
-  kb_context_max_chars: 12000
+  kb_context_max_chars: 16000
+  # Workflow-level retrieval profiles selected by analyze nodes.
+  profiles:
+    fast:
+      recall_k: 18
+      lexical_k: 12
+      graph_limit: 6
+      final_top_k: 8
+      llm_reference_top_k: 8
+      context_budget: 8000
+      rerank_enabled: false
+    standard:
+      recall_k: 32
+      lexical_k: 24
+      graph_limit: 10
+      final_top_k: 10
+      llm_reference_top_k: 10
+      context_budget: 12000
+      rerank_enabled: false
+    broad:
+      recall_k: 40
+      lexical_k: 32
+      graph_limit: 12
+      final_top_k: 12
+      llm_reference_top_k: 12
+      context_budget: 15000
+      rerank_enabled: false

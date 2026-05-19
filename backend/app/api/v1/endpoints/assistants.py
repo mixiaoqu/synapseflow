@@ -44,7 +44,6 @@ def _build_runtime_request(
         team_id=assistant.team_id,
         knowledge_base_id=None,
         knowledge_base_ids=[],
-        knowledge_base_branch_ids=[],
         category_id=None,
         assistant_id=assistant.id,
         assistant_name=assistant.name,

@@ -1,4 +1,4 @@
-"""Application service for end-user knowledge-base chat."""
+﻿"""Application service for end-user knowledge-base chat."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from app.application.stream_events import (
     emit_start,
 )
 from app.application.workflow_meta import get_node_label
+from app.core.config.settings import settings
 from app.db.session import AsyncSessionLocal
 from app.repositories.kb_chat_log_repository import KbChatLogRepository
 from app.services.chat_memory import (
@@ -48,11 +49,18 @@ class KbChatService(BaseAgentService):
         graph: Any | None = None,
         memory_store: ChatMemoryStore | None = None,
         sensitive_word_service: Any | None = None,
+        workflow_id: str | None = None,
     ):
         self._llm_factory = llm_factory
         self._graph = graph
+        self._workflow_id = self._normalize_workflow_id(workflow_id or settings.KB_CHAT_WORKFLOW)
         self._memory_store = memory_store or DatabaseChatMemoryStore()
         self._sensitive_word_service = sensitive_word_service or get_sensitive_word_service()
+
+    @staticmethod
+    def _normalize_workflow_id(value: str | None) -> str:
+        normalized = str(value or "kb_chat").strip()
+        return normalized if normalized in {"kb_chat", "kb_chat_v2"} else "kb_chat"
 
     def build_initial_state(
         self,
@@ -74,11 +82,12 @@ class KbChatService(BaseAgentService):
             category_id=getattr(request, "category_id", None),
             request_id=resolved_session_id,
             messages=history,
-            metadata={"workflow": "kb_chat"},
+            metadata={"workflow": self._workflow_id},
         )
-        return self.build_state(
+        state = self.build_state(
             context,
             {
+                "workflow_id": self._workflow_id,
                 "session_id": resolved_session_id,
                 "query": request.query,
                 "product_id": getattr(request, "product_id", None),
@@ -119,14 +128,10 @@ class KbChatService(BaseAgentService):
                 "page_context": dict(getattr(request, "page_context", None) or {}),
                 "page_config": dict(getattr(request, "page_config", None) or {}),
                 "knowledge_base_ids": list(getattr(request, "knowledge_base_ids", None) or []),
-                "knowledge_base_branch_ids": list(
-                    getattr(request, "knowledge_base_branch_ids", None) or []
-                ),
                 "chat_history": history,
                 "memory_summary": memory_summary,
-                "retrieval_plan": {},
+                "retrieval_execution_plan": {},
                 "retrieval_queries": [],
-                "rewrite_meta": {},
                 "allowed_document_statuses": list(
                     getattr(request, "allowed_document_statuses", None)
                     or VISIBLE_ASK_DOCUMENT_STATUSES
@@ -137,15 +142,39 @@ class KbChatService(BaseAgentService):
                 "retrieved_docs": [],
                 "context": "",
                 "answer": "",
-                "kb_retrieval_status": None,
             },
         )
+        if self._workflow_id == "kb_chat_v2":
+            state.update(
+                {
+                    "question_type": None,
+                    "retrieval_complexity": "standard",
+                    "retrieval_required": True,
+                    "route_reason": "",
+                    "route_trace": {},
+                    "text_queries": [],
+                    "candidate_entities": [],
+                    "plan_trace": {},
+                    "rewrite_trace": {},
+                    "retrieval_trace": {},
+                    "retrieval_evaluation": {},
+                    "evaluate_trace": {},
+                    "answer_status": "",
+                    "answer_trace": {},
+                }
+            )
+        return state
 
     def _get_graph(self) -> Any:
         if self._graph is None:
-            from app.agents.graphs.kb_chat_graph import create_kb_chat_graph
+            if self._workflow_id == "kb_chat_v2":
+                from app.agents.graphs.kb_chat_v2_graph import create_kb_chat_v2_graph
 
-            self._graph = create_kb_chat_graph(llm_factory=self._llm_factory)
+                self._graph = create_kb_chat_v2_graph(llm_factory=self._llm_factory)
+            else:
+                from app.agents.graphs.kb_chat_graph import create_kb_chat_graph
+
+                self._graph = create_kb_chat_graph(llm_factory=self._llm_factory)
         return self._graph
 
     async def _load_memory_context(
@@ -207,7 +236,6 @@ class KbChatService(BaseAgentService):
             external_user_name=state.get("external_user_name"),
             team_id=state.get("team_id"),
             knowledge_base_id=state.get("knowledge_base_id"),
-            knowledge_base_branch_ids=list(state.get("knowledge_base_branch_ids") or []),
             assistant_id=state.get("assistant_id"),
             category_id=state.get("category_id"),
             user_message=state.get("query", ""),
@@ -215,23 +243,29 @@ class KbChatService(BaseAgentService):
             assistant_metadata={
                 "answer_status": answer_status,
                 "log_id": log_id,
-                "retrieval_status": state.get("kb_retrieval_status"),
-                "retrieval_plan": (
-                    dict(state.get("retrieval_plan") or {})
-                    if isinstance(state.get("retrieval_plan"), dict)
-                    else None
-                ),
-                "rewrite_meta": (
-                    dict(state.get("rewrite_meta") or {})
-                    if isinstance(state.get("rewrite_meta"), dict)
+                "workflow_id": state.get("workflow_id") or (state.get("metadata") or {}).get("workflow"),
+                "retrieval_execution_plan": (
+                    dict(state.get("retrieval_execution_plan") or {})
+                    if isinstance(state.get("retrieval_execution_plan"), dict)
                     else None
                 ),
                 "retrieval_queries": list(state.get("retrieval_queries") or []),
-                "retrieval_funnel": (
-                    dict(state.get("retrieval_funnel") or {})
-                    if isinstance(state.get("retrieval_funnel"), dict)
+                "rewrite_trace": (
+                    dict(state.get("rewrite_trace") or {})
+                    if isinstance(state.get("rewrite_trace"), dict)
                     else None
                 ),
+                "retrieval_trace": (
+                    dict(state.get("retrieval_trace") or {})
+                    if isinstance(state.get("retrieval_trace"), dict)
+                    else None
+                ),
+                "retrieval_evaluation": (
+                    dict(state.get("retrieval_evaluation") or {})
+                    if isinstance(state.get("retrieval_evaluation"), dict)
+                    else None
+                ),
+                "candidate_entities": list(state.get("candidate_entities") or []),
                 "answer_context": state.get("context"),
                 "retrieved_docs": list(retrieved_docs or []),
                 "page_context": (
@@ -267,47 +301,63 @@ class KbChatService(BaseAgentService):
 
     @staticmethod
     def _node_progress_message(node_id: str) -> str:
-        if node_id == "plan_query":
+        if node_id == "route":
             return "正在理解问题..."
+        if node_id == "plan":
+            return "正在生成检索方案..."
         if node_id == "rewrite_query":
-            return "正在优化检索问题..."
+            return "正在整理检索问题..."
         if node_id == "retrieve":
             return "正在检索知识库..."
+        if node_id == "evaluate":
+            return "Evaluating evidence..."
         if node_id == "answer":
             return "正在生成回答..."
         return "正在处理..."
-
     @staticmethod
     def _node_summary(node_id: str, state: dict[str, Any]) -> dict[str, Any]:
-        if node_id == "plan_query":
-            retrieval_plan = state.get("retrieval_plan") or {}
-            if isinstance(retrieval_plan, dict):
-                return {
-                    "plan_name": retrieval_plan.get("plan_name"),
-                    "retrieval_required": retrieval_plan.get("retrieval_required"),
-                    "rewrite_mode": ((retrieval_plan.get("rewrite") or {}).get("mode")),
-                    "retrieval_mode": ((retrieval_plan.get("retrieval") or {}).get("mode")),
-                    "rerank_enabled": (
-                        (retrieval_plan.get("retrieval") or {}).get("rerank_enabled")
-                    ),
-                    "reason": retrieval_plan.get("reason"),
-                }
-            return {"retrieval_plan": None}
-        if node_id == "rewrite_query":
-            rewrite_meta = state.get("rewrite_meta") or {}
+        if node_id == "route":
             return {
-                "rewrite_mode": rewrite_meta.get("mode"),
-                "query_count": rewrite_meta.get("query_count"),
-                "fallback": rewrite_meta.get("fallback"),
+                "question_type": state.get("question_type"),
+                "retrieval_required": state.get("retrieval_required"),
+                "retrieval_complexity": state.get("retrieval_complexity"),
+                "reason": state.get("route_reason"),
+            }
+        if node_id == "plan":
+            retrieval_execution_plan = state.get("retrieval_execution_plan") or {}
+            if isinstance(retrieval_execution_plan, dict):
+                return {
+                    "retrieval_required": state.get("retrieval_required"),
+                    "retrieval_complexity": state.get("retrieval_complexity"),
+                    "rewrite_enabled": ((retrieval_execution_plan.get("rewrite") or {}).get("enabled")),
+                    "vector_recall_k": (((retrieval_execution_plan.get("channels") or {}).get("vector") or {}).get("recall_k")),
+                    "lexical_recall_k": (((retrieval_execution_plan.get("channels") or {}).get("lexical") or {}).get("recall_k")),
+                    "graph_limit": (((retrieval_execution_plan.get("channels") or {}).get("graph") or {}).get("limit")),
+                }
+            return {"retrieval_execution_plan": None}
+        if node_id == "rewrite_query":
+            rewrite_trace = state.get("rewrite_trace") or {}
+            return {
+                "rewrite_engine": rewrite_trace.get("engine"),
+                "rewrite_policy": rewrite_trace.get("policy"),
+                "query_count": rewrite_trace.get("query_count"),
+                "fallback_used": rewrite_trace.get("fallback_used"),
             }
         if node_id == "retrieve":
             return {
                 "retrieved_count": len(state.get("retrieved_docs", [])),
-                "kb_retrieval_status": state.get("kb_retrieval_status"),
-                "query_count": len(state.get("retrieval_queries", []) or []),
-                "retrieval_mode": ((state.get("retrieval_plan") or {}).get("retrieval") or {}).get(
-                    "mode"
+                "empty_reason": ((state.get("retrieval_trace") or {}).get("empty_reason")),
+                "query_count": len(
+                    state.get("retrieval_queries", []) or state.get("text_queries", []) or []
                 ),
+                "retrieval_mode": "hybrid_graph",
+            }
+        if node_id == "evaluate":
+            evaluation = state.get("retrieval_evaluation") or {}
+            return {
+                "status": evaluation.get("status"),
+                "next_action": evaluation.get("next_action"),
+                "reason": evaluation.get("reason"),
             }
         if node_id == "answer":
             return {"answer_length": len(state.get("answer", ""))}
@@ -315,26 +365,356 @@ class KbChatService(BaseAgentService):
 
     @staticmethod
     def _resolve_answer_status(result: dict[str, Any]) -> str:
-        retrieval_status = result.get("kb_retrieval_status")
-        if retrieval_status == "blocked_sensitive":
-            return "blocked"
-        if retrieval_status in {"empty_collection", "empty_knowledge_base", "no_hits"}:
-            return "insufficient"
+        if isinstance(result.get("answer_status"), str) and result.get("answer_status"):
+            return str(result["answer_status"])
+        evaluation = dict(result.get("retrieval_evaluation") or {})
+        evaluation_status = str(evaluation.get("status") or "").strip().lower()
+        if evaluation_status == "sufficient":
+            return "answered"
+        if evaluation_status in {"insufficient", "empty", "clarification_needed"}:
+            return evaluation_status
         if result.get("answer"):
             return "answered"
         return "partial"
 
     @staticmethod
-    def _resolve_confidence(answer_status: str, retrieved_count: int) -> str | None:
-        if answer_status == "blocked":
-            return None
-        if answer_status != "answered":
-            return "low"
-        if retrieved_count >= 3:
-            return "high"
-        if retrieved_count >= 1:
-            return "medium"
-        return "low"
+    def _log_v2_retrieval_summary(
+        *,
+        state: dict[str, Any],
+        result: dict[str, Any],
+        total_latency_ms: int,
+    ) -> None:
+        if str(result.get("workflow_id") or state.get("workflow_id") or "") != "kb_chat_v2":
+            return
+
+        retrieval_trace = dict(result.get("retrieval_trace") or {})
+        text_trace = dict(retrieval_trace.get("text") or {})
+        graph_trace = dict(retrieval_trace.get("graph") or {})
+        rerank_trace = dict(retrieval_trace.get("rerank") or {})
+        evaluation = dict(result.get("retrieval_evaluation") or {})
+        rewrite_trace = dict(result.get("rewrite_trace") or {})
+        plan_trace = dict(result.get("plan_trace") or {})
+        evaluate_trace = dict(result.get("evaluate_trace") or {})
+        answer_trace = dict(result.get("answer_trace") or {})
+        retrieval_queries = list(result.get("retrieval_queries") or result.get("text_queries") or [])
+        candidate_entities = list(result.get("candidate_entities") or [])
+        graph_used = graph_trace.get("graph_used")
+        graph_hits = graph_trace.get("graph_hits", 0)
+        graph_empty_reason = graph_trace.get("empty_reason")
+        rerank_enabled = rerank_trace.get("rerank_enabled")
+        rerank_changed = rerank_trace.get("top_docs_changed")
+        top_changes = list(rerank_trace.get("top_changes") or [])
+        top_changes_text = "\n".join(
+            f"  - #{item.get('new_rank')}: 《{item.get('title') or 'Unknown document'}》 "
+            f"(原 #{item.get('old_rank')} -> 新 #{item.get('new_rank')})"
+            for item in top_changes[:3]
+        ) or "  - (暂无)"
+
+        logger.info(
+            "\n[问答日志 {}] {}\n"
+            "问题：{}\n"
+            "会话：{}\n"
+            "团队/知识库：{} / {}\n"
+            "\n"
+            "1. 问题理解\n"
+            "- question_type: {}\n"
+            "- retrieval_required: {}\n"
+            "- retrieval_complexity: {}\n"
+            "- reason: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "2. 检索改写\n"
+            "- 原问题: {}\n"
+            "- 检索问题:\n{}\n"
+            "- candidate_entities: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "3. 文本检索\n"
+            "- query_count: {}\n"
+            "- recall_k: {}\n"
+            "- lexical_k: {}\n"
+            "- 召回 chunk: {}\n"
+            "- 去重后: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "4. 图谱检索\n"
+            "- graph_used: {}\n"
+            "- matched_entities: {}\n"
+            "- graph_hits: {}\n"
+            "- empty_reason: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "5. 重排\n"
+            "- rerank_enabled: {}\n"
+            "- 重排前候选: {}\n"
+            "- 重排后保留: {}\n"
+            "- rerank_top_docs_changed: {}\n"
+            "- top_changes:\n{}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "6. 结果合并\n"
+            "- 文本证据: {}\n"
+            "- 图谱补充证据: {}\n"
+            "- final_context_docs: {}\n"
+            "- empty_reason: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "7. 证据评估\n"
+            "- status: {}\n"
+            "- next_action: {}\n"
+            "- reason: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "8. 最终回答\n"
+            "- answer_status: {}\n"
+            "- confidence: {}\n"
+            "- latency_ms: {}\n"
+            "- total_latency_ms: {}\n"
+            "\n"
+            "9. 审查信息\n"
+            "- feedback: {}\n"
+            "- suggested_review_label: {}\n"
+            "- review_label: {}\n",
+            result.get("log_id") or "-",
+            result.get("created_at") or "-",
+            str(result.get("query") or state.get("query") or ""),
+            result.get("session_id") or state.get("session_id"),
+            result.get("team_name") or result.get("team_id") or state.get("team_id") or "-",
+            result.get("knowledge_base_name")
+            or result.get("knowledge_base_id")
+            or state.get("knowledge_base_id")
+            or "-",
+            result.get("question_type") or state.get("question_type"),
+            result.get("retrieval_required") if result.get("retrieval_required") is not None else state.get("retrieval_required"),
+            result.get("retrieval_complexity") or state.get("retrieval_complexity"),
+            result.get("route_reason") or result.get("reason") or state.get("route_reason"),
+            plan_trace.get("latency_ms", 0),
+            str(result.get("query") or state.get("query") or ""),
+            "\n".join(
+                f"  {index + 1}) {query}" for index, query in enumerate(retrieval_queries[:3])
+            ) or "  (none)",
+            ", ".join(candidate_entities) if candidate_entities else "(none)",
+            rewrite_trace.get("latency_ms", 0),
+            text_trace.get("text_query_count") or len(retrieval_queries),
+            text_trace.get("recall_k", 0),
+            text_trace.get("lexical_k", 0),
+            text_trace.get("raw_candidate_count", 0),
+            text_trace.get("merged_candidate_count", text_trace.get("raw_candidate_count", 0)),
+            text_trace.get("latency_ms", 0),
+            graph_used,
+            ", ".join(candidate_entities) if candidate_entities else "(none)",
+            graph_hits,
+            graph_empty_reason or "(none)",
+            graph_trace.get("latency_ms", 0),
+            rerank_enabled,
+            rerank_trace.get("candidate_count", 0),
+            rerank_trace.get("final_count", 0),
+            rerank_changed,
+            top_changes_text,
+            rerank_trace.get("latency_ms", 0),
+            retrieval_trace.get("text_evidence_count", 0),
+            retrieval_trace.get("graph_evidence_count", 0),
+            retrieval_trace.get("final_context_docs", retrieval_trace.get("final_hits", 0)),
+            retrieval_trace.get("empty_reason"),
+            retrieval_trace.get("merge_latency_ms", 0),
+            evaluation.get("status"),
+            evaluation.get("next_action"),
+            evaluation.get("reason"),
+            evaluate_trace.get("latency_ms", 0),
+            result.get("answer_status"),
+            answer_trace.get("confidence") or "-",
+            answer_trace.get("latency_ms", 0),
+            total_latency_ms,
+            result.get("feedback_value") or "(none)",
+            result.get("suggested_review_label") or "(none)",
+            result.get("review_label") or "（未审核）",
+        )
+
+    @staticmethod
+    def _log_v2_retrieval_review_log(
+        *,
+        state: dict[str, Any],
+        result: dict[str, Any],
+        total_latency_ms: int,
+    ) -> None:
+        if str(result.get("workflow_id") or state.get("workflow_id") or "") != "kb_chat_v2":
+            return
+
+        retrieval_trace = dict(result.get("retrieval_trace") or {})
+        text_trace = dict(retrieval_trace.get("text") or {})
+        graph_trace = dict(retrieval_trace.get("graph") or {})
+        rerank_trace = dict(retrieval_trace.get("rerank") or {})
+        evaluation = dict(result.get("retrieval_evaluation") or {})
+        rewrite_trace = dict(result.get("rewrite_trace") or {})
+        plan_trace = dict(result.get("plan_trace") or {})
+        evaluate_trace = dict(result.get("evaluate_trace") or {})
+        answer_trace = dict(result.get("answer_trace") or {})
+        retrieval_queries = list(
+            result.get("retrieval_queries") or result.get("text_queries") or []
+        )
+        candidate_entities = list(result.get("candidate_entities") or [])
+
+        def _format_list(values: list[Any], *, empty_text: str = "(none)") -> str:
+            if not values:
+                return empty_text
+            items = [str(value).strip() for value in values if str(value).strip()]
+            return ", ".join(items) if items else empty_text
+
+        def _format_queries(values: list[str]) -> str:
+            if not values:
+                return "  (none)"
+            return "\n".join(
+                f"  {index + 1}. {value}" for index, value in enumerate(values[:3])
+            )
+
+        def _format_top_changes(items: list[dict[str, Any]]) -> str:
+            if not items:
+                return "  - (none)"
+            return "\n".join(
+                f"  - #{item.get('new_rank')}: 《{item.get('title') or 'Unknown document'}》 "
+                f"(原 #{item.get('old_rank')} -> 新 #{item.get('new_rank')})"
+                for item in items[:3]
+            )
+
+        logger.info(
+            "\n[问答日志 #{}] {}\n"
+            "问题：{}\n"
+            "会话：{}\n"
+            "团队/知识库：{} / {}\n"
+            "\n"
+            "1. 问题理解\n"
+            "- question_type: {}\n"
+            "- retrieval_required: {}\n"
+            "- retrieval_complexity: {}\n"
+            "- reason: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "2. 检索改写\n"
+            "- 原问题: {}\n"
+            "- 检索问题:\n{}\n"
+            "- candidate_entities: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "3. 文本检索\n"
+            "- query_count: {}\n"
+            "- recall_k: {}\n"
+            "- lexical_k: {}\n"
+            "- 召回 chunk: {}\n"
+            "- 去重后: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "4. 图谱检索\n"
+            "- graph_used: {}\n"
+            "- matched_entities: {}\n"
+            "- graph_hits: {}\n"
+            "- empty_reason: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "5. 重排\n"
+            "- rerank_enabled: {}\n"
+            "- 重排前候选: {}\n"
+            "- 重排后保留: {}\n"
+            "- rerank_top_docs_changed: {}\n"
+            "- top_changes:\n{}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "6. 结果合并\n"
+            "- 文本证据: {}\n"
+            "- 图谱补充证据: {}\n"
+            "- final_context_docs: {}\n"
+            "- empty_reason: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "7. 证据评估\n"
+            "- status: {}\n"
+            "- next_action: {}\n"
+            "- reason: {}\n"
+            "- latency_ms: {}\n"
+            "\n"
+            "8. 最终回答\n"
+            "- answer_status: {}\n"
+            "- confidence: {}\n"
+            "- latency_ms: {}\n"
+            "- total_latency_ms: {}\n"
+            "\n"
+            "9. 审查信息\n"
+            "- feedback: {}\n"
+            "- suggested_review_label: {}\n"
+            "- review_label: {}\n",
+            result.get("log_id") or "-",
+            result.get("created_at") or "-",
+            str(result.get("query") or state.get("query") or ""),
+            result.get("session_id") or state.get("session_id") or "-",
+            result.get("team_name") or result.get("team_id") or state.get("team_id") or "-",
+            result.get("knowledge_base_name")
+            or result.get("knowledge_base_id")
+            or state.get("knowledge_base_id")
+            or "-",
+            result.get("question_type") or state.get("question_type") or "-",
+            result.get("retrieval_required")
+            if result.get("retrieval_required") is not None
+            else state.get("retrieval_required"),
+            result.get("retrieval_complexity") or state.get("retrieval_complexity") or "-",
+            result.get("route_reason")
+            or result.get("reason")
+            or state.get("route_reason")
+            or "-",
+            int(plan_trace.get("latency_ms") or 0),
+            str(result.get("query") or state.get("query") or ""),
+            _format_queries([str(query) for query in retrieval_queries if str(query).strip()]),
+            _format_list(candidate_entities),
+            int(rewrite_trace.get("latency_ms") or 0),
+            int(text_trace.get("text_query_count") or len(retrieval_queries) or 0),
+            int(text_trace.get("recall_k") or 0),
+            int(text_trace.get("lexical_k") or 0),
+            int(text_trace.get("text_hits") or text_trace.get("raw_candidate_count") or 0),
+            int(
+                text_trace.get("merged_candidate_count")
+                or text_trace.get("text_hits")
+                or text_trace.get("raw_candidate_count")
+                or 0
+            ),
+            int(
+                text_trace.get("latency_ms")
+                or retrieval_trace.get("text_retrieval_latency_ms")
+                or 0
+            ),
+            bool(graph_trace.get("graph_used")),
+            _format_list(candidate_entities),
+            int(graph_trace.get("graph_hits") or 0),
+            graph_trace.get("empty_reason") or "(none)",
+            int(graph_trace.get("latency_ms") or 0),
+            bool(rerank_trace.get("rerank_enabled")),
+            int(
+                rerank_trace.get("candidate_count")
+                or text_trace.get("raw_candidate_count")
+                or 0
+            ),
+            int(rerank_trace.get("final_count") or 0),
+            bool(rerank_trace.get("top_docs_changed")),
+            _format_top_changes(list(rerank_trace.get("top_changes") or [])),
+            int(rerank_trace.get("latency_ms") or 0),
+            int(retrieval_trace.get("text_evidence_count") or 0),
+            int(retrieval_trace.get("graph_evidence_count") or 0),
+            int(
+                retrieval_trace.get("final_context_docs")
+                or retrieval_trace.get("final_hits")
+                or 0
+            ),
+            retrieval_trace.get("empty_reason") or "-",
+            int(retrieval_trace.get("merge_latency_ms") or 0),
+            evaluation.get("status") or "-",
+            evaluation.get("next_action") or "-",
+            evaluation.get("reason") or "-",
+            int(evaluate_trace.get("latency_ms") or 0),
+            result.get("answer_status") or "-",
+            answer_trace.get("confidence") or "-",
+            int(answer_trace.get("latency_ms") or 0),
+            total_latency_ms,
+            result.get("feedback_value") or "(none)",
+            result.get("suggested_review_label") or "(none)",
+            result.get("review_label") or "（未审核）",
+        )
 
     async def _record_log(
         self,
@@ -356,13 +736,12 @@ class KbChatService(BaseAgentService):
                     external_user_id=state.get("external_user_id"),
                     external_user_name=state.get("external_user_name"),
                     knowledge_base_id=state.get("knowledge_base_id"),
-                    knowledge_base_branch_ids=list(state.get("knowledge_base_branch_ids") or []),
                     assistant_id=state.get("assistant_id"),
                     category_id=state.get("category_id"),
                     query=str(state.get("query") or ""),
                     answer_text=str(result.get("answer") or ""),
                     answer_status=self._resolve_answer_status(result),
-                    retrieval_status=result.get("kb_retrieval_status"),
+                    retrieval_status=None,
                     retrieved_count=len(result.get("retrieved_docs", []) or []),
                     latency_ms=latency_ms,
                 )
@@ -387,13 +766,11 @@ class KbChatService(BaseAgentService):
             **state,
             "answer": answer,
             "retrieved_docs": [],
-            "kb_retrieval_status": "blocked_sensitive",
-            "retrieval_plan": {},
+            "retrieval_execution_plan": {},
             "retrieval_queries": [],
-            "rewrite_meta": {},
-            "retrieval_funnel": None,
             "context": "",
             "matched_sensitive_words": list(check_result.matched_words),
+            "answer_status": "blocked",
         }
 
     async def _check_sensitive_query(
@@ -433,7 +810,6 @@ class KbChatService(BaseAgentService):
                 answer=result["answer"],
                 answer_text=result["answer"],
                 answer_status=answer_status,
-                confidence_level=None,
                 backend_citations=[],
                 retrieved_docs=[],
                 assistant_id=state.get("assistant_id"),
@@ -446,10 +822,16 @@ class KbChatService(BaseAgentService):
         result = await self._get_graph().ainvoke(state)
         answer = result.get("answer", "")
         answer_status = self._resolve_answer_status(result)
+        total_latency_ms = int((perf_counter() - started_at) * 1000)
+        self._log_v2_retrieval_review_log(
+            state=state,
+            result=result,
+            total_latency_ms=total_latency_ms,
+        )
         log_id = await self._record_log(
             state=state,
             result=result,
-            latency_ms=int((perf_counter() - started_at) * 1000),
+            latency_ms=total_latency_ms,
         )
         await self._save_turn(
             state=result,
@@ -462,10 +844,6 @@ class KbChatService(BaseAgentService):
             answer=answer,
             answer_text=answer,
             answer_status=answer_status,
-            confidence_level=self._resolve_confidence(
-                answer_status,
-                len(result.get("retrieved_docs", []) or []),
-            ),
             backend_citations=result.get("retrieved_docs", []),
             retrieved_docs=result.get("retrieved_docs", []),
             assistant_id=state.get("assistant_id"),
@@ -494,7 +872,6 @@ class KbChatService(BaseAgentService):
                 answer=result["answer"],
                 answer_text=result["answer"],
                 answer_status=answer_status,
-                confidence_level=None,
                 backend_citations=[],
                 retrieved_docs=[],
                 assistant_id=state.get("assistant_id"),
@@ -509,10 +886,6 @@ class KbChatService(BaseAgentService):
             answer=result.get("answer", ""),
             answer_text=result.get("answer", ""),
             answer_status=answer_status,
-            confidence_level=self._resolve_confidence(
-                answer_status,
-                len(result.get("retrieved_docs", []) or []),
-            ),
             backend_citations=result.get("retrieved_docs", []),
             retrieved_docs=result.get("retrieved_docs", []),
             assistant_id=state.get("assistant_id"),
@@ -551,7 +924,6 @@ class KbChatService(BaseAgentService):
                 external_user_name=record.external_user_name,
                 team_id=record.team_id,
                 knowledge_base_id=record.knowledge_base_id,
-                knowledge_base_branch_ids=list(record.knowledge_base_branch_ids or []),
                 knowledge_base_name=record.knowledge_base_name,
                 assistant_id=record.assistant_id,
                 assistant_name=record.assistant_name,
@@ -596,7 +968,6 @@ class KbChatService(BaseAgentService):
             external_user_name=record.external_user_name,
             team_id=record.team_id,
             knowledge_base_id=record.knowledge_base_id,
-            knowledge_base_branch_ids=list(record.knowledge_base_branch_ids or []),
             knowledge_base_name=record.knowledge_base_name,
             assistant_id=record.assistant_id,
             assistant_name=record.assistant_name,
@@ -655,6 +1026,7 @@ class KbChatService(BaseAgentService):
 
         state = await self._prepare_state(request, user_id=user_id)
         run_id = state.get("run_id")
+        workflow_id = str(state.get("workflow_id") or self._workflow_id)
         graph = self._get_graph()
         started_nodes: set[str] = set()
         final_state = dict(state)
@@ -684,7 +1056,6 @@ class KbChatService(BaseAgentService):
                         "answer": blocked_state["answer"],
                         "answer_text": blocked_state["answer"],
                         "answer_status": answer_status,
-                        "confidence_level": None,
                         "backend_citations": [],
                         "retrieved_docs": [],
                         "assistant_id": state.get("assistant_id"),
@@ -704,7 +1075,7 @@ class KbChatService(BaseAgentService):
 
                 if chunk_type == "updates":
                     for node_id, node_state in chunk_data.items():
-                        node_name = get_node_label("kb_chat", node_id)
+                        node_name = get_node_label(workflow_id, node_id)
                         if node_id not in started_nodes:
                             yield emit_node_start(
                                 node_id,
@@ -732,7 +1103,7 @@ class KbChatService(BaseAgentService):
                         )
                 elif chunk_type == "custom":
                     node_id = chunk_data.get("node_id") or "answer"
-                    node_name = get_node_label("kb_chat", node_id)
+                    node_name = get_node_label(workflow_id, node_id)
                     if chunk_data.get("type") == "progress":
                         message = str(
                             chunk_data.get("message") or self._node_progress_message(node_id)
@@ -779,10 +1150,16 @@ class KbChatService(BaseAgentService):
 
             answer = final_state.get("answer", "")
             answer_status = self._resolve_answer_status(final_state)
+            total_latency_ms = int((perf_counter() - started_at) * 1000)
+            self._log_v2_retrieval_review_log(
+                state=state,
+                result=final_state,
+                total_latency_ms=total_latency_ms,
+            )
             log_id = await self._record_log(
                 state=state,
                 result=final_state,
-                latency_ms=int((perf_counter() - started_at) * 1000),
+                latency_ms=total_latency_ms,
             )
             await self._save_turn(
                 state=final_state,
@@ -797,10 +1174,6 @@ class KbChatService(BaseAgentService):
                     "answer": answer,
                     "answer_text": answer,
                     "answer_status": answer_status,
-                    "confidence_level": self._resolve_confidence(
-                        answer_status,
-                        len(final_state.get("retrieved_docs", []) or []),
-                    ),
                     "backend_citations": final_state.get("retrieved_docs", []),
                     "retrieved_docs": final_state.get("retrieved_docs", []),
                     "assistant_id": state.get("assistant_id"),

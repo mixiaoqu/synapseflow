@@ -10,20 +10,6 @@ export interface KnowledgeBaseBase {
   updated_at: string;
 }
 
-export interface KnowledgeBaseBranch {
-  id: number;
-  knowledge_base_id: number;
-  code: string;
-  name: string;
-  description?: string | null;
-  is_active: boolean;
-  created_by_user_id?: number | null;
-  created_at: string;
-  updated_at: string;
-  bound_app_count: number;
-  document_count: number;
-}
-
 export type KnowledgeBaseStatus = "available" | "indexing" | "error" | "empty";
 
 export interface KnowledgeBaseRecentDocument {
@@ -89,45 +75,4 @@ export async function updateKnowledgeBase(
 
 export async function deleteKnowledgeBase(knowledgeBaseId: number): Promise<void> {
   await apiClient.delete(`/api/v1/knowledge-bases/${knowledgeBaseId}`);
-}
-
-export async function listKnowledgeBaseBranches(
-  knowledgeBaseId: number,
-): Promise<KnowledgeBaseBranch[]> {
-  return apiClient.get(`/api/v1/knowledge-bases/${knowledgeBaseId}/branches`);
-}
-
-export async function createKnowledgeBaseBranch(
-  knowledgeBaseId: number,
-  payload: {
-    code: string;
-    name: string;
-    description?: string | null;
-    is_active: boolean;
-  },
-): Promise<KnowledgeBaseBranch> {
-  return apiClient.post(`/api/v1/knowledge-bases/${knowledgeBaseId}/branches`, payload);
-}
-
-export async function updateKnowledgeBaseBranch(
-  knowledgeBaseId: number,
-  branchId: number,
-  payload: {
-    code: string;
-    name: string;
-    description?: string | null;
-    is_active: boolean;
-  },
-): Promise<KnowledgeBaseBranch> {
-  return apiClient.put(
-    `/api/v1/knowledge-bases/${knowledgeBaseId}/branches/${branchId}`,
-    payload,
-  );
-}
-
-export async function deleteKnowledgeBaseBranch(
-  knowledgeBaseId: number,
-  branchId: number,
-): Promise<void> {
-  await apiClient.delete(`/api/v1/knowledge-bases/${knowledgeBaseId}/branches/${branchId}`);
 }

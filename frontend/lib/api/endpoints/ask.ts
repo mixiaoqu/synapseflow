@@ -38,7 +38,6 @@ export interface AskResponse {
   answer: string;
   answer_text: string;
   answer_status: string;
-  confidence_level?: string | null;
   backend_citations: AskRetrievedDoc[];
   retrieved_docs: AskRetrievedDoc[];
   assistant_id?: number | null;

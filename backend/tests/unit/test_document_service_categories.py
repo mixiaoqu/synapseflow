@@ -5,6 +5,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.application.document_service import DocumentService
+from app.models.schemas.document import DocumentCreate
 from app.services.document_index_state import INDEX_STATUS_INDEXED
 
 
@@ -41,6 +42,59 @@ def test_document_service_rejects_publish_from_draft():
 
     with pytest.raises(HTTPException):
         DocumentService._assert_can_publish(doc)
+
+
+def test_document_create_schema_does_not_require_knowledge_base_branch_id():
+    payload = DocumentCreate(
+        title="FAQ",
+        content="content",
+        knowledge_base_id=3,
+    )
+
+    assert payload.knowledge_base_id == 3
+
+
+@pytest.mark.asyncio
+async def test_document_service_resolves_location_without_branch(monkeypatch):
+    service = DocumentService()
+
+    class DummyCategoryRepository:
+        def __init__(self, db, user_id):
+            self.db = db
+            self.user_id = user_id
+
+        async def get_by_id(self, category_id: int):
+            return SimpleNamespace(id=category_id, knowledge_base_id=5, name="支付")
+
+        async def get_or_create(self, knowledge_base_id: int, name: str):
+            return SimpleNamespace(id=9, knowledge_base_id=knowledge_base_id, name=name)
+
+    class DummyKnowledgeBaseRepository:
+        def __init__(self, db, user_id):
+            self.db = db
+            self.user_id = user_id
+
+        async def get_by_id(self, knowledge_base_id: int):
+            return SimpleNamespace(id=knowledge_base_id, team_id=2, name="知识库A")
+
+    monkeypatch.setattr(
+        "app.application.document_service.DocumentCategoryRepository",
+        DummyCategoryRepository,
+    )
+    monkeypatch.setattr(
+        "app.application.document_service.KnowledgeBaseRepository",
+        DummyKnowledgeBaseRepository,
+    )
+
+    result = await service._resolve_document_location(
+        db=object(),
+        user_id=1,
+        knowledge_base_id=5,
+        category_id=None,
+        source_path="支付/FAQ.md",
+    )
+
+    assert result == (5, 9, "支付/FAQ.md")
 
 
 def test_upload_documents_batch_does_not_swallow_unexpected_errors(monkeypatch):

@@ -7,12 +7,10 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock3,
-  Database,
   Edit3,
   FileText,
   Folder,
   Globe2,
-  Layers,
   Loader2,
   RefreshCcw,
   Send,
@@ -110,7 +108,7 @@ function buildListUrl(
   documentId: number,
 ) {
   const next = new URLSearchParams();
-  for (const key of ["teamId", "branchId", "categoryId"]) {
+  for (const key of ["teamId", "categoryId"]) {
     const value = query.get(key);
     if (value) next.set(key, value);
   }
@@ -459,12 +457,10 @@ function DocumentDetailPageContent() {
               <p className="text-sm font-semibold text-slate-900">文档基础信息</p>
               <div className="mt-4 grid gap-4">
                 <div>
-                  <p className="text-xs text-slate-500">所属知识库与版本</p>
+                  <p className="text-xs text-slate-500">所属知识库</p>
                   <p className="mt-1 flex min-w-0 items-center gap-2 text-sm font-medium text-slate-800">
-                    <Database className="h-4 w-4 shrink-0 text-slate-400" />
+                    <Globe2 className="h-4 w-4 shrink-0 text-slate-400" />
                     <span className="truncate">知识库 #{document.knowledge_base_id ?? knowledgeBaseId}</span>
-                    <Layers className="h-4 w-4 shrink-0 text-slate-400" />
-                    <span className="truncate">{document.knowledge_base_branch_name || "未关联版本"}</span>
                   </p>
                 </div>
                 <div>

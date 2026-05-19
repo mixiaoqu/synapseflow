@@ -37,36 +37,6 @@ class KnowledgeBaseResponse(BaseModel):
     updated_at: datetime
 
 
-class KnowledgeBaseBranchCreate(BaseModel):
-    code: str = Field(..., min_length=1, max_length=120)
-    name: str = Field(..., min_length=1, max_length=100)
-    description: str | None = Field(default=None)
-    is_active: bool = True
-
-
-class KnowledgeBaseBranchUpdate(BaseModel):
-    code: str = Field(..., min_length=1, max_length=120)
-    name: str = Field(..., min_length=1, max_length=100)
-    description: str | None = Field(default=None)
-    is_active: bool = True
-
-
-class KnowledgeBaseBranchResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    knowledge_base_id: int
-    code: str
-    name: str
-    description: str | None = None
-    is_active: bool
-    created_by_user_id: int | None = None
-    created_at: datetime
-    updated_at: datetime
-    bound_app_count: int = 0
-    document_count: int = 0
-
-
 class KnowledgeBaseRecentDocument(BaseModel):
     """Recent document summary used in knowledge-base cards."""
 

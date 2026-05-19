@@ -5,9 +5,9 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AssistantProfile, KnowledgeBaseBranch, Product, Project, ProjectApp
+from app.db.models import AssistantProfile, Product, Project, ProjectApp
 from app.models.schemas.project import (
-    ProjectAppKnowledgeBaseBranchBindingResponse,
+    ProjectAppKnowledgeBaseBindingResponse,
     ProjectAppCreate,
     ProjectAppResponse,
     ProjectAppUpdate,
@@ -49,12 +49,10 @@ class ProjectService:
     @staticmethod
     def _to_binding_response(
         binding: ProjectAppBindingRecord,
-    ) -> ProjectAppKnowledgeBaseBranchBindingResponse:
-        return ProjectAppKnowledgeBaseBranchBindingResponse(
+    ) -> ProjectAppKnowledgeBaseBindingResponse:
+        return ProjectAppKnowledgeBaseBindingResponse(
             knowledge_base_id=binding.knowledge_base_id,
             knowledge_base_name=binding.knowledge_base_name,
-            knowledge_base_branch_id=binding.knowledge_base_branch_id,
-            knowledge_base_branch_name=binding.knowledge_base_branch_name,
         )
 
     @staticmethod
@@ -128,50 +126,34 @@ class ProjectService:
         *,
         project: Project,
         bindings: list,
-    ) -> list[tuple[int, int]]:
+    ) -> list[int]:
         if not bindings:
             raise HTTPException(
                 status_code=400,
-                detail="At least one knowledge base branch binding is required",
+                detail="At least one knowledge base binding is required",
             )
-        normalized: list[tuple[int, int]] = []
+        normalized: list[int] = []
         seen_knowledge_base_ids: set[int] = set()
+        from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
+
+        kb_repository = KnowledgeBaseRepository(self.db, user_id=self.user_id)
         for item in bindings:
             knowledge_base_id = int(item.knowledge_base_id)
-            knowledge_base_branch_id = int(item.knowledge_base_branch_id)
             if knowledge_base_id in seen_knowledge_base_ids:
                 raise HTTPException(
                     status_code=400,
-                    detail="Only one branch can be selected per knowledge base",
+                    detail="Duplicate knowledge base binding is not allowed",
                 )
-            branch = await self.db.get(KnowledgeBaseBranch, knowledge_base_branch_id)
-            if branch is None:
-                raise HTTPException(status_code=404, detail="Knowledge base branch not found")
-            if branch.knowledge_base_id != knowledge_base_id:
+            knowledge_base = await kb_repository.get_by_id(knowledge_base_id)
+            if knowledge_base is None:
+                raise HTTPException(status_code=404, detail="Knowledge base not found")
+            if knowledge_base.team_id != project.team_id:
                 raise HTTPException(
                     status_code=400,
-                    detail="Knowledge base branch does not belong to the selected knowledge base",
-                )
-            if not branch.is_active:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Inactive knowledge base branch cannot be bound",
+                    detail="Knowledge base does not belong to the project team",
                 )
             seen_knowledge_base_ids.add(knowledge_base_id)
-            normalized.append((knowledge_base_id, knowledge_base_branch_id))
-        if normalized:
-            from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
-
-            kb_repository = KnowledgeBaseRepository(self.db, user_id=self.user_id)
-            for knowledge_base_id, _ in normalized:
-                knowledge_base = await kb_repository.get_by_id(knowledge_base_id)
-                if knowledge_base is None:
-                    raise HTTPException(status_code=404, detail="Knowledge base not found")
-                if knowledge_base.team_id != project.team_id:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Knowledge base does not belong to the project team",
-                    )
+            normalized.append(knowledge_base_id)
         return normalized
 
     async def list_projects(self, *, team_id: int | None = None) -> list[ProjectResponse]:

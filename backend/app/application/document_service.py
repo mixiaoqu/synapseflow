@@ -13,6 +13,8 @@ from app.application.indexing_service import indexing_service
 from app.db.models import Document
 from app.models.schemas.document import (
     ActiveIndexingJob,
+    DocumentChunkResponse,
+    DocumentChunksResponse,
     DocumentContentUpdate,
     DocumentCreate,
     FailedIndexingItem,
@@ -23,6 +25,7 @@ from app.models.schemas.document import (
     DocumentVersionsResponse,
     IndexingPanelSummaryResponse,
 )
+from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.repositories.document_category_repository import DocumentCategoryRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.index_job_repository import IndexJobRepository
@@ -223,27 +226,18 @@ class DocumentService:
         db: AsyncSession,
         user_id: int,
         knowledge_base_id: int | None,
-        knowledge_base_branch_id: int | None,
         category_id: int | None,
         source_path: str | None,
-    ) -> tuple[int, int, str | None, int | None, str | None, str | None]:
+    ) -> tuple[int, int | None, str | None]:
         normalized_path = self._normalize_source_path(source_path)
         category_repo = DocumentCategoryRepository(db, user_id=user_id)
         knowledge_base_repo = KnowledgeBaseRepository(db, user_id=user_id)
-        category = None
-        if knowledge_base_branch_id is None:
-            raise HTTPException(status_code=400, detail="Knowledge base branch is required")
-        branch = await knowledge_base_repo.get_branch(knowledge_base_branch_id)
-        if branch is None:
-            raise HTTPException(status_code=404, detail="Knowledge base branch not found")
         if knowledge_base_id is None:
-            knowledge_base_id = branch.knowledge_base_id
-        elif branch.knowledge_base_id != knowledge_base_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Knowledge base branch does not belong to the selected knowledge base",
-            )
-
+            raise HTTPException(status_code=400, detail="Knowledge base is required")
+        knowledge_base = await knowledge_base_repo.get_by_id(knowledge_base_id)
+        if not knowledge_base:
+            raise HTTPException(status_code=404, detail="Knowledge base not found")
+        category = None
         if category_id is not None:
             category = await category_repo.get_by_id(category_id)
             if not category:
@@ -254,29 +248,18 @@ class DocumentService:
                     detail="Category does not belong to the selected knowledge base",
                 )
         else:
-            knowledge_base = await knowledge_base_repo.get_by_id(knowledge_base_id)
-            if not knowledge_base:
-                raise HTTPException(status_code=404, detail="Knowledge base not found")
             inferred_name = self._infer_category_name(normalized_path)
             if inferred_name:
                 category = await category_repo.get_or_create(
                     knowledge_base_id=knowledge_base_id,
                     name=inferred_name,
                 )
-        return (
-            knowledge_base_id,
-            knowledge_base_branch_id,
-            branch.name,
-            category.id if category else None,
-            category.name if category else None,
-            normalized_path,
-        )
+        return knowledge_base_id, category.id if category else None, normalized_path
 
     def _to_response(
         self,
         doc: Document,
         *,
-        branch_name: str | None = None,
         category_name: str | None = None,
     ) -> DocumentResponse:
         return DocumentResponse(
@@ -290,8 +273,6 @@ class DocumentService:
             is_latest=getattr(doc, "is_latest", True),
             is_live=getattr(doc, "is_live", False),
             knowledge_base_id=getattr(doc, "knowledge_base_id", None),
-            knowledge_base_branch_id=getattr(doc, "knowledge_base_branch_id", None),
-            knowledge_base_branch_name=branch_name,
             category_id=getattr(doc, "category_id", None),
             category_name=category_name,
             source_path=getattr(doc, "source_path", None),
@@ -303,6 +284,9 @@ class DocumentService:
             index_status=getattr(doc, "index_status", INDEX_STATUS_QUEUED),
             index_error=getattr(doc, "index_error", None),
             indexed_at=getattr(doc, "indexed_at", None),
+            graph_index_status=getattr(doc, "graph_index_status", INDEX_STATUS_QUEUED),
+            graph_index_error=getattr(doc, "graph_index_error", None),
+            graph_indexed_at=getattr(doc, "graph_indexed_at", None),
             created_at=doc.created_at,
             updated_at=doc.updated_at,
         )
@@ -314,7 +298,6 @@ class DocumentService:
         user_id: int,
         file: UploadFile,
         knowledge_base_id: int | None,
-        knowledge_base_branch_id: int | None,
         category_id: int | None,
         source_path: str | None,
     ) -> DocumentResponse:
@@ -325,16 +308,12 @@ class DocumentService:
         title, doc_type, parsed, text = self._parse_single_file(file, content)
         (
             knowledge_base_id,
-            knowledge_base_branch_id,
-            branch_name,
             category_id,
-            category_name,
             source_path,
         ) = await self._resolve_document_location(
             db=db,
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
-            knowledge_base_branch_id=knowledge_base_branch_id,
             category_id=category_id,
             source_path=source_path,
         )
@@ -345,7 +324,6 @@ class DocumentService:
             document_type=doc_type,
             size=len(text.encode("utf-8")),
             knowledge_base_id=knowledge_base_id,
-            knowledge_base_branch_id=knowledge_base_branch_id,
             category_id=category_id,
             source_path=source_path,
             status=DOC_STATUS_DRAFT,
@@ -368,7 +346,7 @@ class DocumentService:
             title=f"索引《{doc.title}》",
         )
         logger.info("Uploaded document id={} title={}", doc.id, doc.title)
-        return self._to_response(doc, branch_name=branch_name, category_name=category_name)
+        return self._to_response(doc, category_name=category_name)
 
     async def upload_documents_batch(
         self,
@@ -377,7 +355,6 @@ class DocumentService:
         user_id: int,
         files: Sequence[UploadFile],
         knowledge_base_id: int | None,
-        knowledge_base_branch_id: int | None,
         category_id: int | None,
         source_paths: Sequence[str] | None,
     ) -> list[DocumentResponse]:
@@ -395,7 +372,6 @@ class DocumentService:
         repo = DocumentRepository(db, user_id=user_id)
         created: list[Document] = []
         category_names_by_doc_key: dict[int, str | None] = {}
-        branch_names_by_doc_key: dict[int, str | None] = {}
         parsed_by_doc_key: dict[int, ParsedDocument] = {}
         normalized_source_paths = list(source_paths or [])
 
@@ -410,16 +386,12 @@ class DocumentService:
                 title, doc_type, parsed, text = self._parse_single_file(file, content)
                 (
                     resolved_knowledge_base_id,
-                    resolved_knowledge_base_branch_id,
-                    branch_name,
                     resolved_category_id,
-                    category_name,
                     normalized_source_path,
                 ) = await self._resolve_document_location(
                     db=db,
                     user_id=user_id,
                     knowledge_base_id=knowledge_base_id,
-                    knowledge_base_branch_id=knowledge_base_branch_id,
                     category_id=category_id,
                     source_path=(
                         normalized_source_paths[index]
@@ -443,7 +415,6 @@ class DocumentService:
                     is_current=True,
                     is_live=False,
                     knowledge_base_id=resolved_knowledge_base_id,
-                    knowledge_base_branch_id=resolved_knowledge_base_branch_id,
                     category_id=resolved_category_id,
                     source_path=normalized_source_path,
                     status=DOC_STATUS_DRAFT,
@@ -451,7 +422,6 @@ class DocumentService:
                 await repo.add_for_batch(doc)
                 created.append(doc)
                 category_names_by_doc_key[id(doc)] = category_name
-                branch_names_by_doc_key[id(doc)] = branch_name
                 parsed_by_doc_key[id(doc)] = parsed
             except HTTPException:
                 raise
@@ -496,7 +466,6 @@ class DocumentService:
         return [
             self._to_response(
                 doc,
-                branch_name=branch_names_by_doc_key.get(id(doc)),
                 category_name=category_names_by_doc_key.get(id(doc)),
             )
             for doc in created
@@ -521,19 +490,16 @@ class DocumentService:
 
         (
             knowledge_base_id,
-            knowledge_base_branch_id,
-            branch_name,
             category_id,
-            category_name,
             source_path,
         ) = await self._resolve_document_location(
             db=db,
             user_id=user_id,
             knowledge_base_id=body.knowledge_base_id,
-            knowledge_base_branch_id=body.knowledge_base_branch_id,
             category_id=body.category_id,
             source_path=body.source_path,
         )
+        category_name = await DocumentRepository(db, user_id=user_id).get_category_name(category_id)
         repo = DocumentRepository(db, user_id=user_id)
         doc = await repo.create(
             title=title,
@@ -541,7 +507,6 @@ class DocumentService:
             document_type=body.document_type or "txt",
             size=len(text.encode("utf-8")),
             knowledge_base_id=knowledge_base_id,
-            knowledge_base_branch_id=knowledge_base_branch_id,
             category_id=category_id,
             source_path=source_path,
             status=DOC_STATUS_DRAFT,
@@ -564,7 +529,7 @@ class DocumentService:
             title=f"索引《{doc.title}》",
         )
         logger.info("Created document from content id={} title={}", doc.id, doc.title)
-        return self._to_response(doc, branch_name=branch_name, category_name=category_name)
+        return self._to_response(doc, category_name=category_name)
 
     async def list_documents(
         self,
@@ -576,7 +541,6 @@ class DocumentService:
         keyword: str | None,
         team_id: int | None,
         knowledge_base_id: int | None,
-        knowledge_base_branch_id: int | None,
         category_id: int | None,
         status: str | None = None,
     ) -> DocumentListResponse:
@@ -590,7 +554,6 @@ class DocumentService:
             keyword=keyword,
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
-            knowledge_base_branch_id=knowledge_base_branch_id,
             category_id=category_id,
             status=status,
         )
@@ -611,8 +574,6 @@ class DocumentService:
                 index_error=getattr(doc, "index_error", None),
                 indexed_at=getattr(doc, "indexed_at", None),
                 knowledge_base_id=getattr(doc, "knowledge_base_id", None),
-                knowledge_base_branch_id=getattr(doc, "knowledge_base_branch_id", None),
-                knowledge_base_branch_name=knowledge_base_branch_name,
                 category_id=getattr(doc, "category_id", None),
                 knowledge_base_name=knowledge_base_name,
                 category_name=category_name,
@@ -623,7 +584,7 @@ class DocumentService:
                 reviewed_at=getattr(doc, "reviewed_at", None),
                 reviewed_by=getattr(doc, "reviewed_by", None),
             )
-            for doc, knowledge_base_name, knowledge_base_branch_name, category_name in rows
+            for doc, knowledge_base_name, category_name in rows
         ]
         return DocumentListResponse(items=items, total=total, page=page, page_size=page_size)
 
@@ -736,8 +697,42 @@ class DocumentService:
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
         category_name = await repo.get_category_name(getattr(doc, "category_id", None))
-        branch_name = await repo.get_branch_name(getattr(doc, "knowledge_base_branch_id", None))
-        return self._to_response(doc, branch_name=branch_name, category_name=category_name)
+        return self._to_response(doc, category_name=category_name)
+
+    async def get_document_chunks(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc_id: int,
+    ) -> DocumentChunksResponse:
+        repo = DocumentRepository(db, user_id=user_id)
+        doc = await repo.get_by_id_for_user(doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        chunk_rows = await DocumentChunkRepository(db).get_child_chunks_for_document(doc_id)
+        items = [
+            DocumentChunkResponse(
+                id=row.id,
+                document_id=row.document_id,
+                chunk_kind=row.chunk_kind,
+                parent_chunk_id=row.parent_chunk_id,
+                chunk_index=row.chunk_index,
+                prev_chunk_id=row.prev_chunk_id,
+                next_chunk_id=row.next_chunk_id,
+                section_path=row.section_path,
+                block_types=list(row.block_types or []),
+                start_offset=row.start_offset,
+                end_offset=row.end_offset,
+                content=row.content or "",
+                search_text=row.search_text or "",
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+            )
+            for row in chunk_rows
+        ]
+        return DocumentChunksResponse(items=items, total=len(items))
 
     async def reindex_all_documents(
         self,
@@ -815,8 +810,7 @@ class DocumentService:
         )
         logger.info("Replaced document content id={}", doc_id)
         category_name = await repo.get_category_name(getattr(doc, "category_id", None))
-        branch_name = await repo.get_branch_name(getattr(doc, "knowledge_base_branch_id", None))
-        return self._to_response(doc, branch_name=branch_name, category_name=category_name)
+        return self._to_response(doc, category_name=category_name)
 
     async def create_document_version(
         self,
@@ -862,8 +856,7 @@ class DocumentService:
         )
         logger.info("Created document version id={} from doc_id={}", new_doc.id, doc_id)
         category_name = await repo.get_category_name(getattr(new_doc, "category_id", None))
-        branch_name = await repo.get_branch_name(getattr(new_doc, "knowledge_base_branch_id", None))
-        return self._to_response(new_doc, branch_name=branch_name, category_name=category_name)
+        return self._to_response(new_doc, category_name=category_name)
 
     async def switch_current_document_version(
         self,
@@ -891,8 +884,7 @@ class DocumentService:
         )
         logger.info("Switched current document version id={}", target.id)
         category_name = await repo.get_category_name(getattr(target, "category_id", None))
-        branch_name = await repo.get_branch_name(getattr(target, "knowledge_base_branch_id", None))
-        return self._to_response(target, branch_name=branch_name, category_name=category_name)
+        return self._to_response(target, category_name=category_name)
 
     async def submit_document_for_review(
         self,
@@ -913,8 +905,7 @@ class DocumentService:
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
         category_name = await repo.get_category_name(getattr(doc, "category_id", None))
-        branch_name = await repo.get_branch_name(getattr(doc, "knowledge_base_branch_id", None))
-        return self._to_response(doc, branch_name=branch_name, category_name=category_name)
+        return self._to_response(doc, category_name=category_name)
 
     async def reject_document(
         self,
@@ -936,8 +927,7 @@ class DocumentService:
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
         category_name = await repo.get_category_name(getattr(doc, "category_id", None))
-        branch_name = await repo.get_branch_name(getattr(doc, "knowledge_base_branch_id", None))
-        return self._to_response(doc, branch_name=branch_name, category_name=category_name)
+        return self._to_response(doc, category_name=category_name)
 
     async def publish_document(
         self,
@@ -991,8 +981,7 @@ class DocumentService:
         await db.commit()
         await db.refresh(doc)
         category_name = await repo.get_category_name(getattr(doc, "category_id", None))
-        branch_name = await repo.get_branch_name(getattr(doc, "knowledge_base_branch_id", None))
-        return self._to_response(doc, branch_name=branch_name, category_name=category_name)
+        return self._to_response(doc, category_name=category_name)
 
     async def unpublish_document(
         self,
@@ -1016,8 +1005,7 @@ class DocumentService:
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
         category_name = await repo.get_category_name(getattr(doc, "category_id", None))
-        branch_name = await repo.get_branch_name(getattr(doc, "knowledge_base_branch_id", None))
-        return self._to_response(doc, branch_name=branch_name, category_name=category_name)
+        return self._to_response(doc, category_name=category_name)
 
     async def delete_documents_batch(
         self,

@@ -16,7 +16,7 @@ def test_kb_chat_prompt_includes_assistant_layers_without_dropping_base_rules():
             "How do I create a project?",
             "How do I configure a team?",
         ],
-        retrieval_status="no_hits",
+        evidence_status="empty",
     )
 
     assert "Current assistant name: Implementation Assistant" in prompt
@@ -30,8 +30,8 @@ def test_kb_chat_prompt_includes_assistant_layers_without_dropping_base_rules():
     assert "Use numbered steps for procedures." in prompt
     assert "[Configured suggested prompts]" in prompt
     assert "- How do I create a project?" in prompt
-    assert "[Retrieval status]" in prompt
-    assert "no_hits" in prompt
+    assert "[Evidence evaluation]" in prompt
+    assert "empty" in prompt
     assert "Do not fabricate facts" in prompt
     assert "Knowledge-base context" in prompt
 
@@ -46,7 +46,7 @@ def test_kb_chat_prompt_keeps_readable_chinese_constraints_and_page_context_labe
             "assistant_intro": "可咨询账号相关问题",
         },
         page_context={"page_type": "account-detail"},
-        retrieval_status="ok",
+        evidence_status="sufficient",
     )
 
     assert "资料中没有提到" in prompt

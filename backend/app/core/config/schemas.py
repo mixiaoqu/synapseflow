@@ -65,6 +65,17 @@ class RagChunkConfig:
 
 
 @dataclass(frozen=True)
+class RagRetrievalProfileConfig:
+    recall_k: int
+    lexical_k: int
+    graph_limit: int
+    final_top_k: int
+    llm_reference_top_k: int | None
+    context_budget: int
+    rerank_enabled: bool
+
+
+@dataclass(frozen=True)
 class RagRetrievalConfig:
     k_first: int
     distance_threshold: float
@@ -76,6 +87,7 @@ class RagRetrievalConfig:
     rrf_k: int
     hybrid_pool_limit: int
     kb_context_max_chars: int
+    profiles: dict[str, RagRetrievalProfileConfig]
 
 
 @dataclass(frozen=True)

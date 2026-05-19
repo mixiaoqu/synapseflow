@@ -29,17 +29,11 @@ class DocumentCategoryRepository:
     async def list_for_knowledge_base(
         self,
         knowledge_base_id: int,
-        knowledge_base_branch_id: int | None = None,
     ) -> list[DocumentCategorySummary]:
         document_join_condition = (
             (Document.category_id == DocumentCategory.id)
             & Document.is_current.is_(True)
         )
-        if knowledge_base_branch_id is not None:
-            document_join_condition = (
-                document_join_condition
-                & (Document.knowledge_base_branch_id == knowledge_base_branch_id)
-            )
 
         stmt = (
             select(

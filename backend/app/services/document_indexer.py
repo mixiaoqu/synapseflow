@@ -208,6 +208,17 @@ async def index_document_graph(
 
     repository = DocumentChunkRepository(db)
     child_rows = await repository.get_child_chunks_for_document(document_id)
+    document_scope_result = await db.execute(
+        select(
+            KnowledgeBase.team_id.label("team_id"),
+            Document.knowledge_base_id.label("knowledge_base_id"),
+        )
+        .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
+        .where(Document.id == document_id)
+    )
+    document_scope = document_scope_result.one_or_none()
+    if document_scope is None:
+        raise ValueError(f"Document {document_id} must belong to a team and knowledge base")
     store = get_graph_store()
     indexer = GraphIndexer(store)
     summary = {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
@@ -216,6 +227,8 @@ async def index_document_graph(
 
     for row in child_rows:
         chunk = GraphChunkRecord(
+            team_id=int(document_scope.team_id),
+            knowledge_base_id=int(document_scope.knowledge_base_id),
             document_id=document_id,
             document_chunk_id=int(row.id),
             document_title=title,

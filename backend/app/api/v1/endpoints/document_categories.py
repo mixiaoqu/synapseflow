@@ -20,18 +20,11 @@ router = APIRouter()
 @router.get("", response_model=list[DocumentCategoryResponse])
 async def list_document_categories(
     knowledge_base_id: int = Query(..., description="Owning knowledge base id"),
-    knowledge_base_branch_id: int | None = Query(
-        None,
-        description="Optional knowledge base branch id for branch-scoped category counts",
-    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
     repo = DocumentCategoryRepository(db, user_id=current_user.id)
-    rows = await repo.list_for_knowledge_base(
-        knowledge_base_id,
-        knowledge_base_branch_id=knowledge_base_branch_id,
-    )
+    rows = await repo.list_for_knowledge_base(knowledge_base_id)
     return [
         DocumentCategoryResponse(
             id=row.category.id,

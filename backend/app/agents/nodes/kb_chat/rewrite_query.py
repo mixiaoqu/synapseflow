@@ -70,7 +70,7 @@ async def user_kb_rewrite_query_node(state: KbChatState) -> dict[str, Any]:
         max_queries=max_queries,
     )
     started_at = perf_counter()
-    retrieval_queries = await build_kb_chat_retrieval_queries(
+    rewrite_result = await build_kb_chat_retrieval_queries(
         query,
         chat_history=state.get("chat_history") or [],
         memory_summary=state.get("memory_summary"),
@@ -79,6 +79,7 @@ async def user_kb_rewrite_query_node(state: KbChatState) -> dict[str, Any]:
         max_queries=max_queries,
         strategies=strategies,
     )
+    retrieval_queries = list(rewrite_result.get("queries") or [])
     latency_ms = int((perf_counter() - started_at) * 1000)
     effective_mode = mode if rewrite_enabled else "skip"
     fallback = effective_mode == "llm" and len(retrieval_queries) <= 1

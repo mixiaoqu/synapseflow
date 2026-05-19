@@ -1,6 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from app.services.graph_models import (
     ChunkGraphExtraction,
     GraphChunkRecord,
@@ -47,6 +49,8 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
 
     extraction = ChunkGraphExtraction(
         chunk=GraphChunkRecord(
+            team_id=2,
+            knowledge_base_id=9,
             document_id=1,
             document_chunk_id=101,
             document_title="系统说明",
@@ -65,6 +69,8 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
         ],
         relations=[
             GraphRelationRecord(
+                team_id=2,
+                knowledge_base_id=9,
                 document_id=1,
                 document_chunk_id=101,
                 source_normalized_name="projectapp",
@@ -78,6 +84,9 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
     class DummyGraphConfig:
         enabled = True
         indexing_enabled = True
+
+    async def fake_execute(stmt):
+        return SimpleNamespace(one_or_none=lambda: SimpleNamespace(team_id=2, knowledge_base_id=9))
 
     monkeypatch.setattr(
         "app.services.document_indexer.DocumentChunkRepository",
@@ -106,7 +115,7 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
 
     summary = asyncio.run(
         index_document_graph(
-            object(),
+            SimpleNamespace(execute=fake_execute),
             document_id=1,
             title="系统说明",
             commit=False,
@@ -119,3 +128,38 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
     assert ("entity", "projectapp") in events
     assert ("mention", "projectapp", 101) in events
     assert events[-1] == ("prune",)
+
+
+def test_index_document_graph_requires_document_team_and_knowledge_base(monkeypatch):
+    class FakeChunkRepository:
+        def __init__(self, db):
+            pass
+
+        async def get_child_chunks_for_document(self, document_id):
+            return []
+
+    class DummyGraphConfig:
+        enabled = True
+        indexing_enabled = True
+
+    async def fake_execute(stmt):
+        return SimpleNamespace(one_or_none=lambda: None)
+
+    monkeypatch.setattr(
+        "app.services.document_indexer.DocumentChunkRepository",
+        FakeChunkRepository,
+    )
+    monkeypatch.setattr(
+        "app.services.document_indexer.config_registry.get_graph_config",
+        lambda: DummyGraphConfig(),
+    )
+
+    with pytest.raises(ValueError, match="Document 1 must belong to a team and knowledge base"):
+        asyncio.run(
+            index_document_graph(
+                SimpleNamespace(execute=fake_execute),
+                document_id=1,
+                title="ç³»ç»Ÿè¯´æ˜Ž",
+                commit=False,
+            )
+        )

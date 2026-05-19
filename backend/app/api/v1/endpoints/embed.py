@@ -82,7 +82,6 @@ def _build_embed_runtime_request(
 ) -> SimpleNamespace:
     assistant = runtime.assistant
     knowledge_base_ids = [item.knowledge_base_id for item in runtime.bindings]
-    knowledge_base_branch_ids = [item.knowledge_base_branch_id for item in runtime.bindings]
     return SimpleNamespace(
         query=query,
         session_id=session_id,
@@ -94,7 +93,6 @@ def _build_embed_runtime_request(
         team_id=assistant.team_id,
         knowledge_base_id=knowledge_base_ids[0] if len(knowledge_base_ids) == 1 else None,
         knowledge_base_ids=knowledge_base_ids,
-        knowledge_base_branch_ids=knowledge_base_branch_ids,
         category_id=None,
         assistant_id=assistant.id,
         assistant_name=assistant.name,

@@ -2,7 +2,13 @@ from app.core.config.registry import config_registry
 from app.core.config.settings import Settings, settings
 
 
-def test_graph_settings_default_to_safe_disabled_values():
+def test_graph_settings_default_to_safe_disabled_values(monkeypatch):
+    monkeypatch.delenv("GRAPH_ENABLED", raising=False)
+    monkeypatch.delenv("GRAPH_INDEXING_ENABLED", raising=False)
+    monkeypatch.delenv("GRAPH_URI", raising=False)
+    monkeypatch.delenv("GRAPH_USERNAME", raising=False)
+    monkeypatch.delenv("GRAPH_PASSWORD", raising=False)
+    monkeypatch.delenv("GRAPH_DATABASE", raising=False)
     cfg = Settings(_env_file=None)
 
     assert cfg.GRAPH_ENABLED is False
@@ -29,6 +35,8 @@ def test_graph_config_reads_app_yaml_with_env_overrides(monkeypatch):
     monkeypatch.setattr(settings, "GRAPH_USERNAME", "graph-user")
     monkeypatch.setattr(settings, "GRAPH_PASSWORD", "graph-pass")
     monkeypatch.setattr(settings, "GRAPH_DATABASE", "synapseflow")
+    monkeypatch.setattr(settings, "GRAPH_ENABLED", False)
+    monkeypatch.setattr(settings, "GRAPH_INDEXING_ENABLED", False)
     config_registry.get_graph_config.cache_clear()
 
     try:

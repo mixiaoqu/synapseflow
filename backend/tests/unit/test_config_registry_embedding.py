@@ -58,3 +58,54 @@ def test_rag_chunk_config_reads_structured_chunk_fields(monkeypatch):
     finally:
         config_registry.get_rag_config.cache_clear()
 
+
+def test_rag_retrieval_config_reads_profiles(monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.registry.load_embedding_raw",
+        lambda: {
+            "chunk": {},
+            "retrieval": {
+                "k_first": 32,
+                "distance_threshold": 0.5,
+                "rerank_threshold": None,
+                "final_top_k": 16,
+                "llm_reference_top_k": 10,
+                "hybrid_enabled": True,
+                "lexical_k": 32,
+                "rrf_k": 60,
+                "hybrid_pool_limit": 64,
+                "kb_context_max_chars": 16000,
+                "profiles": {
+                    "fast": {
+                        "recall_k": 18,
+                        "lexical_k": 12,
+                        "graph_limit": 6,
+                        "final_top_k": 8,
+                        "llm_reference_top_k": 8,
+                        "context_budget": 8000,
+                        "rerank_enabled": False,
+                    },
+                    "standard": {
+                        "recall_k": 32,
+                        "lexical_k": 24,
+                        "graph_limit": 10,
+                        "final_top_k": 10,
+                        "llm_reference_top_k": 10,
+                        "context_budget": 12000,
+                        "rerank_enabled": False,
+                    },
+                },
+            },
+        },
+    )
+    config_registry.get_rag_config.cache_clear()
+
+    try:
+        retrieval = config_registry.get_rag_config().retrieval
+        assert retrieval.profiles["fast"].recall_k == 18
+        assert retrieval.profiles["fast"].graph_limit == 6
+        assert retrieval.profiles["standard"].context_budget == 12000
+        assert retrieval.profiles["standard"].rerank_enabled is False
+    finally:
+        config_registry.get_rag_config.cache_clear()
+
