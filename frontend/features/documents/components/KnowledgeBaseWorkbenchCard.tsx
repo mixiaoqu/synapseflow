@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, MoreHorizontal, PencilLine, Plus, Trash2, UploadCloud } from "lucide-react";
+import { Loader2, MoreHorizontal, PencilLine, Trash2, UploadCloud } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -10,34 +10,28 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { KnowledgeBaseBranch, KnowledgeBaseWithCount } from "@/lib/api/knowledgeBases";
+import type { KnowledgeBaseWithCount } from "@/lib/api/knowledgeBases";
 import { cn } from "@/lib/utils";
 
 import { formatKnowledgeBaseDateTime } from "./KnowledgeBaseStatusSummary";
 
 export function KnowledgeBaseWorkbenchCard({
   knowledgeBase,
-  branches,
   active,
   deleting,
   onOpen,
   onUpload,
   onEdit,
-  onCreateBranch,
   onDelete,
 }: {
   knowledgeBase: KnowledgeBaseWithCount;
-  branches: KnowledgeBaseBranch[];
   active: boolean;
   deleting: boolean;
   onOpen: (knowledgeBase: KnowledgeBaseWithCount) => void;
   onUpload: (knowledgeBase: KnowledgeBaseWithCount) => void;
   onEdit: (knowledgeBase: KnowledgeBaseWithCount) => void;
-  onCreateBranch: (knowledgeBase: KnowledgeBaseWithCount) => void;
   onDelete: (knowledgeBase: KnowledgeBaseWithCount) => void;
 }) {
-  const activeBranchCount = branches.filter((item) => item.is_active).length;
-
   return (
     <article
       role="button"
@@ -66,12 +60,12 @@ export function KnowledgeBaseWorkbenchCard({
               <div className="min-w-0">
                 <h3 className="truncate text-lg font-semibold text-slate-900">{knowledgeBase.name}</h3>
                 <span className="mt-2 inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                  包含 {branches.length} 个版本
+                  文档 {knowledgeBase.document_count}
                 </span>
               </div>
             </div>
             <p className="mt-4 line-clamp-2 min-h-12 text-sm leading-6 text-slate-500">
-              {knowledgeBase.description || "管理您的企业知识库文档、版本与发布内容。"}
+              {knowledgeBase.description || "管理知识库下的文档、分类、索引和发布状态。"}
             </p>
           </div>
 
@@ -96,10 +90,6 @@ export function KnowledgeBaseWorkbenchCard({
                   <PencilLine className="mr-2 h-4 w-4" />
                   编辑知识库
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => onCreateBranch(knowledgeBase)}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  新建版本
-                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onSelect={() => onDelete(knowledgeBase)}
@@ -120,10 +110,7 @@ export function KnowledgeBaseWorkbenchCard({
 
         <div className="mt-5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
           <span className="rounded-full bg-slate-100 px-2.5 py-1">
-            版本 {branches.length}
-          </span>
-          <span className="rounded-full bg-slate-100 px-2.5 py-1">
-            启用 {activeBranchCount}
+            知识库
           </span>
           <span className="rounded-full bg-slate-100 px-2.5 py-1">
             文档 {knowledgeBase.document_count}

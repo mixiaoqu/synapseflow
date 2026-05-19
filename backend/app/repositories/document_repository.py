@@ -8,8 +8,11 @@ from datetime import datetime
 from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Document, DocumentCategory, KnowledgeBase, KnowledgeBaseBranch
-from app.repositories.access_scope import accessible_document_condition, accessible_knowledge_base_condition
+from app.db.models import Document, DocumentCategory, KnowledgeBase
+from app.repositories.access_scope import (
+    accessible_document_condition,
+    accessible_knowledge_base_condition,
+)
 from app.services.document_lifecycle import DOC_STATUS_DRAFT
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
@@ -67,7 +70,6 @@ class DocumentRepository:
         document_type: str | None = None,
         size: int = 0,
         knowledge_base_id: int | None = None,
-        knowledge_base_branch_id: int | None = None,
         category_id: int | None = None,
         source_path: str | None = None,
         status: str = DOC_STATUS_DRAFT,
@@ -90,7 +92,6 @@ class DocumentRepository:
             is_current=True,
             is_live=False,
             knowledge_base_id=knowledge_base_id,
-            knowledge_base_branch_id=knowledge_base_branch_id,
             category_id=category_id,
             source_path=source_path,
             status=status,
@@ -130,11 +131,10 @@ class DocumentRepository:
         keyword: str | None = None,
         team_id: int | None = None,
         knowledge_base_id: int | None = None,
-        knowledge_base_branch_id: int | None = None,
         category_id: int | None = None,
         status: str | None = None,
-    ) -> tuple[list[tuple[Document, str | None, str | None, str | None]], int]:
-        """Return paginated current documents plus knowledge-base/branch/category names."""
+    ) -> tuple[list[tuple[Document, str | None, str | None]], int]:
+        """Return paginated current documents plus knowledge-base/category names."""
         base_filter = accessible_document_condition(self.user_id)
         base_filter = base_filter & Document.is_current.is_(True)
         if keyword and keyword.strip():
@@ -144,8 +144,6 @@ class DocumentRepository:
                 base_filter = base_filter & Document.knowledge_base_id.is_(None)
             else:
                 base_filter = base_filter & (Document.knowledge_base_id == knowledge_base_id)
-        if knowledge_base_branch_id is not None:
-            base_filter = base_filter & (Document.knowledge_base_branch_id == knowledge_base_branch_id)
         if category_id is not None:
             if category_id == 0:
                 base_filter = base_filter & Document.category_id.is_(None)
@@ -158,7 +156,6 @@ class DocumentRepository:
             select(func.count())
             .select_from(Document)
             .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
-            .outerjoin(KnowledgeBaseBranch, Document.knowledge_base_branch_id == KnowledgeBaseBranch.id)
             .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
             .where(base_filter)
         )
@@ -176,11 +173,9 @@ class DocumentRepository:
             select(
                 Document,
                 KnowledgeBase.name.label("knowledge_base_name"),
-                KnowledgeBaseBranch.name.label("knowledge_base_branch_name"),
                 DocumentCategory.name.label("category_name"),
             )
             .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
-            .outerjoin(KnowledgeBaseBranch, Document.knowledge_base_branch_id == KnowledgeBaseBranch.id)
             .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
             .where(base_filter)
             .order_by(Document.created_at.desc())
@@ -206,20 +201,6 @@ class DocumentRepository:
             .join(KnowledgeBase, KnowledgeBase.id == DocumentCategory.knowledge_base_id)
             .where(
                 DocumentCategory.id == category_id,
-                accessible_knowledge_base_condition(self.user_id),
-            )
-        )
-        return result.scalar_one_or_none()
-
-    async def get_branch_name(self, branch_id: int | None) -> str | None:
-        """Fetch a branch name scoped to the current user."""
-        if branch_id is None:
-            return None
-        result = await self.db.execute(
-            select(KnowledgeBaseBranch.name)
-            .join(KnowledgeBase, KnowledgeBase.id == KnowledgeBaseBranch.knowledge_base_id)
-            .where(
-                KnowledgeBaseBranch.id == branch_id,
                 accessible_knowledge_base_condition(self.user_id),
             )
         )
@@ -387,7 +368,6 @@ class DocumentRepository:
             is_current=True,
             is_live=False,
             knowledge_base_id=getattr(latest_doc or orig, "knowledge_base_id", None),
-            knowledge_base_branch_id=getattr(latest_doc or orig, "knowledge_base_branch_id", None),
             category_id=getattr(latest_doc or orig, "category_id", None),
             source_path=getattr(latest_doc or orig, "source_path", None),
             status=DOC_STATUS_DRAFT,

@@ -27,7 +27,6 @@ class DocumentCreate(BaseModel):
     content: str = Field(..., description="Document content")
     document_type: str | None = Field(None, description="Document type such as txt/md/pdf/docx")
     knowledge_base_id: int | None = Field(None, description="Owning knowledge base id")
-    knowledge_base_branch_id: int = Field(..., description="Owning knowledge base branch id")
     category_id: int | None = Field(None, description="Owning category id")
     source_path: str | None = Field(None, description="Original relative source path")
 
@@ -47,8 +46,6 @@ class DocumentResponse(BaseModel):
     is_latest: bool = True
     is_live: bool = False
     knowledge_base_id: int | None = Field(None, description="Owning knowledge base id")
-    knowledge_base_branch_id: int | None = Field(None, description="Owning knowledge base branch id")
-    knowledge_base_branch_name: str | None = Field(None, description="Owning knowledge base branch name")
     category_id: int | None = Field(None, description="Owning category id")
     category_name: str | None = Field(None, description="Owning category name")
     source_path: str | None = Field(None, description="Original relative source path")
@@ -88,8 +85,6 @@ class DocumentListItem(BaseModel):
     graph_index_error: str | None = None
     graph_indexed_at: datetime | None = None
     knowledge_base_id: int | None = None
-    knowledge_base_branch_id: int | None = None
-    knowledge_base_branch_name: str | None = None
     knowledge_base_name: str | None = None
     category_id: int | None = None
     category_name: str | None = None
@@ -154,6 +149,37 @@ class DocumentVersionsResponse(BaseModel):
     model_config = UTC_MODEL_CONFIG
 
     items: list[DocumentVersionItem]
+
+
+class DocumentChunkResponse(BaseModel):
+    """Persisted document chunk response."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    id: int
+    document_id: int
+    chunk_kind: str
+    parent_chunk_id: int | None = None
+    chunk_index: int
+    prev_chunk_id: int | None = None
+    next_chunk_id: int | None = None
+    section_path: str | None = None
+    block_types: list[str] = Field(default_factory=list)
+    start_offset: int
+    end_offset: int
+    content: str
+    search_text: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocumentChunksResponse(BaseModel):
+    """Document chunk list response."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    items: list[DocumentChunkResponse]
+    total: int
 
 
 class ActiveIndexingJob(BaseModel):

@@ -95,7 +95,6 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
     common_kwargs = {
         "team_id": state.get("team_id"),
         "knowledge_base_id": state.get("knowledge_base_id"),
-        "knowledge_base_branch_ids": list(state.get("knowledge_base_branch_ids") or []),
         "category_id": state.get("category_id"),
         "log_prefix": "[User KB Retrieval]",
         "user_id": state.get("user_id"),

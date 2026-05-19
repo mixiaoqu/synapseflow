@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { computed, useSlots } from "vue";
-
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppForbidden from "@/shared/components/feedback/AppForbidden.vue";
@@ -47,55 +45,10 @@ const props = withDefaults(
 defineEmits<{
   retry: [];
 }>();
-
-const slots = useSlots();
-const hasMeta = computed(() => Boolean(slots.meta));
-const hasHeaderExtra = computed(() => Boolean(slots["header-extra"]) || Boolean(props.badge));
 </script>
 
 <template>
   <section class="flex flex-col gap-5">
-    <header
-      class="flex flex-col gap-4 rounded-[20px] border border-gray-200 bg-white px-[22px] py-[22px] shadow-sm sm:flex-row sm:items-start sm:justify-between"
-    >
-      <div class="min-w-0">
-        <p class="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-teal-800">
-          {{ eyebrow }}
-        </p>
-        <h1 class="text-[clamp(24px,3vw,32px)] font-semibold leading-tight text-slate-900">
-          {{ title }}
-        </h1>
-        <p
-          v-if="description"
-          class="mt-3 max-w-[640px] text-sm leading-[1.65] text-slate-600"
-        >
-          {{ description }}
-        </p>
-
-        <div
-          v-if="hasMeta"
-          class="mt-[18px] flex flex-wrap gap-3"
-        >
-          <slot name="meta" />
-        </div>
-      </div>
-
-      <div
-        v-if="hasHeaderExtra"
-        class="flex flex-wrap items-center gap-3 sm:justify-end"
-      >
-        <slot name="header-extra" />
-        <el-tag
-          v-if="badge"
-          type="info"
-          effect="plain"
-          round
-        >
-          {{ badge }}
-        </el-tag>
-      </div>
-    </header>
-
     <div class="flex flex-col gap-5">
       <AppLoading
         v-if="loading"

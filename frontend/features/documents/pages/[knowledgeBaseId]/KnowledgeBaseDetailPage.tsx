@@ -16,16 +16,10 @@ import {
   type DocumentListItem,
 } from "@/lib/api/documents";
 import { listDocumentCategories, type DocumentCategory } from "@/lib/api/documentCategories";
-import {
-  listKnowledgeBaseBranches,
-  listKnowledgeBases,
-  type KnowledgeBaseBranch,
-  type KnowledgeBaseWithCount,
-} from "@/lib/api/knowledgeBases";
+import { listKnowledgeBases, type KnowledgeBaseWithCount } from "@/lib/api/knowledgeBases";
 import { listTeams, type Team } from "@/lib/api/teams";
 import { cn } from "@/lib/utils";
 
-import { KnowledgeBaseBranchSidebar } from "../../components/KnowledgeBaseBranchSidebar";
 import { KnowledgeBaseDocumentTable } from "../../components/KnowledgeBaseDocumentTable";
 
 const ACCEPT_FILES = ".txt,.md,.pdf,.docx";
@@ -73,12 +67,10 @@ function KnowledgeBaseDetailPageContent() {
 
   const kbId = Number(params.knowledgeBaseId);
   const teamIdQuery = Number(searchParams.get("teamId"));
-  const branchIdQuery = Number(searchParams.get("branchId"));
   const categoryIdQuery = Number(searchParams.get("categoryId"));
   const documentIdQuery = Number(searchParams.get("documentId"));
 
   const teamIdFromQuery = Number.isFinite(teamIdQuery) && teamIdQuery > 0 ? teamIdQuery : null;
-  const branchIdFromQuery = Number.isFinite(branchIdQuery) && branchIdQuery > 0 ? branchIdQuery : null;
   const categoryIdFromQuery =
     Number.isFinite(categoryIdQuery) && categoryIdQuery > 0 ? categoryIdQuery : null;
   const documentIdFromQuery =
@@ -87,10 +79,7 @@ function KnowledgeBaseDetailPageContent() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<number | null>(teamIdFromQuery);
   const [kb, setKb] = useState<KnowledgeBaseWithCount | null>(null);
-  const [branches, setBranches] = useState<KnowledgeBaseBranch[]>([]);
   const [allCategories, setAllCategories] = useState<DocumentCategory[]>([]);
-  const [branchCategories, setBranchCategories] = useState<DocumentCategory[]>([]);
-  const [selectedBranchId, setSelectedBranchId] = useState<number | null>(branchIdFromQuery);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(categoryIdFromQuery);
   const [focusedDocumentId, setFocusedDocumentId] = useState<number | null>(documentIdFromQuery);
   const [docs, setDocs] = useState<DocumentListItem[]>([]);
@@ -103,7 +92,6 @@ function KnowledgeBaseDetailPageContent() {
   const [loadingStructure, setLoadingStructure] = useState(false);
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
-  const [uploadBranchId, setUploadBranchId] = useState<number | null>(branchIdFromQuery);
   const [uploadCategoryId, setUploadCategoryId] = useState<number | null>(categoryIdFromQuery);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -123,11 +111,9 @@ function KnowledgeBaseDetailPageContent() {
   const docsRequestSeqRef = useRef(0);
 
   const activeTeam = teams.find((item) => item.id === teamId) ?? null;
-  const activeBranch = branches.find((item) => item.id === selectedBranchId) ?? null;
-  const uploadBranch = branches.find((item) => item.id === uploadBranchId) ?? null;
   const uploadCategory = allCategories.find((item) => item.id === uploadCategoryId) ?? null;
 
-  const activeCategory = branchCategories.find((item) => item.id === selectedCategoryId) ?? null;
+  const activeCategory = allCategories.find((item) => item.id === selectedCategoryId) ?? null;
   const pageTitle = activeCategory?.name || "全部文档";
 
   const openConfirmDialog = (options: Omit<ConfirmDialogState, "open">) => {
@@ -230,12 +216,8 @@ function KnowledgeBaseDetailPageContent() {
 
   useEffect(() => {
     if (!Number.isFinite(kbId) || kbId <= 0) {
-      setBranches([]);
       setAllCategories([]);
-      setBranchCategories([]);
-      setSelectedBranchId(null);
       setSelectedCategoryId(null);
-      setUploadBranchId(null);
       setUploadCategoryId(null);
       return;
     }
@@ -246,49 +228,27 @@ function KnowledgeBaseDetailPageContent() {
       setLoadingStructure(true);
 
       try {
-        const [categoryItems, branchItems] = await Promise.all([
-          listDocumentCategories(kbId),
-          listKnowledgeBaseBranches(kbId),
-        ]);
+        const categoryItems = await listDocumentCategories(kbId);
         if (cancelled) return;
-
-        const fallbackBranchId =
-          (branchIdFromQuery != null && branchItems.some((item) => item.id === branchIdFromQuery)
-            ? branchIdFromQuery
-            : null) ??
-          branchItems.find((item) => item.is_active)?.id ??
-          branchItems[0]?.id ??
-          null;
 
         const fallbackCategoryId =
           categoryIdFromQuery != null && categoryItems.some((item) => item.id === categoryIdFromQuery)
             ? categoryIdFromQuery
             : null;
 
-        setBranches(branchItems);
         setAllCategories(categoryItems);
-        setSelectedBranchId((prev) =>
-          prev != null && branchItems.some((item) => item.id === prev) ? prev : fallbackBranchId,
-        );
         setSelectedCategoryId((prev) =>
           prev != null && categoryItems.some((item) => item.id === prev) ? prev : fallbackCategoryId,
-        );
-        setUploadBranchId((prev) =>
-          prev != null && branchItems.some((item) => item.id === prev) ? prev : fallbackBranchId,
         );
         setUploadCategoryId((prev) =>
           prev != null && categoryItems.some((item) => item.id === prev) ? prev : fallbackCategoryId,
         );
       } catch (error) {
         if (!cancelled) {
-          setBranches([]);
           setAllCategories([]);
-          setBranchCategories([]);
-          setSelectedBranchId(null);
           setSelectedCategoryId(null);
-          setUploadBranchId(null);
           setUploadCategoryId(null);
-          toast.error(error instanceof Error ? error.message : "加载版本与分类失败");
+          toast.error(error instanceof Error ? error.message : "加载分类失败");
         }
       } finally {
         if (!cancelled) setLoadingStructure(false);
@@ -300,16 +260,10 @@ function KnowledgeBaseDetailPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [branchIdFromQuery, categoryIdFromQuery, kbId, reloadToken]);
+  }, [categoryIdFromQuery, kbId, reloadToken]);
 
   const loadDocumentsList = useCallback(async () => {
     if (!Number.isFinite(kbId) || kbId <= 0 || loadingStructure) return;
-
-    if (branches.length > 0 && selectedBranchId == null) {
-      setDocs([]);
-      setDocsTotal(0);
-      return;
-    }
 
     const requestSeq = ++docsRequestSeqRef.current;
     setLoadingDocs(true);
@@ -320,7 +274,6 @@ function KnowledgeBaseDetailPageContent() {
         page_size: docPageSize,
         keyword: keyword || undefined,
         knowledge_base_id: kbId,
-        knowledge_base_branch_id: selectedBranchId ?? undefined,
         category_id: selectedCategoryId ?? undefined,
         team_id: teamId ?? undefined,
       });
@@ -345,13 +298,11 @@ function KnowledgeBaseDetailPageContent() {
       }
     }
   }, [
-    branches.length,
     docPage,
     docPageSize,
     kbId,
     keyword,
     loadingStructure,
-    selectedBranchId,
     selectedCategoryId,
     teamId,
   ]);
@@ -361,48 +312,13 @@ function KnowledgeBaseDetailPageContent() {
   }, [loadDocumentsList, reloadToken]);
 
   useEffect(() => {
-    if (!Number.isFinite(kbId) || kbId <= 0 || selectedBranchId == null) {
-      setBranchCategories([]);
-      return;
-    }
-
-    let cancelled = false;
-
-    const run = async () => {
-      try {
-        const result = await listDocumentCategories(kbId, selectedBranchId);
-
-        if (cancelled) return;
-        setBranchCategories(result);
-      } catch (error) {
-        if (cancelled) return;
-        setBranchCategories([]);
-        toast.error(error instanceof Error ? error.message : "加载当前版本分类失败");
-      }
-    };
-
-    void run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [kbId, reloadToken, selectedBranchId]);
-
-  useEffect(() => {
     if (selectedCategoryId == null) return;
-    if (branchCategories.some((item) => item.id === selectedCategoryId)) return;
+    if (allCategories.some((item) => item.id === selectedCategoryId)) return;
     setSelectedCategoryId(null);
-  }, [branchCategories, selectedCategoryId]);
+  }, [allCategories, selectedCategoryId]);
 
   const handleBack = () => {
     router.push(buildDocumentsListUrl(teamId));
-  };
-
-  const handleBranchSelect = (branchId: number) => {
-    setSelectedBranchId(branchId);
-    setSelectedCategoryId(null);
-    setFocusedDocumentId(null);
-    setDocPage(1);
   };
 
   const handleCategorySelect = (categoryId: number | null) => {
@@ -420,7 +336,6 @@ function KnowledgeBaseDetailPageContent() {
     setFocusedDocumentId(document.id);
     const query = new URLSearchParams();
     if (teamId != null) query.set("teamId", String(teamId));
-    if (selectedBranchId != null) query.set("branchId", String(selectedBranchId));
     if (selectedCategoryId != null) query.set("categoryId", String(selectedCategoryId));
     query.set("documentId", String(document.id));
     router.push(`/admin/documents/${kbId}/documents/${document.id}?${query.toString()}`);
@@ -466,11 +381,6 @@ function KnowledgeBaseDetailPageContent() {
       toast.error(`单次最多上传 ${MAX_BATCH} 个文件`);
       return;
     }
-    if (!uploadBranchId) {
-      toast.error("请先选择上传版本");
-      return;
-    }
-
     const validFiles = Array.from(files).filter((file) => {
       const ext = "." + (file.name.split(".").pop()?.toLowerCase() || "");
       return SUPPORTED_EXTENSIONS.includes(ext) && file.size <= MAX_SIZE;
@@ -487,12 +397,12 @@ function KnowledgeBaseDetailPageContent() {
       const sourcePaths = getSourcePaths(validFiles);
 
       if (validFiles.length === 1) {
-        await uploadDocument(validFiles[0], kbId, uploadBranchId, {
+        await uploadDocument(validFiles[0], kbId, {
           categoryId: uploadCategoryId ?? undefined,
           sourcePath: sourcePaths?.[0] ?? null,
         });
       } else {
-        await uploadDocumentsBatch(validFiles, kbId, uploadBranchId, {
+        await uploadDocumentsBatch(validFiles, kbId, {
           categoryId: uploadCategoryId ?? undefined,
           sourcePaths,
         });
@@ -571,22 +481,65 @@ function KnowledgeBaseDetailPageContent() {
           </header>
 
           <section className="flex min-h-0 flex-1 overflow-hidden">
-            <KnowledgeBaseBranchSidebar
-              branches={branches}
-              categories={branchCategories}
-              selectedBranchId={selectedBranchId}
-              selectedCategoryId={selectedCategoryId}
-              onSelectBranch={handleBranchSelect}
-              onSelectCategory={handleCategorySelect}
-            />
+            <aside className="flex w-[280px] shrink-0 flex-col border-r border-slate-200 bg-slate-50/80">
+              <div className="border-b border-slate-200 px-5 py-5">
+                <p className="text-sm font-semibold text-slate-900">分类导航</p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  按分类浏览当前知识库下的全部文档。
+                </p>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+                <button
+                  type="button"
+                  onClick={() => handleCategorySelect(null)}
+                  className={cn(
+                    "flex w-full items-center justify-between rounded-2xl px-3 py-3 text-left text-sm transition",
+                    selectedCategoryId == null
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "text-slate-600 hover:bg-white hover:text-slate-900",
+                  )}
+                >
+                  <span className="font-medium">全部文档</span>
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-xs",
+                      selectedCategoryId == null ? "bg-white/15 text-white" : "bg-slate-200 text-slate-600",
+                    )}
+                  >
+                    {docsTotal}
+                  </span>
+                </button>
+
+                <div className="mt-3 space-y-1">
+                  {allCategories.map((category) => {
+                    const selected = selectedCategoryId === category.id;
+                    return (
+                      <button
+                        key={category.id}
+                        type="button"
+                        onClick={() => handleCategorySelect(category.id)}
+                        className={cn(
+                          "flex w-full items-center justify-between rounded-2xl px-3 py-3 text-left text-sm transition",
+                          selected
+                            ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200"
+                            : "text-slate-600 hover:bg-white hover:text-slate-900",
+                        )}
+                      >
+                        <span className="truncate font-medium">{category.name}</span>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                          {category.document_count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </aside>
 
             <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
               <div className="flex shrink-0 flex-col gap-4 border-b border-slate-200 px-6 py-5 xl:flex-row xl:items-end xl:justify-between">
                 <div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">
-                      版本：{activeBranch?.name || "未选择"}
-                    </span>
                     <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">
                       分类：{activeCategory?.name || "全部文档"}
                     </span>
@@ -701,7 +654,7 @@ function KnowledgeBaseDetailPageContent() {
               <div>
                 <p className="text-lg font-semibold text-slate-900">上传文档</p>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  上传时选择目标版本与分类，上传完成后可进入文档详情查看正文、状态和后续操作。
+                  上传时可选择目标分类，上传完成后可进入文档详情查看正文、状态和后续操作。
                 </p>
               </div>
               <Button variant="ghost" size="icon" onClick={() => !uploading && setUploadModalOpen(false)}>
@@ -719,25 +672,6 @@ function KnowledgeBaseDetailPageContent() {
                   <p className="text-xs text-slate-500">当前知识库</p>
                   <p className="mt-1 font-medium text-slate-800">{kb?.name || "未识别知识库"}</p>
                 </div>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">上传版本</label>
-                <select
-                  value={uploadBranchId ?? ""}
-                  onChange={(event) => setUploadBranchId(event.target.value ? Number(event.target.value) : null)}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                >
-                  <option value="">请选择版本</option>
-                  {branches.map((branch) => (
-                    <option key={branch.id} value={branch.id}>
-                      {branch.name} / {branch.code}
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-2 text-xs text-slate-500">
-                  当前选择：{uploadBranch?.name || "未选择版本"}
-                </p>
               </div>
 
               <div>

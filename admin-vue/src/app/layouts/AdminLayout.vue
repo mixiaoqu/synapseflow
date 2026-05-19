@@ -1,33 +1,38 @@
 <script setup lang="ts">
 import type { Component } from "vue";
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
-  Bell,
   Collection,
-  Fold,
   FolderOpened,
-  House,
   MagicStick,
   Odometer,
-  Setting,
   SetUp,
   User,
+  CaretBottom,
+  SwitchButton
 } from "@element-plus/icons-vue";
 
 import { adminNav } from "@/app/navigation/admin-nav";
 import { useAuthStore } from "@/stores/auth";
+import { useTeamScopeStore } from "@/stores/team-scope";
 
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
+const teamScopeStore = useTeamScopeStore();
 
-const pageTitle = computed(() => String(route.meta.title ?? "管理后台"));
-const currentNav = computed(() => adminNav.find((item) => route.path.startsWith(item.to)));
-const breadcrumbLabel = computed(() => currentNav.value?.label ?? "控制台");
-const pageDescription = computed(() =>
-  String(route.meta.description ?? "统一承载后台模块入口、检索面板与资源页面内容。"),
-);
+const currentUserName = computed(() => authStore.user?.full_name || authStore.user?.username || "Admin User");
+const currentUserRole = computed(() => authStore.user?.role || "System Operator");
+const currentUserInitial = computed(() => currentUserName.value.trim().charAt(0).toUpperCase() || "A");
+const selectedTeamId = computed({
+  get() {
+    return teamScopeStore.selectedTeamId;
+  },
+  set(value: number | null) {
+    teamScopeStore.setSelectedTeam(value);
+  }
+});
 
 const navIcons: Record<(typeof adminNav)[number]["key"], Component> = {
   dashboard: Odometer,
@@ -39,100 +44,140 @@ const navIcons: Record<(typeof adminNav)[number]["key"], Component> = {
 };
 
 async function handleLogout() {
+  teamScopeStore.clear();
   authStore.signOut();
   await router.replace("/login");
 }
+
+onMounted(() => {
+  void teamScopeStore.bootstrap();
+});
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-gray-100">
-    <aside class="flex w-60 shrink-0 flex-col bg-slate-900 text-white">
-      <div class="px-6 pt-6">
-        <h1 class="text-lg font-semibold leading-7 text-white">
-          AI企业知识库后台
+  <div class="flex h-screen overflow-hidden bg-slate-50">
+    
+    <aside class="flex w-[260px] shrink-0 flex-col bg-[#0F172A] text-slate-300 shadow-2xl transition-all duration-300 [&::-webkit-scrollbar]:hidden">
+      
+      <div class="flex h-16 shrink-0 items-center px-5 border-b border-slate-800/60">
+        <div class="mr-3 flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/20">
+          <el-icon class="text-white text-xs"><MagicStick /></el-icon>
+        </div>
+        <h1 class="text-[15px] font-bold tracking-wide text-slate-100">
+          AI 企业知识库
         </h1>
       </div>
 
-      <nav
-        class="mt-6 flex flex-col gap-2 px-3"
-        aria-label="后台主导航"
-      >
+      <nav class="flex-1 overflow-y-auto px-3 py-5 space-y-1" aria-label="后台主导航">
         <router-link
           v-for="item in adminNav"
           :key="item.key"
           :to="item.to"
-          class="flex min-h-11 items-center gap-3 rounded-xl border border-transparent px-4 text-sm font-medium text-slate-400 transition-colors"
+          class="group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-all duration-200"
           :class="
             route.path.startsWith(item.to)
-              ? 'border-slate-700 bg-slate-800 text-white'
-              : 'hover:bg-slate-800/80 hover:text-slate-200'
+              ? 'bg-indigo-500/10 text-indigo-400' 
+              : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
           "
         >
-          <el-icon :size="16">
+          <div 
+            v-if="route.path.startsWith(item.to)"
+            class="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-indigo-500"
+          ></div>
+          
+          <el-icon 
+            :size="17" 
+            class="transition-transform duration-200"
+            :class="route.path.startsWith(item.to) ? 'scale-110' : 'group-hover:scale-110 group-hover:text-slate-300'"
+          >
             <component :is="navIcons[item.key]" />
           </el-icon>
           <span>{{ item.label }}</span>
         </router-link>
       </nav>
+
+      <div class="shrink-0 border-t border-slate-800/60 bg-slate-900/30 p-4">
+        
+        <div class="mb-3 px-1">
+          <div class="mb-1.5 flex items-center justify-between">
+            <span class="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+              Workspace
+            </span>
+          </div>
+          <el-select
+            v-model="selectedTeamId"
+            class="!w-full custom-dark-select"
+            size="default"
+            :loading="teamScopeStore.loading"
+            placeholder="切换团队..."
+            :disabled="!teamScopeStore.hasTeams"
+          >
+            <el-option
+              v-for="team in teamScopeStore.teams"
+              :key="team.id"
+              :label="team.name"
+              :value="team.id"
+            />
+          </el-select>
+          <p v-if="teamScopeStore.errorMessage" class="mt-1.5 text-[11px] text-rose-400/90">
+            {{ teamScopeStore.errorMessage }}
+          </p>
+        </div>
+
+        <el-dropdown trigger="click" class="w-full" placement="top">
+          <div class="flex w-full cursor-pointer items-center gap-3 rounded-lg p-2 transition-colors hover:bg-slate-800/80">
+            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-indigo-500/20 border border-indigo-500/30 text-[13px] font-bold text-indigo-300">
+              {{ currentUserInitial }}
+            </div>
+            
+            <div class="flex min-w-0 flex-1 flex-col text-left">
+              <span class="truncate text-[13px] font-medium text-slate-200">
+                {{ currentUserName }}
+              </span>
+              <span class="truncate text-[11px] text-slate-500 capitalize">
+                {{ currentUserRole }}
+              </span>
+            </div>
+            
+            <el-icon class="text-slate-500 transition-colors hover:text-slate-300"><CaretBottom /></el-icon>
+          </div>
+
+          <template #dropdown>
+            <el-dropdown-menu class="w-[228px]">
+              <el-dropdown-item disabled>
+                <span class="text-xs text-slate-400">登录账号: {{ currentUserName }}</span>
+              </el-dropdown-item>
+              <el-dropdown-item divided @click="handleLogout" class="!text-rose-500 hover:!bg-rose-50 hover:!text-rose-600">
+                <el-icon><SwitchButton /></el-icon>
+                安全退出
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+
+      </div>
     </aside>
 
-    <div class="flex min-w-0 flex-1 flex-col">
-      <header class="flex items-center justify-between gap-6 border-b border-gray-200 bg-white px-5 py-4 shadow-sm">
-        <div class="flex min-w-0 items-start gap-4">
-          <div class="flex items-center pt-0.5">
-            <el-button
-              :icon="Fold"
-              circle
-              plain
-            />
-          </div>
-          <div class="min-w-0">
-            <el-breadcrumb separator="/">
-              <el-breadcrumb-item :icon="House">
-                企业系统
-              </el-breadcrumb-item>
-              <el-breadcrumb-item>{{ breadcrumbLabel }}</el-breadcrumb-item>
-            </el-breadcrumb>
-            <h2 class="mt-2 text-2xl font-semibold leading-8 text-gray-900">
-              {{ pageTitle }}
-            </h2>
-            <p class="mt-1 text-sm leading-6 text-slate-500">
-              {{ pageDescription }}
-            </p>
-          </div>
-        </div>
-
-        <div class="flex items-center gap-4">
-          <el-button
-            :icon="Bell"
-            circle
-            plain
-          />
-          <el-button
-            :icon="Setting"
-            circle
-            plain
-          />
-          <div class="flex flex-col items-end gap-1">
-            <span class="text-sm font-semibold text-gray-900">
-              {{ authStore.user?.full_name || authStore.user?.username || "Admin User" }}
-            </span>
-            <span class="text-xs uppercase tracking-wide text-slate-500">
-              {{ authStore.user?.role || "system operator" }}
-            </span>
-          </div>
-          <el-button
-            plain
-            @click="handleLogout"
-          >
-            退出登录
-          </el-button>
-        </div>
-      </header>
-
-      <main class="flex-1 p-5">
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+      <main class="min-h-0 flex-1 overflow-y-auto p-6">
         <router-view />
       </main>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 针对深色侧边栏中的 el-select 进行样式穿透美化 */
+:deep(.custom-dark-select .el-input__wrapper) {
+  background-color: rgba(30, 41, 59, 0.4) !important; /* 更通透的背景 */
+  box-shadow: 0 0 0 1px rgba(71, 85, 105, 0.4) inset !important; /* 更柔和的边框 */
+  border-radius: 6px;
+}
+:deep(.custom-dark-select .el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.8) inset !important; /* 聚焦时的靛蓝色边框 */
+}
+:deep(.custom-dark-select .el-input__inner) {
+  color: #cbd5e1 !important; /* slate-300 */
+  font-size: 13px;
+}
+</style>

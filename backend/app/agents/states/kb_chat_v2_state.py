@@ -23,7 +23,6 @@ class KbChatV2State(BaseAgentContext, total=False):
     page_config: Dict[str, Any]
     knowledge_base_id: Optional[int]
     knowledge_base_ids: List[int]
-    knowledge_base_branch_ids: List[int]
     category_id: Optional[int]
     chat_history: List[Dict[str, Any]]
     memory_summary: Optional[str]

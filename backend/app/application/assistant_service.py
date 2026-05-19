@@ -278,7 +278,6 @@ class AssistantService:
             team_id=payload.current_team_id,
             knowledge_base_id=None,
             knowledge_base_ids=[],
-            knowledge_base_branch_ids=[],
             category_id=None,
             assistant_id=None,
             assistant_name=self._normalize_optional_text(payload.name) or "预览助手",

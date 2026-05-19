@@ -50,45 +50,10 @@ defineEmits<{
 
 const slots = useSlots();
 const hasFilters = computed(() => Boolean(slots.filters));
-const hasHeaderExtra = computed(() => Boolean(slots["header-extra"]) || Boolean(props.badge));
 </script>
 
 <template>
   <section class="flex flex-col gap-5">
-    <header
-      class="flex flex-col gap-4 rounded-[20px] border border-gray-200 bg-white px-[22px] py-[22px] shadow-sm sm:flex-row sm:items-center sm:justify-between"
-    >
-      <div class="min-w-0">
-        <p class="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-teal-800">
-          {{ eyebrow }}
-        </p>
-        <h1 class="text-[clamp(24px,3vw,32px)] font-semibold leading-tight text-slate-900">
-          {{ title }}
-        </h1>
-        <p
-          v-if="description"
-          class="mt-3 max-w-[640px] text-sm leading-[1.65] text-slate-600"
-        >
-          {{ description }}
-        </p>
-      </div>
-
-      <div
-        v-if="hasHeaderExtra"
-        class="flex flex-wrap items-center gap-3 sm:justify-end"
-      >
-        <slot name="header-extra" />
-        <el-tag
-          v-if="badge"
-          type="info"
-          effect="plain"
-          round
-        >
-          {{ badge }}
-        </el-tag>
-      </div>
-    </header>
-
     <slot
       v-if="hasFilters"
       name="filters"

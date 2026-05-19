@@ -10,11 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     AssistantProfile,
     KnowledgeBase,
-    KnowledgeBaseBranch,
     Product,
     Project,
     ProjectApp,
-    ProjectAppKnowledgeBaseBranch,
+    ProjectAppKnowledgeBase,
     Team,
 )
 
@@ -32,8 +31,6 @@ class ProjectRecord:
 class ProjectAppBindingRecord:
     knowledge_base_id: int
     knowledge_base_name: str | None
-    knowledge_base_branch_id: int
-    knowledge_base_branch_name: str | None
 
 
 @dataclass(slots=True)
@@ -157,35 +154,27 @@ class ProjectRepository:
             return {}
         stmt = (
             select(
-                ProjectAppKnowledgeBaseBranch.project_app_id,
-                ProjectAppKnowledgeBaseBranch.knowledge_base_id,
+                ProjectAppKnowledgeBase.project_app_id,
+                ProjectAppKnowledgeBase.knowledge_base_id,
                 KnowledgeBase.name,
-                ProjectAppKnowledgeBaseBranch.knowledge_base_branch_id,
-                KnowledgeBaseBranch.name,
             )
             .join(
                 KnowledgeBase,
-                KnowledgeBase.id == ProjectAppKnowledgeBaseBranch.knowledge_base_id,
+                KnowledgeBase.id == ProjectAppKnowledgeBase.knowledge_base_id,
             )
-            .join(
-                KnowledgeBaseBranch,
-                KnowledgeBaseBranch.id == ProjectAppKnowledgeBaseBranch.knowledge_base_branch_id,
-            )
-            .where(ProjectAppKnowledgeBaseBranch.project_app_id.in_(app_ids))
+            .where(ProjectAppKnowledgeBase.project_app_id.in_(app_ids))
             .order_by(
-                ProjectAppKnowledgeBaseBranch.project_app_id.asc(),
-                ProjectAppKnowledgeBaseBranch.id.asc(),
+                ProjectAppKnowledgeBase.project_app_id.asc(),
+                ProjectAppKnowledgeBase.id.asc(),
             )
         )
         rows = (await self.db.execute(stmt)).all()
         mapping: dict[int, list[ProjectAppBindingRecord]] = {}
-        for app_id, kb_id, kb_name, branch_id, branch_name in rows:
+        for app_id, kb_id, kb_name in rows:
             mapping.setdefault(int(app_id), []).append(
                 ProjectAppBindingRecord(
                     knowledge_base_id=int(kb_id),
                     knowledge_base_name=kb_name,
-                    knowledge_base_branch_id=int(branch_id),
-                    knowledge_base_branch_name=branch_name,
                 )
             )
         return mapping
@@ -252,22 +241,21 @@ class ProjectRepository:
         self,
         *,
         app_id: int,
-        bindings: list[tuple[int, int]],
+        bindings: list[int],
     ) -> None:
-        existing_stmt = select(ProjectAppKnowledgeBaseBranch).where(
-            ProjectAppKnowledgeBaseBranch.project_app_id == app_id
+        existing_stmt = select(ProjectAppKnowledgeBase).where(
+            ProjectAppKnowledgeBase.project_app_id == app_id
         )
         existing_rows = list((await self.db.execute(existing_stmt)).scalars().all())
         for row in existing_rows:
             await self.db.delete(row)
         if existing_rows:
             await self.db.flush()
-        for knowledge_base_id, knowledge_base_branch_id in bindings:
+        for knowledge_base_id in bindings:
             self.db.add(
-                ProjectAppKnowledgeBaseBranch(
+                ProjectAppKnowledgeBase(
                     project_app_id=app_id,
                     knowledge_base_id=knowledge_base_id,
-                    knowledge_base_branch_id=knowledge_base_branch_id,
                 )
             )
         await self.db.flush()
@@ -276,7 +264,7 @@ class ProjectRepository:
         self,
         app: ProjectApp,
         *,
-        bindings: list[tuple[int, int]],
+        bindings: list[int],
     ) -> ProjectApp:
         self.db.add(app)
         await self.db.flush()
@@ -289,7 +277,7 @@ class ProjectRepository:
         self,
         app: ProjectApp,
         *,
-        bindings: list[tuple[int, int]],
+        bindings: list[int],
     ) -> ProjectApp:
         await self.replace_app_bindings(app_id=app.id, bindings=bindings)
         await self.db.commit()

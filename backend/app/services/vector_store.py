@@ -136,7 +136,6 @@ async def search(
     user_id: int | None = None,
     team_id: int | None = None,
     knowledge_base_id: int | None = None,
-    knowledge_base_branch_ids: Sequence[int] | None = None,
     category_id: int | None = None,
     document_statuses: Sequence[str] | None = None,
     retrieval_version_mode: str | None = None,
@@ -180,8 +179,6 @@ async def search(
         stmt = stmt.where(KnowledgeBase.team_id == team_id)
     if knowledge_base_id is not None:
         stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)
-    if knowledge_base_branch_ids:
-        stmt = stmt.where(Document.knowledge_base_branch_id.in_(list(knowledge_base_branch_ids)))
     if category_id is not None:
         stmt = stmt.where(Document.category_id == category_id)
     if document_statuses:
@@ -344,7 +341,6 @@ async def _search_lexical_fts(
     user_id: int | None = None,
     team_id: int | None = None,
     knowledge_base_id: int | None = None,
-    knowledge_base_branch_ids: Sequence[int] | None = None,
     category_id: int | None = None,
     document_statuses: Sequence[str] | None = None,
     retrieval_version_mode: str | None = None,
@@ -396,15 +392,6 @@ async def _search_lexical_fts(
     if knowledge_base_id is not None:
         sql_lines.append("  AND d.knowledge_base_id = :knowledge_base_id")
         params["knowledge_base_id"] = knowledge_base_id
-    if knowledge_base_branch_ids:
-        branch_placeholders: list[str] = []
-        for index, branch_id in enumerate(knowledge_base_branch_ids):
-            key = f"branch_id_{index}"
-            branch_placeholders.append(f":{key}")
-            params[key] = int(branch_id)
-        sql_lines.append(
-            f"  AND d.knowledge_base_branch_id IN ({', '.join(branch_placeholders)})"
-        )
     if team_id is not None:
         sql_lines.append(
             "  AND EXISTS (SELECT 1 FROM knowledge_bases kb WHERE kb.id = d.knowledge_base_id AND kb.team_id = :team_id)"
@@ -471,7 +458,6 @@ async def _search_lexical_trgm(
     user_id: int | None = None,
     team_id: int | None = None,
     knowledge_base_id: int | None = None,
-    knowledge_base_branch_ids: Sequence[int] | None = None,
     category_id: int | None = None,
     document_statuses: Sequence[str] | None = None,
     retrieval_version_mode: str | None = None,
@@ -552,15 +538,6 @@ async def _search_lexical_trgm(
     if knowledge_base_id is not None:
         sql_lines.append("  AND d.knowledge_base_id = :knowledge_base_id")
         params["knowledge_base_id"] = knowledge_base_id
-    if knowledge_base_branch_ids:
-        branch_placeholders: list[str] = []
-        for index, branch_id in enumerate(knowledge_base_branch_ids):
-            key = f"branch_id_{index}"
-            branch_placeholders.append(f":{key}")
-            params[key] = int(branch_id)
-        sql_lines.append(
-            f"  AND d.knowledge_base_branch_id IN ({', '.join(branch_placeholders)})"
-        )
     if team_id is not None:
         sql_lines.append(
             "  AND EXISTS (SELECT 1 FROM knowledge_bases kb WHERE kb.id = d.knowledge_base_id AND kb.team_id = :team_id)"
@@ -627,7 +604,6 @@ async def search_lexical(
     user_id: int | None = None,
     team_id: int | None = None,
     knowledge_base_id: int | None = None,
-    knowledge_base_branch_ids: Sequence[int] | None = None,
     category_id: int | None = None,
     document_statuses: Sequence[str] | None = None,
     retrieval_version_mode: str | None = None,
@@ -648,7 +624,6 @@ async def search_lexical(
         user_id=user_id,
         team_id=team_id,
         knowledge_base_id=knowledge_base_id,
-        knowledge_base_branch_ids=knowledge_base_branch_ids,
         category_id=category_id,
         document_statuses=document_statuses,
         retrieval_version_mode=retrieval_version_mode,
@@ -660,7 +635,6 @@ async def search_lexical(
         user_id=user_id,
         team_id=team_id,
         knowledge_base_id=knowledge_base_id,
-        knowledge_base_branch_ids=knowledge_base_branch_ids,
         category_id=category_id,
         document_statuses=document_statuses,
         retrieval_version_mode=retrieval_version_mode,
@@ -684,7 +658,6 @@ async def search_hybrid_rrf(
     user_id: int | None = None,
     team_id: int | None = None,
     knowledge_base_id: int | None = None,
-    knowledge_base_branch_ids: Sequence[int] | None = None,
     category_id: int | None = None,
     document_statuses: Sequence[str] | None = None,
     retrieval_version_mode: str | None = None,
@@ -700,7 +673,6 @@ async def search_hybrid_rrf(
         user_id=user_id,
         team_id=team_id,
         knowledge_base_id=knowledge_base_id,
-        knowledge_base_branch_ids=knowledge_base_branch_ids,
         category_id=category_id,
         document_statuses=document_statuses,
         retrieval_version_mode=retrieval_version_mode,
@@ -712,7 +684,6 @@ async def search_hybrid_rrf(
         user_id=user_id,
         team_id=team_id,
         knowledge_base_id=knowledge_base_id,
-        knowledge_base_branch_ids=knowledge_base_branch_ids,
         category_id=category_id,
         document_statuses=document_statuses,
         retrieval_version_mode=retrieval_version_mode,
