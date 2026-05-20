@@ -22,6 +22,7 @@ function handleAdminAccessDenied() {
 export function createAuthGuard(): NavigationGuardWithThis<undefined> {
   return async (to) => {
     const authStore = useAuthStore();
+    const bypassAdminCheck = (to.meta as { bypassAdminCheck?: boolean }).bypassAdminCheck === true;
 
     // 首次进入路由前先恢复本地会话，避免刷新后误判成未登录。
     if (!authStore.checked) {
@@ -32,7 +33,7 @@ export function createAuthGuard(): NavigationGuardWithThis<undefined> {
       return resolveRedirectTarget(to);
     }
 
-    if (authStore.isAuthenticated && !authStore.canAccessAdmin) {
+    if (!bypassAdminCheck && authStore.isAuthenticated && !authStore.canAccessAdmin) {
       handleAdminAccessDenied();
 
       if (to.path === "/login") {

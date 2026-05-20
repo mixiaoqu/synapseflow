@@ -13,7 +13,7 @@ export const adminNav: AdminNavItem[] = [
   },
   {
     key: "projects",
-    label: "项目",
+    label: "应用与发布",
     to: "/projects",
   },
   {
