@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.authz import ROLE_END_USER, normalize_role
@@ -53,6 +53,32 @@ class UserRepository:
     async def list_users(self) -> list[User]:
         result = await self.db.execute(select(User).order_by(User.created_at.desc(), User.id.desc()))
         return list(result.scalars().all())
+
+    async def list_users_paginated(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: str | None = None,
+    ) -> tuple[list[User], int]:
+        base_query = select(User)
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            base_query = base_query.where(
+                or_(
+                    User.username.ilike(pattern),
+                    User.email.ilike(pattern),
+                    User.full_name.ilike(pattern),
+                )
+            )
+        count_result = await self.db.execute(select(func.count()).select_from(base_query.subquery()))
+        total = count_result.scalar_one()
+        offset = (page - 1) * page_size
+        result = await self.db.execute(
+            base_query.order_by(User.created_at.desc(), User.id.desc()).offset(offset).limit(page_size)
+        )
+        rows = list(result.scalars().all())
+        return rows, total
 
     async def create_user(
         self,

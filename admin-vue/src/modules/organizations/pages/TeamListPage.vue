@@ -131,7 +131,7 @@ async function loadData() {
     ]);
     teams.value = teamResult.items;
     pagination.value.total = teamResult.total;
-    users.value = userList;
+    users.value = userList.items;
   } catch (error) {
     loadError.value = error;
   } finally {

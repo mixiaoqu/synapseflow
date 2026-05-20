@@ -12,6 +12,7 @@ import KnowledgeBaseDetailPage from "@/modules/knowledge-bases/pages/KnowledgeBa
 import KnowledgeBaseListPage from "@/modules/knowledge-bases/pages/KnowledgeBaseListPage.vue";
 import ModulePlaceholderPage from "@/modules/platform/pages/ModulePlaceholderPage.vue";
 import TeamListPage from "@/modules/organizations/pages/TeamListPage.vue";
+import UserListPage from "@/modules/users/pages/UserListPage.vue";
 import ProjectAppDetailPage from "@/modules/projects/pages/ProjectAppDetailPage.vue";
 import ProjectAppListPage from "@/modules/projects/pages/ProjectAppListPage.vue";
 import ProjectListPage from "@/modules/projects/pages/ProjectListPage.vue";
@@ -164,6 +165,15 @@ const router = createRouter({
           meta: {
             title: "组织",
             description: "团队与成员管理。",
+          },
+        },
+        {
+          path: "users",
+          name: "users",
+          component: UserListPage,
+          meta: {
+            title: "用户",
+            description: "管理系统中所有用户的账号信息、角色权限和启停状态。",
           },
         },
         {

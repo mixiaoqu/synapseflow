@@ -1,24 +1,29 @@
 """Admin user management endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import require_any_admin_role
 from app.db.models import User
 from app.db.session import get_db
-from app.models.schemas.user_admin import AdminUserCreate, AdminUserResponse, AdminUserUpdate
+from app.models.schemas.user_admin import AdminUserCreate, AdminUserResponse, AdminUserUpdate, UserListResponse
 from app.repositories.user_repository import UserRepository
 
 router = APIRouter()
 
 
-@router.get("", response_model=list[AdminUserResponse])
+@router.get("", response_model=UserListResponse)
 async def list_users(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页条数"),
+    keyword: str | None = Query(None, description="搜索关键词，匹配用户名、邮箱或姓名"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_any_admin_role),
 ):
     del current_user
-    return await UserRepository(db).list_users()
+    repo = UserRepository(db)
+    rows, total = await repo.list_users_paginated(page=page, page_size=page_size, keyword=keyword)
+    return UserListResponse(items=rows, total=total, page=page, page_size=page_size)
 
 
 @router.post("", response_model=AdminUserResponse, status_code=status.HTTP_201_CREATED)

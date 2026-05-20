@@ -1,5 +1,5 @@
 export interface AdminNavItem {
-  key: "dashboard" | "projects" | "knowledge-bases" | "assistants" | "organizations" | "governance";
+  key: "dashboard" | "projects" | "knowledge-bases" | "assistants" | "organizations" | "users" | "governance";
   label: string;
   to: string;
 }
@@ -30,6 +30,11 @@ export const adminNav: AdminNavItem[] = [
     key: "organizations",
     label: "团队",
     to: "/organizations",
+  },
+  {
+    key: "users",
+    label: "用户",
+    to: "/users",
   },
   {
     key: "governance",

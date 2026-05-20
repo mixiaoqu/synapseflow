@@ -9,6 +9,7 @@ import {
   Odometer,
   SetUp,
   User,
+  UserFilled,
   CaretBottom,
   SwitchButton
 } from "@element-plus/icons-vue";
@@ -40,6 +41,7 @@ const navIcons: Record<(typeof adminNav)[number]["key"], Component> = {
   projects: FolderOpened,
   assistants: MagicStick,
   organizations: User,
+  users: UserFilled,
   governance: SetUp,
 };
 
