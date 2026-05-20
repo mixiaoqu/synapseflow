@@ -7,12 +7,13 @@ import { cn } from "@/lib/utils";
 
 import {
   actionButtonClass,
-  reviewActionMeta,
+  getReviewActionBatchLabel,
   type ReviewAction,
 } from "./review-utils";
 
 interface BatchActionBarProps {
   selectedCount: number;
+  selectedStatus: "draft" | "pending_review" | "published" | "archived" | null;
   visibleActions: ReviewAction[];
   enabledActions: ReviewAction[];
   runningAction: ReviewAction | null;
@@ -23,6 +24,7 @@ interface BatchActionBarProps {
 
 export function BatchActionBar({
   selectedCount,
+  selectedStatus,
   visibleActions,
   enabledActions,
   runningAction,
@@ -69,7 +71,7 @@ export function BatchActionBar({
                       处理中
                     </>
                   ) : (
-                    reviewActionMeta[action].batchLabel
+                    getReviewActionBatchLabel(action, selectedStatus)
                   )}
                 </Button>
               );

@@ -20,10 +20,10 @@ import {
   actionButtonClass,
   availableReviewActions,
   formatDateTime,
+  getReviewActionLabel,
   indexStatusMeta,
   lifecycleMeta,
   looksLikeMarkdown,
-  reviewActionMeta,
   type ReviewAction,
 } from "./review-utils";
 
@@ -233,7 +233,7 @@ export function ReviewDocumentSheet({
         <div className="border-t border-slate-200 bg-white/95 px-6 py-4 backdrop-blur">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-500">
-              根据当前状态选择审核、退回或下线操作。
+              根据当前状态选择审核、退回、下线或重新上线操作。
             </p>
 
             <div className="flex flex-wrap gap-2">
@@ -269,7 +269,7 @@ export function ReviewDocumentSheet({
                       处理中
                     </>
                   ) : (
-                    reviewActionMeta[action].label
+                    getReviewActionLabel(action, documentView?.status)
                   )}
                 </Button>
               ))}

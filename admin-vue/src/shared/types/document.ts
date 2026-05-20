@@ -69,3 +69,17 @@ export interface DocumentQueueResponse {
   message: string;
   queued: number;
 }
+
+export interface BatchDocumentActionFailure {
+  document_id: number;
+  detail: string;
+}
+
+export interface BatchDocumentActionResponse {
+  action: string;
+  requested_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  succeeded_ids: number[];
+  failures: BatchDocumentActionFailure[];
+}

@@ -1,5 +1,6 @@
 import { request } from "@/shared/api/http";
 import type {
+  BatchDocumentActionResponse,
   DocumentChunksResponse,
   DocumentDetail,
   DocumentLifecycleStatus,
@@ -82,5 +83,91 @@ export function indexDocument(docId: number) {
   return request<DocumentQueueResponse>({
     url: `/documents/${docId}/index`,
     method: "POST",
+  });
+}
+
+export function submitDocumentForReview(docId: number) {
+  return request<DocumentDetail>({
+    url: `/documents/${docId}/submit-for-review`,
+    method: "POST",
+  });
+}
+
+export function submitDocumentsForReviewBatch(ids: number[]) {
+  return request<BatchDocumentActionResponse, { ids: number[] }>({
+    url: "/documents/batch/submit-for-review",
+    method: "POST",
+    data: { ids },
+  });
+}
+
+export function submitDocumentsForReviewByFilter(payload: {
+  keyword?: string;
+  team_id?: number;
+  knowledge_base_id?: number;
+  category_id?: number;
+}) {
+  return request<BatchDocumentActionResponse, typeof payload>({
+    url: "/documents/batch/submit-for-review-by-filter",
+    method: "POST",
+    data: payload,
+  });
+}
+
+export function rejectDocument(docId: number) {
+  return request<DocumentDetail>({
+    url: `/documents/${docId}/reject`,
+    method: "POST",
+  });
+}
+
+export function rejectDocumentsBatch(ids: number[]) {
+  return request<BatchDocumentActionResponse, { ids: number[] }>({
+    url: "/documents/batch/reject",
+    method: "POST",
+    data: { ids },
+  });
+}
+
+export function publishDocument(docId: number) {
+  return request<DocumentDetail>({
+    url: `/documents/${docId}/publish`,
+    method: "POST",
+  });
+}
+
+export function publishDocumentsBatch(ids: number[]) {
+  return request<BatchDocumentActionResponse, { ids: number[] }>({
+    url: "/documents/batch/publish",
+    method: "POST",
+    data: { ids },
+  });
+}
+
+export function publishDocumentsByFilter(payload: {
+  keyword?: string;
+  team_id?: number;
+  knowledge_base_id?: number;
+  category_id?: number;
+}) {
+  return request<BatchDocumentActionResponse, typeof payload>({
+    url: "/documents/batch/publish-by-filter",
+    method: "POST",
+    data: payload,
+  });
+}
+
+export function unpublishDocument(docId: number) {
+  return request<DocumentDetail>({
+    url: `/documents/${docId}/unpublish`,
+    method: "POST",
+  });
+}
+
+export function unpublishDocumentsBatch(ids: number[]) {
+  return request<BatchDocumentActionResponse, { ids: number[] }>({
+    url: "/documents/batch/unpublish",
+    method: "POST",
+    data: { ids },
   });
 }

@@ -12,7 +12,8 @@ import {
   REVIEW_FILTER_ORDER,
   applyDocumentDetailToListItem,
   availableReviewActions,
-  reviewActionMeta,
+  getReviewActionBatchLabel,
+  getReviewActionSuccessMessage,
   reviewFilterLabels,
   sortReviewDocuments,
   type ReviewAction,
@@ -197,6 +198,11 @@ function AdminReviewPageContent() {
     () => items.filter((item) => selectedIds.includes(item.id)),
     [items, selectedIds],
   );
+  const selectedStatus = useMemo(() => {
+    const [first] = selectedItems;
+    if (!first) return null;
+    return selectedItems.every((item) => item.status === first.status) ? first.status : null;
+  }, [selectedItems]);
 
   const visibleBatchActions = useMemo(() => {
     const actionSet = new Set<ReviewAction>();
@@ -251,6 +257,7 @@ function AdminReviewPageContent() {
 
   const runSingleAction = useCallback(
     async (documentId: number, action: ReviewAction): Promise<boolean> => {
+      const currentItem = items.find((item) => item.id === documentId);
       return withBusyIds([documentId], async () => {
         try {
           const updates = await runReviewAction(documentId, action);
@@ -258,7 +265,7 @@ function AdminReviewPageContent() {
           setSelectedIds((current) => current.filter((id) => id !== documentId));
           void loadDocuments(true);
           void loadSummary();
-          toast.success(reviewActionMeta[action].successMessage);
+          toast.success(getReviewActionSuccessMessage(action, currentItem?.status));
           return true;
         } catch (error) {
           toast.error(error instanceof Error ? error.message : "操作失败");
@@ -266,7 +273,7 @@ function AdminReviewPageContent() {
         }
       });
     },
-    [loadDocuments, loadSummary, withBusyIds],
+    [items, loadDocuments, loadSummary, withBusyIds],
   );
 
   const runBatchAction = useCallback(
@@ -378,7 +385,7 @@ function AdminReviewPageContent() {
                         处理中
                       </>
                     ) : (
-                      reviewActionMeta[action].batchLabel
+                      getReviewActionBatchLabel(action, selectedStatus)
                     )}
                   </Button>
                 ))}
@@ -465,6 +472,7 @@ function AdminReviewPageContent() {
           {selectedIds.length > 0 ? (
             <BatchActionBar
               selectedCount={selectedIds.length}
+              selectedStatus={selectedStatus}
               visibleActions={visibleBatchActions}
               enabledActions={enabledBatchActions}
               runningAction={runningBatchAction}

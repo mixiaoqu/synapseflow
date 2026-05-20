@@ -76,6 +76,36 @@ export const reviewActionMeta: Record<ReviewAction, ActionMeta> = {
   },
 };
 
+export function getReviewActionLabel(
+  action: ReviewAction,
+  status?: DocumentLifecycleStatus | null,
+): string {
+  if (action === "approve_publish") {
+    return status === "archived" ? "重新上线" : reviewActionMeta[action].label;
+  }
+  return reviewActionMeta[action].label;
+}
+
+export function getReviewActionBatchLabel(
+  action: ReviewAction,
+  status?: DocumentLifecycleStatus | null,
+): string {
+  if (action === "approve_publish") {
+    return status === "archived" ? "批量重新上线" : reviewActionMeta[action].batchLabel;
+  }
+  return reviewActionMeta[action].batchLabel;
+}
+
+export function getReviewActionSuccessMessage(
+  action: ReviewAction,
+  status?: DocumentLifecycleStatus | null,
+): string {
+  if (action === "approve_publish") {
+    return status === "archived" ? "文档已重新上线" : reviewActionMeta[action].successMessage;
+  }
+  return reviewActionMeta[action].successMessage;
+}
+
 export const lifecycleMeta: Record<DocumentLifecycleStatus, StatusMeta> = {
   draft: {
     label: "草稿",
@@ -135,6 +165,9 @@ export function availableReviewActions(
   }
   if (item.status === "pending_review") {
     return ["approve_publish", "reject"];
+  }
+  if (item.status === "archived" && indexedReady) {
+    return ["approve_publish"];
   }
   if (item.status === "published") {
     return ["unpublish"];

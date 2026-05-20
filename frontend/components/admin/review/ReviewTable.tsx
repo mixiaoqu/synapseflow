@@ -20,10 +20,10 @@ import {
   actionButtonClass,
   availableReviewActions,
   formatDateTime,
+  getReviewActionLabel,
   getTimelineLabel,
   indexStatusMeta,
   lifecycleMeta,
-  reviewActionMeta,
   type ReviewAction,
 } from "./review-utils";
 
@@ -221,7 +221,7 @@ export function ReviewTable({
                               处理中
                             </>
                           ) : (
-                            reviewActionMeta[action].label
+                            getReviewActionLabel(action, item.status)
                           )}
                         </Button>
                       ))}

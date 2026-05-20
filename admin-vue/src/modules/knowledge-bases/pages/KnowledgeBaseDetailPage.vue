@@ -27,7 +27,13 @@ import {
   deleteDocumentsBatch,
   indexDocument,
   listDocuments,
+  publishDocumentsBatch,
+  publishDocumentsByFilter,
+  rejectDocumentsBatch,
+  submitDocumentsForReviewBatch,
+  submitDocumentsForReviewByFilter,
   uploadDocumentsBatch,
+  unpublishDocumentsBatch,
 } from "@/shared/api/documents";
 import {
   listKnowledgeBases,
@@ -53,6 +59,12 @@ interface CategoryNavItem {
   label: string;
   count: number | null;
   categoryId: number | null;
+}
+
+interface DocumentStatusTabItem {
+  label: string;
+  value: "" | DocumentLifecycleStatus;
+  count: number | null;
 }
 
 const route = useRoute();
@@ -111,6 +123,36 @@ const selectedCategory = computed(() =>
 const currentCategoryLabel = computed(() => selectedCategory.value?.name ?? "全部文档");
 const selectedDocumentIds = computed(() => selectedDocuments.value.map((item) => item.id));
 const hasDocumentSelection = computed(() => selectedDocuments.value.length > 0);
+const selectedDocumentStatus = computed(() => {
+  if (selectedDocuments.value.length === 0) {
+    return null;
+  }
+
+  const [first] = selectedDocuments.value;
+  return selectedDocuments.value.every((item) => item.status === first.status) ? first.status : null;
+});
+const canBatchSubmitForReview = computed(
+  () => selectedDocumentStatus.value === "draft" && hasDocumentSelection.value,
+);
+const canBatchReject = computed(
+  () => selectedDocumentStatus.value === "pending_review" && hasDocumentSelection.value,
+);
+const canBatchPublish = computed(
+  () =>
+    (selectedDocumentStatus.value === "pending_review" || selectedDocumentStatus.value === "archived") &&
+    hasDocumentSelection.value,
+);
+const canBatchUnpublish = computed(
+  () => selectedDocumentStatus.value === "published" && hasDocumentSelection.value,
+);
+const canRunOneClickSubmit = computed(
+  () => documentQuery.status === "draft" && documentQuery.total > 0,
+);
+const canRunOneClickPublish = computed(
+  () =>
+    (documentQuery.status === "pending_review" || documentQuery.status === "archived") &&
+    documentQuery.total > 0,
+);
 const pageTitle = computed(() => knowledgeBase.value?.name ?? "知识库详情");
 const pageDescription = computed(() => knowledgeBase.value?.description?.trim() || "当前知识库用于统一管理分类、文档和索引状态。");
 const summaryStats = computed(() => {
@@ -120,14 +162,57 @@ const summaryStats = computed(() => {
 
   return [
     { label: "文档总数", value: String(knowledgeBase.value.document_count) },
-    { label: "已索引", value: String(knowledgeBase.value.indexed_document_count) },
     {
       label: "索引中",
       value: String(knowledgeBase.value.queued_document_count + knowledgeBase.value.processing_document_count),
     },
-    { label: "待审核", value: String(knowledgeBase.value.pending_review_document_count) },
   ];
 });
+const documentStatusTabs = computed<DocumentStatusTabItem[]>(() => [
+  {
+    label: "全部文档",
+    value: "",
+    count: knowledgeBase.value?.document_count ?? null,
+  },
+  {
+    label: "草稿",
+    value: "draft",
+    count: knowledgeBase.value?.draft_document_count ?? null,
+  },
+  {
+    label: "待审核",
+    value: "pending_review",
+    count: knowledgeBase.value?.pending_review_document_count ?? null,
+  },
+  {
+    label: "已发布",
+    value: "published",
+    count: knowledgeBase.value?.published_document_count ?? null,
+  },
+  {
+    label: "已下线",
+    value: "archived",
+    count: knowledgeBase.value?.archived_document_count ?? null,
+  },
+]);
+
+function getPublishActionText(status: DocumentLifecycleStatus | null) {
+  return status === "archived" ? "重新上线" : "通过并上线";
+}
+
+function getPublishBatchActionText(status: DocumentLifecycleStatus | null) {
+  return status === "archived" ? "批量重新上线" : "批量通过并上线";
+}
+
+function getPublishConfirmText(status: DocumentLifecycleStatus | null) {
+  return status === "archived" ? "重新上线" : "通过并上线";
+}
+
+function getOneClickPublishHint(status: DocumentLifecycleStatus | null) {
+  return status === "archived"
+    ? "确定将当前筛选下的已下线文档一次性重新上线吗？"
+    : "确定将当前筛选下的待审核文档一次性通过并发布吗？";
+}
 
 function getKnowledgeBaseId() {
   const raw = Number(route.params.knowledgeBaseId);
@@ -261,6 +346,18 @@ async function loadDocuments() {
   }
 }
 
+async function refreshKnowledgeBaseData() {
+  if (!knowledgeBase.value) {
+    return;
+  }
+
+  await Promise.all([
+    loadKnowledgeBaseSummary(knowledgeBase.value.id),
+    loadCategories(knowledgeBase.value.id),
+    loadDocuments(),
+  ]);
+}
+
 async function loadPage() {
   const knowledgeBaseId = getKnowledgeBaseId();
   if (!knowledgeBaseId) {
@@ -299,6 +396,7 @@ function handleSelectCategory(key: CategoryFilterKey) {
 
 function handleSearch() {
   documentQuery.page = 1;
+  selectedDocuments.value = [];
   void loadDocuments();
 }
 
@@ -306,6 +404,18 @@ function resetSearch() {
   documentQuery.keyword = "";
   documentQuery.status = "";
   documentQuery.page = 1;
+  selectedDocuments.value = [];
+  void loadDocuments();
+}
+
+function handleSelectDocumentStatus(status: "" | DocumentLifecycleStatus) {
+  if (documentQuery.status === status) {
+    return;
+  }
+
+  documentQuery.status = status;
+  documentQuery.page = 1;
+  selectedDocuments.value = [];
   void loadDocuments();
 }
 
@@ -460,6 +570,108 @@ function handleDocumentSelectionChange(items: DocumentSummary[]) {
   selectedDocuments.value = items;
 }
 
+async function runBatchDocumentAction(
+  documentIds: number[],
+  title: string,
+  message: string,
+  action: (ids: number[]) => Promise<{
+    succeeded_count: number;
+    failed_count: number;
+    failures: Array<{ document_id: number; detail: string }>;
+  }>,
+  successPrefix: string,
+) {
+  if (documentActionLoading.value || documentIds.length === 0) {
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm(message, title, {
+      type: "warning",
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  documentActionLoading.value = true;
+  try {
+    const result = await action(documentIds);
+    const succeeded = result.succeeded_count;
+    const failed = result.failed_count;
+    selectedDocuments.value = [];
+
+    if (succeeded > 0) {
+      ElMessage.success(`已${successPrefix}${succeeded}个文档。`);
+    }
+    if (failed > 0) {
+      const firstFailure = result.failures[0];
+      const detail = firstFailure?.detail ? `：${firstFailure.detail}` : "。";
+      ElMessage.warning(`${failed} 个文档处理失败${detail}`);
+    }
+
+    await refreshKnowledgeBaseData();
+  } catch (error) {
+    const fallback = `${title}失败，请稍后重试。`;
+    const messageText = error instanceof Error ? error.message : fallback;
+    ElMessage.error(messageText);
+  } finally {
+    documentActionLoading.value = false;
+  }
+}
+
+async function runOneClickDocumentAction(
+  title: string,
+  message: string,
+  action: () => Promise<{
+    succeeded_count: number;
+    failed_count: number;
+    failures: Array<{ document_id: number; detail: string }>;
+  }>,
+  successPrefix: string,
+) {
+  if (documentActionLoading.value) {
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm(message, title, {
+      type: "warning",
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  documentActionLoading.value = true;
+  try {
+    const result = await action();
+    const succeeded = result.succeeded_count;
+    const failed = result.failed_count;
+
+    if (succeeded > 0) {
+      ElMessage.success(`已${successPrefix}${succeeded}个文档。`);
+    } else {
+      ElMessage.info("当前筛选下没有可处理的文档。");
+    }
+    if (failed > 0) {
+      const firstFailure = result.failures[0];
+      const detail = firstFailure?.detail ? `：${firstFailure.detail}` : "。";
+      ElMessage.warning(`${failed} 个文档处理失败${detail}`);
+    }
+
+    await refreshKnowledgeBaseData();
+  } catch (error) {
+    const fallback = `${title}失败，请稍后重试。`;
+    const messageText = error instanceof Error ? error.message : fallback;
+    ElMessage.error(messageText);
+  } finally {
+    documentActionLoading.value = false;
+  }
+}
+
 async function handleDeleteOneDocument(document: DocumentSummary) {
   if (documentActionLoading.value) {
     return;
@@ -553,6 +765,117 @@ async function handleIndexDocument(document: DocumentSummary) {
   } finally {
     documentActionLoading.value = false;
   }
+}
+
+async function handleRejectDocument(document: DocumentSummary) {
+  await runBatchDocumentAction(
+    [document.id],
+    "驳回",
+    `确定驳回文档“${document.title}”吗？驳回后会回到草稿状态。`,
+    rejectDocumentsBatch,
+    "驳回",
+  );
+}
+
+async function handlePublishDocument(document: DocumentSummary) {
+  const actionText = getPublishActionText(document.status);
+  await runBatchDocumentAction(
+    [document.id],
+    actionText,
+    `确定${getPublishConfirmText(document.status)}文档“${document.title}”吗？`,
+    publishDocumentsBatch,
+    actionText,
+  );
+}
+
+async function handleUnpublishDocument(document: DocumentSummary) {
+  await runBatchDocumentAction(
+    [document.id],
+    "下线",
+    `确定下线文档“${document.title}”吗？`,
+    unpublishDocumentsBatch,
+    "下线",
+  );
+}
+
+async function handleBatchSubmitForReview() {
+  await runBatchDocumentAction(
+    selectedDocumentIds.value,
+    "批量提交审核",
+    `确定将选中的 ${selectedDocuments.value.length} 个文档提交审核吗？`,
+    submitDocumentsForReviewBatch,
+    "提交审核",
+  );
+}
+
+async function handleBatchReject() {
+  await runBatchDocumentAction(
+    selectedDocumentIds.value,
+    "批量驳回",
+    `确定驳回选中的 ${selectedDocuments.value.length} 个文档吗？`,
+    rejectDocumentsBatch,
+    "驳回",
+  );
+}
+
+async function handleBatchPublish() {
+  const actionText = getPublishBatchActionText(selectedDocumentStatus.value);
+  await runBatchDocumentAction(
+    selectedDocumentIds.value,
+    actionText,
+    `确定${getPublishConfirmText(selectedDocumentStatus.value)}选中的 ${selectedDocuments.value.length} 个文档吗？`,
+    publishDocumentsBatch,
+    getPublishActionText(selectedDocumentStatus.value),
+  );
+}
+
+async function handleBatchUnpublish() {
+  await runBatchDocumentAction(
+    selectedDocumentIds.value,
+    "批量下线",
+    `确定下线选中的 ${selectedDocuments.value.length} 个文档吗？`,
+    unpublishDocumentsBatch,
+    "下线",
+  );
+}
+
+async function handleOneClickSubmitForReview() {
+  if (!canRunOneClickSubmit.value) {
+    return;
+  }
+
+  await runOneClickDocumentAction(
+    "一键提交审核",
+    `确定将当前筛选下的草稿文档一次性提交审核吗？`,
+    async () =>
+      submitDocumentsForReviewByFilter({
+        keyword: documentQuery.keyword.trim() || undefined,
+        team_id: teamScopeStore.selectedTeamId ?? undefined,
+        knowledge_base_id: getKnowledgeBaseId() ?? undefined,
+        category_id: typeof selectedCategoryKey.value === "number" ? selectedCategoryKey.value : undefined,
+      }),
+    "提交审核",
+  );
+}
+
+async function handleOneClickPublish() {
+  if (!canRunOneClickPublish.value) {
+    return;
+  }
+
+  const actionText = getPublishActionText(documentQuery.status);
+  await runOneClickDocumentAction(
+    `一键${actionText}`,
+    getOneClickPublishHint(documentQuery.status),
+    async () =>
+      publishDocumentsByFilter({
+        keyword: documentQuery.keyword.trim() || undefined,
+        team_id: teamScopeStore.selectedTeamId ?? undefined,
+        knowledge_base_id: getKnowledgeBaseId() ?? undefined,
+        category_id: typeof selectedCategoryKey.value === "number" ? selectedCategoryKey.value : undefined,
+      }),
+    actionText,
+  );
 }
 
 async function handleReindexKnowledgeBase() {
@@ -696,7 +1019,6 @@ watch(
           <div class="kb-sidebar__header">
             <div>
               <h2 class="kb-sidebar__title">文档分类</h2>
-              <p class="kb-sidebar__hint">按分类筛选当前知识库中的文档。</p>
             </div>
             <el-button
               type="primary"
@@ -771,7 +1093,6 @@ watch(
           <section class="kb-documents__toolbar">
             <div class="kb-documents__toolbar-copy">
               <h2 class="kb-documents__title">{{ currentCategoryLabel }}</h2>
-              <p class="kb-documents__hint">管理当前分类下的文档、索引状态和内容预览。</p>
             </div>
 
             <div class="kb-documents__toolbar-actions">
@@ -789,29 +1110,7 @@ watch(
                 </template>
               </el-input>
 
-              <el-select
-                v-model="documentQuery.status"
-                size="large"
-                clearable
-                placeholder="发布状态"
-                class="kb-documents__status"
-                @change="handleSearch"
-              >
-                <el-option label="草稿" value="draft" />
-                <el-option label="待审核" value="pending_review" />
-                <el-option label="已发布" value="published" />
-                <el-option label="已归档" value="archived" />
-              </el-select>
-
               <el-button @click="resetSearch">重置</el-button>
-              <el-button
-                type="danger"
-                plain
-                :disabled="!hasDocumentSelection || documentActionLoading"
-                @click="handleBatchDeleteDocuments"
-              >
-                批量删除
-              </el-button>
               <el-button
                 type="primary"
                 :loading="uploadLoading"
@@ -827,6 +1126,85 @@ watch(
                 multiple
                 @change="handleFileChange"
               >
+            </div>
+          </section>
+
+          <section class="kb-documents__status-bar">
+            <div class="kb-documents__status-tabs">
+              <button
+                v-for="tab in documentStatusTabs"
+                :key="tab.value || 'all'"
+                type="button"
+                class="kb-documents__status-tab"
+                :class="{ 'is-active': documentQuery.status === tab.value }"
+                @click="handleSelectDocumentStatus(tab.value)"
+              >
+                <span>{{ tab.label }}</span>
+                <span class="kb-documents__status-tab-count">{{ tab.count ?? 0 }}</span>
+              </button>
+            </div>
+
+            <div class="kb-documents__batch-actions">
+              <el-button
+                v-if="canRunOneClickSubmit"
+                type="warning"
+                :disabled="documentActionLoading"
+                @click="handleOneClickSubmitForReview"
+              >
+                一键提交审核
+              </el-button>
+              <el-button
+                v-if="canRunOneClickPublish"
+                type="primary"
+                :disabled="documentActionLoading"
+                @click="handleOneClickPublish"
+              >
+                {{ `一键${getPublishActionText(documentQuery.status)}` }}
+              </el-button>
+              <el-button
+                v-if="canBatchSubmitForReview"
+                type="warning"
+                plain
+                :disabled="documentActionLoading"
+                @click="handleBatchSubmitForReview"
+              >
+                批量提交审核
+              </el-button>
+              <el-button
+                v-if="canBatchReject"
+                type="danger"
+                plain
+                :disabled="documentActionLoading"
+                @click="handleBatchReject"
+              >
+                批量驳回
+              </el-button>
+              <el-button
+                v-if="canBatchPublish"
+                type="primary"
+                plain
+                :disabled="documentActionLoading"
+                @click="handleBatchPublish"
+              >
+                {{ getPublishBatchActionText(selectedDocumentStatus) }}
+              </el-button>
+              <el-button
+                v-if="canBatchUnpublish"
+                type="warning"
+                plain
+                :disabled="documentActionLoading"
+                @click="handleBatchUnpublish"
+              >
+                批量下线
+              </el-button>
+              <el-button
+                type="danger"
+                plain
+                :disabled="!hasDocumentSelection || documentActionLoading"
+                @click="handleBatchDeleteDocuments"
+              >
+                批量删除
+              </el-button>
             </div>
           </section>
 
@@ -890,7 +1268,7 @@ watch(
                   <span>{{ formatDateTime(row.updated_at) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="220" fixed="right" align="right">
+              <el-table-column label="操作" width="360" fixed="right" align="right">
                 <template #default="{ row }">
                   <el-button link type="primary" @click="handleOpenDocumentDetail(row)">
                     <el-icon><View /></el-icon>
@@ -899,6 +1277,18 @@ watch(
                   <el-button link type="primary" @click="handleIndexDocument(row)">
                     <el-icon><RefreshRight /></el-icon>
                     <span>索引</span>
+                  </el-button>
+                  <el-button v-if="row.status === 'draft'" link type="warning" @click="handleSubmitDocumentForReview(row)">
+                    <span>提交审核</span>
+                  </el-button>
+                  <el-button v-else-if="row.status === 'pending_review' || row.status === 'archived'" link type="success" @click="handlePublishDocument(row)">
+                    <span>{{ getPublishActionText(row.status) }}</span>
+                  </el-button>
+                  <el-button v-else-if="row.status === 'published'" link type="warning" @click="handleUnpublishDocument(row)">
+                    <span>下线</span>
+                  </el-button>
+                  <el-button v-if="row.status === 'pending_review'" link type="danger" @click="handleRejectDocument(row)">
+                    <span>驳回</span>
                   </el-button>
                   <el-button link type="danger" @click="handleDeleteOneDocument(row)">
                     <el-icon><Delete /></el-icon>
@@ -1147,6 +1537,68 @@ watch(
   width: 280px;
 }
 
+.kb-documents__status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px 16px;
+}
+
+.kb-documents__status-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.kb-documents__status-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #dbe2ea;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.kb-documents__status-tab:hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.kb-documents__status-tab.is-active {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.kb-documents__status-tab-count {
+  min-width: 22px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.15);
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
+  text-align: center;
+}
+
+.kb-documents__batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .kb-documents__status {
   width: 150px;
 }
@@ -1271,6 +1723,15 @@ watch(
   .kb-documents__search,
   .kb-documents__status {
     width: 100%;
+  }
+
+  .kb-documents__status-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .kb-documents__batch-actions {
+    justify-content: flex-start;
   }
 
   .kb-preview__meta {

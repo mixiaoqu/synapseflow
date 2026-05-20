@@ -13,6 +13,9 @@ from app.application.indexing_service import indexing_service
 from app.db.models import Document
 from app.models.schemas.document import (
     ActiveIndexingJob,
+    BatchDocumentActionFailure,
+    BatchDocumentActionResponse,
+    BatchDocumentFilterRequest,
     DocumentChunkResponse,
     DocumentChunksResponse,
     DocumentContentUpdate,
@@ -36,6 +39,7 @@ from app.services.document_index_state import (
     is_indexed_status,
 )
 from app.services.document_lifecycle import (
+    DOC_STATUS_ARCHIVED,
     DOC_STATUS_DRAFT,
     DOC_STATUS_PENDING_REVIEW,
     DOC_STATUS_PUBLISHED,
@@ -77,6 +81,13 @@ class DocumentService:
     def _is_current_document(doc: Document) -> bool:
         return bool(getattr(doc, "is_current", True))
 
+    @staticmethod
+    def _http_error_detail(error: Exception) -> str:
+        if isinstance(error, HTTPException):
+            detail = error.detail
+            return detail if isinstance(detail, str) else str(detail)
+        return str(error) or "Unexpected error"
+
     @classmethod
     def _assert_current_document(cls, doc: Document) -> None:
         if not cls._is_current_document(doc):
@@ -116,10 +127,13 @@ class DocumentService:
                 status_code=400,
                 detail="Document must finish indexing before publish",
             )
-        if getattr(doc, "status", DOC_STATUS_DRAFT) != DOC_STATUS_PENDING_REVIEW:
+        if getattr(doc, "status", DOC_STATUS_DRAFT) not in (
+            DOC_STATUS_PENDING_REVIEW,
+            DOC_STATUS_ARCHIVED,
+        ):
             raise HTTPException(
                 status_code=400,
-                detail="Document must be pending review before publish",
+                detail="Document must be pending review or archived before publish",
             )
 
     @classmethod
@@ -326,7 +340,7 @@ class DocumentService:
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             source_path=source_path,
-            status=DOC_STATUS_DRAFT,
+            status=DOC_STATUS_PENDING_REVIEW,
             commit=False,
         )
         await self._persist_document_structure(
@@ -417,7 +431,7 @@ class DocumentService:
                     knowledge_base_id=resolved_knowledge_base_id,
                     category_id=resolved_category_id,
                     source_path=normalized_source_path,
-                    status=DOC_STATUS_DRAFT,
+                    status=DOC_STATUS_PENDING_REVIEW,
                 )
                 await repo.add_for_batch(doc)
                 created.append(doc)
@@ -509,7 +523,7 @@ class DocumentService:
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             source_path=source_path,
-            status=DOC_STATUS_DRAFT,
+            status=DOC_STATUS_PENDING_REVIEW,
             commit=False,
         )
         await self._persist_document_structure(
@@ -893,6 +907,19 @@ class DocumentService:
         user_id: int,
         doc_id: int,
     ) -> DocumentResponse:
+        return await self._submit_document_for_review(
+            db=db,
+            user_id=user_id,
+            doc_id=doc_id,
+        )
+
+    async def _submit_document_for_review(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc_id: int,
+    ) -> DocumentResponse:
         repo = DocumentRepository(db, user_id=user_id)
         existing = await repo.get_by_id_for_user(doc_id)
         if not existing:
@@ -908,6 +935,19 @@ class DocumentService:
         return self._to_response(doc, category_name=category_name)
 
     async def reject_document(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc_id: int,
+    ) -> DocumentResponse:
+        return await self._reject_document(
+            db=db,
+            user_id=user_id,
+            doc_id=doc_id,
+        )
+
+    async def _reject_document(
         self,
         *,
         db: AsyncSession,
@@ -930,6 +970,19 @@ class DocumentService:
         return self._to_response(doc, category_name=category_name)
 
     async def publish_document(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc_id: int,
+    ) -> DocumentResponse:
+        return await self._publish_document(
+            db=db,
+            user_id=user_id,
+            doc_id=doc_id,
+        )
+
+    async def _publish_document(
         self,
         *,
         db: AsyncSession,
@@ -990,6 +1043,19 @@ class DocumentService:
         user_id: int,
         doc_id: int,
     ) -> DocumentResponse:
+        return await self._unpublish_document(
+            db=db,
+            user_id=user_id,
+            doc_id=doc_id,
+        )
+
+    async def _unpublish_document(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        doc_id: int,
+    ) -> DocumentResponse:
         repo = DocumentRepository(db, user_id=user_id)
         existing = await repo.get_by_id_for_user(doc_id)
         if not existing:
@@ -997,7 +1063,7 @@ class DocumentService:
         self._assert_can_unpublish(existing)
         doc = await repo.update_status(
             doc_id,
-            status=DOC_STATUS_DRAFT,
+            status=DOC_STATUS_ARCHIVED,
             reviewer_id=user_id,
             publisher_id=None,
             is_live=False,
@@ -1006,6 +1072,167 @@ class DocumentService:
             raise HTTPException(status_code=404, detail="Document not found")
         category_name = await repo.get_category_name(getattr(doc, "category_id", None))
         return self._to_response(doc, category_name=category_name)
+
+    async def _run_batch_document_action(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        ids: list[int],
+        action: str,
+        handler,
+    ) -> BatchDocumentActionResponse:
+        succeeded_ids: list[int] = []
+        failures: list[BatchDocumentActionFailure] = []
+
+        for doc_id in ids:
+            try:
+                await handler(db=db, user_id=user_id, doc_id=doc_id)
+                succeeded_ids.append(doc_id)
+            except Exception as error:  # noqa: BLE001
+                failures.append(
+                    BatchDocumentActionFailure(
+                        document_id=doc_id,
+                        detail=self._http_error_detail(error),
+                    )
+                )
+                await db.rollback()
+
+        return BatchDocumentActionResponse(
+            action=action,
+            requested_count=len(ids),
+            succeeded_count=len(succeeded_ids),
+            failed_count=len(failures),
+            succeeded_ids=succeeded_ids,
+            failures=failures,
+        )
+
+    async def _run_batch_document_action_by_filter(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        action: str,
+        handler,
+        keyword: str | None = None,
+        team_id: int | None = None,
+        knowledge_base_id: int | None = None,
+        category_id: int | None = None,
+        status: str | None = None,
+    ) -> BatchDocumentActionResponse:
+        repo = DocumentRepository(db, user_id=user_id)
+        ids = await repo.list_ids(
+            keyword=keyword,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            status=status,
+        )
+        return await self._run_batch_document_action(
+            db=db,
+            user_id=user_id,
+            ids=ids,
+            action=action,
+            handler=handler,
+        )
+
+    async def submit_documents_for_review_batch(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        ids: list[int],
+    ) -> BatchDocumentActionResponse:
+        return await self._run_batch_document_action(
+            db=db,
+            user_id=user_id,
+            ids=ids,
+            action="submit_for_review",
+            handler=self._submit_document_for_review,
+        )
+
+    async def submit_documents_for_review_by_filter(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        filter_body: BatchDocumentFilterRequest,
+    ) -> BatchDocumentActionResponse:
+        return await self._run_batch_document_action_by_filter(
+            db=db,
+            user_id=user_id,
+            action="submit_for_review",
+            handler=self._submit_document_for_review,
+            keyword=filter_body.keyword,
+            team_id=filter_body.team_id,
+            knowledge_base_id=filter_body.knowledge_base_id,
+            category_id=filter_body.category_id,
+            status="draft",
+        )
+
+    async def reject_documents_batch(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        ids: list[int],
+    ) -> BatchDocumentActionResponse:
+        return await self._run_batch_document_action(
+            db=db,
+            user_id=user_id,
+            ids=ids,
+            action="reject",
+            handler=self._reject_document,
+        )
+
+    async def publish_documents_batch(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        ids: list[int],
+    ) -> BatchDocumentActionResponse:
+        return await self._run_batch_document_action(
+            db=db,
+            user_id=user_id,
+            ids=ids,
+            action="publish",
+            handler=self._publish_document,
+        )
+
+    async def publish_documents_by_filter(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        filter_body: BatchDocumentFilterRequest,
+    ) -> BatchDocumentActionResponse:
+        return await self._run_batch_document_action_by_filter(
+            db=db,
+            user_id=user_id,
+            action="publish",
+            handler=self._publish_document,
+            keyword=filter_body.keyword,
+            team_id=filter_body.team_id,
+            knowledge_base_id=filter_body.knowledge_base_id,
+            category_id=filter_body.category_id,
+            status="pending_review",
+        )
+
+    async def unpublish_documents_batch(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        ids: list[int],
+    ) -> BatchDocumentActionResponse:
+        return await self._run_batch_document_action(
+            db=db,
+            user_id=user_id,
+            ids=ids,
+            action="unpublish",
+            handler=self._unpublish_document,
+        )
 
     async def delete_documents_batch(
         self,

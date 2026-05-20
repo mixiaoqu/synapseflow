@@ -129,6 +129,47 @@ class DocumentStatusActionRequest(BaseModel):
     note: str | None = Field(default=None, description="Optional admin note")
 
 
+class BatchDocumentActionRequest(BaseModel):
+    """Batch document transition request."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    ids: list[int] = Field(..., min_length=1, description="Document ids to process")
+
+
+class BatchDocumentFilterRequest(BaseModel):
+    """Filter used for one-click batch transitions."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    keyword: str | None = Field(default=None, description="Title keyword")
+    team_id: int | None = Field(default=None, description="Team id")
+    knowledge_base_id: int | None = Field(default=None, description="Knowledge base id")
+    category_id: int | None = Field(default=None, description="Category id")
+
+
+class BatchDocumentActionFailure(BaseModel):
+    """One failed item in a batch document transition."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    document_id: int
+    detail: str
+
+
+class BatchDocumentActionResponse(BaseModel):
+    """Batch document transition result."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    action: str
+    requested_count: int
+    succeeded_count: int
+    failed_count: int
+    succeeded_ids: list[int] = Field(default_factory=list)
+    failures: list[BatchDocumentActionFailure] = Field(default_factory=list)
+
+
 class DocumentVersionItem(BaseModel):
     """Document version item."""
 

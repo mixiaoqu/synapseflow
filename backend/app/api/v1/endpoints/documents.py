@@ -8,6 +8,9 @@ from app.application.document_service import document_service
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.document import (
+    BatchDocumentActionRequest,
+    BatchDocumentActionResponse,
+    BatchDocumentFilterRequest,
     DocumentContentUpdate,
     DocumentCreate,
     IndexingPanelSummaryResponse,
@@ -236,6 +239,84 @@ async def delete_documents_batch(
     )
 
 
+@router.post("/batch/submit-for-review", response_model=BatchDocumentActionResponse)
+async def submit_documents_for_review_batch_v2(
+    body: BatchDocumentActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await document_service.submit_documents_for_review_batch(
+        db=db,
+        user_id=current_user.id,
+        ids=body.ids,
+    )
+
+
+@router.post("/batch/submit-for-review-by-filter", response_model=BatchDocumentActionResponse)
+async def submit_documents_for_review_by_filter(
+    body: BatchDocumentFilterRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await document_service.submit_documents_for_review_by_filter(
+        db=db,
+        user_id=current_user.id,
+        filter_body=body,
+    )
+
+
+@router.post("/batch/reject", response_model=BatchDocumentActionResponse)
+async def reject_documents_batch_v2(
+    body: BatchDocumentActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    return await document_service.reject_documents_batch(
+        db=db,
+        user_id=current_user.id,
+        ids=body.ids,
+    )
+
+
+@router.post("/batch/publish", response_model=BatchDocumentActionResponse)
+async def publish_documents_batch_v2(
+    body: BatchDocumentActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    return await document_service.publish_documents_batch(
+        db=db,
+        user_id=current_user.id,
+        ids=body.ids,
+    )
+
+
+@router.post("/batch/publish-by-filter", response_model=BatchDocumentActionResponse)
+async def publish_documents_by_filter(
+    body: BatchDocumentFilterRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    return await document_service.publish_documents_by_filter(
+        db=db,
+        user_id=current_user.id,
+        filter_body=body,
+    )
+
+
+@router.post("/batch/unpublish", response_model=BatchDocumentActionResponse)
+async def unpublish_documents_batch_v2(
+    body: BatchDocumentActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    return await document_service.unpublish_documents_batch(
+        db=db,
+        user_id=current_user.id,
+        ids=body.ids,
+    )
+
+
 @router.delete("/{doc_id}")
 async def delete_document(
     doc_id: int,
@@ -262,6 +343,19 @@ async def submit_document_for_review(
     )
 
 
+@router.post("/batch/submit-for-review", response_model=BatchDocumentActionResponse)
+async def submit_documents_for_review_batch(
+    body: BatchDocumentActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await document_service.submit_documents_for_review_batch(
+        db=db,
+        user_id=current_user.id,
+        ids=body.ids,
+    )
+
+
 @router.post("/{doc_id}/reject", response_model=DocumentResponse)
 async def reject_document(
     doc_id: int,
@@ -272,6 +366,19 @@ async def reject_document(
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,
+    )
+
+
+@router.post("/batch/reject", response_model=BatchDocumentActionResponse)
+async def reject_documents_batch(
+    body: BatchDocumentActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    return await document_service.reject_documents_batch(
+        db=db,
+        user_id=current_user.id,
+        ids=body.ids,
     )
 
 
@@ -288,6 +395,19 @@ async def publish_document(
     )
 
 
+@router.post("/batch/publish", response_model=BatchDocumentActionResponse)
+async def publish_documents_batch(
+    body: BatchDocumentActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    return await document_service.publish_documents_batch(
+        db=db,
+        user_id=current_user.id,
+        ids=body.ids,
+    )
+
+
 @router.post("/{doc_id}/unpublish", response_model=DocumentResponse)
 async def unpublish_document(
     doc_id: int,
@@ -298,4 +418,17 @@ async def unpublish_document(
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,
+    )
+
+
+@router.post("/batch/unpublish", response_model=BatchDocumentActionResponse)
+async def unpublish_documents_batch(
+    body: BatchDocumentActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    return await document_service.unpublish_documents_batch(
+        db=db,
+        user_id=current_user.id,
+        ids=body.ids,
     )

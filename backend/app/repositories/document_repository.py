@@ -13,7 +13,7 @@ from app.repositories.access_scope import (
     accessible_document_condition,
     accessible_knowledge_base_condition,
 )
-from app.services.document_lifecycle import DOC_STATUS_DRAFT
+from app.services.document_lifecycle import DOC_STATUS_DRAFT, DOC_STATUS_PENDING_REVIEW
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
     INDEX_STATUS_INDEXED,
@@ -192,6 +192,63 @@ class DocumentRepository:
         result = await self.db.execute(stmt)
         return list(result.all()), total
 
+    def _build_document_filter(
+        self,
+        *,
+        keyword: str | None = None,
+        team_id: int | None = None,
+        knowledge_base_id: int | None = None,
+        category_id: int | None = None,
+        status: str | None = None,
+    ):
+        base_filter = accessible_document_condition(self.user_id) & Document.is_current.is_(True)
+        if keyword and keyword.strip():
+            base_filter = base_filter & Document.title.ilike(f"%{keyword.strip()}%")
+        if knowledge_base_id is not None:
+            if knowledge_base_id == 0:
+                base_filter = base_filter & Document.knowledge_base_id.is_(None)
+            else:
+                base_filter = base_filter & (Document.knowledge_base_id == knowledge_base_id)
+        if category_id is not None:
+            if category_id == 0:
+                base_filter = base_filter & Document.category_id.is_(None)
+            else:
+                base_filter = base_filter & (Document.category_id == category_id)
+        if status:
+            base_filter = base_filter & (Document.status == status)
+        if team_id is not None:
+            base_filter = base_filter & (
+                Document.knowledge_base_id.is_not(None) & (KnowledgeBase.team_id == team_id)
+            )
+        return base_filter
+
+    async def list_ids(
+        self,
+        *,
+        keyword: str | None = None,
+        team_id: int | None = None,
+        knowledge_base_id: int | None = None,
+        category_id: int | None = None,
+        status: str | None = None,
+    ) -> list[int]:
+        stmt = (
+            select(Document.id)
+            .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
+            .where(
+                self._build_document_filter(
+                    keyword=keyword,
+                    team_id=team_id,
+                    knowledge_base_id=knowledge_base_id,
+                    category_id=category_id,
+                    status=status,
+                )
+            )
+            .order_by(Document.created_at.desc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_category_name(self, category_id: int | None) -> str | None:
         """Fetch a category name scoped to the current user."""
         if category_id is None:
@@ -253,7 +310,7 @@ class DocumentRepository:
         doc.index_error = None
         doc.indexed_at = None
         doc.version = (doc.version or 1) + 1
-        doc.status = DOC_STATUS_DRAFT
+        doc.status = DOC_STATUS_PENDING_REVIEW
         doc.is_live = False
         doc.published_at = None
         doc.published_by = None
@@ -370,7 +427,7 @@ class DocumentRepository:
             knowledge_base_id=getattr(latest_doc or orig, "knowledge_base_id", None),
             category_id=getattr(latest_doc or orig, "category_id", None),
             source_path=getattr(latest_doc or orig, "source_path", None),
-            status=DOC_STATUS_DRAFT,
+            status=DOC_STATUS_PENDING_REVIEW,
             published_at=None,
             published_by=None,
             reviewed_at=None,
