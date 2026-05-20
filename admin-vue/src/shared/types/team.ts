@@ -22,6 +22,7 @@ export interface CreateTeamPayload {
   name: string;
   code?: string | null;
   description?: string | null;
+  member_ids?: number[];
 }
 
 /** 更新团队请求体 */

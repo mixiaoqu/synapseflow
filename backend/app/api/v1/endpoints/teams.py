@@ -52,6 +52,7 @@ async def create_team(
         name=body.name,
         code=body.code,
         description=body.description,
+        member_ids=body.member_ids,
     )
 
 

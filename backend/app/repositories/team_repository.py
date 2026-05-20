@@ -114,6 +114,7 @@ class TeamRepository:
         name: str,
         code: str | None = None,
         description: str | None = None,
+        member_ids: list[int] | None = None,
     ) -> Team:
         team = Team(
             name=name.strip(),
@@ -123,6 +124,10 @@ class TeamRepository:
         self.db.add(team)
         await self.db.flush()
         self.db.add(TeamMember(team_id=team.id, user_id=self.user_id, role="owner"))
+        if member_ids:
+            for uid in member_ids:
+                if uid != self.user_id:
+                    self.db.add(TeamMember(team_id=team.id, user_id=uid, role="member"))
         await self.db.commit()
         await self.db.refresh(team)
         return team
