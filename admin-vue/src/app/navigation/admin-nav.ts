@@ -28,7 +28,7 @@ export const adminNav: AdminNavItem[] = [
   },
   {
     key: "organizations",
-    label: "组织",
+    label: "团队",
     to: "/organizations",
   },
   {

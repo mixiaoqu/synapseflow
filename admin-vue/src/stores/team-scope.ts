@@ -61,7 +61,8 @@ export const useTeamScopeStore = defineStore("team-scope", {
       this.errorMessage = "";
 
       try {
-        const teams = await listTeams();
+        const result = await listTeams();
+        const teams = result.items;
         this.teams = teams;
 
         if (teams.length === 0) {

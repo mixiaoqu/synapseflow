@@ -10,6 +10,7 @@ import DocumentDetailPage from "@/modules/knowledge-bases/pages/DocumentDetailPa
 import KnowledgeBaseDetailPage from "@/modules/knowledge-bases/pages/KnowledgeBaseDetailPage.vue";
 import KnowledgeBaseListPage from "@/modules/knowledge-bases/pages/KnowledgeBaseListPage.vue";
 import ModulePlaceholderPage from "@/modules/platform/pages/ModulePlaceholderPage.vue";
+import TeamListPage from "@/modules/organizations/pages/TeamListPage.vue";
 
 // 当前阶段所有一级后台模块先复用统一骨架页，后续再逐个替换成真实业务页面。
 const router = createRouter({
@@ -119,10 +120,10 @@ const router = createRouter({
         {
           path: "organizations",
           name: "organizations",
-          component: ModulePlaceholderPage,
+          component: TeamListPage,
           meta: {
             title: "组织",
-            description: "组织资源导航占位，后续任务在此接入团队、成员与角色管理。",
+            description: "团队与成员管理。",
           },
         },
         {

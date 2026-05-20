@@ -6,3 +6,42 @@ export interface TeamSummary {
   created_at: string;
   updated_at: string;
 }
+
+/** 团队成员记录 */
+export interface TeamMember {
+  id: number;
+  team_id: number;
+  user_id: number;
+  role: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 创建团队请求体 */
+export interface CreateTeamPayload {
+  name: string;
+  code?: string | null;
+  description?: string | null;
+}
+
+/** 更新团队请求体 */
+export interface UpdateTeamPayload {
+  name: string;
+  code?: string | null;
+  description?: string | null;
+}
+
+/** 团队角色标签映射 */
+export const TEAM_ROLE_LABELS: Record<string, string> = {
+  owner: "所有者",
+  admin: "管理员",
+  member: "成员",
+};
+
+/** 分页团队列表响应 */
+export interface TeamListResponse {
+  items: TeamSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}

@@ -1,6 +1,6 @@
 """Team and team-member repository."""
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import KnowledgeBase, KnowledgeBaseMember, Team, TeamMember
@@ -16,6 +16,43 @@ class TeamRepository:
     async def list_teams(self) -> list[Team]:
         result = await self.db.execute(select(Team).order_by(Team.created_at.desc(), Team.id.desc()))
         return list(result.scalars().all())
+
+    async def list_teams_paginated(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: str | None = None,
+    ) -> tuple[list[Team], int]:
+        """分页查询团队列表，支持按名称/编码模糊搜索。
+
+        Args:
+            page: 页码，从 1 开始
+            page_size: 每页条数
+            keyword: 可选搜索关键词，匹配 name 或 code
+
+        Returns:
+            (团队列表, 总数) 二元组
+        """
+        base_query = select(Team)
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            base_query = base_query.where(
+                or_(
+                    Team.name.ilike(pattern),
+                    Team.code.ilike(pattern),
+                )
+            )
+
+        count_result = await self.db.execute(select(func.count()).select_from(base_query.subquery()))
+        total = count_result.scalar_one()
+
+        offset = (page - 1) * page_size
+        result = await self.db.execute(
+            base_query.order_by(Team.created_at.desc(), Team.id.desc()).offset(offset).limit(page_size)
+        )
+        rows = list(result.scalars().all())
+        return rows, total
 
     async def list_user_teams(self) -> list[Team]:
         """List teams visible to the current user for scoped operations."""

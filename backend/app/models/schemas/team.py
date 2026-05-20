@@ -33,6 +33,15 @@ class TeamResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
+class TeamListResponse(BaseModel):
+    """Paginated team list response."""
+
+    items: list[TeamResponse]
+    total: int
+    page: int
+    page_size: int
+
 class TeamMemberCreate(BaseModel):
     """Create team member request."""
 
