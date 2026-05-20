@@ -11,6 +11,7 @@ class TeamCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="团队名称")
     code: str | None = Field(default=None, max_length=50, description="团队编码")
     description: str | None = Field(default=None, description="团队描述")
+    member_ids: list[int] = Field(default_factory=list, description="创建时批量绑定的成员用户 ID 列表")
 
 
 class TeamUpdate(BaseModel):

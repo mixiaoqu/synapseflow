@@ -40,3 +40,12 @@ class AdminUserResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class UserListResponse(BaseModel):
+    """Paginated user list response."""
+
+    items: list[AdminUserResponse]
+    total: int
+    page: int
+    page_size: int

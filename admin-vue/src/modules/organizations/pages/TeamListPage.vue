@@ -80,20 +80,40 @@ const editingTeam = ref<TeamSummary | null>(null);
 const teamFormLoading = ref(false);
 const teamForm = ref({ name: "", code: "", description: "" });
 
-const memberDrawerVisible = ref(false);
+const memberDialogVisible = ref(false);
 const activeTeam = ref<TeamSummary | null>(null);
 const members = ref<TeamMember[]>([]);
-const selectedUserId = ref<number | null>(null);
-const selectedRole = ref("member");
 const memberLoading = ref(false);
+const memberLoaded = ref(false);
 const updatingMemberId = ref<number | null>(null);
 
-const pagination = ref({ page: 1, pageSize: 20, total: 0 });
+/** 新建团队时选中的初始成员 ID 列表 */
+const createMemberIds = ref<number[]>([]);
+/** 成员管理弹窗左侧搜索关键词 */
+const memberSearchKeyword = ref("");
+/** 成员管理弹窗左侧待添加的用户 ID 列表 */
+const pendingAddIds = ref<number[]>([]);
+
+const pagination = ref({ page: 1, pageSize: 10, total: 0 });
 const searchKeyword = ref("");
 
 const userMap = computed(() => new Map(users.value.map((u) => [u.id, u])));
 
 const memberIds = computed(() => new Set(members.value.map((m) => m.user_id)));
+
+/** 成员管理弹窗左侧：所有非当前团队成员的用户（支持搜索过滤） */
+const availableMembers = computed(() => {
+  const keyword = memberSearchKeyword.value.trim().toLowerCase();
+  return users.value.filter((u) => {
+    if (memberIds.value.has(u.id)) return false;
+    if (!keyword) return true;
+    return (
+      (u.full_name || "").toLowerCase().includes(keyword) ||
+      u.username.toLowerCase().includes(keyword) ||
+      u.email.toLowerCase().includes(keyword)
+    );
+  });
+});
 
 /** 加载团队和用户列表 */
 async function loadData() {
@@ -111,7 +131,7 @@ async function loadData() {
     ]);
     teams.value = teamResult.items;
     pagination.value.total = teamResult.total;
-    users.value = userList;
+    users.value = userList.items;
   } catch (error) {
     loadError.value = error;
   } finally {
@@ -123,6 +143,7 @@ async function loadData() {
 function openCreateDialog() {
   editingTeam.value = null;
   teamForm.value = { name: "", code: "", description: "" };
+  createMemberIds.value = [];
   teamDialogVisible.value = true;
 }
 
@@ -157,7 +178,10 @@ async function handleTeamSubmit() {
       if (activeTeam.value?.id === updated.id) activeTeam.value = updated;
       ElMessage.success("团队信息已更新");
     } else {
-      const created = await createTeam(payload);
+      const created = await createTeam({
+        ...payload,
+        member_ids: createMemberIds.value,
+      });
       teams.value = [created, ...teams.value];
       ElMessage.success("团队已创建");
     }
@@ -185,7 +209,7 @@ async function handleDeleteTeam(team: TeamSummary) {
     await deleteTeam(team.id);
     teams.value = teams.value.filter((t) => t.id !== team.id);
     if (activeTeam.value?.id === team.id) {
-      memberDrawerVisible.value = false;
+      memberDialogVisible.value = false;
       activeTeam.value = null;
     }
     ElMessage.success("团队已删除");
@@ -195,42 +219,46 @@ async function handleDeleteTeam(team: TeamSummary) {
   }
 }
 
-/** 打开成员管理面板 */
+/** 打开成员管理弹窗 */
 async function openMemberPanel(team: TeamSummary) {
   activeTeam.value = team;
-  memberDrawerVisible.value = true;
-  selectedUserId.value = null;
-  selectedRole.value = "member";
+  memberLoaded.value = false;
+  memberDialogVisible.value = true;
+  memberSearchKeyword.value = "";
+  pendingAddIds.value = [];
   try {
     members.value = await listTeamMembers(team.id);
   } catch {
     members.value = [];
+  } finally {
+    memberLoaded.value = true;
   }
 }
 
-/** 关闭成员管理面板 */
+/** 关闭成员管理弹窗 */
 function closeMemberPanel() {
-  memberDrawerVisible.value = false;
+  memberDialogVisible.value = false;
   activeTeam.value = null;
   members.value = [];
+  memberLoaded.value = false;
+  memberSearchKeyword.value = "";
+  pendingAddIds.value = [];
 }
 
-/** 添加成员 */
-async function handleAddMember() {
-  if (!activeTeam.value || !selectedUserId.value) {
-    ElMessage.error("请先选择一个用户");
-    return;
-  }
+/** 批量添加选中的用户到团队 */
+async function handleAddMembers() {
+  if (!activeTeam.value || pendingAddIds.value.length === 0) return;
   memberLoading.value = true;
   try {
-    const created = await addTeamMember(activeTeam.value.id, {
-      user_id: selectedUserId.value,
-      role: selectedRole.value,
-    });
-    members.value = [...members.value, created];
-    ElMessage.success("成员已加入团队");
-    selectedUserId.value = null;
-    selectedRole.value = "member";
+    const results = await Promise.all(
+      pendingAddIds.value.map((uid) =>
+        addTeamMember(activeTeam.value!.id, { user_id: uid, role: "member" })
+      )
+    );
+    members.value = [...members.value, ...results];
+    ElMessage.success(`已添加 ${results.length} 位成员`);
+    pendingAddIds.value = [];
+    memberSearchKeyword.value = "";
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "添加成员失败");
   } finally {
@@ -280,6 +308,13 @@ async function handleRemoveMember(member: TeamMember) {
 
 /** 搜索团队（重置到第一页） */
 function handleSearch() {
+  pagination.value.page = 1;
+  void loadData();
+}
+
+/** 重置搜索条件并刷新 */
+function handleResetSearch() {
+  searchKeyword.value = "";
   pagination.value.page = 1;
   void loadData();
 }
@@ -349,6 +384,8 @@ onMounted(() => {
             <el-icon><Search /></el-icon>
           </template>
         </el-input>
+        <el-button type="primary" @click="handleSearch">搜索</el-button>
+        <el-button @click="handleResetSearch">重置</el-button>
       </div>
       <el-table :data="teams" row-key="id" class="team-list-page__table">
         <el-table-column label="团队名称" min-width="220">
@@ -411,7 +448,7 @@ onMounted(() => {
     <el-dialog
       v-model="teamDialogVisible"
       :title="editingTeam ? '编辑团队' : '新建团队'"
-      width="480px"
+      width="560px"
       :close-on-click-modal="false"
     >
       <el-form label-position="top" @submit.prevent="handleTeamSubmit">
@@ -437,34 +474,16 @@ onMounted(() => {
             :rows="3"
           />
         </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="teamDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="teamFormLoading" @click="handleTeamSubmit">
-          {{ editingTeam ? "保存修改" : "创建团队" }}
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 成员管理抽屉 -->
-    <el-drawer
-      v-model="memberDrawerVisible"
-      :title="activeTeam ? `${activeTeam.name} · 成员管理` : '成员管理'"
-      size="420px"
-      :close-on-click-modal="false"
-      @close="closeMemberPanel"
-    >
-      <!-- 添加成员 -->
-      <div class="team-list-page__add-member">
-        <div class="team-list-page__add-member-row">
+        <el-form-item v-if="!editingTeam" label="初始成员">
           <el-select
-            v-model="selectedUserId"
+            v-model="createMemberIds"
+            multiple
             filterable
-            placeholder="搜索姓名、用户名或邮箱…"
-            style="flex: 1"
+            placeholder="搜索并选择成员…"
+            style="width: 100%"
           >
             <el-option
-              v-for="user in users.filter((u) => !memberIds.has(u.id))"
+              v-for="user in users"
               :key="user.id"
               :label="user.full_name || user.username"
               :value="user.id"
@@ -480,72 +499,134 @@ onMounted(() => {
               </div>
             </el-option>
           </el-select>
-          <el-select v-model="selectedRole" style="width: 110px">
-            <el-option
-              v-for="(label, key) in TEAM_ROLE_LABELS"
-              :key="key"
-              :label="label"
-              :value="key"
-            />
-          </el-select>
-          <el-button
-            type="primary"
-            :loading="memberLoading"
-            :disabled="!selectedUserId"
-            @click="handleAddMember"
-          >
-            <el-icon><Plus /></el-icon>
-          </el-button>
-        </div>
-      </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="teamDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="teamFormLoading" @click="handleTeamSubmit">
+          {{ editingTeam ? "保存修改" : "创建团队" }}
+        </el-button>
+      </template>
+    </el-dialog>
 
-      <!-- 成员列表 -->
-      <div class="team-list-page__member-list">
-        <div v-if="members.length === 0" class="team-list-page__member-empty">
-          <el-icon :size="32" color="#94a3b8"><User /></el-icon>
-          <p>还没有成员</p>
-        </div>
-        <div
-          v-for="member in members"
-          :key="member.id"
-          class="team-list-page__member-item"
-          :class="{ 'team-list-page__member-item--inactive': userMap.get(member.user_id)?.is_active === false }"
-        >
-          <span class="team-list-page__member-avatar" :style="avatarStyle(member.user_id)">
-            {{ getInitials(userMap.get(member.user_id)?.full_name, userMap.get(member.user_id)?.username) }}
-          </span>
-          <div class="team-list-page__member-info">
-            <strong>{{ userMap.get(member.user_id)?.full_name || userMap.get(member.user_id)?.username || `用户 #${member.user_id}` }}</strong>
-            <small>
-              {{ userMap.get(member.user_id)?.email || `user_id=${member.user_id}` }}
-              <template v-if="userMap.get(member.user_id)?.is_active === false"> · 已停用</template>
-            </small>
+    <!-- 成员管理弹窗 -->
+    <el-dialog
+      v-model="memberDialogVisible"
+      :title="activeTeam ? `${activeTeam.name} · 成员管理` : '成员管理'"
+      width="780px"
+      :close-on-click-modal="false"
+      @close="closeMemberPanel"
+    >
+      <div v-if="!memberLoaded" class="team-list-page__member-panel__loading">
+        <el-icon class="is-loading" :size="24" color="#94a3b8"><Search /></el-icon>
+        <p>加载成员列表中…</p>
+      </div>
+      <div v-else class="team-list-page__member-panel">
+        <!-- 左侧：添加成员 -->
+        <div class="team-list-page__member-panel__left">
+          <div class="team-list-page__member-panel__header">
+            <strong>添加成员</strong>
           </div>
-          <div class="team-list-page__member-actions">
-            <el-tag v-if="userMap.get(member.user_id)?.role" size="small" type="info">
-              {{ TEAM_ROLE_LABELS[userMap.get(member.user_id)!.role] ?? userMap.get(member.user_id)!.role }}
-            </el-tag>
-            <el-select
-              :model-value="member.role"
-              :loading="updatingMemberId === member.id"
+          <div class="team-list-page__member-panel__search">
+            <el-input
+              v-model="memberSearchKeyword"
+              placeholder="搜索姓名、用户名或邮箱…"
+              clearable
               size="small"
-              style="width: 90px"
-              @change="(role: string) => handleUpdateRole(member, role)"
             >
-              <el-option
-                v-for="(label, key) in TEAM_ROLE_LABELS"
-                :key="key"
-                :label="label"
-                :value="key"
-              />
-            </el-select>
-            <el-button link type="danger" size="small" @click="handleRemoveMember(member)">
-              移除
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+          </div>
+          <div class="team-list-page__member-panel__list">
+            <el-checkbox-group v-model="pendingAddIds">
+              <div
+                v-for="user in availableMembers"
+                :key="user.id"
+                class="team-list-page__member-panel__user-row"
+              >
+                <el-checkbox :value="user.id">
+                  <div class="team-list-page__member-panel__user-content">
+                    <span class="team-list-page__user-avatar-sm" :style="avatarStyle(user.id)">
+                      {{ getInitials(user.full_name, user.username) }}
+                    </span>
+                    <span class="team-list-page__user-info">
+                      <strong>{{ user.full_name || user.username }}</strong>
+                      <small>{{ user.email }}</small>
+                    </span>
+                  </div>
+                </el-checkbox>
+              </div>
+            </el-checkbox-group>
+            <p v-if="availableMembers.length === 0" class="team-list-page__member-panel__empty">
+              没有可添加的用户
+            </p>
+          </div>
+          <div class="team-list-page__member-panel__footer">
+            <el-button
+              type="primary"
+              :disabled="pendingAddIds.length === 0"
+              :loading="memberLoading"
+              @click="handleAddMembers"
+            >
+              添加选中 ({{ pendingAddIds.length }})
             </el-button>
           </div>
         </div>
+
+        <!-- 右侧：当前成员 -->
+        <div class="team-list-page__member-panel__right">
+          <div class="team-list-page__member-panel__header">
+            <strong>当前成员 ({{ members.length }})</strong>
+          </div>
+          <div class="team-list-page__member-panel__list">
+            <div v-if="members.length === 0" class="team-list-page__member-panel__empty">
+              还没有成员
+            </div>
+            <div
+              v-for="member in members"
+              :key="member.id"
+              class="team-list-page__member-panel__user-row"
+              :class="{ 'team-list-page__member-panel__user-row--inactive': userMap.get(member.user_id)?.is_active === false }"
+            >
+              <span class="team-list-page__member-avatar" :style="avatarStyle(member.user_id)">
+                {{ getInitials(userMap.get(member.user_id)?.full_name, userMap.get(member.user_id)?.username) }}
+              </span>
+              <div class="team-list-page__member-info">
+                <strong>{{ userMap.get(member.user_id)?.full_name || userMap.get(member.user_id)?.username || `用户 #${member.user_id}` }}</strong>
+                <small>
+                  {{ userMap.get(member.user_id)?.email || `user_id=${member.user_id}` }}
+                  <template v-if="userMap.get(member.user_id)?.is_active === false"> · 已停用</template>
+                </small>
+              </div>
+              <div class="team-list-page__member-actions">
+                <el-select
+                  :model-value="member.role"
+                  :loading="updatingMemberId === member.id"
+                  size="small"
+                  style="width: 90px"
+                  @change="(role: string) => handleUpdateRole(member, role)"
+                >
+                  <el-option
+                    v-for="(label, key) in TEAM_ROLE_LABELS"
+                    :key="key"
+                    :label="label"
+                    :value="key"
+                  />
+                </el-select>
+                <el-button link type="danger" size="small" @click="handleRemoveMember(member)">
+                  移除
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-    </el-drawer>
+      <template #footer>
+        <el-button @click="memberDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
@@ -655,16 +736,79 @@ onMounted(() => {
   font-size: 13px;
 }
 
-/* 成员管理抽屉 */
-.team-list-page__add-member {
-  padding: 16px 0;
+/* 成员管理弹窗 */
+.team-list-page__member-panel__loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  gap: 12px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.team-list-page__member-panel {
+  display: flex;
+  gap: 16px;
+  min-height: 400px;
+}
+
+.team-list-page__member-panel__left,
+.team-list-page__member-panel__right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.team-list-page__member-panel__header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 14px;
+}
+
+.team-list-page__member-panel__search {
+  padding: 8px 12px;
   border-bottom: 1px solid #f1f5f9;
 }
 
-.team-list-page__add-member-row {
+.team-list-page__member-panel__list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  max-height: 360px;
+}
+
+.team-list-page__member-panel__footer {
+  padding: 12px 16px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.team-list-page__member-panel__user-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
+  padding: 6px 0;
+}
+
+.team-list-page__member-panel__user-row--inactive {
+  opacity: 0.5;
+}
+
+.team-list-page__member-panel__user-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-list-page__member-panel__empty {
+  text-align: center;
+  padding: 32px 0;
+  color: #94a3b8;
+  font-size: 13px;
 }
 
 .team-list-page__select-option {
@@ -711,37 +855,6 @@ onMounted(() => {
 .team-list-page__user-info small {
   font-size: 11px;
   color: #94a3b8;
-}
-
-.team-list-page__member-list {
-  padding: 8px 0;
-}
-
-.team-list-page__member-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 48px 0;
-  gap: 8px;
-  color: #94a3b8;
-  font-size: 13px;
-}
-
-.team-list-page__member-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid #f8fafc;
-}
-
-.team-list-page__member-item:last-child {
-  border-bottom: none;
-}
-
-.team-list-page__member-item--inactive {
-  opacity: 0.5;
 }
 
 .team-list-page__member-avatar {
