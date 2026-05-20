@@ -6,12 +6,15 @@ import { createAuthGuard } from "@/app/guards/auth";
 import LoginPage from "@/modules/auth/pages/LoginPage.vue";
 import AssistantDetailPage from "@/modules/assistants/pages/AssistantDetailPage.vue";
 import AssistantListPage from "@/modules/assistants/pages/AssistantListPage.vue";
+import EmbedAssistantPage from "@/modules/embed/pages/EmbedAssistantPage.vue";
 import DocumentDetailPage from "@/modules/knowledge-bases/pages/DocumentDetailPage.vue";
 import KnowledgeBaseDetailPage from "@/modules/knowledge-bases/pages/KnowledgeBaseDetailPage.vue";
 import KnowledgeBaseListPage from "@/modules/knowledge-bases/pages/KnowledgeBaseListPage.vue";
 import ModulePlaceholderPage from "@/modules/platform/pages/ModulePlaceholderPage.vue";
 import TeamListPage from "@/modules/organizations/pages/TeamListPage.vue";
-
+import ProjectAppDetailPage from "@/modules/projects/pages/ProjectAppDetailPage.vue";
+import ProjectAppListPage from "@/modules/projects/pages/ProjectAppListPage.vue";
+import ProjectListPage from "@/modules/projects/pages/ProjectListPage.vue";
 // 当前阶段所有一级后台模块先复用统一骨架页，后续再逐个替换成真实业务页面。
 const router = createRouter({
   history: createWebHistory(),
@@ -33,6 +36,16 @@ const router = createRouter({
           },
         },
       ],
+    },
+    {
+      path: "/embed/assistant",
+      name: "embed-assistant",
+      component: EmbedAssistantPage,
+      meta: {
+        public: true,
+        bypassAdminCheck: true,
+        title: "嵌入助手",
+      },
     },
     {
       path: "/",
@@ -57,10 +70,37 @@ const router = createRouter({
         {
           path: "projects",
           name: "projects",
-          component: ModulePlaceholderPage,
+          component: ProjectListPage,
           meta: {
-            title: "项目",
-            description: "项目资源导航占位，后续任务在此接入项目管理相关页面。",
+            title: "应用与发布",
+            description: "项目列表与发布渠道管理入口。",
+          },
+        },
+        {
+          path: "projects/:projectId/apps",
+          name: "project-apps",
+          component: ProjectAppListPage,
+          meta: {
+            title: "发布渠道",
+            description: "当前项目下的应用与发布配置列表。",
+          },
+        },
+        {
+          path: "projects/:projectId/apps/new",
+          name: "project-app-create",
+          component: ProjectAppDetailPage,
+          meta: {
+            title: "新建发布渠道",
+            description: "新建项目下的应用与发布配置。",
+          },
+        },
+        {
+          path: "projects/:projectId/apps/:appId",
+          name: "project-app-detail",
+          component: ProjectAppDetailPage,
+          meta: {
+            title: "发布渠道详情",
+            description: "编辑项目下的应用与发布配置。",
           },
         },
         {
