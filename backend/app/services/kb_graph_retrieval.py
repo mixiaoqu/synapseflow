@@ -48,6 +48,88 @@ def _normalize_graph_row(row: dict[str, Any], rank: int) -> dict[str, Any]:
     return {"content": content, "metadata": metadata}
 
 
+class GraphRetriever:
+    """Retrieve graph evidence independently from text retrieval."""
+
+    def __init__(
+        self,
+        *,
+        store: GraphStore | None = None,
+        enabled: bool | None = None,
+    ) -> None:
+        self._store = store
+        self._enabled = enabled
+
+    async def retrieve(
+        self,
+        *,
+        candidate_entities: list[str] | None,
+        knowledge_base_id: int,
+        team_id: int,
+        limit: int = 8,
+    ) -> dict[str, Any]:
+        """Retrieve graph evidence and return prompt-ready docs plus trace."""
+
+        started_at = perf_counter()
+        graph_cfg = config_registry.get_graph_config()
+        resolved_enabled = (
+            graph_cfg.enabled if self._enabled is None else bool(self._enabled)
+        )
+        entities = _normalize_entities(candidate_entities)
+        base_trace = {
+            "graph_used": resolved_enabled,
+            "entity_count": len(entities),
+            "graph_hits": 0,
+            "empty_reason": None,
+            "error": None,
+        }
+        if not resolved_enabled:
+            return {
+                "retrieved_docs": [],
+                "trace": {**base_trace, "empty_reason": "disabled", "latency_ms": 0},
+            }
+        if not entities:
+            return {
+                "retrieved_docs": [],
+                "trace": {**base_trace, "empty_reason": "no_entities", "latency_ms": 0},
+            }
+
+        try:
+            resolved_store = self._store or get_graph_store(require_indexing=False)
+            rows = await resolved_store.search_related_evidence(
+                entity_names=entities,
+                knowledge_base_id=knowledge_base_id,
+                team_id=team_id,
+                limit=limit,
+            )
+        except Exception as exc:
+            logger.warning("KB graph retrieval failed: {}", exc)
+            return {
+                "retrieved_docs": [],
+                "trace": {
+                    **base_trace,
+                    "empty_reason": "error",
+                    "error": str(exc),
+                    "latency_ms": int((perf_counter() - started_at) * 1000),
+                },
+            }
+
+        docs = [
+            _normalize_graph_row(dict(row), index + 1)
+            for index, row in enumerate(rows)
+            if str(row.get("chunk_text") or row.get("evidence") or "").strip()
+        ]
+        return {
+            "retrieved_docs": docs,
+            "trace": {
+                **base_trace,
+                "graph_hits": len(docs),
+                "empty_reason": None if docs else "no_hits",
+                "latency_ms": int((perf_counter() - started_at) * 1000),
+            },
+        }
+
+
 async def run_kb_graph_retrieval(
     *,
     candidate_entities: list[str] | None,
@@ -57,55 +139,11 @@ async def run_kb_graph_retrieval(
     enabled: bool | None = None,
     limit: int = 8,
 ) -> dict[str, Any]:
-    """Retrieve graph evidence and return prompt-ready docs plus trace."""
+    """Retrieve KB graph evidence through the graph retriever."""
 
-    started_at = perf_counter()
-    graph_cfg = config_registry.get_graph_config()
-    resolved_enabled = graph_cfg.enabled if enabled is None else bool(enabled)
-    entities = _normalize_entities(candidate_entities)
-    base_trace = {
-        "graph_used": resolved_enabled,
-        "entity_count": len(entities),
-        "graph_hits": 0,
-        "empty_reason": None,
-        "error": None,
-    }
-    if not resolved_enabled:
-        return {"retrieved_docs": [], "trace": {**base_trace, "empty_reason": "disabled", "latency_ms": 0}}
-    if not entities:
-        return {"retrieved_docs": [], "trace": {**base_trace, "empty_reason": "no_entities", "latency_ms": 0}}
-
-    try:
-        resolved_store = store or get_graph_store(require_indexing=False)
-        rows = await resolved_store.search_related_evidence(
-            entity_names=entities,
-            knowledge_base_id=knowledge_base_id,
-            team_id=team_id,
-            limit=limit,
-        )
-    except Exception as exc:
-        logger.warning("KB graph retrieval failed: {}", exc)
-        return {
-            "retrieved_docs": [],
-            "trace": {
-                **base_trace,
-                "empty_reason": "error",
-                "error": str(exc),
-                "latency_ms": int((perf_counter() - started_at) * 1000),
-            },
-        }
-
-    docs = [
-        _normalize_graph_row(dict(row), index + 1)
-        for index, row in enumerate(rows)
-        if str(row.get("chunk_text") or row.get("evidence") or "").strip()
-    ]
-    return {
-        "retrieved_docs": docs,
-        "trace": {
-            **base_trace,
-            "graph_hits": len(docs),
-            "empty_reason": None if docs else "no_hits",
-            "latency_ms": int((perf_counter() - started_at) * 1000),
-        },
-    }
+    return await GraphRetriever(store=store, enabled=enabled).retrieve(
+        candidate_entities=candidate_entities,
+        knowledge_base_id=knowledge_base_id,
+        team_id=team_id,
+        limit=limit,
+    )

@@ -86,7 +86,7 @@ def test_kb_chat_v2_graph_routes_chitchat_directly_to_answer():
 def test_kb_chat_v2_graph_builds_execution_plan():
     graph = create_kb_chat_v2_graph(
         planner_llm_factory=lambda: FakeJsonLlm(
-            '{"question_type":"procedural_lookup","retrieval_complexity":"broad",'
+            '{"question_type":"summary_lookup","retrieval_complexity":"broad",'
             '"retrieval_required":true,"reason":"The user asks for an end-to-end process."}'
         ),
         answer_llm_factory=lambda: FakeJsonLlm("Grounded answer."),
@@ -104,7 +104,7 @@ def test_kb_chat_v2_graph_builds_execution_plan():
         )
     )
 
-    assert result["question_type"] == "procedural_lookup"
+    assert result["question_type"] == "summary_lookup"
     assert result["retrieval_complexity"] == "broad"
     assert result["retrieval_required"] is True
     assert result["retrieval_execution_plan"]["context"]["final_top_k"] == 12
@@ -149,6 +149,34 @@ def test_kb_chat_v2_execution_plan_maps_complexity():
     assert plan["context"]["budget_chars"] == 15000
 
 
+def test_kb_chat_v2_execution_plan_routes_by_intent():
+    summary_plan = build_kb_chat_v2_execution_plan(
+        question_type="summary_lookup",
+        retrieval_required=True,
+        retrieval_complexity="standard",
+    )
+    attribute_plan = build_kb_chat_v2_execution_plan(
+        question_type="attribute_lookup",
+        retrieval_required=True,
+        retrieval_complexity="standard",
+    )
+    definition_plan = build_kb_chat_v2_execution_plan(
+        question_type="definition_lookup",
+        retrieval_required=True,
+        retrieval_complexity="standard",
+    )
+
+    assert summary_plan["retrieval_mode"] == "global_priority"
+    assert summary_plan["fallbacks"]["community_summary_empty"] == "local_hybrid"
+    assert summary_plan["channels"]["graph"]["enabled"] is True
+    assert attribute_plan["retrieval_mode"] == "graph_first"
+    assert attribute_plan["fallbacks"]["graph_empty"] == "text_hybrid"
+    assert attribute_plan["channels"]["graph"]["enabled"] is True
+    assert definition_plan["retrieval_mode"] == "text_hybrid"
+    assert definition_plan["channels"]["graph"]["enabled"] is False
+    assert definition_plan["channels"]["text"]["enabled"] is True
+
+
 def test_kb_chat_v2_analyze_node_merges_route_and_plan():
     result = asyncio.run(
         kb_chat_v2_analyze_node(
@@ -160,16 +188,17 @@ def test_kb_chat_v2_analyze_node_merges_route_and_plan():
                 "page_config": {},
             },
             llm_factory=lambda: FakeJsonLlm(
-                '{"question_type":"procedural_lookup","retrieval_complexity":"broad",'
+                '{"question_type":"summary_lookup","retrieval_complexity":"broad",'
                 '"retrieval_required":true,"reason":"The user asks for an end-to-end process."}'
             ),
         )
     )
 
-    assert result["question_type"] == "procedural_lookup"
+    assert result["question_type"] == "summary_lookup"
     assert result["retrieval_required"] is True
-    assert result["retrieval_execution_plan"]["rewrite"]["max_queries"] == 4
+    assert result["retrieval_execution_plan"]["rewrite"]["max_queries"] == 5
     assert result["retrieval_execution_plan"]["channels"]["graph"]["limit"] == 12
+    assert result["retrieval_mode"] == "global_priority"
     assert "route_trace" in result
     assert "plan_trace" in result
 

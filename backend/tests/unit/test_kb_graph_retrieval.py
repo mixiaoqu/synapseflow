@@ -1,6 +1,6 @@
 import asyncio
 
-from app.services.kb_graph_retrieval import run_kb_graph_retrieval
+from app.services.kb_graph_retrieval import GraphRetriever
 
 
 class FakeGraphStore:
@@ -26,14 +26,12 @@ class FailingGraphStore:
         raise RuntimeError("neo4j unavailable")
 
 
-def test_run_kb_graph_retrieval_returns_normalized_docs_and_trace():
+def test_graph_retriever_returns_normalized_docs_and_trace():
     result = asyncio.run(
-        run_kb_graph_retrieval(
+        GraphRetriever(store=FakeGraphStore(), enabled=True).retrieve(
             candidate_entities=["Prescription Flow", "Payment"],
             knowledge_base_id=7,
             team_id=3,
-            store=FakeGraphStore(),
-            enabled=True,
         )
     )
 
@@ -47,14 +45,12 @@ def test_run_kb_graph_retrieval_returns_normalized_docs_and_trace():
     assert result["trace"]["graph_hits"] == 1
 
 
-def test_run_kb_graph_retrieval_degrades_when_disabled():
+def test_graph_retriever_degrades_when_disabled():
     result = asyncio.run(
-        run_kb_graph_retrieval(
+        GraphRetriever(store=FakeGraphStore(), enabled=False).retrieve(
             candidate_entities=["Prescription Flow"],
             knowledge_base_id=7,
             team_id=3,
-            store=FakeGraphStore(),
-            enabled=False,
         )
     )
 
@@ -63,14 +59,12 @@ def test_run_kb_graph_retrieval_degrades_when_disabled():
     assert result["trace"]["empty_reason"] == "disabled"
 
 
-def test_run_kb_graph_retrieval_degrades_on_store_error():
+def test_graph_retriever_degrades_on_store_error():
     result = asyncio.run(
-        run_kb_graph_retrieval(
+        GraphRetriever(store=FailingGraphStore(), enabled=True).retrieve(
             candidate_entities=["Prescription Flow"],
             knowledge_base_id=7,
             team_id=3,
-            store=FailingGraphStore(),
-            enabled=True,
         )
     )
 

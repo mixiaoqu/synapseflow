@@ -332,6 +332,7 @@ class DocumentService:
             source_path=source_path,
         )
         repo = DocumentRepository(db, user_id=user_id)
+        category_name = await repo.get_category_name(category_id)
         doc = await repo.create(
             title=title,
             content=text,
@@ -413,6 +414,7 @@ class DocumentService:
                         else None
                     ),
                 )
+                category_name = await repo.get_category_name(resolved_category_id)
                 doc = Document(
                     user_id=repo.user_id,
                     title=title,

@@ -1,16 +1,18 @@
 import type { SseEnvelope } from "./sse";
 
 const NODE_START_MESSAGES: Record<string, string> = {
-  plan_query: "正在理解问题...",
+  analyze: "正在分析问题并生成检索方案...",
   rewrite_query: "正在优化检索问题...",
   retrieve: "正在检索知识库...",
+  evaluate: "正在核对答案依据...",
   answer: "正在生成回答...",
 };
 
 const NODE_COMPLETE_MESSAGES: Record<string, string> = {
-  plan_query: "已完成问题理解",
+  analyze: "已完成问题分析",
   rewrite_query: "已准备检索问题",
   retrieve: "已匹配相关资料",
+  evaluate: "已完成答案依据核对",
   answer: "正在整理回答...",
 };
 

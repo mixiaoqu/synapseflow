@@ -13,36 +13,117 @@ from app.core.config.registry import config_registry
 
 def _build_rewrite_plan(question_type: str, retrieval_complexity: str) -> dict[str, Any]:
     max_queries_matrix = {
-        "entity_lookup": {"fast": 1, "standard": 2, "broad": 2},
+        "summary_lookup": {"fast": 2, "standard": 3, "broad": 5},
         "relationship_lookup": {"fast": 2, "standard": 3, "broad": 3},
-        "procedural_lookup": {"fast": 2, "standard": 3, "broad": 4},
-        "compare_lookup": {"fast": 3, "standard": 4, "broad": 4},
-        "summary_lookup": {"fast": 3, "standard": 4, "broad": 5},
-        "followup_lookup": {"fast": 1, "standard": 2, "broad": 3},
+        "attribute_lookup": {"fast": 1, "standard": 2, "broad": 2},
+        "definition_lookup": {"fast": 1, "standard": 1, "broad": 2},
     }
     max_queries = (
-        max_queries_matrix.get(question_type, max_queries_matrix["entity_lookup"]).get(
+        max_queries_matrix.get(question_type, max_queries_matrix["definition_lookup"]).get(
             retrieval_complexity,
-            2,
+            1,
         )
     )
     strategies = ["query_compaction", "terminology_normalization"]
-    if question_type in {"followup_lookup", "relationship_lookup"}:
-        strategies.append("context_completion")
-    if question_type in {"compare_lookup", "summary_lookup"} and max_queries > 1:
-        strategies.append("multi_aspect_split")
-    if question_type == "procedural_lookup":
-        strategies.append("procedural_focus")
     if question_type == "relationship_lookup":
-        strategies.append("relationship_focus")
-    if question_type == "summary_lookup" and retrieval_complexity == "broad":
-        strategies.append("subtopic_expansion")
+        strategies.extend(["context_completion", "relationship_focus"])
+    elif question_type == "summary_lookup":
+        strategies.append("multi_aspect_split")
+        if retrieval_complexity == "broad":
+            strategies.append("subtopic_expansion")
+    elif question_type == "attribute_lookup":
+        strategies.append("attribute_focus")
+    elif question_type == "definition_lookup":
+        strategies.append("definition_focus")
     return {
         "enabled": True,
         "question_type": question_type,
         "retrieval_complexity": retrieval_complexity,
         "max_queries": max_queries,
         "strategies": strategies,
+    }
+
+
+def _build_retrieval_plan(
+    question_type: str,
+    *,
+    retrieval_complexity: str,
+    final_top_k: int,
+    llm_reference_top_k: int,
+    recall_k: int,
+    lexical_k: int,
+    graph_limit: int,
+    context_budget: int,
+    rerank_enabled: bool,
+) -> dict[str, Any]:
+    base_channels = {
+        "community": {
+            "enabled": False,
+            "limit": 0,
+            "reason": "community_summary_layer_unavailable",
+        },
+        "vector": {"enabled": True, "recall_k": recall_k},
+        "lexical": {"enabled": True, "recall_k": lexical_k},
+        "text": {"enabled": True, "recall_k": recall_k, "lexical_k": lexical_k},
+        "graph": {"enabled": True, "limit": graph_limit},
+    }
+    if question_type == "summary_lookup":
+        return {
+            "retrieval_mode": "global_priority",
+            "fallbacks": {"community_summary_empty": "local_hybrid"},
+            "channels": base_channels,
+            "rerank": {"enabled": rerank_enabled, "top_k": final_top_k},
+            "context": {
+                "final_top_k": final_top_k,
+                "budget_chars": context_budget,
+                "llm_reference_top_k": llm_reference_top_k,
+            },
+        }
+    if question_type == "relationship_lookup":
+        return {
+            "retrieval_mode": "local_hybrid",
+            "fallbacks": {},
+            "channels": base_channels,
+            "rerank": {"enabled": rerank_enabled, "top_k": final_top_k},
+            "context": {
+                "final_top_k": final_top_k,
+                "budget_chars": context_budget,
+                "llm_reference_top_k": llm_reference_top_k,
+            },
+        }
+    if question_type == "attribute_lookup":
+        return {
+            "retrieval_mode": "graph_first",
+            "fallbacks": {"graph_empty": "text_hybrid"},
+            "channels": {
+                **base_channels,
+                "text": {"enabled": True, "recall_k": recall_k, "lexical_k": lexical_k},
+            },
+            "rerank": {"enabled": rerank_enabled, "top_k": final_top_k},
+            "context": {
+                "final_top_k": final_top_k,
+                "budget_chars": context_budget,
+                "llm_reference_top_k": llm_reference_top_k,
+            },
+        }
+    return {
+        "retrieval_mode": "text_hybrid",
+        "fallbacks": {},
+        "channels": {
+            "community": {
+                "enabled": False,
+                "limit": 0,
+                "reason": "community_summary_layer_unavailable",
+            },
+            "text": {"enabled": True, "recall_k": recall_k, "lexical_k": lexical_k},
+            "graph": {"enabled": False, "limit": 0},
+        },
+        "rerank": {"enabled": rerank_enabled, "top_k": final_top_k},
+        "context": {
+            "final_top_k": final_top_k,
+            "budget_chars": context_budget,
+            "llm_reference_top_k": llm_reference_top_k,
+        },
     }
 
 
@@ -61,11 +142,15 @@ def build_kb_chat_v2_execution_plan(
                 "max_queries": 0,
                 "strategies": [],
             },
+            "retrieval_mode": "skip",
             "channels": {
+                "community": {"enabled": False, "limit": 0, "reason": "retrieval_skipped"},
                 "vector": {"enabled": False, "recall_k": 0},
                 "lexical": {"enabled": False, "recall_k": 0},
+                "text": {"enabled": False, "recall_k": 0, "lexical_k": 0},
                 "graph": {"enabled": False, "limit": 0},
             },
+            "fallbacks": {},
             "rerank": {"enabled": False, "top_k": 0},
             "context": {"final_top_k": 0, "budget_chars": 0, "llm_reference_top_k": 0},
         }
@@ -80,17 +165,17 @@ def build_kb_chat_v2_execution_plan(
     )
     return {
         "rewrite": _build_rewrite_plan(question_type, retrieval_complexity),
-        "channels": {
-            "vector": {"enabled": True, "recall_k": int(profile.recall_k)},
-            "lexical": {"enabled": True, "recall_k": int(profile.lexical_k)},
-            "graph": {"enabled": True, "limit": int(profile.graph_limit)},
-        },
-        "rerank": {"enabled": bool(profile.rerank_enabled), "top_k": final_top_k},
-        "context": {
-            "final_top_k": final_top_k,
-            "budget_chars": int(profile.context_budget),
-            "llm_reference_top_k": llm_reference_top_k,
-        },
+        **_build_retrieval_plan(
+            question_type,
+            retrieval_complexity=retrieval_complexity,
+            final_top_k=final_top_k,
+            llm_reference_top_k=llm_reference_top_k,
+            recall_k=int(profile.recall_k),
+            lexical_k=int(profile.lexical_k),
+            graph_limit=int(profile.graph_limit),
+            context_budget=int(profile.context_budget),
+            rerank_enabled=bool(profile.rerank_enabled),
+        ),
     }
 
 
@@ -133,6 +218,7 @@ async def kb_chat_v2_analyze_node(
         "retrieval_required": route["retrieval_required"],
         "route_reason": route["reason"],
         "route_trace": {"latency_ms": route_latency_ms},
+        "retrieval_mode": execution_plan.get("retrieval_mode"),
         "retrieval_execution_plan": execution_plan,
         "plan_trace": {"latency_ms": plan_latency_ms},
     }

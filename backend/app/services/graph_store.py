@@ -19,7 +19,11 @@ class GraphStore(Protocol):
 
     async def upsert_chunk(self, chunk: GraphChunkRecord) -> None: ...
 
+    async def upsert_chunks(self, chunks: list[GraphChunkRecord]) -> None: ...
+
     async def upsert_entity(self, entity: GraphEntityRecord) -> None: ...
+
+    async def upsert_entities(self, entities: list[GraphEntityRecord]) -> None: ...
 
     async def link_entity_to_chunk(
         self,
@@ -28,7 +32,11 @@ class GraphStore(Protocol):
         chunk: GraphChunkRecord,
     ) -> None: ...
 
+    async def link_entities_to_chunks(self, rows: list[dict[str, Any]]) -> None: ...
+
     async def upsert_relation(self, relation: GraphRelationRecord) -> None: ...
+
+    async def upsert_relations(self, relations: list[GraphRelationRecord]) -> None: ...
 
     async def prune_orphan_entities(self) -> None: ...
 
@@ -51,7 +59,13 @@ class NullGraphStore:
     async def upsert_chunk(self, chunk: GraphChunkRecord) -> None:
         return None
 
+    async def upsert_chunks(self, chunks: list[GraphChunkRecord]) -> None:
+        return None
+
     async def upsert_entity(self, entity: GraphEntityRecord) -> None:
+        return None
+
+    async def upsert_entities(self, entities: list[GraphEntityRecord]) -> None:
         return None
 
     async def link_entity_to_chunk(
@@ -62,7 +76,13 @@ class NullGraphStore:
     ) -> None:
         return None
 
+    async def link_entities_to_chunks(self, rows: list[dict[str, Any]]) -> None:
+        return None
+
     async def upsert_relation(self, relation: GraphRelationRecord) -> None:
+        return None
+
+    async def upsert_relations(self, relations: list[GraphRelationRecord]) -> None:
         return None
 
     async def prune_orphan_entities(self) -> None:
@@ -117,35 +137,59 @@ class Neo4jGraphStore:
         )
 
     async def upsert_chunk(self, chunk: GraphChunkRecord) -> None:
+        await self.upsert_chunks([chunk])
+
+    async def upsert_chunks(self, chunks: list[GraphChunkRecord]) -> None:
+        if not chunks:
+            return None
+        rows = [
+            {
+                "team_id": chunk.team_id,
+                "knowledge_base_id": chunk.knowledge_base_id,
+                "document_id": chunk.document_id,
+                "document_chunk_id": chunk.document_chunk_id,
+                "document_title": chunk.document_title,
+                "section_path": chunk.section_path,
+            }
+            for chunk in chunks
+        ]
         await self._run(
             """
-            MERGE (c:Chunk {document_chunk_id: $document_chunk_id})
-            SET c.team_id = $team_id,
-                c.knowledge_base_id = $knowledge_base_id,
-                c.document_id = $document_id,
-                c.document_title = $document_title,
-                c.section_path = $section_path
+            UNWIND $rows AS row
+            MERGE (c:Chunk {document_chunk_id: row.document_chunk_id})
+            SET c.team_id = row.team_id,
+                c.knowledge_base_id = row.knowledge_base_id,
+                c.document_id = row.document_id,
+                c.document_title = row.document_title,
+                c.section_path = row.section_path
             """,
-            team_id=chunk.team_id,
-            knowledge_base_id=chunk.knowledge_base_id,
-            document_chunk_id=chunk.document_chunk_id,
-            document_id=chunk.document_id,
-            document_title=chunk.document_title,
-            section_path=chunk.section_path,
+            rows=rows,
         )
 
     async def upsert_entity(self, entity: GraphEntityRecord) -> None:
+        await self.upsert_entities([entity])
+
+    async def upsert_entities(self, entities: list[GraphEntityRecord]) -> None:
+        if not entities:
+            return None
+        rows = [
+            {
+                "normalized_name": entity.normalized_name,
+                "display_name": entity.display_name,
+                "entity_type": entity.entity_type,
+                "aliases": list(entity.aliases),
+            }
+            for entity in entities
+        ]
         await self._run(
             """
-            MERGE (e:Entity {normalized_name: $normalized_name})
-            SET e.display_name = $display_name,
-                e.entity_type = $entity_type,
-                e.aliases = $aliases
+            UNWIND $rows AS row
+            MERGE (e:Entity {normalized_name: row.normalized_name})
+            SET e.display_name = row.display_name,
+                e.entity_type = row.entity_type,
+                e.aliases = row.aliases
             """,
-            normalized_name=entity.normalized_name,
-            display_name=entity.display_name,
-            entity_type=entity.entity_type,
-            aliases=list(entity.aliases),
+            rows=rows,
         )
 
     async def link_entity_to_chunk(
@@ -154,46 +198,70 @@ class Neo4jGraphStore:
         normalized_name: str,
         chunk: GraphChunkRecord,
     ) -> None:
+        await self.link_entities_to_chunks(
+            [
+                {
+                    "normalized_name": normalized_name,
+                    "team_id": chunk.team_id,
+                    "knowledge_base_id": chunk.knowledge_base_id,
+                    "document_id": chunk.document_id,
+                    "document_chunk_id": chunk.document_chunk_id,
+                }
+            ]
+        )
+
+    async def link_entities_to_chunks(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return None
         await self._run(
             """
-            MATCH (e:Entity {normalized_name: $normalized_name})
-            MATCH (c:Chunk {document_chunk_id: $document_chunk_id})
-            MERGE (e)-[r:MENTIONED_IN {document_chunk_id: $document_chunk_id}]->(c)
-            SET r.team_id = $team_id,
-                r.knowledge_base_id = $knowledge_base_id,
-                r.document_id = $document_id
+            UNWIND $rows AS row
+            MATCH (e:Entity {normalized_name: row.normalized_name})
+            MATCH (c:Chunk {document_chunk_id: row.document_chunk_id})
+            MERGE (e)-[r:MENTIONED_IN {document_chunk_id: row.document_chunk_id}]->(c)
+            SET r.team_id = row.team_id,
+                r.knowledge_base_id = row.knowledge_base_id,
+                r.document_id = row.document_id
             """,
-            normalized_name=normalized_name,
-            team_id=chunk.team_id,
-            knowledge_base_id=chunk.knowledge_base_id,
-            document_chunk_id=chunk.document_chunk_id,
-            document_id=chunk.document_id,
+            rows=rows,
         )
 
     async def upsert_relation(self, relation: GraphRelationRecord) -> None:
+        await self.upsert_relations([relation])
+
+    async def upsert_relations(self, relations: list[GraphRelationRecord]) -> None:
+        if not relations:
+            return None
+        rows = [
+            {
+                "team_id": relation.team_id,
+                "knowledge_base_id": relation.knowledge_base_id,
+                "document_id": relation.document_id,
+                "document_chunk_id": relation.document_chunk_id,
+                "source_normalized_name": relation.source_normalized_name,
+                "target_normalized_name": relation.target_normalized_name,
+                "relation_type": relation.relation_type,
+                "evidence": relation.evidence,
+            }
+            for relation in relations
+        ]
         await self._run(
             """
-            MATCH (source:Entity {normalized_name: $source_normalized_name})
-            MATCH (target:Entity {normalized_name: $target_normalized_name})
+            UNWIND $rows AS row
+            MATCH (source:Entity {normalized_name: row.source_normalized_name})
+            MATCH (target:Entity {normalized_name: row.target_normalized_name})
             MERGE (source)-[r:RELATED {
-                source_normalized_name: $source_normalized_name,
-                target_normalized_name: $target_normalized_name,
-                relation_type: $relation_type,
-                document_chunk_id: $document_chunk_id
+                source_normalized_name: row.source_normalized_name,
+                target_normalized_name: row.target_normalized_name,
+                relation_type: row.relation_type
             }]->(target)
-            SET r.team_id = $team_id,
-                r.knowledge_base_id = $knowledge_base_id,
-                r.document_id = $document_id,
-                r.evidence = $evidence
+            SET r.team_id = row.team_id,
+                r.knowledge_base_id = row.knowledge_base_id,
+                r.document_id = row.document_id,
+                r.document_chunk_id = row.document_chunk_id,
+                r.evidence = row.evidence
             """,
-            team_id=relation.team_id,
-            knowledge_base_id=relation.knowledge_base_id,
-            source_normalized_name=relation.source_normalized_name,
-            target_normalized_name=relation.target_normalized_name,
-            relation_type=relation.relation_type,
-            document_chunk_id=relation.document_chunk_id,
-            document_id=relation.document_id,
-            evidence=relation.evidence,
+            rows=rows,
         )
 
     async def prune_orphan_entities(self) -> None:

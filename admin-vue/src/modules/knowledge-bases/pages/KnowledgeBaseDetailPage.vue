@@ -67,6 +67,32 @@ interface DocumentStatusTabItem {
   count: number | null;
 }
 
+type UploadTargetCategoryValue = "uncategorized" | number;
+
+interface UploadQueueItem {
+  raw: File;
+  name: string;
+  path: string;
+  category: string;
+  isNewCategory: boolean;
+  size: number;
+}
+
+interface UploadInputFile extends File {
+  customPath?: string;
+  webkitRelativePath?: string;
+}
+
+interface FileSystemEntryLike {
+  isFile: boolean;
+  isDirectory: boolean;
+  name: string;
+  file?: (callback: (file: File) => void) => void;
+  createReader?: () => {
+    readEntries: (callback: (entries: FileSystemEntryLike[]) => void) => void;
+  };
+}
+
 const route = useRoute();
 const router = useRouter();
 const teamScopeStore = useTeamScopeStore();
@@ -83,6 +109,11 @@ const uploadLoading = ref(false);
 const selectedCategoryKey = ref<CategoryFilterKey>("all");
 const selectedDocuments = ref<DocumentSummary[]>([]);
 const fileInputRef = ref<HTMLInputElement | null>(null);
+const folderInputRef = ref<HTMLInputElement | null>(null);
+const uploadDialogVisible = ref(false);
+const uploadTargetCategory = ref<UploadTargetCategoryValue>("uncategorized");
+const uploadQueue = ref<UploadQueueItem[]>([]);
+const uploadDragging = ref(false);
 
 const documentQuery = reactive({
   keyword: "",
@@ -123,6 +154,7 @@ const selectedCategory = computed(() =>
 const currentCategoryLabel = computed(() => selectedCategory.value?.name ?? "全部文档");
 const selectedDocumentIds = computed(() => selectedDocuments.value.map((item) => item.id));
 const hasDocumentSelection = computed(() => selectedDocuments.value.length > 0);
+const existingCategoryNames = computed(() => new Set(categories.value.map((item) => item.name)));
 const selectedDocumentStatus = computed(() => {
   if (selectedDocuments.value.length === 0) {
     return null;
@@ -532,27 +564,250 @@ function handleUploadClick() {
     return;
   }
 
+  uploadTargetCategory.value = selectedCategory.value?.id ?? "uncategorized";
+  uploadQueue.value = [];
+  uploadDialogVisible.value = true;
+}
+
+function closeUploadDialog() {
+  if (uploadLoading.value) {
+    return;
+  }
+
+  uploadDialogVisible.value = false;
+}
+
+function handleUploadDialogClosed() {
+  uploadQueue.value = [];
+  uploadDragging.value = false;
+  uploadTargetCategory.value = selectedCategory.value?.id ?? "uncategorized";
+}
+
+function triggerFileSelect() {
+  if (uploadLoading.value) {
+    return;
+  }
+
   fileInputRef.value?.click();
+}
+
+function triggerFolderSelect() {
+  if (uploadLoading.value) {
+    return;
+  }
+
+  folderInputRef.value?.click();
+}
+
+function getRootUploadCategory() {
+  if (uploadTargetCategory.value === "uncategorized") {
+    return {
+      label: "未分类",
+      sourcePrefix: null,
+      isNewCategory: false,
+    };
+  }
+
+  const category = categories.value.find((item) => item.id === uploadTargetCategory.value);
+  return {
+    label: category?.name ?? "未分类",
+    sourcePrefix: category?.name ?? null,
+    isNewCategory: false,
+  };
+}
+
+function buildUploadQueueItem(file: UploadInputFile): UploadQueueItem {
+  const path = (file.customPath || file.webkitRelativePath || file.name).replace(/\\/g, "/").trim();
+  const normalizedPath = path || file.name;
+  const segments = normalizedPath.split("/").filter(Boolean);
+
+  if (segments.length > 1) {
+    const categoryName = segments[0] || "未分类";
+    return {
+      raw: file,
+      name: file.name,
+      path: normalizedPath,
+      category: categoryName,
+      isNewCategory: !existingCategoryNames.value.has(categoryName),
+      size: file.size,
+    };
+  }
+
+  const rootCategory = getRootUploadCategory();
+  return {
+    raw: file,
+    name: file.name,
+    path: file.name,
+    category: rootCategory.label,
+    isNewCategory: false,
+    size: file.size,
+  };
+}
+
+function syncUploadQueueWithTargetCategory() {
+  const rootCategory = getRootUploadCategory();
+  uploadQueue.value = uploadQueue.value.map((item) => {
+    if (item.path.includes("/")) {
+      const categoryName = item.path.split("/", 1)[0] || "未分类";
+      return {
+        ...item,
+        category: categoryName,
+        isNewCategory: !existingCategoryNames.value.has(categoryName),
+      };
+    }
+
+    return {
+      ...item,
+      category: rootCategory.label,
+      isNewCategory: false,
+    };
+  });
+}
+
+function processUploadFiles(rawFiles: UploadInputFile[]) {
+  const seenPaths = new Set(uploadQueue.value.map((item) => item.path));
+
+  for (const file of rawFiles) {
+    const queueItem = buildUploadQueueItem(file);
+    if (seenPaths.has(queueItem.path)) {
+      continue;
+    }
+    seenPaths.add(queueItem.path);
+    uploadQueue.value.push(queueItem);
+  }
+
+  syncUploadQueueWithTargetCategory();
 }
 
 async function handleFileChange(event: Event) {
   const target = event.target as HTMLInputElement;
-  const files = Array.from(target.files ?? []);
+  const files = Array.from(target.files ?? []).map((file) => {
+    const uploadFile = file as UploadInputFile;
+    uploadFile.customPath = file.name;
+    return uploadFile;
+  });
   target.value = "";
 
-  if (!knowledgeBase.value || files.length === 0) {
+  if (files.length === 0) {
+    return;
+  }
+
+  processUploadFiles(files);
+}
+
+async function handleFolderChange(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const files = Array.from(target.files ?? []).map((file) => {
+    const uploadFile = file as UploadInputFile;
+    uploadFile.customPath = uploadFile.webkitRelativePath || file.name;
+    return uploadFile;
+  });
+  target.value = "";
+
+  if (files.length === 0) {
+    return;
+  }
+
+  processUploadFiles(files);
+}
+
+async function traverseDroppedEntry(
+  entry: FileSystemEntryLike,
+  currentPath: string,
+  files: UploadInputFile[],
+) {
+  if (entry.isFile && entry.file) {
+    const file = await new Promise<File>((resolve) => entry.file!(resolve));
+    const uploadFile = file as UploadInputFile;
+    uploadFile.customPath = `${currentPath}${file.name}`;
+    files.push(uploadFile);
+    return;
+  }
+
+  if (!entry.isDirectory || !entry.createReader) {
+    return;
+  }
+
+  const reader = entry.createReader();
+  const directoryPath = `${currentPath}${entry.name}/`;
+  while (true) {
+    const entries = await new Promise<FileSystemEntryLike[]>((resolve) => reader.readEntries(resolve));
+    if (entries.length === 0) {
+      break;
+    }
+    for (const child of entries) {
+      await traverseDroppedEntry(child, directoryPath, files);
+    }
+  }
+}
+
+async function handleUploadDrop(event: DragEvent) {
+  uploadDragging.value = false;
+  const items = Array.from(event.dataTransfer?.items ?? []);
+  const files: UploadInputFile[] = [];
+
+  for (const item of items) {
+    if (item.kind !== "file") {
+      continue;
+    }
+
+    const entry = (item as DataTransferItem & {
+      webkitGetAsEntry?: () => FileSystemEntryLike | null;
+    }).webkitGetAsEntry?.();
+
+    if (entry) {
+      await traverseDroppedEntry(entry, "", files);
+      continue;
+    }
+
+    const file = item.getAsFile();
+    if (!file) {
+      continue;
+    }
+    const uploadFile = file as UploadInputFile;
+    uploadFile.customPath = file.name;
+    files.push(uploadFile);
+  }
+
+  if (files.length === 0) {
+    return;
+  }
+
+  processUploadFiles(files);
+}
+
+function removeUploadFile(path: string) {
+  uploadQueue.value = uploadQueue.value.filter((item) => item.path !== path);
+}
+
+function clearUploadQueue() {
+  uploadQueue.value = [];
+}
+
+function buildUploadSourcePath(item: UploadQueueItem) {
+  if (item.path.includes("/")) {
+    return item.path;
+  }
+
+  const rootCategory = getRootUploadCategory();
+  return rootCategory.sourcePrefix ? `${rootCategory.sourcePrefix}/${item.name}` : item.name;
+}
+
+async function submitUploadQueue() {
+  if (!knowledgeBase.value || uploadQueue.value.length === 0 || uploadLoading.value) {
     return;
   }
 
   uploadLoading.value = true;
   try {
     await uploadDocumentsBatch({
-      files,
+      files: uploadQueue.value.map((item) => item.raw),
       knowledgeBaseId: knowledgeBase.value.id,
-      categoryId: selectedCategory.value?.id ?? null,
+      sourcePaths: uploadQueue.value.map((item) => buildUploadSourcePath(item)),
     });
-    ElMessage.success(`已提交 ${files.length} 个文档的上传任务。`);
+    ElMessage.success(`已提交 ${uploadQueue.value.length} 个文档的上传任务。`);
     documentQuery.page = 1;
+    uploadDialogVisible.value = false;
     await Promise.all([
       loadKnowledgeBaseSummary(knowledgeBase.value.id),
       loadCategories(knowledgeBase.value.id),
@@ -946,6 +1201,14 @@ watch(
     void loadPage();
   },
 );
+
+watch(
+  [uploadTargetCategory, categories],
+  () => {
+    syncUploadQueueWithTargetCategory();
+  },
+  { deep: true },
+);
 </script>
 
 <template>
@@ -1119,13 +1382,6 @@ watch(
                 <el-icon class="mr-2"><UploadFilled /></el-icon>
                 上传文档
               </el-button>
-              <input
-                ref="fileInputRef"
-                class="kb-documents__hidden-input"
-                type="file"
-                multiple
-                @change="handleFileChange"
-              >
             </div>
           </section>
 
@@ -1311,6 +1567,140 @@ watch(
           </footer>
         </div>
       </section>
+
+      <el-dialog
+        v-model="uploadDialogVisible"
+        width="960px"
+        destroy-on-close
+        class="kb-upload-dialog"
+        :close-on-click-modal="!uploadLoading"
+        :close-on-press-escape="!uploadLoading"
+        @closed="handleUploadDialogClosed"
+      >
+        <template #header>
+          <div class="kb-upload-dialog__header">
+            <div>
+              <h3 class="kb-upload-dialog__title">文档上传</h3>
+              <p class="kb-upload-dialog__subtitle">
+                支持拖拽、选择文件或文件夹，并按目录结构自动映射分类。
+              </p>
+            </div>
+
+            <div class="kb-upload-dialog__target">
+              <span class="kb-upload-dialog__target-label">上传至</span>
+              <el-select v-model="uploadTargetCategory" class="kb-upload-dialog__target-select">
+                <el-option :value="'uncategorized'" label="未分类（默认）" />
+                <el-option
+                  v-for="category in categories"
+                  :key="category.id"
+                  :value="category.id"
+                  :label="category.name"
+                />
+              </el-select>
+            </div>
+          </div>
+        </template>
+
+        <div class="kb-upload-dialog__body">
+          <div
+            class="kb-upload-dropzone"
+            :class="{ 'is-dragging': uploadDragging }"
+            @dragover.prevent="uploadDragging = true"
+            @dragleave.prevent="uploadDragging = false"
+            @drop.prevent="handleUploadDrop"
+          >
+            <div class="kb-upload-dropzone__icon">
+              <el-icon :size="28"><UploadFilled /></el-icon>
+            </div>
+            <h4 class="kb-upload-dropzone__title">将文件或文件夹拖拽至此</h4>
+            <p class="kb-upload-dropzone__hint">或者使用下方按钮手动选择</p>
+            <div class="kb-upload-dropzone__actions">
+              <el-button @click="triggerFileSelect">
+                <el-icon class="mr-2"><Document /></el-icon>
+                选择文件
+              </el-button>
+              <el-button type="primary" @click="triggerFolderSelect">
+                <el-icon class="mr-2"><Folder /></el-icon>
+                选择文件夹
+              </el-button>
+            </div>
+            <input
+              ref="fileInputRef"
+              class="kb-documents__hidden-input"
+              type="file"
+              multiple
+              @change="handleFileChange"
+            >
+            <input
+              ref="folderInputRef"
+              class="kb-documents__hidden-input"
+              type="file"
+              multiple
+              webkitdirectory
+              @change="handleFolderChange"
+            >
+          </div>
+
+          <div v-if="uploadQueue.length > 0" class="kb-upload-queue">
+            <div class="kb-upload-queue__header">
+              <h4 class="kb-upload-queue__title">待上传列表（{{ uploadQueue.length }}）</h4>
+              <el-button link type="danger" @click="clearUploadQueue">清空全部</el-button>
+            </div>
+
+            <div class="kb-upload-queue__table">
+              <div class="kb-upload-queue__row kb-upload-queue__row--head">
+                <span>文件名</span>
+                <span>归属分类</span>
+                <span>原始路径</span>
+                <span class="is-right">大小</span>
+                <span class="is-right">操作</span>
+              </div>
+
+              <div
+                v-for="item in uploadQueue"
+                :key="item.path"
+                class="kb-upload-queue__row"
+              >
+                <span class="kb-upload-queue__file">
+                  <el-icon><Document /></el-icon>
+                  <span class="kb-upload-queue__file-name">{{ item.name }}</span>
+                </span>
+                <span>
+                  <span
+                    class="kb-upload-queue__category"
+                    :class="{
+                      'is-plain': item.category === '未分类',
+                      'is-new': item.isNewCategory,
+                    }"
+                  >
+                    {{ item.category }}
+                    <span v-if="item.isNewCategory">（将自动创建）</span>
+                  </span>
+                </span>
+                <span class="kb-upload-queue__path" :title="item.path">{{ item.path }}</span>
+                <span class="is-right">{{ formatFileSize(item.size) }}</span>
+                <span class="is-right">
+                  <el-button link type="danger" @click="removeUploadFile(item.path)">移除</el-button>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <template #footer>
+          <div class="kb-upload-dialog__footer">
+            <el-button :disabled="uploadLoading" @click="closeUploadDialog">取消</el-button>
+            <el-button
+              type="primary"
+              :loading="uploadLoading"
+              :disabled="uploadQueue.length === 0"
+              @click="submitUploadQueue"
+            >
+              确认上传
+            </el-button>
+          </div>
+        </template>
+      </el-dialog>
     </template>
 
   </section>
@@ -1649,6 +2039,223 @@ watch(
   display: none;
 }
 
+:deep(.kb-upload-dialog) {
+  border-radius: 20px;
+}
+
+:deep(.kb-upload-dialog .el-dialog__header) {
+  border-bottom: 1px solid #e2e8f0;
+  margin-right: 0;
+  padding: 20px 24px 18px;
+}
+
+:deep(.kb-upload-dialog .el-dialog__body) {
+  padding: 0;
+}
+
+:deep(.kb-upload-dialog .el-dialog__footer) {
+  border-top: 1px solid #e2e8f0;
+  padding: 18px 24px 20px;
+}
+
+.kb-upload-dialog__header,
+.kb-upload-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.kb-upload-dialog__title {
+  margin: 0;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.kb-upload-dialog__subtitle {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.kb-upload-dialog__target {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.kb-upload-dialog__target-label {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.kb-upload-dialog__target-select {
+  width: 220px;
+}
+
+.kb-upload-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px;
+}
+
+.kb-upload-dropzone {
+  border: 2px dashed #cbd5e1;
+  border-radius: 20px;
+  background: #fff;
+  padding: 36px 24px;
+  text-align: center;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.kb-upload-dropzone.is-dragging {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.kb-upload-dropzone__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.kb-upload-dropzone__title {
+  margin: 16px 0 8px;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.kb-upload-dropzone__hint {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.kb-upload-dropzone__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.kb-upload-queue {
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  background: #ffffff;
+}
+
+.kb-upload-queue__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  padding: 16px 20px;
+}
+
+.kb-upload-queue__title {
+  margin: 0;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.kb-upload-queue__table {
+  display: flex;
+  flex-direction: column;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.kb-upload-queue__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.2fr) 96px 72px;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid #f1f5f9;
+  padding: 14px 20px;
+}
+
+.kb-upload-queue__row--head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.kb-upload-queue__row:last-child {
+  border-bottom: 0;
+}
+
+.kb-upload-queue__file {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.kb-upload-queue__file-name,
+.kb-upload-queue__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-upload-queue__path {
+  color: #64748b;
+  font-family: Consolas, "SFMono-Regular", Monaco, monospace;
+  font-size: 12px;
+}
+
+.kb-upload-queue__category {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+}
+
+.kb-upload-queue__category.is-plain {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.kb-upload-queue__category.is-new {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.is-right {
+  text-align: right;
+}
+
 .kb-preview {
   display: flex;
   flex-direction: column;
@@ -1736,6 +2343,30 @@ watch(
 
   .kb-preview__meta {
     grid-template-columns: 1fr;
+  }
+
+  .kb-upload-dialog__header,
+  .kb-upload-dialog__footer,
+  .kb-upload-dialog__target {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .kb-upload-dialog__target-select {
+    width: 100%;
+  }
+
+  .kb-upload-queue__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .kb-upload-queue__row--head {
+    display: none;
+  }
+
+  .is-right {
+    text-align: left;
   }
 }
 

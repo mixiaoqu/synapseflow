@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable, Sequence
+from typing import Any
 
 from loguru import logger
 from sqlalchemy import select
@@ -15,8 +16,8 @@ from app.db.session import AsyncSessionLocal
 from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.services.embedding import embed_documents
 from app.services.graph_extraction import extract_chunk_graph
-from app.services.graph_indexer import GraphIndexer
-from app.services.graph_models import GraphChunkRecord
+from app.services.graph_indexer import DEFAULT_GRAPH_BATCH_SIZE, GraphIndexer
+from app.services.graph_models import GraphChunkRecord, GraphEntityRecord, GraphRelationRecord
 from app.services.graph_normalizer import normalize_chunk_graph
 from app.services.graph_store import get_graph_store
 from app.services.semantic_chunk import DocumentChunkPlan, VectorIndexChunk, build_chunk_plan, build_vector_index_chunks, plan_text_chunks
@@ -110,6 +111,60 @@ async def _load_indexable_chunks(
         )
         document_chunk_ids.append(int(row.id))
     return document_chunk_ids, vector_chunks
+
+
+def _merge_entity_records(
+    existing: GraphEntityRecord,
+    incoming: GraphEntityRecord,
+) -> GraphEntityRecord:
+    aliases: list[str] = []
+    seen: set[str] = set()
+    for alias in (*existing.aliases, *incoming.aliases):
+        cleaned = str(alias or "").strip()
+        if not cleaned or cleaned in seen:
+            continue
+        aliases.append(cleaned)
+        seen.add(cleaned)
+
+    evidence = existing.evidence.strip()
+    incoming_evidence = incoming.evidence.strip()
+    if incoming_evidence and incoming_evidence not in evidence:
+        evidence = f"{evidence}\n{incoming_evidence}".strip() if evidence else incoming_evidence
+
+    entity_type = existing.entity_type
+    if entity_type == "OTHER" and incoming.entity_type != "OTHER":
+        entity_type = incoming.entity_type
+
+    return GraphEntityRecord(
+        document_id=existing.document_id,
+        document_chunk_id=existing.document_chunk_id,
+        normalized_name=existing.normalized_name,
+        display_name=existing.display_name or incoming.display_name,
+        entity_type=entity_type,
+        aliases=tuple(aliases),
+        evidence=evidence,
+    )
+
+
+def _merge_relation_records(
+    existing: GraphRelationRecord,
+    incoming: GraphRelationRecord,
+) -> GraphRelationRecord:
+    evidence = existing.evidence.strip()
+    incoming_evidence = incoming.evidence.strip()
+    if incoming_evidence and incoming_evidence not in evidence:
+        evidence = f"{evidence}\n{incoming_evidence}".strip() if evidence else incoming_evidence
+
+    return GraphRelationRecord(
+        team_id=existing.team_id,
+        knowledge_base_id=existing.knowledge_base_id,
+        document_id=existing.document_id,
+        document_chunk_id=existing.document_chunk_id,
+        source_normalized_name=existing.source_normalized_name,
+        target_normalized_name=existing.target_normalized_name,
+        relation_type=existing.relation_type,
+        evidence=evidence,
+    )
 
 
 async def index_document(
@@ -221,9 +276,12 @@ async def index_document_graph(
         raise ValueError(f"Document {document_id} must belong to a team and knowledge base")
     store = get_graph_store()
     indexer = GraphIndexer(store)
-    summary = {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
-
     await store.delete_document_graph(document_id=document_id)
+
+    chunk_records: list[GraphChunkRecord] = []
+    entity_records: dict[str, Any] = {}
+    mention_rows: list[dict[str, Any]] = []
+    relation_records: dict[tuple[str, str, str], Any] = {}
 
     for row in child_rows:
         chunk = GraphChunkRecord(
@@ -243,13 +301,41 @@ async def index_document_graph(
             entities=extracted.entities,
             relations=extracted.relations,
         )
-        counts = await indexer.index_chunk_graph(
-            chunk=chunk,
-            entities=normalized.entities,
-            relations=normalized.relations,
-        )
-        for key, value in counts.items():
-            summary[key] += value
+        chunk_records.append(chunk)
+        for entity in normalized.entities:
+            existing = entity_records.get(entity.normalized_name)
+            if existing is None:
+                entity_records[entity.normalized_name] = entity
+            else:
+                entity_records[entity.normalized_name] = _merge_entity_records(existing, entity)
+            mention_rows.append(
+                {
+                    "normalized_name": entity.normalized_name,
+                    "team_id": chunk.team_id,
+                    "knowledge_base_id": chunk.knowledge_base_id,
+                    "document_id": chunk.document_id,
+                    "document_chunk_id": chunk.document_chunk_id,
+                }
+            )
+        for relation in normalized.relations:
+            relation_key = (
+                relation.source_normalized_name,
+                relation.relation_type,
+                relation.target_normalized_name,
+            )
+            existing = relation_records.get(relation_key)
+            if existing is None:
+                relation_records[relation_key] = relation
+            else:
+                relation_records[relation_key] = _merge_relation_records(existing, relation)
+
+    summary = await indexer.index_batch_graph(
+        chunks=chunk_records,
+        entities=list(entity_records.values()),
+        mentions=mention_rows,
+        relations=list(relation_records.values()),
+        batch_size=DEFAULT_GRAPH_BATCH_SIZE,
+    )
 
     await store.prune_orphan_entities()
     if commit:

@@ -61,11 +61,14 @@ def test_user_kb_rewrite_query_node_uses_llm_plan(monkeypatch):
     async def fake_build_queries(query: str, **kwargs):
         captured["query"] = query
         captured.update(kwargs)
-        return [
-            "How do I configure the generation model?",
-            "generation model config",
-            "models.yaml generation model",
-        ]
+        return {
+            "queries": [
+                "How do I configure the generation model?",
+                "generation model config",
+                "models.yaml generation model",
+            ],
+            "candidate_entities": [],
+        }
 
     monkeypatch.setattr(rewrite_module, "build_kb_chat_retrieval_queries", fake_build_queries)
 
@@ -104,9 +107,14 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
         return {
             "retrieved_docs": [],
             "context": "",
+            "kb_retrieval_status": "no_hits",
         }
 
-    monkeypatch.setattr(retrieve_module, "run_multi_query_kb_retrieval", fake_multi_query_retrieval)
+    monkeypatch.setattr(
+        retrieve_module,
+        "run_multi_query_kb_text_retrieval",
+        fake_multi_query_retrieval,
+    )
 
     state = {
         "query": "How do I configure the generation model?",
@@ -134,7 +142,7 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
     }
     result = asyncio.run(user_kb_retrieve_node(state))
 
-    assert result["retrieval_trace"]["empty_reason"] == "no_hits"
+    assert result["kb_retrieval_status"] == "no_hits"
     assert result["retrieval_queries"] == [
         "How do I configure the generation model?",
         "generation model config",
@@ -144,7 +152,7 @@ def test_user_kb_retrieve_node_uses_multi_query_path(monkeypatch):
     assert captured["knowledge_base_id"] == 9
     assert captured["category_id"] == 4
     assert captured["result_limit"] == 6
-    assert captured["llm_reference_top_k"] == 6
+    assert captured["llm_reference_top_k"] == 8
     assert captured["context_budget"] == 9000
     assert captured["document_statuses"] == ["published"]
     assert captured["retrieval_mode"] == "hybrid"
@@ -163,6 +171,6 @@ def test_user_kb_retrieve_node_skips_when_plan_disables_retrieval():
 
     result = asyncio.run(user_kb_retrieve_node(state))
 
-    assert result["retrieval_trace"]["graph"]["empty_reason"] == "skipped"
+    assert result["kb_retrieval_status"] == "skipped"
     assert result["retrieved_docs"] == []
-    assert result["retrieval_trace"]["final_hits"] == 0
+    assert result["retrieval_funnel"]["query_count"] == 0

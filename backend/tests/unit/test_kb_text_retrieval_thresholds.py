@@ -5,8 +5,9 @@ from app.core.config.schemas import (
     RagChunkConfig,
     RagConfig,
     RagRetrievalConfig,
+    RagRetrievalProfileConfig,
 )
-from app.services import kb_retrieval
+from app.services import kb_text_retrieval
 
 
 def _rag_config(*, rerank_threshold: float | None = 0.35) -> RagConfig:
@@ -33,13 +34,24 @@ def _rag_config(*, rerank_threshold: float | None = 0.35) -> RagConfig:
             rrf_k=60,
             hybrid_pool_limit=64,
             kb_context_max_chars=12000,
+            profiles={
+                "standard": RagRetrievalProfileConfig(
+                    recall_k=32,
+                    lexical_k=24,
+                    graph_limit=10,
+                    final_top_k=10,
+                    llm_reference_top_k=10,
+                    context_budget=12000,
+                    rerank_enabled=False,
+                )
+            },
         ),
     )
 
 
 def test_apply_retrieval_thresholds_filters_weak_dense_hits(monkeypatch):
     monkeypatch.setattr(
-        kb_retrieval.config_registry,
+        kb_text_retrieval.config_registry,
         "get_rag_config",
         lambda: _rag_config(),
     )
@@ -48,7 +60,7 @@ def test_apply_retrieval_thresholds_filters_weak_dense_hits(monkeypatch):
         {"document_id": 2, "chunk_index": 0, "distance": 0.62},
     ]
 
-    filtered = kb_retrieval._apply_retrieval_thresholds(
+    filtered = kb_text_retrieval._apply_retrieval_thresholds(
         rows,
         rerank_enabled=False,
     )
@@ -58,7 +70,7 @@ def test_apply_retrieval_thresholds_filters_weak_dense_hits(monkeypatch):
 
 def test_apply_retrieval_thresholds_enforces_rerank_threshold_when_available(monkeypatch):
     monkeypatch.setattr(
-        kb_retrieval.config_registry,
+        kb_text_retrieval.config_registry,
         "get_rag_config",
         lambda: _rag_config(rerank_threshold=0.35),
     )
@@ -67,7 +79,7 @@ def test_apply_retrieval_thresholds_enforces_rerank_threshold_when_available(mon
         {"document_id": 2, "chunk_index": 0, "distance": 0.28, "rerank_score": 0.22},
     ]
 
-    filtered = kb_retrieval._apply_retrieval_thresholds(
+    filtered = kb_text_retrieval._apply_retrieval_thresholds(
         rows,
         rerank_enabled=True,
     )
@@ -77,7 +89,7 @@ def test_apply_retrieval_thresholds_enforces_rerank_threshold_when_available(mon
 
 def test_apply_retrieval_thresholds_keeps_lexical_only_hits_with_good_rerank(monkeypatch):
     monkeypatch.setattr(
-        kb_retrieval.config_registry,
+        kb_text_retrieval.config_registry,
         "get_rag_config",
         lambda: _rag_config(rerank_threshold=0.35),
     )
@@ -91,7 +103,7 @@ def test_apply_retrieval_thresholds_keeps_lexical_only_hits_with_good_rerank(mon
         }
     ]
 
-    filtered = kb_retrieval._apply_retrieval_thresholds(
+    filtered = kb_text_retrieval._apply_retrieval_thresholds(
         rows,
         rerank_enabled=True,
     )
@@ -122,11 +134,11 @@ def test_expand_results_with_parent_context_skips_missing_parent_windows(monkeyp
                 )
             }
 
-    monkeypatch.setattr(kb_retrieval, "AsyncSessionLocal", lambda: DummySession())
-    monkeypatch.setattr(kb_retrieval, "DocumentChunkRepository", FakeChunkRepository)
+    monkeypatch.setattr(kb_text_retrieval, "AsyncSessionLocal", lambda: DummySession())
+    monkeypatch.setattr(kb_text_retrieval, "DocumentChunkRepository", FakeChunkRepository)
 
     expanded = asyncio.run(
-        kb_retrieval._expand_results_with_parent_context(
+        kb_text_retrieval._expand_results_with_parent_context(
             [
                 {
                     "document_id": 1,

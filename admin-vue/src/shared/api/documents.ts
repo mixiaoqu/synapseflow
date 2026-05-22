@@ -42,11 +42,16 @@ export function uploadDocumentsBatch(payload: {
   files: File[];
   knowledgeBaseId: number;
   categoryId?: number | null;
+  sourcePaths?: string[];
 }) {
   const form = new FormData();
-  for (const file of payload.files) {
+  payload.files.forEach((file, index) => {
     form.append("files", file);
-  }
+    const sourcePath = payload.sourcePaths?.[index];
+    if (sourcePath) {
+      form.append("source_paths", sourcePath);
+    }
+  });
   form.append("knowledge_base_id", String(payload.knowledgeBaseId));
   if (payload.categoryId) {
     form.append("category_id", String(payload.categoryId));
@@ -75,6 +80,16 @@ export function deleteDocumentsBatch(ids: number[]) {
     method: "DELETE",
     params: {
       ids,
+    },
+    paramsSerializer: {
+      serialize(params) {
+        const searchParams = new URLSearchParams();
+        const values = Array.isArray(params.ids) ? params.ids : [];
+        values.forEach((value) => {
+          searchParams.append("ids", String(value));
+        });
+        return searchParams.toString();
+      },
     },
   });
 }

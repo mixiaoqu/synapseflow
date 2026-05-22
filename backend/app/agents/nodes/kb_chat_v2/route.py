@@ -14,12 +14,10 @@ from app.agents.states import KbChatV2State
 from app.core.llm import get_llm_for_planner
 
 ALLOWED_QUESTION_TYPES = {
-    "entity_lookup",
-    "relationship_lookup",
-    "procedural_lookup",
-    "compare_lookup",
     "summary_lookup",
-    "followup_lookup",
+    "relationship_lookup",
+    "attribute_lookup",
+    "definition_lookup",
     "chitchat",
     "out_of_scope",
 }
@@ -66,19 +64,17 @@ You classify one user turn for a knowledge-base QA workflow.
 
 Return JSON only:
 {{
-  "question_type": "entity_lookup",
+  "question_type": "summary_lookup",
   "retrieval_complexity": "standard",
   "retrieval_required": true,
   "reason": "short reason"
 }}
 
 Allowed question_type values:
-- entity_lookup
-- relationship_lookup
-- procedural_lookup
-- compare_lookup
 - summary_lookup
-- followup_lookup
+- relationship_lookup
+- attribute_lookup
+- definition_lookup
 - chitchat
 - out_of_scope
 
@@ -90,12 +86,10 @@ Allowed retrieval_complexity values:
 Rules:
 - Do not answer the user.
 - Use retrieval_required=false only for chitchat and out_of_scope.
-- Use followup_lookup when the query strongly depends on prior turns or unresolved references.
-- Use entity_lookup for questions about one entity, concept, module, or object.
-- Use relationship_lookup for relations, dependencies, ownership, or connections between entities.
-- Use procedural_lookup for process, steps, setup, or handling questions.
-- Use compare_lookup for explicit differences, tradeoffs, or comparisons.
-- Use summary_lookup for broad overviews or multi-aspect summaries.
+- Use summary_lookup for broad overviews, summaries, or multi-aspect synthesis.
+- Use relationship_lookup for explicit relations, dependencies, ownership, or multi-entity reasoning.
+- Use attribute_lookup for pure properties, structure, fields, state, values, or schema-like questions.
+- Use definition_lookup for concepts, meanings, definitions, or plain explanations.
 - retrieval_complexity indicates retrieval scope and complexity, not question type.
 - Prefer fast for precise single-target lookups.
 - Prefer broad for overviews, multi-aspect comparisons, or complex follow-ups.
@@ -146,7 +140,7 @@ async def build_kb_chat_v2_route(
     question_type = _normalize_choice(
         parsed.get("question_type"),
         ALLOWED_QUESTION_TYPES,
-        "entity_lookup",
+        "definition_lookup",
     )
     retrieval_required = bool(parsed.get("retrieval_required"))
     if question_type in {"chitchat", "out_of_scope"}:

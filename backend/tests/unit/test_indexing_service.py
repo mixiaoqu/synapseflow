@@ -411,6 +411,7 @@ def test_run_document_batch_index_reuses_prepared_chunks(monkeypatch):
         fake_index_prepared_documents_batch,
     )
     monkeypatch.setattr(indexing_service, "_get_document_hashes", fake_get_document_hashes)
+    monkeypatch.setattr(indexing_service, "_graph_indexing_enabled", lambda: False)
 
     db = DummyDB()
     counts = asyncio.run(indexing_service._run_document_batch_index(db, batch=batch))

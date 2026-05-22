@@ -56,7 +56,7 @@ uv run pytest
 - 问答服务：[app/application/kb_chat_service.py](app/application/kb_chat_service.py)
 - 文档管理接口：[app/api/v1/endpoints/documents.py](app/api/v1/endpoints/documents.py)
 - 文档索引服务：[app/services/document_indexer.py](app/services/document_indexer.py)
-- 知识库检索服务：[app/services/kb_retrieval.py](app/services/kb_retrieval.py)
+- 知识库文本检索服务：[app/services/kb_text_retrieval.py](app/services/kb_text_retrieval.py)
 
 ## 请求流转
 

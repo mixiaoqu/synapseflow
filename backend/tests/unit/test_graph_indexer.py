@@ -1,6 +1,6 @@
 import asyncio
 
-from app.services.graph_indexer import GraphIndexer
+from app.services.graph_indexer import DEFAULT_GRAPH_BATCH_SIZE, GraphIndexer
 from app.services.graph_models import (
     GraphChunkRecord,
     GraphEntityRecord,
@@ -170,3 +170,77 @@ def test_graph_indexer_skips_relation_without_known_entities():
 
     assert summary["relations"] == 0
     assert [item[0] for item in calls].count("relation") == 0
+
+
+def test_graph_indexer_batches_writes_by_default_batch_size():
+    calls = []
+
+    class FakeStore:
+        async def upsert_chunks(self, chunks):
+            calls.append(("chunks", len(chunks)))
+
+        async def upsert_entities(self, entities):
+            calls.append(("entities", len(entities)))
+
+        async def link_entities_to_chunks(self, rows):
+            calls.append(("mentions", len(rows)))
+
+        async def upsert_relations(self, relations):
+            calls.append(("relations", len(relations)))
+
+    indexer = GraphIndexer(FakeStore())
+    chunk = GraphChunkRecord(
+        team_id=1,
+        knowledge_base_id=3,
+        document_id=9,
+        document_chunk_id=1,
+        document_title="批次测试",
+        section_path=None,
+    )
+    entities = [
+        GraphEntityRecord(
+            document_id=9,
+            document_chunk_id=index + 1,
+            normalized_name=f"entity-{index}",
+            display_name=f"Entity {index}",
+            entity_type="OTHER",
+            aliases=(),
+            evidence="batch",
+        )
+        for index in range(DEFAULT_GRAPH_BATCH_SIZE + 1)
+    ]
+    mentions = [
+        {
+            "normalized_name": entity.normalized_name,
+            "team_id": 1,
+            "knowledge_base_id": 3,
+            "document_id": 9,
+            "document_chunk_id": entity.document_chunk_id,
+        }
+        for entity in entities
+    ]
+
+    summary = asyncio.run(
+        indexer.index_batch_graph(
+            chunks=[chunk],
+            entities=entities,
+            mentions=mentions,
+            relations=[],
+        )
+    )
+
+    assert summary == {
+        "chunks": 1,
+        "entities": DEFAULT_GRAPH_BATCH_SIZE + 1,
+        "mentions": DEFAULT_GRAPH_BATCH_SIZE + 1,
+        "relations": 0,
+    }
+    assert ("chunks", 1) in calls
+    assert [item for item in calls if item[0] == "entities"] == [
+        ("entities", DEFAULT_GRAPH_BATCH_SIZE),
+        ("entities", 1),
+    ]
+    assert [item for item in calls if item[0] == "mentions"] == [
+        ("mentions", DEFAULT_GRAPH_BATCH_SIZE),
+        ("mentions", 1),
+    ]

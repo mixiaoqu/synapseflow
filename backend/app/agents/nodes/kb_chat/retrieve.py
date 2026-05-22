@@ -10,7 +10,10 @@ from app.agents.common.retrieval import pick_query_from_state
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
 from app.agents.states import KbChatState
 from app.services.chat_memory import format_chat_history
-from app.services.kb_retrieval import run_kb_retrieval, run_multi_query_kb_retrieval
+from app.services.kb_text_retrieval import (
+    run_kb_text_retrieval,
+    run_multi_query_kb_text_retrieval,
+)
 
 MIN_CONTEXT_CHUNKS = 8
 
@@ -110,13 +113,13 @@ async def user_kb_retrieve_node(state: KbChatState) -> Dict[str, Any]:
         "progress_callback": emit_retrieval_progress,
     }
     if len(retrieval_queries) > 1:
-        result = await run_multi_query_kb_retrieval(
+        result = await run_multi_query_kb_text_retrieval(
             query=query,
             retrieval_queries=retrieval_queries,
             **common_kwargs,
         )
     else:
-        result = await run_kb_retrieval(
+        result = await run_kb_text_retrieval(
             query=retrieval_queries[0],
             **common_kwargs,
         )

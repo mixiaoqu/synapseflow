@@ -1,4 +1,4 @@
-"""Shared retrieval pipeline for KB chat, curation, and tools."""
+"""Shared text retrieval pipeline for KB chat, curation, and tools."""
 
 from __future__ import annotations
 
@@ -561,13 +561,13 @@ async def _build_retrieval_output(
     }
 
 
-async def run_kb_retrieval(
+async def run_kb_text_retrieval(
     *,
     query: str,
     team_id: int | None,
     knowledge_base_id: int | None,
     category_id: int | None = None,
-    log_prefix: str = "[KB Retrieval]",
+    log_prefix: str = "[KB Text Retrieval]",
     user_id: int | None = None,
     result_limit: int | None = None,
     llm_reference_top_k: int | None = None,
@@ -580,7 +580,7 @@ async def run_kb_retrieval(
     rerank_enabled: bool | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Retrieve KB chunks and return prompt-ready state."""
+    """Retrieve KB text chunks and return prompt-ready state."""
 
     started_at = perf_counter()
     rag = config_registry.get_rag_config().retrieval
@@ -664,14 +664,14 @@ async def run_kb_retrieval(
     return output
 
 
-async def run_multi_query_kb_retrieval(
+async def run_multi_query_kb_text_retrieval(
     *,
     query: str,
     retrieval_queries: list[str],
     team_id: int | None,
     knowledge_base_id: int | None,
     category_id: int | None = None,
-    log_prefix: str = "[KB Retrieval]",
+    log_prefix: str = "[KB Text Retrieval]",
     user_id: int | None = None,
     result_limit: int | None = None,
     llm_reference_top_k: int | None = None,
@@ -684,12 +684,12 @@ async def run_multi_query_kb_retrieval(
     rerank_enabled: bool | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Retrieve KB chunks from multiple rewritten queries and fuse them with RRF."""
+    """Retrieve KB text chunks from multiple rewritten queries and fuse them with RRF."""
 
     started_at = perf_counter()
     queries = _dedupe_queries(retrieval_queries or [query])
     if len(queries) <= 1:
-        output = await run_kb_retrieval(
+        output = await run_kb_text_retrieval(
             query=queries[0] if queries else query,
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,

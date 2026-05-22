@@ -27,9 +27,9 @@ async def run_state_kb_retrieval(
 ) -> dict[str, Any]:
     """Run KB retrieval using the shared runtime context."""
 
-    from app.services.kb_retrieval import run_kb_retrieval
+    from app.services.kb_text_retrieval import run_kb_text_retrieval
 
-    return await run_kb_retrieval(
+    return await run_kb_text_retrieval(
         query=query,
         team_id=state.get("team_id"),
         knowledge_base_id=state.get("knowledge_base_id"),
