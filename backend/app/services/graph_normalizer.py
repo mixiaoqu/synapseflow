@@ -46,6 +46,31 @@ def _is_noise_entity(name: str) -> bool:
     return False
 
 
+def _clean_attributes(raw_attributes: dict[str, object] | None) -> dict[str, object]:
+    if not raw_attributes:
+        return {}
+    attributes: dict[str, object] = {}
+    for key, value in raw_attributes.items():
+        cleaned_key = _clean_text(str(key))
+        if not cleaned_key:
+            continue
+        if isinstance(value, str):
+            cleaned_value = _clean_text(value)
+            if not cleaned_value:
+                continue
+            attributes[cleaned_key] = cleaned_value
+            continue
+        if isinstance(value, (int, float, bool)):
+            attributes[cleaned_key] = value
+            continue
+        if value is None:
+            continue
+        cleaned_value = _clean_text(str(value))
+        if cleaned_value:
+            attributes[cleaned_key] = cleaned_value
+    return attributes
+
+
 def normalize_chunk_graph(
     *,
     chunk: GraphChunkRecord,
@@ -73,6 +98,7 @@ def normalize_chunk_graph(
                 display_name=display_name,
                 entity_type=_clean_text(entity.entity_type or "OTHER") or "OTHER",
                 aliases=cleaned_aliases,
+                attributes=_clean_attributes(entity.attributes),
                 evidence=_clean_text(entity.evidence),
             ),
         )
@@ -101,6 +127,7 @@ def normalize_chunk_graph(
                 source_normalized_name=source_name,
                 target_normalized_name=target_name,
                 relation_type=relation_type,
+                attributes=_clean_attributes(relation.attributes),
                 evidence=_clean_text(relation.evidence),
             ),
         )

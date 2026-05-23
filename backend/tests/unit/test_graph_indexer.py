@@ -24,6 +24,7 @@ def test_graph_models_expose_minimal_document_and_chunk_fields():
         display_name="PostgreSQL",
         entity_type="DATABASE",
         aliases=("Postgres",),
+        attributes={"version": "15"},
         evidence="结果写入 PostgreSQL",
     )
     relation = GraphRelationRecord(
@@ -34,6 +35,7 @@ def test_graph_models_expose_minimal_document_and_chunk_fields():
         source_normalized_name="projectapp",
         target_normalized_name="postgresql",
         relation_type="USES",
+        attributes={"mode": "direct"},
         evidence="ProjectApp 使用 PostgreSQL",
     )
 
@@ -77,6 +79,7 @@ def test_graph_indexer_writes_chunk_entities_and_relations():
             display_name="ProjectApp",
             entity_type="COMPONENT",
             aliases=(),
+            attributes={},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         ),
         GraphEntityRecord(
@@ -86,6 +89,7 @@ def test_graph_indexer_writes_chunk_entities_and_relations():
             display_name="AssistantProfile",
             entity_type="COMPONENT",
             aliases=(),
+            attributes={},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         ),
     ]
@@ -98,6 +102,7 @@ def test_graph_indexer_writes_chunk_entities_and_relations():
             source_normalized_name="projectapp",
             target_normalized_name="assistantprofile",
             relation_type="USES",
+            attributes={},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         )
     ]
@@ -150,6 +155,7 @@ def test_graph_indexer_skips_relation_without_known_entities():
             display_name="Neo4j",
             entity_type="DATABASE",
             aliases=(),
+            attributes={},
             evidence="Neo4j 作为图数据库",
         )
     ]
@@ -162,6 +168,7 @@ def test_graph_indexer_skips_relation_without_known_entities():
             source_normalized_name="neo4j",
             target_normalized_name="unknown-service",
             relation_type="USES",
+            attributes={},
             evidence="无效关系",
         )
     ]
@@ -205,6 +212,7 @@ def test_graph_indexer_batches_writes_by_default_batch_size():
             display_name=f"Entity {index}",
             entity_type="OTHER",
             aliases=(),
+            attributes={},
             evidence="batch",
         )
         for index in range(DEFAULT_GRAPH_BATCH_SIZE + 1)

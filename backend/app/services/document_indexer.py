@@ -19,6 +19,7 @@ from app.services.graph_extraction import extract_chunk_graph
 from app.services.graph_indexer import DEFAULT_GRAPH_BATCH_SIZE, GraphIndexer
 from app.services.graph_models import GraphChunkRecord, GraphEntityRecord, GraphRelationRecord
 from app.services.graph_normalizer import normalize_chunk_graph
+from app.services.graph_summary import refresh_entity_summaries, refresh_relation_summaries
 from app.services.graph_store import get_graph_store
 from app.services.semantic_chunk import DocumentChunkPlan, VectorIndexChunk, build_chunk_plan, build_vector_index_chunks, plan_text_chunks
 from app.services.vector_store import add_document_chunks, delete_by_document_id
@@ -117,6 +118,18 @@ def _merge_entity_records(
     existing: GraphEntityRecord,
     incoming: GraphEntityRecord,
 ) -> GraphEntityRecord:
+    attributes = dict(existing.attributes)
+    for key, value in incoming.attributes.items():
+        if value is None:
+            continue
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                continue
+            attributes[key] = cleaned
+            continue
+        attributes[key] = value
+
     aliases: list[str] = []
     seen: set[str] = set()
     for alias in (*existing.aliases, *incoming.aliases):
@@ -142,6 +155,7 @@ def _merge_entity_records(
         display_name=existing.display_name or incoming.display_name,
         entity_type=entity_type,
         aliases=tuple(aliases),
+        attributes=attributes,
         evidence=evidence,
     )
 
@@ -150,6 +164,18 @@ def _merge_relation_records(
     existing: GraphRelationRecord,
     incoming: GraphRelationRecord,
 ) -> GraphRelationRecord:
+    attributes = dict(existing.attributes)
+    for key, value in incoming.attributes.items():
+        if value is None:
+            continue
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                continue
+            attributes[key] = cleaned
+            continue
+        attributes[key] = value
+
     evidence = existing.evidence.strip()
     incoming_evidence = incoming.evidence.strip()
     if incoming_evidence and incoming_evidence not in evidence:
@@ -163,6 +189,7 @@ def _merge_relation_records(
         source_normalized_name=existing.source_normalized_name,
         target_normalized_name=existing.target_normalized_name,
         relation_type=existing.relation_type,
+        attributes=attributes,
         evidence=evidence,
     )
 
@@ -215,6 +242,11 @@ async def index_prepared_documents_batch(
     embeddings_input: list[str] = []
     vector_payloads: list[tuple[int, list[int], list[VectorIndexChunk]]] = []
 
+    logger.bind(document_pipeline_log=True).info(
+        "[文档管线] 向量索引开始 docs={}",
+        len(prepared_docs),
+    )
+
     for document_id, content, title in prepared_docs:
         document_chunk_ids, chunks = await _load_indexable_chunks(
             db,
@@ -224,8 +256,23 @@ async def index_prepared_documents_batch(
         )
         vector_payloads.append((document_id, document_chunk_ids, chunks))
         embeddings_input.extend(chunk.embedding_text for chunk in chunks)
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 向量索引加载切片 doc_id={} title={} child_chunks={}",
+            document_id,
+            title or "-",
+            len(chunks),
+        )
 
+    logger.bind(document_pipeline_log=True).info(
+        "[文档管线] 向量 embedding 开始 docs={} chunks={}",
+        len(vector_payloads),
+        len(embeddings_input),
+    )
     all_vectors = await asyncio.to_thread(embed_documents, embeddings_input) if embeddings_input else []
+    logger.bind(document_pipeline_log=True).info(
+        "[文档管线] 向量 embedding 完成 vectors={}",
+        len(all_vectors),
+    )
 
     offset = 0
     for document_id, document_chunk_ids, chunks in vector_payloads:
@@ -244,9 +291,19 @@ async def index_prepared_documents_batch(
             document_chunk_ids=document_chunk_ids,
             commit=False,
         )
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 向量索引写入完成 doc_id={} chunks={}",
+            document_id,
+            counts[document_id],
+        )
 
     if commit:
         await db.commit()
+    logger.bind(document_pipeline_log=True).info(
+        "[文档管线] 向量索引完成 docs={} chunks={}",
+        len(counts),
+        sum(counts.values()),
+    )
     return counts
 
 
@@ -259,6 +316,10 @@ async def index_document_graph(
 ) -> dict[str, int]:
     graph_cfg = config_registry.get_graph_config()
     if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 图谱索引跳过 doc_id={} reason=disabled",
+            document_id,
+        )
         return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
 
     repository = DocumentChunkRepository(db)
@@ -277,6 +338,12 @@ async def index_document_graph(
     store = get_graph_store()
     indexer = GraphIndexer(store)
     await store.delete_document_graph(document_id=document_id)
+    logger.bind(document_pipeline_log=True).info(
+        "[文档管线] 图谱索引开始 doc_id={} title={} child_chunks={}",
+        document_id,
+        title or "-",
+        len(child_rows),
+    )
 
     chunk_records: list[GraphChunkRecord] = []
     entity_records: dict[str, Any] = {}
@@ -315,6 +382,8 @@ async def index_document_graph(
                     "knowledge_base_id": chunk.knowledge_base_id,
                     "document_id": chunk.document_id,
                     "document_chunk_id": chunk.document_chunk_id,
+                    "evidence": entity.evidence,
+                    "attributes": entity.attributes,
                 }
             )
         for relation in normalized.relations:
@@ -329,6 +398,14 @@ async def index_document_graph(
             else:
                 relation_records[relation_key] = _merge_relation_records(existing, relation)
 
+    logger.bind(document_pipeline_log=True).info(
+        "[文档管线] 图谱抽取完成 doc_id={} chunks={} entities={} mentions={} relations={}",
+        document_id,
+        len(chunk_records),
+        len(entity_records),
+        len(mention_rows),
+        len(relation_records),
+    )
     summary = await indexer.index_batch_graph(
         chunks=chunk_records,
         entities=list(entity_records.values()),
@@ -338,8 +415,237 @@ async def index_document_graph(
     )
 
     await store.prune_orphan_entities()
+    try:
+        await refresh_entity_summaries(
+            store=store,
+            knowledge_base_id=int(document_scope.knowledge_base_id),
+            team_id=int(document_scope.team_id),
+            normalized_names=list(entity_records.keys()),
+        )
+        await refresh_relation_summaries(
+            store=store,
+            knowledge_base_id=int(document_scope.knowledge_base_id),
+            team_id=int(document_scope.team_id),
+            document_id=document_id,
+        )
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 图谱摘要刷新完成 doc_id={} entities={} relations={}",
+            document_id,
+            len(entity_records),
+            len(relation_records),
+        )
+    except Exception as exc:
+        logger.warning("Graph summary refresh failed for document_id={}: {}", document_id, exc)
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 图谱摘要刷新失败 doc_id={} error={}",
+            document_id,
+            exc,
+        )
     if commit:
         await db.commit()
+    logger.bind(document_pipeline_log=True).info(
+        "[文档管线] 图谱索引完成 doc_id={} chunks={} entities={} mentions={} relations={}",
+        document_id,
+        summary.get("chunks", 0),
+        summary.get("entities", 0),
+        summary.get("mentions", 0),
+        summary.get("relations", 0),
+    )
+    return summary
+
+
+async def index_document_graph_chunk(
+    db: AsyncSession,
+    document_id: int,
+    document_chunk_id: int,
+    expected_content_hash: str,
+    title: str | None = None,
+    *,
+    commit: bool = True,
+) -> dict[str, int]:
+    graph_cfg = config_registry.get_graph_config()
+    if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 图谱 chunk 索引跳过 doc_id={} chunk_id={} reason=disabled",
+            document_id,
+            document_chunk_id,
+        )
+        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+
+    repository = DocumentChunkRepository(db)
+    child_row = await repository.get_by_id(document_chunk_id)
+    if child_row is None or int(child_row.document_id) != int(document_id):
+        raise ValueError(f"Chunk {document_chunk_id} not found for document {document_id}")
+    document_row = await db.get(Document, document_id)
+    if document_row is None or getattr(document_row, "content_hash", None) != expected_content_hash:
+        raise ValueError(f"Document {document_id} content changed before graph chunk processing")
+
+    document_scope_result = await db.execute(
+        select(
+            KnowledgeBase.team_id.label("team_id"),
+            Document.knowledge_base_id.label("knowledge_base_id"),
+        )
+        .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
+        .where(Document.id == document_id)
+    )
+    document_scope = document_scope_result.one_or_none()
+    if document_scope is None:
+        raise ValueError(f"Document {document_id} must belong to a team and knowledge base")
+
+    store = get_graph_store()
+    indexer = GraphIndexer(store)
+    chunk = GraphChunkRecord(
+        team_id=int(document_scope.team_id),
+        knowledge_base_id=int(document_scope.knowledge_base_id),
+        document_id=document_id,
+        document_chunk_id=int(child_row.id),
+        document_title=title,
+        section_path=child_row.section_path,
+    )
+    extracted = await extract_chunk_graph(
+        chunk=chunk,
+        chunk_text=child_row.content or "",
+    )
+    normalized = normalize_chunk_graph(
+        chunk=chunk,
+        entities=extracted.entities,
+        relations=extracted.relations,
+    )
+    summary = await indexer.index_chunk_graph(
+        chunk=chunk,
+        entities=list(normalized.entities),
+        relations=list(normalized.relations),
+    )
+
+    metadata = dict(child_row.metadata_ or {})
+    metadata["graph_extraction"] = {
+        "status": "indexed",
+        "entities": [
+            {
+                "normalized_name": entity.normalized_name,
+                "display_name": entity.display_name,
+                "entity_type": entity.entity_type,
+                "aliases": list(entity.aliases),
+                "attributes": entity.attributes,
+                "evidence": entity.evidence,
+            }
+            for entity in normalized.entities
+        ],
+        "relations": [
+            {
+                "source_normalized_name": relation.source_normalized_name,
+                "target_normalized_name": relation.target_normalized_name,
+                "relation_type": relation.relation_type,
+                "attributes": relation.attributes,
+                "evidence": relation.evidence,
+            }
+            for relation in normalized.relations
+        ],
+    }
+    await repository.update_metadata(int(child_row.id), metadata)
+    if commit:
+        await db.commit()
+    logger.bind(document_pipeline_log=True).info(
+        "[文档管线] 图谱 chunk 完成 doc_id={} chunk_id={} entities={} relations={}",
+        document_id,
+        document_chunk_id,
+        len(normalized.entities),
+        len(normalized.relations),
+    )
+    return summary
+
+
+async def finalize_document_graph(
+    db: AsyncSession,
+    document_id: int,
+    title: str | None = None,
+    *,
+    commit: bool = True,
+) -> dict[str, int]:
+    graph_cfg = config_registry.get_graph_config()
+    if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
+        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+
+    repository = DocumentChunkRepository(db)
+    child_rows = await repository.get_child_chunks_for_document(document_id)
+    document_scope_result = await db.execute(
+        select(
+            KnowledgeBase.team_id.label("team_id"),
+            Document.knowledge_base_id.label("knowledge_base_id"),
+        )
+        .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
+        .where(Document.id == document_id)
+    )
+    document_scope = document_scope_result.one_or_none()
+    if document_scope is None:
+        raise ValueError(f"Document {document_id} must belong to a team and knowledge base")
+
+    completed_rows: list[tuple[Any, dict[str, Any]]] = []
+    entity_names: set[str] = set()
+    relation_keys: set[tuple[str, str, str]] = set()
+    for row in child_rows:
+        metadata = dict(row.metadata_ or {})
+        extraction = metadata.get("graph_extraction") or {}
+        if extraction.get("status") != "indexed":
+            logger.bind(document_pipeline_log=True).info(
+                "[文档管线] 图谱最终合并等待中 doc_id={} missing_chunk_id={}",
+                document_id,
+                row.id,
+            )
+            return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+        completed_rows.append((row, extraction))
+        for item in extraction.get("entities") or []:
+            name = str(item.get("normalized_name") or "").strip()
+            if name:
+                entity_names.add(name)
+        for item in extraction.get("relations") or []:
+            source_name = str(item.get("source_normalized_name") or "").strip()
+            relation_type = str(item.get("relation_type") or "").strip()
+            target_name = str(item.get("target_normalized_name") or "").strip()
+            if source_name and relation_type and target_name:
+                relation_keys.add((source_name, relation_type, target_name))
+
+    if not completed_rows:
+        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+
+    store = get_graph_store()
+    await store.prune_orphan_entities()
+    summary = {
+        "chunks": len(completed_rows),
+        "entities": len(entity_names),
+        "mentions": len(entity_names),
+        "relations": len(relation_keys),
+    }
+    try:
+        await refresh_entity_summaries(
+            store=store,
+            knowledge_base_id=int(document_scope.knowledge_base_id),
+            team_id=int(document_scope.team_id),
+            normalized_names=sorted(entity_names),
+        )
+        await refresh_relation_summaries(
+            store=store,
+            knowledge_base_id=int(document_scope.knowledge_base_id),
+            team_id=int(document_scope.team_id),
+            document_id=document_id,
+        )
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 图谱摘要刷新完成 doc_id={} entities={} chunks={}",
+            document_id,
+            len(entity_names),
+            len(completed_rows),
+        )
+    except Exception as exc:
+        logger.warning("Graph summary refresh failed for document_id={}: {}", document_id, exc)
+
+    if commit:
+        await db.commit()
+    logger.bind(document_pipeline_log=True).info(
+        "[文档管线] 图谱最终合并完成 doc_id={} chunks={} entities={}",
+        document_id,
+        len(completed_rows),
+        len(entity_names),
+    )
     return summary
 
 

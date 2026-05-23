@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Protocol
 
 from app.core.config.registry import config_registry
@@ -10,6 +11,34 @@ from app.services.graph_models import (
     GraphEntityRecord,
     GraphRelationRecord,
 )
+
+
+def _normalize_attribute_key(key: str) -> str:
+    cleaned = re.sub(r"[^0-9a-zA-Z_]+", "_", (key or "").strip()).strip("_")
+    return cleaned.lower()
+
+
+def _prepare_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
+    prepared: dict[str, Any] = {}
+    for key, value in attributes.items():
+        normalized_key = _normalize_attribute_key(str(key))
+        if not normalized_key:
+            continue
+        if value is None:
+            continue
+        if isinstance(value, str):
+            cleaned_value = value.strip()
+            if not cleaned_value:
+                continue
+            prepared[f"attr_{normalized_key}"] = cleaned_value
+            continue
+        if isinstance(value, (int, float, bool)):
+            prepared[f"attr_{normalized_key}"] = value
+            continue
+        cleaned_value = str(value).strip()
+        if cleaned_value:
+            prepared[f"attr_{normalized_key}"] = cleaned_value
+    return prepared
 
 
 class GraphStore(Protocol):
@@ -39,6 +68,26 @@ class GraphStore(Protocol):
     async def upsert_relations(self, relations: list[GraphRelationRecord]) -> None: ...
 
     async def prune_orphan_entities(self) -> None: ...
+
+    async def list_entity_summary_contexts(
+        self,
+        *,
+        knowledge_base_id: int,
+        team_id: int,
+        normalized_names: list[str],
+    ) -> list[dict[str, Any]]: ...
+
+    async def upsert_entity_summaries(self, rows: list[dict[str, Any]]) -> None: ...
+
+    async def list_relation_summary_contexts(
+        self,
+        *,
+        knowledge_base_id: int,
+        team_id: int,
+        document_id: int | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    async def upsert_relation_summaries(self, rows: list[dict[str, Any]]) -> None: ...
 
     async def search_related_evidence(
         self,
@@ -86,6 +135,30 @@ class NullGraphStore:
         return None
 
     async def prune_orphan_entities(self) -> None:
+        return None
+
+    async def list_entity_summary_contexts(
+        self,
+        *,
+        knowledge_base_id: int,
+        team_id: int,
+        normalized_names: list[str],
+    ) -> list[dict[str, Any]]:
+        return []
+
+    async def upsert_entity_summaries(self, rows: list[dict[str, Any]]) -> None:
+        return None
+
+    async def list_relation_summary_contexts(
+        self,
+        *,
+        knowledge_base_id: int,
+        team_id: int,
+        document_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    async def upsert_relation_summaries(self, rows: list[dict[str, Any]]) -> None:
         return None
 
     async def search_related_evidence(
@@ -178,6 +251,7 @@ class Neo4jGraphStore:
                 "display_name": entity.display_name,
                 "entity_type": entity.entity_type,
                 "aliases": list(entity.aliases),
+                "attributes": _prepare_attributes(entity.attributes),
             }
             for entity in entities
         ]
@@ -188,6 +262,7 @@ class Neo4jGraphStore:
             SET e.display_name = row.display_name,
                 e.entity_type = row.entity_type,
                 e.aliases = row.aliases
+            SET e += row.attributes
             """,
             rows=rows,
         )
@@ -206,6 +281,8 @@ class Neo4jGraphStore:
                     "knowledge_base_id": chunk.knowledge_base_id,
                     "document_id": chunk.document_id,
                     "document_chunk_id": chunk.document_chunk_id,
+                    "evidence": "",
+                    "attributes": {},
                 }
             ]
         )
@@ -221,9 +298,17 @@ class Neo4jGraphStore:
             MERGE (e)-[r:MENTIONED_IN {document_chunk_id: row.document_chunk_id}]->(c)
             SET r.team_id = row.team_id,
                 r.knowledge_base_id = row.knowledge_base_id,
-                r.document_id = row.document_id
+                r.document_id = row.document_id,
+                r.evidence = row.evidence
+            SET r += row.attributes
             """,
-            rows=rows,
+            rows=[
+                {
+                    **row,
+                    "attributes": _prepare_attributes(row.get("attributes") or {}),
+                }
+                for row in rows
+            ],
         )
 
     async def upsert_relation(self, relation: GraphRelationRecord) -> None:
@@ -242,6 +327,7 @@ class Neo4jGraphStore:
                 "target_normalized_name": relation.target_normalized_name,
                 "relation_type": relation.relation_type,
                 "evidence": relation.evidence,
+                "attributes": _prepare_attributes(relation.attributes),
             }
             for relation in relations
         ]
@@ -260,6 +346,7 @@ class Neo4jGraphStore:
                 r.document_id = row.document_id,
                 r.document_chunk_id = row.document_chunk_id,
                 r.evidence = row.evidence
+            SET r += row.attributes
             """,
             rows=rows,
         )
@@ -271,6 +358,132 @@ class Neo4jGraphStore:
             WHERE NOT (e)--()
             DELETE e
             """
+        )
+
+    async def list_entity_summary_contexts(
+        self,
+        *,
+        knowledge_base_id: int,
+        team_id: int,
+        normalized_names: list[str],
+    ) -> list[dict[str, Any]]:
+        if not normalized_names:
+            return []
+        query = """
+        MATCH (e:Entity)
+        WHERE e.normalized_name IN $normalized_names
+        OPTIONAL MATCH (e)-[m:MENTIONED_IN]->(c:Chunk)
+        WHERE c.knowledge_base_id = $knowledge_base_id
+          AND c.team_id = $team_id
+        OPTIONAL MATCH (e)-[rel:RELATED]-(other:Entity)
+        WHERE rel.knowledge_base_id = $knowledge_base_id
+          AND rel.team_id = $team_id
+        RETURN
+            e.normalized_name AS normalized_name,
+            e.display_name AS display_name,
+            e.entity_type AS entity_type,
+            coalesce(e.aliases, []) AS aliases,
+            properties(e) AS entity_props,
+            collect(DISTINCT {
+                document_title: c.document_title,
+                section_path: c.section_path,
+                evidence: m.evidence,
+                mention_props: properties(m)
+            }) AS mentions,
+            collect(DISTINCT {
+                other: other.display_name,
+                relation_type: rel.relation_type,
+                evidence: rel.evidence,
+                relation_props: properties(rel)
+            }) AS relations
+        """
+        async with self._driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                normalized_names=normalized_names,
+                knowledge_base_id=knowledge_base_id,
+                team_id=team_id,
+            )
+            rows: list[dict[str, Any]] = []
+            async for record in result:
+                rows.append(dict(record))
+            return rows
+
+    async def upsert_entity_summaries(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return None
+        await self._run(
+            """
+            UNWIND $rows AS row
+            MATCH (e:Entity {normalized_name: row.normalized_name})
+            MERGE (s:EntitySummary {
+                normalized_name: row.normalized_name,
+                team_id: row.team_id,
+                knowledge_base_id: row.knowledge_base_id
+            })
+            SET s.display_name = row.display_name,
+                s.entity_type = row.entity_type,
+                s.summary = row.summary
+            MERGE (e)-[:HAS_SUMMARY]->(s)
+            """,
+            rows=rows,
+        )
+
+    async def list_relation_summary_contexts(
+        self,
+        *,
+        knowledge_base_id: int,
+        team_id: int,
+        document_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+        MATCH (source:Entity)-[r:RELATED]->(target:Entity)
+        WHERE r.knowledge_base_id = $knowledge_base_id
+          AND r.team_id = $team_id
+          AND ($document_id IS NULL OR r.document_id = $document_id)
+        RETURN
+            source.normalized_name AS source_normalized_name,
+            source.display_name AS source_display_name,
+            source.entity_type AS source_entity_type,
+            coalesce(source.aliases, []) AS source_aliases,
+            properties(source) AS source_props,
+            target.normalized_name AS target_normalized_name,
+            target.display_name AS target_display_name,
+            target.entity_type AS target_entity_type,
+            coalesce(target.aliases, []) AS target_aliases,
+            properties(target) AS target_props,
+            r.relation_type AS relation_type,
+            r.evidence AS evidence,
+            properties(r) AS relation_props
+        """
+        async with self._driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                knowledge_base_id=knowledge_base_id,
+                team_id=team_id,
+                document_id=document_id,
+            )
+            rows: list[dict[str, Any]] = []
+            async for record in result:
+                rows.append(dict(record))
+            return rows
+
+    async def upsert_relation_summaries(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return None
+        await self._run(
+            """
+            UNWIND $rows AS row
+            MATCH (source:Entity {normalized_name: row.source_normalized_name})
+            MATCH (target:Entity {normalized_name: row.target_normalized_name})
+            MATCH (source)-[r:RELATED {
+                source_normalized_name: row.source_normalized_name,
+                target_normalized_name: row.target_normalized_name,
+                relation_type: row.relation_type
+            }]->(target)
+            SET r.summary = row.summary
+            """,
+            rows=rows,
         )
 
     async def search_related_evidence(

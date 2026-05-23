@@ -70,15 +70,15 @@ def _build_graph_extraction_prompt(
 - BELONGS_TO
 - MENTIONED_WITH
 
-返回格式：
-{{
-  "entities": [
-    {{"name": "实体名", "type": "实体类型", "aliases": ["别名"], "evidence": "证据"}}
-  ],
-  "relations": [
-    {{"source": "实体A", "target": "实体B", "type": "关系类型", "evidence": "证据"}}
-  ]
-}}
+ 返回格式：
+ {{
+   "entities": [
+    {{"name": "实体名", "type": "实体类型", "aliases": ["别名"], "attributes": {{"key": "value"}}, "evidence": "证据"}}
+   ],
+   "relations": [
+    {{"source": "实体A", "target": "实体B", "type": "关系类型", "attributes": {{"key": "value"}}, "evidence": "证据"}}
+   ]
+ }}
 
 document_id: {chunk.document_id}
 document_chunk_id: {chunk.document_chunk_id}
@@ -90,6 +90,29 @@ chunk_text: {chunk_text}
 
 def _normalize_name(value: str) -> str:
     return " ".join((value or "").split()).strip().casefold()
+
+
+def _parse_attributes(raw_value: Any) -> dict[str, Any]:
+    if not raw_value:
+        return {}
+    attributes: dict[str, Any] = {}
+    if isinstance(raw_value, dict):
+        items = raw_value.items()
+        for key, value in items:
+            cleaned_key = str(key or "").strip()
+            if cleaned_key:
+                attributes[cleaned_key] = value
+        return attributes
+    if isinstance(raw_value, list):
+        for item in raw_value:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key") or item.get("name") or "").strip()
+            if not key:
+                continue
+            attributes[key] = item.get("value")
+        return attributes
+    return {}
 
 
 async def extract_chunk_graph(
@@ -133,6 +156,7 @@ async def extract_chunk_graph(
                 display_name=name,
                 entity_type=str(item.get("type") or "OTHER").strip() or "OTHER",
                 aliases=tuple(str(alias).strip() for alias in aliases if str(alias).strip()),
+                attributes=_parse_attributes(item.get("attributes")),
                 evidence=str(item.get("evidence") or "").strip(),
             )
         )
@@ -154,6 +178,7 @@ async def extract_chunk_graph(
                 source_normalized_name=_normalize_name(source),
                 target_normalized_name=_normalize_name(target),
                 relation_type=str(item.get("type") or "RELATED_TO").strip() or "RELATED_TO",
+                attributes=_parse_attributes(item.get("attributes")),
                 evidence=str(item.get("evidence") or "").strip(),
             )
         )

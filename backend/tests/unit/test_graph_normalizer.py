@@ -23,6 +23,7 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
             display_name=" PostgreSQL ",
             entity_type="DATABASE",
             aliases=("Postgres",),
+            attributes={"version": "15"},
             evidence="结果写入 PostgreSQL",
         ),
         GraphEntityRecord(
@@ -32,6 +33,7 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
             display_name="PostgreSQL",
             entity_type="DATABASE",
             aliases=(),
+            attributes={"edition": "community"},
             evidence="结果写入 PostgreSQL",
         ),
         GraphEntityRecord(
@@ -41,6 +43,7 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
             display_name="系统",
             entity_type="OTHER",
             aliases=(),
+            attributes={},
             evidence="系统",
         ),
     ]
@@ -53,6 +56,7 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
             source_normalized_name="postgresql",
             target_normalized_name="postgresql",
             relation_type="USES",
+            attributes={"mode": "direct"},
             evidence="自引用",
         )
     ]
@@ -84,6 +88,7 @@ def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
             display_name="ProjectApp",
             entity_type="COMPONENT",
             aliases=(),
+            attributes={"owner": "平台组"},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         ),
         GraphEntityRecord(
@@ -93,6 +98,7 @@ def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
             display_name="AssistantProfile",
             entity_type="COMPONENT",
             aliases=(),
+            attributes={"scope": "default"},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         ),
     ]
@@ -105,6 +111,7 @@ def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
             source_normalized_name="projectapp",
             target_normalized_name="assistantprofile",
             relation_type="BINDS_TO",
+            attributes={"mode": "auto"},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         )
     ]
@@ -116,3 +123,4 @@ def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
     )
 
     assert normalized.relations[0].relation_type == "RELATED_TO"
+    assert normalized.relations[0].attributes == {"mode": "auto"}

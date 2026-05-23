@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://synapseflow:password@localhost:5432/synapseflow"
     REDIS_URL: str = "redis://localhost:6379/0"
     DRAMATIQ_INDEXING_QUEUE: str = "indexing"
+    DRAMATIQ_GRAPH_INDEXING_QUEUE: str = "graph_indexing"
     EMBEDDING_MODEL: Optional[str] = None
 
     MOYU_API_KEY: str = ""

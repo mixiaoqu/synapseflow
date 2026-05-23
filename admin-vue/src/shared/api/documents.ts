@@ -61,9 +61,6 @@ export function uploadDocumentsBatch(payload: {
     url: "/documents/batch",
     method: "POST",
     data: form,
-    headers: {
-      "Content-Type": "multipart/form-data",
-    },
   });
 }
 

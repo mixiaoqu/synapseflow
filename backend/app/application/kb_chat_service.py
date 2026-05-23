@@ -531,14 +531,14 @@ class KbChatService(BaseAgentService):
         )
 
     @staticmethod
-    def _log_v2_retrieval_review_log(
+    def _build_v2_retrieval_review_log_message(
         *,
         state: dict[str, Any],
         result: dict[str, Any],
         total_latency_ms: int,
-    ) -> None:
+    ) -> str:
         if str(result.get("workflow_id") or state.get("workflow_id") or "") != "kb_chat_v2":
-            return
+            return ""
 
         retrieval_trace = dict(result.get("retrieval_trace") or {})
         text_trace = dict(retrieval_trace.get("text") or {})
@@ -546,6 +546,7 @@ class KbChatService(BaseAgentService):
         rerank_trace = dict(retrieval_trace.get("rerank") or {})
         evaluation = dict(result.get("retrieval_evaluation") or {})
         rewrite_trace = dict(result.get("rewrite_trace") or {})
+        route_trace = dict(result.get("route_trace") or {})
         plan_trace = dict(result.get("plan_trace") or {})
         evaluate_trace = dict(result.get("evaluate_trace") or {})
         answer_trace = dict(result.get("answer_trace") or {})
@@ -555,8 +556,6 @@ class KbChatService(BaseAgentService):
         candidate_entities = list(result.get("candidate_entities") or [])
 
         def _format_list(values: list[Any], *, empty_text: str = "(none)") -> str:
-            if not values:
-                return empty_text
             items = [str(value).strip() for value in values if str(value).strip()]
             return ", ".join(items) if items else empty_text
 
@@ -576,71 +575,59 @@ class KbChatService(BaseAgentService):
                 for item in items[:3]
             )
 
-        logger.info(
-            "\n[问答日志 #{}] {}\n"
+        return (
+            "[问答审查日志 #{}] {}\n"
             "问题：{}\n"
             "会话：{}\n"
             "团队/知识库：{} / {}\n"
             "\n"
-            "1. 问题理解\n"
+            "1. 问题分析\n"
             "- question_type: {}\n"
             "- retrieval_required: {}\n"
             "- retrieval_complexity: {}\n"
             "- reason: {}\n"
-            "- latency_ms: {}\n"
+            "- route_latency_ms: {}\n"
+            "- plan_latency_ms: {}\n"
             "\n"
             "2. 检索改写\n"
             "- 原问题: {}\n"
             "- 检索问题:\n{}\n"
             "- candidate_entities: {}\n"
-            "- latency_ms: {}\n"
+            "- rewrite_latency_ms: {}\n"
             "\n"
-            "3. 文本检索\n"
-            "- query_count: {}\n"
+            "3. 检索执行\n"
+            "- retrieval_mode: {}\n"
+            "- text_query_count: {}\n"
             "- recall_k: {}\n"
             "- lexical_k: {}\n"
-            "- 召回 chunk: {}\n"
-            "- 去重后: {}\n"
-            "- latency_ms: {}\n"
-            "\n"
-            "4. 图谱检索\n"
+            "- text_hits: {}\n"
             "- graph_used: {}\n"
-            "- matched_entities: {}\n"
             "- graph_hits: {}\n"
-            "- empty_reason: {}\n"
-            "- latency_ms: {}\n"
-            "\n"
-            "5. 重排\n"
+            "- final_context_docs: {}\n"
             "- rerank_enabled: {}\n"
-            "- 重排前候选: {}\n"
-            "- 重排后保留: {}\n"
             "- rerank_top_docs_changed: {}\n"
             "- top_changes:\n{}\n"
-            "- latency_ms: {}\n"
-            "\n"
-            "6. 结果合并\n"
-            "- 文本证据: {}\n"
-            "- 图谱补充证据: {}\n"
-            "- final_context_docs: {}\n"
             "- empty_reason: {}\n"
-            "- latency_ms: {}\n"
+            "- retrieval_latency_ms: {}\n"
+            "- merge_latency_ms: {}\n"
             "\n"
-            "7. 证据评估\n"
+            "4. 证据评估\n"
             "- status: {}\n"
             "- next_action: {}\n"
             "- reason: {}\n"
-            "- latency_ms: {}\n"
+            "- evaluate_latency_ms: {}\n"
             "\n"
-            "8. 最终回答\n"
+            "5. 答案生成\n"
             "- answer_status: {}\n"
             "- confidence: {}\n"
-            "- latency_ms: {}\n"
+            "- answer_latency_ms: {}\n"
             "- total_latency_ms: {}\n"
             "\n"
-            "9. 审查信息\n"
+            "6. 审查信息\n"
             "- feedback: {}\n"
             "- suggested_review_label: {}\n"
-            "- review_label: {}\n",
+            "- review_label: {}\n"
+        ).format(
             result.get("log_id") or "-",
             result.get("created_at") or "-",
             str(result.get("query") or state.get("query") or ""),
@@ -659,49 +646,29 @@ class KbChatService(BaseAgentService):
             or result.get("reason")
             or state.get("route_reason")
             or "-",
+            int(route_trace.get("latency_ms") or 0),
             int(plan_trace.get("latency_ms") or 0),
             str(result.get("query") or state.get("query") or ""),
             _format_queries([str(query) for query in retrieval_queries if str(query).strip()]),
             _format_list(candidate_entities),
             int(rewrite_trace.get("latency_ms") or 0),
+            str(retrieval_trace.get("retrieval_mode") or state.get("retrieval_mode") or "-"),
             int(text_trace.get("text_query_count") or len(retrieval_queries) or 0),
             int(text_trace.get("recall_k") or 0),
             int(text_trace.get("lexical_k") or 0),
             int(text_trace.get("text_hits") or text_trace.get("raw_candidate_count") or 0),
-            int(
-                text_trace.get("merged_candidate_count")
-                or text_trace.get("text_hits")
-                or text_trace.get("raw_candidate_count")
-                or 0
-            ),
-            int(
-                text_trace.get("latency_ms")
-                or retrieval_trace.get("text_retrieval_latency_ms")
-                or 0
-            ),
             bool(graph_trace.get("graph_used")),
-            _format_list(candidate_entities),
             int(graph_trace.get("graph_hits") or 0),
-            graph_trace.get("empty_reason") or "(none)",
-            int(graph_trace.get("latency_ms") or 0),
-            bool(rerank_trace.get("rerank_enabled")),
-            int(
-                rerank_trace.get("candidate_count")
-                or text_trace.get("raw_candidate_count")
-                or 0
-            ),
-            int(rerank_trace.get("final_count") or 0),
-            bool(rerank_trace.get("top_docs_changed")),
-            _format_top_changes(list(rerank_trace.get("top_changes") or [])),
-            int(rerank_trace.get("latency_ms") or 0),
-            int(retrieval_trace.get("text_evidence_count") or 0),
-            int(retrieval_trace.get("graph_evidence_count") or 0),
             int(
                 retrieval_trace.get("final_context_docs")
                 or retrieval_trace.get("final_hits")
                 or 0
             ),
-            retrieval_trace.get("empty_reason") or "-",
+            bool(rerank_trace.get("rerank_enabled")),
+            bool(rerank_trace.get("top_docs_changed")),
+            _format_top_changes(list(rerank_trace.get("top_changes") or [])),
+            retrieval_trace.get("empty_reason") or graph_trace.get("empty_reason") or "-",
+            int(text_trace.get("latency_ms") or retrieval_trace.get("text_retrieval_latency_ms") or 0),
             int(retrieval_trace.get("merge_latency_ms") or 0),
             evaluation.get("status") or "-",
             evaluation.get("next_action") or "-",
@@ -715,6 +682,21 @@ class KbChatService(BaseAgentService):
             result.get("suggested_review_label") or "(none)",
             result.get("review_label") or "（未审核）",
         )
+
+    @staticmethod
+    def _log_v2_retrieval_review_log(
+        *,
+        state: dict[str, Any],
+        result: dict[str, Any],
+        total_latency_ms: int,
+    ) -> None:
+        message = KbChatService._build_v2_retrieval_review_log_message(
+            state=state,
+            result=result,
+            total_latency_ms=total_latency_ms,
+        )
+        if message:
+            logger.bind(kb_review_log=True).info(message)
 
     async def _record_log(
         self,

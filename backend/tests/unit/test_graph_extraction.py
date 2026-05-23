@@ -13,12 +13,14 @@ def test_extract_chunk_graph_parses_llm_json_into_records():
               "name": "ProjectApp",
               "type": "COMPONENT",
               "aliases": ["project app"],
+              "attributes": {"owner": "平台组"},
               "evidence": "ProjectApp 默认绑定 AssistantProfile"
             },
             {
               "name": "AssistantProfile",
               "type": "COMPONENT",
               "aliases": [],
+              "attributes": {"scope": "default"},
               "evidence": "ProjectApp 默认绑定 AssistantProfile"
             }
           ],
@@ -27,6 +29,7 @@ def test_extract_chunk_graph_parses_llm_json_into_records():
               "source": "ProjectApp",
               "target": "AssistantProfile",
               "type": "USES",
+              "attributes": {"mode": "auto"},
               "evidence": "ProjectApp 默认绑定 AssistantProfile"
             }
           ]
@@ -59,8 +62,10 @@ def test_extract_chunk_graph_parses_llm_json_into_records():
         "ProjectApp",
         "AssistantProfile",
     ]
+    assert result.entities[0].attributes == {"owner": "平台组"}
     assert result.relations[0].source_normalized_name == "projectapp"
     assert result.relations[0].target_normalized_name == "assistantprofile"
+    assert result.relations[0].attributes == {"mode": "auto"}
 
 
 def test_extract_chunk_graph_returns_empty_result_on_invalid_json():

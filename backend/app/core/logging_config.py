@@ -6,6 +6,7 @@ Loguru 日志配置
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
@@ -28,10 +29,27 @@ def setup_logging() -> None:
     fmt = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
     if use_json:
         fmt = "{message}"
+
+    def _is_dedicated_file_log(record: dict[str, Any]) -> bool:
+        return bool(
+            record["extra"].get("kb_review_log")
+            or record["extra"].get("document_pipeline_log")
+        )
+
+    def _is_normal_log(record: dict[str, Any]) -> bool:
+        return not _is_dedicated_file_log(record)
+
+    def _is_review_log(record: dict[str, Any]) -> bool:
+        return bool(record["extra"].get("kb_review_log"))
+
+    def _is_document_pipeline_log(record: dict[str, Any]) -> bool:
+        return bool(record["extra"].get("document_pipeline_log"))
+
     logger.add(
         sys.stderr,
         format=fmt,
         level=level,
+        filter=_is_normal_log,
         colorize=not use_json,
     )
 
@@ -46,11 +64,32 @@ def setup_logging() -> None:
 
         rotation = file_cfg.rotation
         retention = file_cfg.retention
+        review_log_file = log_file.with_name("kb_chat_review.log")
+        document_pipeline_log_file = log_file.with_name("document_pipeline.log")
 
         logger.add(
             str(log_file),
             format=fmt,
             level=level,
+            filter=_is_normal_log,
+            rotation=rotation,
+            retention=retention,
+            encoding="utf-8",
+        )
+        logger.add(
+            str(review_log_file),
+            format=fmt,
+            level=level,
+            filter=_is_review_log,
+            rotation=rotation,
+            retention=retention,
+            encoding="utf-8",
+        )
+        logger.add(
+            str(document_pipeline_log_file),
+            format=fmt,
+            level=level,
+            filter=_is_document_pipeline_log,
             rotation=rotation,
             retention=retention,
             encoding="utf-8",
