@@ -18,12 +18,15 @@ function Load-WinForms {
 function Show-ErrorDialog {
     param([string]$Message)
 
+    $owner = New-DialogOwner
     [System.Windows.Forms.MessageBox]::Show(
+        $owner,
         $Message,
         "SynapseFlow MCP 安装失败",
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Error
     ) | Out-Null
+    Close-DialogOwner -Owner $owner
 }
 
 function Show-InfoDialog {
@@ -32,12 +35,55 @@ function Show-InfoDialog {
         [string]$Title = "SynapseFlow MCP"
     )
 
+    $owner = New-DialogOwner
     [System.Windows.Forms.MessageBox]::Show(
+        $owner,
         $Message,
         $Title,
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Information
     ) | Out-Null
+    Close-DialogOwner -Owner $owner
+}
+
+function New-DialogOwner {
+    $owner = New-Object System.Windows.Forms.Form
+    $owner.StartPosition = "CenterScreen"
+    $owner.Size = New-Object System.Drawing.Size(1, 1)
+    $owner.ShowInTaskbar = $false
+    $owner.TopMost = $true
+    $owner.Opacity = 0
+    $owner.Show()
+    $owner.Activate()
+    $owner.BringToFront()
+    [System.Windows.Forms.Application]::DoEvents()
+    return $owner
+}
+
+function Close-DialogOwner {
+    param([System.Windows.Forms.Form]$Owner)
+
+    if (-not $Owner) {
+        return
+    }
+
+    $Owner.Close()
+    $Owner.Dispose()
+}
+
+function Show-ForegroundForm {
+    param([System.Windows.Forms.Form]$Form)
+
+    if (-not $Form) {
+        return
+    }
+
+    $Form.Show()
+    $Form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+    $Form.Activate()
+    $Form.BringToFront()
+    $null = $Form.Focus()
+    [System.Windows.Forms.Application]::DoEvents()
 }
 
 function Copy-TextToClipboard {
@@ -139,6 +185,11 @@ $TraeTemplatePath
     $form.Controls.Add($closeButton)
 
     $form.AcceptButton = $closeButton
+    $form.Add_Shown({
+        $this.Activate()
+        $this.BringToFront()
+        $null = $this.Focus()
+    })
     $form.ShowDialog() | Out-Null
     $form.Dispose()
 }
@@ -146,12 +197,15 @@ $TraeTemplatePath
 function Confirm-OverwriteGui {
     param([string]$TargetDir)
 
+    $owner = New-DialogOwner
     $result = [System.Windows.Forms.MessageBox]::Show(
+        $owner,
         "目标目录已存在文件，是否继续覆盖？`n`n$TargetDir",
         "SynapseFlow MCP",
         [System.Windows.Forms.MessageBoxButtons]::OKCancel,
         [System.Windows.Forms.MessageBoxIcon]::Warning
     )
+    Close-DialogOwner -Owner $owner
 
     return $result -eq [System.Windows.Forms.DialogResult]::OK
 }
@@ -159,12 +213,14 @@ function Confirm-OverwriteGui {
 function Select-InstallDir {
     param([string]$DefaultDir)
 
+    $owner = New-DialogOwner
     $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
     $dialog.Description = "请选择 SynapseFlow MCP 的安装目录"
     $dialog.ShowNewFolderButton = $true
     $dialog.SelectedPath = $DefaultDir
 
-    $result = $dialog.ShowDialog()
+    $result = $dialog.ShowDialog($owner)
+    Close-DialogOwner -Owner $owner
     if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
         return $null
     }
@@ -208,8 +264,7 @@ function New-ProgressWindow {
     $listBox.Size = New-Object System.Drawing.Size(510, 172)
     $form.Controls.Add($listBox)
 
-    $form.Show()
-    [System.Windows.Forms.Application]::DoEvents()
+    Show-ForegroundForm -Form $form
 
     return [PSCustomObject]@{
         Form = $form
@@ -282,20 +337,6 @@ function Set-TextFile {
 function Escape-JsonPath {
     param([string]$Value)
     return $Value.Replace("\", "\\")
-}
-
-function Open-TemplateFile {
-    param([string]$Path)
-
-    if (-not (Test-Path -LiteralPath $Path)) {
-        return
-    }
-
-    try {
-        Start-Process -FilePath "notepad.exe" -ArgumentList "`"$Path`"" | Out-Null
-    } catch {
-        Write-Step "Template file could not be opened automatically: $Path"
-    }
 }
 
 function Resolve-InstallDir {
@@ -493,12 +534,7 @@ function Invoke-Install {
     }
 
     $traeTemplatePath = Join-Path $ResolvedTargetDir "trae-mcp-config.json"
-    if ($UseGui) {
-        & $updateStep 100 "安装完成，正在打开 Trae 配置模板..."
-        Open-TemplateFile -Path $traeTemplatePath
-    } else {
-        & $updateStep 100 "安装完成。"
-    }
+    & $updateStep 100 "安装完成。"
 
     return [PSCustomObject]@{
         InstallDir = $ResolvedTargetDir
