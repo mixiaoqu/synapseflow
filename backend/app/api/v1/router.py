@@ -11,6 +11,7 @@ from app.api.v1.endpoints import (
     embed,
     health,
     knowledge_bases,
+    mcp,
     products,
     projects,
     sensitive_words,
@@ -25,6 +26,7 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(ask.router, prefix="/ask", tags=["ask"])
 api_router.include_router(ask.admin_router, prefix="/admin/qa", tags=["admin-qa"])
 api_router.include_router(embed.router, prefix="/embed", tags=["embed"])
+api_router.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
 api_router.include_router(assistants.router, prefix="/assistants", tags=["assistants"])
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
 api_router.include_router(

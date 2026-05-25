@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-this-secret-key-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
+    MCP_TOKEN_EXPIRE_MINUTES: int = 30
     ENABLE_PUBLIC_REGISTRATION: bool = False
     ENTERPRISE_SERVICE_TOKEN: str = ""
     EMBED_TOKEN_EXPIRE_MINUTES: int = 60
