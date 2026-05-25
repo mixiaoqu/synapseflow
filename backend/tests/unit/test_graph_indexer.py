@@ -18,6 +18,8 @@ def test_graph_models_expose_minimal_document_and_chunk_fields():
         section_path="安装 / 数据库",
     )
     entity = GraphEntityRecord(
+        team_id=7,
+        knowledge_base_id=8,
         document_id=12,
         document_chunk_id=34,
         normalized_name="postgresql",
@@ -73,6 +75,8 @@ def test_graph_indexer_writes_chunk_entities_and_relations():
     )
     entities = [
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=3,
             document_id=1,
             document_chunk_id=101,
             normalized_name="projectapp",
@@ -83,6 +87,8 @@ def test_graph_indexer_writes_chunk_entities_and_relations():
             evidence="ProjectApp 默认绑定 AssistantProfile",
         ),
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=3,
             document_id=1,
             document_chunk_id=101,
             normalized_name="assistantprofile",
@@ -149,6 +155,8 @@ def test_graph_indexer_skips_relation_without_known_entities():
     )
     entities = [
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=3,
             document_id=2,
             document_chunk_id=202,
             normalized_name="neo4j",
@@ -206,6 +214,8 @@ def test_graph_indexer_batches_writes_by_default_batch_size():
     )
     entities = [
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=3,
             document_id=9,
             document_chunk_id=index + 1,
             normalized_name=f"entity-{index}",

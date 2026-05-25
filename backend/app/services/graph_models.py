@@ -18,6 +18,8 @@ class GraphChunkRecord:
 
 @dataclass(frozen=True, slots=True)
 class GraphEntityRecord:
+    team_id: int
+    knowledge_base_id: int
     document_id: int
     document_chunk_id: int
     normalized_name: str

@@ -17,7 +17,7 @@ from app.agents.states import KbChatV2State
 
 
 def _route_after_analyze(state: KbChatV2State) -> str:
-    return "answer" if state.get("retrieval_required") is False else "rewrite_query"
+    return "answer" if str(state.get("retrieval_strategy") or "").strip().lower() == "skip" else "rewrite_query"
 
 
 def create_kb_chat_v2_graph(

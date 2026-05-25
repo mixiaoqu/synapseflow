@@ -17,6 +17,8 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
     )
     entities = [
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=2,
             document_id=1,
             document_chunk_id=11,
             normalized_name="  PostgreSQL  ",
@@ -27,6 +29,8 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
             evidence="结果写入 PostgreSQL",
         ),
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=2,
             document_id=1,
             document_chunk_id=11,
             normalized_name="postgresql",
@@ -37,6 +41,8 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
             evidence="结果写入 PostgreSQL",
         ),
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=2,
             document_id=1,
             document_chunk_id=11,
             normalized_name="系统",
@@ -82,6 +88,8 @@ def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
     )
     entities = [
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=2,
             document_id=2,
             document_chunk_id=22,
             normalized_name="projectapp",
@@ -92,6 +100,8 @@ def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
             evidence="ProjectApp 默认绑定 AssistantProfile",
         ),
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=2,
             document_id=2,
             document_chunk_id=22,
             normalized_name="assistantprofile",

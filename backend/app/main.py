@@ -1,4 +1,5 @@
 """FastAPI应用主入口"""
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,24 @@ from app.core.config import config_registry, settings
 from app.core.logging_config import setup_logging
 
 app_config = config_registry.get_app_config()
+
+
+def _load_docling_converter() -> None:
+    from importlib import import_module
+
+    converter_module = import_module("docling.document_converter")
+    converter_module.DocumentConverter()
+
+
+async def _warmup_docling_models() -> None:
+    """后台初始化 Docling，避免首次解析文档时才触发模型加载。"""
+    from loguru import logger
+
+    try:
+        await asyncio.to_thread(_load_docling_converter)
+        logger.info("Docling 模型预热完成")
+    except Exception as exc:
+        logger.warning("Docling 模型预热失败: {}", exc)
 
 
 

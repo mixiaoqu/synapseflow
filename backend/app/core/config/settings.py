@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: Optional[str] = None
 
     MOYU_API_KEY: str = ""
+    DEEPSEEK_API_KEY: str = ""
 
     RERANK_ENABLED: bool = True
     RERANK_PROVIDER: str = "local"

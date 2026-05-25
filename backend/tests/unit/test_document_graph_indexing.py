@@ -77,6 +77,8 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
         ),
         entities=[
             GraphEntityRecord(
+                team_id=2,
+                knowledge_base_id=9,
                 document_id=1,
                 document_chunk_id=101,
                 normalized_name="projectapp",
@@ -112,6 +114,8 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
         ),
         entities=[
             GraphEntityRecord(
+                team_id=2,
+                knowledge_base_id=9,
                 document_id=1,
                 document_chunk_id=102,
                 normalized_name="projectapp",
@@ -122,6 +126,8 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
                 evidence="ProjectApp 也关联 AssistantProfile",
             ),
             GraphEntityRecord(
+                team_id=2,
+                knowledge_base_id=9,
                 document_id=1,
                 document_chunk_id=102,
                 normalized_name="assistantprofile",
@@ -167,10 +173,13 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
         lambda: FakeStore(),
     )
     monkeypatch.setattr(
-        "app.services.document_indexer.extract_chunk_graph",
-        lambda *, chunk, chunk_text: asyncio.sleep(
+        "app.services.document_indexer.extract_chunk_graphs_batch",
+        lambda items: asyncio.sleep(
             0,
-            result=extraction if chunk.document_chunk_id == 101 else second_extraction,
+            result=[
+                extraction if chunk.document_chunk_id == 101 else second_extraction
+                for chunk, _chunk_text in items
+            ],
         ),
     )
     monkeypatch.setattr(

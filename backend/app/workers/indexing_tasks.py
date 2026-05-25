@@ -92,12 +92,31 @@ if dramatiq is not None:
     async def index_document_graph_chunk_actor(
         document_id: int,
         document_chunk_id: int,
+        expected_content_hash: str,
         job_id: int,
         title: str | None = None,
     ) -> None:
         await indexing_service.index_document_graph_chunk_task(
             document_id=document_id,
             document_chunk_id=document_chunk_id,
+            expected_content_hash=expected_content_hash,
+            job_id=job_id,
+            title=title,
+        )
+
+
+    @dramatiq.actor(queue_name=settings.DRAMATIQ_GRAPH_INDEXING_QUEUE)
+    async def index_document_graph_chunks_actor(
+        document_id: int,
+        document_chunk_ids: list[int],
+        expected_content_hash: str,
+        job_id: int,
+        title: str | None = None,
+    ) -> None:
+        await indexing_service.index_document_graph_chunks_task(
+            document_id=document_id,
+            document_chunk_ids=document_chunk_ids,
+            expected_content_hash=expected_content_hash,
             job_id=job_id,
             title=title,
         )
@@ -154,5 +173,6 @@ else:
     index_document_graph_actor = _MissingActor("index_document_graph_actor")
     index_documents_graph_batch_actor = _MissingActor("index_documents_graph_batch_actor")
     index_document_graph_chunk_actor = _MissingActor("index_document_graph_chunk_actor")
+    index_document_graph_chunks_actor = _MissingActor("index_document_graph_chunks_actor")
     finalize_document_graph_actor = _MissingActor("finalize_document_graph_actor")
     reindex_current_document_graph_actor = _MissingActor("reindex_current_document_graph_actor")

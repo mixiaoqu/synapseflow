@@ -12,6 +12,8 @@ from app.services.graph_models import (
     GraphRelationRecord,
 )
 
+_GRAPH_STORE_CACHE: dict[tuple[bool, bool, str, str, str, str, bool], GraphStore] = {}
+
 
 def _normalize_attribute_key(key: str) -> str:
     cleaned = re.sub(r"[^0-9a-zA-Z_]+", "_", (key or "").strip()).strip("_")
@@ -247,6 +249,8 @@ class Neo4jGraphStore:
             return None
         rows = [
             {
+                "team_id": entity.team_id,
+                "knowledge_base_id": entity.knowledge_base_id,
                 "normalized_name": entity.normalized_name,
                 "display_name": entity.display_name,
                 "entity_type": entity.entity_type,
@@ -258,7 +262,11 @@ class Neo4jGraphStore:
         await self._run(
             """
             UNWIND $rows AS row
-            MERGE (e:Entity {normalized_name: row.normalized_name})
+            MERGE (e:Entity {
+                team_id: row.team_id,
+                knowledge_base_id: row.knowledge_base_id,
+                normalized_name: row.normalized_name
+            })
             SET e.display_name = row.display_name,
                 e.entity_type = row.entity_type,
                 e.aliases = row.aliases
@@ -293,7 +301,11 @@ class Neo4jGraphStore:
         await self._run(
             """
             UNWIND $rows AS row
-            MATCH (e:Entity {normalized_name: row.normalized_name})
+            MATCH (e:Entity {
+                team_id: row.team_id,
+                knowledge_base_id: row.knowledge_base_id,
+                normalized_name: row.normalized_name
+            })
             MATCH (c:Chunk {document_chunk_id: row.document_chunk_id})
             MERGE (e)-[r:MENTIONED_IN {document_chunk_id: row.document_chunk_id}]->(c)
             SET r.team_id = row.team_id,
@@ -334,9 +346,19 @@ class Neo4jGraphStore:
         await self._run(
             """
             UNWIND $rows AS row
-            MATCH (source:Entity {normalized_name: row.source_normalized_name})
-            MATCH (target:Entity {normalized_name: row.target_normalized_name})
+            MATCH (source:Entity {
+                team_id: row.team_id,
+                knowledge_base_id: row.knowledge_base_id,
+                normalized_name: row.source_normalized_name
+            })
+            MATCH (target:Entity {
+                team_id: row.team_id,
+                knowledge_base_id: row.knowledge_base_id,
+                normalized_name: row.target_normalized_name
+            })
             MERGE (source)-[r:RELATED {
+                team_id: row.team_id,
+                knowledge_base_id: row.knowledge_base_id,
                 source_normalized_name: row.source_normalized_name,
                 target_normalized_name: row.target_normalized_name,
                 relation_type: row.relation_type
@@ -367,11 +389,20 @@ class Neo4jGraphStore:
         team_id: int,
         normalized_names: list[str],
     ) -> list[dict[str, Any]]:
-        if not normalized_names:
+        lookup_names = [" ".join(item.split()).strip().casefold() for item in normalized_names]
+        lookup_names = [item for item in lookup_names if item]
+        if not lookup_names:
             return []
         query = """
         MATCH (e:Entity)
-        WHERE e.normalized_name IN $normalized_names
+        WHERE e.team_id = $team_id
+          AND e.knowledge_base_id = $knowledge_base_id
+          AND (
+            e.normalized_name IN $normalized_names
+            OR toLower(e.normalized_name) IN $lookup_names
+            OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) IN $lookup_names)
+          )
+        OPTIONAL MATCH (e)-[:HAS_SUMMARY]->(s:EntitySummary)
         OPTIONAL MATCH (e)-[m:MENTIONED_IN]->(c:Chunk)
         WHERE c.knowledge_base_id = $knowledge_base_id
           AND c.team_id = $team_id
@@ -383,6 +414,7 @@ class Neo4jGraphStore:
             e.display_name AS display_name,
             e.entity_type AS entity_type,
             coalesce(e.aliases, []) AS aliases,
+            s.summary AS summary,
             properties(e) AS entity_props,
             collect(DISTINCT {
                 document_title: c.document_title,
@@ -401,6 +433,7 @@ class Neo4jGraphStore:
             result = await session.run(
                 query,
                 normalized_names=normalized_names,
+                lookup_names=lookup_names,
                 knowledge_base_id=knowledge_base_id,
                 team_id=team_id,
             )
@@ -415,7 +448,11 @@ class Neo4jGraphStore:
         await self._run(
             """
             UNWIND $rows AS row
-            MATCH (e:Entity {normalized_name: row.normalized_name})
+            MATCH (e:Entity {
+                team_id: row.team_id,
+                knowledge_base_id: row.knowledge_base_id,
+                normalized_name: row.normalized_name
+            })
             MERGE (s:EntitySummary {
                 normalized_name: row.normalized_name,
                 team_id: row.team_id,
@@ -441,19 +478,24 @@ class Neo4jGraphStore:
         WHERE r.knowledge_base_id = $knowledge_base_id
           AND r.team_id = $team_id
           AND ($document_id IS NULL OR r.document_id = $document_id)
+        OPTIONAL MATCH (source)-[:HAS_SUMMARY]->(source_summary:EntitySummary)
+        OPTIONAL MATCH (target)-[:HAS_SUMMARY]->(target_summary:EntitySummary)
         RETURN
             source.normalized_name AS source_normalized_name,
             source.display_name AS source_display_name,
             source.entity_type AS source_entity_type,
             coalesce(source.aliases, []) AS source_aliases,
+            source_summary.summary AS source_summary,
             properties(source) AS source_props,
             target.normalized_name AS target_normalized_name,
             target.display_name AS target_display_name,
             target.entity_type AS target_entity_type,
             coalesce(target.aliases, []) AS target_aliases,
+            target_summary.summary AS target_summary,
             properties(target) AS target_props,
             r.relation_type AS relation_type,
             r.evidence AS evidence,
+            r.summary AS summary,
             properties(r) AS relation_props
         """
         async with self._driver.session(database=self._database) as session:
@@ -474,9 +516,19 @@ class Neo4jGraphStore:
         await self._run(
             """
             UNWIND $rows AS row
-            MATCH (source:Entity {normalized_name: row.source_normalized_name})
-            MATCH (target:Entity {normalized_name: row.target_normalized_name})
+            MATCH (source:Entity {
+                team_id: row.team_id,
+                knowledge_base_id: row.knowledge_base_id,
+                normalized_name: row.source_normalized_name
+            })
+            MATCH (target:Entity {
+                team_id: row.team_id,
+                knowledge_base_id: row.knowledge_base_id,
+                normalized_name: row.target_normalized_name
+            })
             MATCH (source)-[r:RELATED {
+                team_id: row.team_id,
+                knowledge_base_id: row.knowledge_base_id,
                 source_normalized_name: row.source_normalized_name,
                 target_normalized_name: row.target_normalized_name,
                 relation_type: row.relation_type
@@ -500,14 +552,19 @@ class Neo4jGraphStore:
             return []
         query = """
         MATCH (e:Entity)
-        WHERE e.normalized_name IN $entity_names
-           OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) IN $entity_names)
-        OPTIONAL MATCH (e)-[:MENTIONED_IN]->(mention_chunk:Chunk)
+        WHERE e.team_id = $team_id
+          AND e.knowledge_base_id = $knowledge_base_id
+          AND (
+            e.normalized_name IN $entity_names
+            OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) IN $entity_names)
+          )
+        OPTIONAL MATCH (e)-[mention:MENTIONED_IN]->(mention_chunk:Chunk)
         OPTIONAL MATCH (e)-[rel:RELATED]-(other:Entity)
         OPTIONAL MATCH (other)-[:MENTIONED_IN]->(relation_chunk:Chunk)
-        WITH e, mention_chunk, rel, other, relation_chunk
+        WITH e, mention, mention_chunk, rel, other, relation_chunk
         WITH e,
              coalesce(relation_chunk, mention_chunk) AS chunk,
+             mention,
              rel,
              other
         WHERE chunk IS NOT NULL
@@ -521,7 +578,7 @@ class Neo4jGraphStore:
              chunk.document_title AS document_title,
              chunk.section_path AS section_path,
              rel.relation_type AS relation_type,
-             rel.evidence AS evidence,
+             coalesce(rel.evidence, mention.evidence) AS evidence,
              [name IN [e.display_name, other.display_name] WHERE name IS NOT NULL] AS matched_entities
         LIMIT $limit
         """
@@ -549,9 +606,22 @@ def get_graph_store(*, require_indexing: bool = True) -> GraphStore:
     cfg = config_registry.get_graph_config()
     if not cfg.enabled or (require_indexing and not cfg.indexing_enabled):
         return NullGraphStore()
-    return Neo4jGraphStore(
-        uri=cfg.uri,
-        username=cfg.username,
-        password=cfg.password,
-        database=cfg.database,
+    cache_key = (
+        bool(cfg.enabled),
+        bool(cfg.indexing_enabled),
+        str(cfg.uri),
+        str(cfg.username),
+        str(cfg.password),
+        str(cfg.database),
+        bool(require_indexing),
     )
+    store = _GRAPH_STORE_CACHE.get(cache_key)
+    if store is None:
+        store = Neo4jGraphStore(
+            uri=cfg.uri,
+            username=cfg.username,
+            password=cfg.password,
+            database=cfg.database,
+        )
+        _GRAPH_STORE_CACHE[cache_key] = store
+    return store

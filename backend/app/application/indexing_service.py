@@ -36,6 +36,7 @@ from app.services.document_indexer import (
     index_document,
     index_document_graph,
     index_document_graph_chunk,
+    index_document_graph_chunks,
     finalize_document_graph,
     index_prepared_documents_batch,
 )
@@ -643,6 +644,7 @@ class IndexingService:
         *,
         document_id: int,
         document_chunk_id: int,
+        expected_content_hash: str,
         job_id: int,
         title: str | None = None,
     ) -> None:
@@ -650,6 +652,27 @@ class IndexingService:
         actor_module.index_document_graph_chunk_actor.send(
             document_id=document_id,
             document_chunk_id=document_chunk_id,
+            expected_content_hash=expected_content_hash,
+            job_id=job_id,
+            title=title,
+        )
+
+    def enqueue_document_graph_chunks(
+        self,
+        *,
+        document_id: int,
+        document_chunk_ids: Sequence[int],
+        expected_content_hash: str,
+        job_id: int,
+        title: str | None = None,
+    ) -> None:
+        if not document_chunk_ids:
+            return
+        actor_module = self._actor_module()
+        actor_module.index_document_graph_chunks_actor.send(
+            document_id=document_id,
+            document_chunk_ids=[int(chunk_id) for chunk_id in document_chunk_ids],
+            expected_content_hash=expected_content_hash,
             job_id=job_id,
             title=title,
         )
@@ -1666,13 +1689,13 @@ class IndexingService:
         await store.delete_document_graph(document_id=document_id)
         await store.prune_orphan_entities()
 
-        for row in child_rows:
-            self.enqueue_document_graph_chunk(
-                document_id=document_id,
-                document_chunk_id=int(row.id),
-                job_id=job_id,
-                title=title or doc.title,
-            )
+        self.enqueue_document_graph_chunks(
+            document_id=document_id,
+            document_chunk_ids=[int(row.id) for row in child_rows],
+            expected_content_hash=expected_content_hash,
+            job_id=job_id,
+            title=title or doc.title,
+        )
 
         logger.bind(document_pipeline_log=True).info(
             "[文档管线] 图谱任务已调度 doc_id={} child_chunks={}",
@@ -1702,6 +1725,7 @@ class IndexingService:
         *,
         document_id: int,
         document_chunk_id: int,
+        expected_content_hash: str,
         job_id: int,
         title: str | None = None,
     ) -> None:
@@ -1714,11 +1738,42 @@ class IndexingService:
             doc = await self._get_document(db, document_id)
             if not doc:
                 return
-            expected_content_hash = doc.content_hash
             await index_document_graph_chunk(
                 db,
                 document_id=document_id,
                 document_chunk_id=document_chunk_id,
+                expected_content_hash=expected_content_hash,
+                title=title or doc.title,
+            )
+            self.enqueue_document_graph_finalize(
+                document_id=document_id,
+                job_id=job_id,
+                title=title or doc.title,
+                expected_content_hash=expected_content_hash,
+            )
+
+    async def index_document_graph_chunks_task(
+        self,
+        *,
+        document_id: int,
+        document_chunk_ids: Sequence[int],
+        expected_content_hash: str,
+        job_id: int,
+        title: str | None = None,
+    ) -> None:
+        async with AsyncSessionLocal() as db:
+            repo = IndexJobRepository(db)
+            await repo.refresh_job_state(job_id=job_id)
+            if not await repo.is_job_active(job_id=job_id):
+                logger.info("Skipped inactive graph chunks job job_id={}", job_id)
+                return
+            doc = await self._get_document(db, document_id)
+            if not doc:
+                return
+            await index_document_graph_chunks(
+                db,
+                document_id=document_id,
+                document_chunk_ids=[int(chunk_id) for chunk_id in document_chunk_ids],
                 expected_content_hash=expected_content_hash,
                 title=title or doc.title,
             )
@@ -1795,85 +1850,6 @@ class IndexingService:
                     document_id,
                     exc,
                 )
-
-    async def _schedule_document_graph_chunks(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
-        expected_content_hash: str,
-        job_id: int,
-        title: str | None = None,
-    ) -> int:
-        doc = await self._get_document(db, document_id)
-        if not doc:
-            await self._mark_job_document_failed(
-                db,
-                job_id=job_id,
-                document_id=document_id,
-                expected_content_hash=expected_content_hash,
-                error_message="文档不存在，任务已跳过",
-            )
-            return 0
-
-        if doc.content_hash != expected_content_hash:
-            await self._mark_job_document_failed(
-                db,
-                job_id=job_id,
-                document_id=document_id,
-                expected_content_hash=expected_content_hash,
-                error_message="文档内容已变化，旧任务已跳过",
-            )
-            return 0
-
-        if not await self._set_graph_processing(
-            db,
-            document_id=document_id,
-            expected_content_hash=expected_content_hash,
-        ):
-            await self._mark_job_document_failed(
-                db,
-                job_id=job_id,
-                document_id=document_id,
-                expected_content_hash=expected_content_hash,
-                error_message="文档内容已变化，旧任务已跳过",
-            )
-            return 0
-
-        await self._set_job_document_status(
-            db,
-            job_id=job_id,
-            document_id=document_id,
-            expected_content_hash=expected_content_hash,
-            status=INDEX_JOB_DOCUMENT_STATUS_PROCESSING,
-        )
-
-        child_rows = await DocumentChunkRepository(db).get_child_chunks_for_document(document_id)
-        if not child_rows:
-            await self._mark_graph_failed(
-                db,
-                document_id=document_id,
-                expected_content_hash=expected_content_hash,
-                error_message="文档缺少新的 child chunks，请删除后重新上传",
-            )
-            await self._mark_job_document_failed(
-                db,
-                job_id=job_id,
-                document_id=document_id,
-                expected_content_hash=expected_content_hash,
-                error_message="文档缺少新的 child chunks，请删除后重新上传",
-            )
-            return 0
-
-        for row in child_rows:
-            self.enqueue_document_graph_chunk(
-                document_id=document_id,
-                document_chunk_id=int(row.id),
-                job_id=job_id,
-                title=title or doc.title,
-            )
-
-        return len(child_rows)
 
     async def index_document_task(
         self,

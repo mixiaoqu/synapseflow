@@ -92,6 +92,8 @@ def normalize_chunk_graph(
         deduped_entities.setdefault(
             normalized_name,
             GraphEntityRecord(
+                team_id=chunk.team_id,
+                knowledge_base_id=chunk.knowledge_base_id,
                 document_id=chunk.document_id,
                 document_chunk_id=chunk.document_chunk_id,
                 normalized_name=normalized_name,

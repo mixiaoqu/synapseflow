@@ -30,8 +30,10 @@ class KbChatV2State(BaseAgentContext, total=False):
     retrieval_version_mode: str
 
     question_type: Optional[str]
+    retrieval_strategy: Optional[str]
     retrieval_complexity: Optional[str]
     retrieval_required: bool
+    needs_clarification: bool
     route_reason: str
     route_trace: Dict[str, Any]
     text_queries: List[str]

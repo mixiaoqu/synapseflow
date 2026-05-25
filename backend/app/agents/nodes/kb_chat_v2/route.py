@@ -1,4 +1,4 @@
-"""Route node for kb_chat_v2."""
+"""Route helper for kb_chat_v2."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ ALLOWED_QUESTION_TYPES = {
     "out_of_scope",
 }
 ALLOWED_RETRIEVAL_COMPLEXITIES = {"fast", "standard", "broad"}
+ALLOWED_RETRIEVAL_STRATEGIES = {"skip", "parallel_fusion"}
 
 
 def _coerce_text(content: Any) -> str:
@@ -65,8 +66,9 @@ You classify one user turn for a knowledge-base QA workflow.
 Return JSON only:
 {{
   "question_type": "summary_lookup",
+  "retrieval_strategy": "parallel_fusion",
   "retrieval_complexity": "standard",
-  "retrieval_required": true,
+  "needs_clarification": false,
   "reason": "short reason"
 }}
 
@@ -78,6 +80,10 @@ Allowed question_type values:
 - chitchat
 - out_of_scope
 
+Allowed retrieval_strategy values:
+- skip
+- parallel_fusion
+
 Allowed retrieval_complexity values:
 - fast
 - standard
@@ -85,7 +91,7 @@ Allowed retrieval_complexity values:
 
 Rules:
 - Do not answer the user.
-- Use retrieval_required=false only for chitchat and out_of_scope.
+- Use retrieval_strategy=skip only for chitchat and out_of_scope.
 - Use summary_lookup for broad overviews, summaries, or multi-aspect synthesis.
 - Use relationship_lookup for explicit relations, dependencies, ownership, or multi-entity reasoning.
 - Use attribute_lookup for pure properties, structure, fields, state, values, or schema-like questions.
@@ -93,6 +99,7 @@ Rules:
 - retrieval_complexity indicates retrieval scope and complexity, not question type.
 - Prefer fast for precise single-target lookups.
 - Prefer broad for overviews, multi-aspect comparisons, or complex follow-ups.
+- Mark needs_clarification=true only when the question lacks a core entity or has unresolved references.
 
 Page type:
 {page_type or "(none)"}
@@ -119,8 +126,10 @@ async def build_kb_chat_v2_route(
     if not query.strip():
         return {
             "question_type": "out_of_scope",
+            "retrieval_strategy": "skip",
             "retrieval_complexity": "fast",
             "retrieval_required": False,
+            "needs_clarification": False,
             "reason": "Empty query.",
         }
 
@@ -142,21 +151,26 @@ async def build_kb_chat_v2_route(
         ALLOWED_QUESTION_TYPES,
         "definition_lookup",
     )
-    retrieval_required = bool(parsed.get("retrieval_required"))
-    if question_type in {"chitchat", "out_of_scope"}:
-        retrieval_required = False
-    elif not retrieval_required:
-        retrieval_required = True
+    raw_strategy = str(parsed.get("retrieval_strategy") or "").strip().lower()
+    if raw_strategy in ALLOWED_RETRIEVAL_STRATEGIES:
+        retrieval_strategy = raw_strategy
+    elif question_type in {"chitchat", "out_of_scope"}:
+        retrieval_strategy = "skip"
+    else:
+        retrieval_strategy = "parallel_fusion"
 
     retrieval_complexity = _normalize_choice(
         parsed.get("retrieval_complexity"),
         ALLOWED_RETRIEVAL_COMPLEXITIES,
         "standard",
     )
+    needs_clarification = bool(parsed.get("needs_clarification"))
     return {
         "question_type": question_type,
+        "retrieval_strategy": retrieval_strategy,
         "retrieval_complexity": retrieval_complexity,
-        "retrieval_required": retrieval_required,
+        "retrieval_required": retrieval_strategy != "skip",
+        "needs_clarification": needs_clarification,
         "reason": _compact_text(str(parsed.get("reason") or ""), limit=240)
         or "V2 router selected the route.",
     }
@@ -191,8 +205,10 @@ async def kb_chat_v2_route_node(
 
     return {
         "question_type": route["question_type"],
+        "retrieval_strategy": route["retrieval_strategy"],
         "retrieval_complexity": route["retrieval_complexity"],
         "retrieval_required": route["retrieval_required"],
+        "needs_clarification": route["needs_clarification"],
         "route_reason": route["reason"],
         "route_trace": {"latency_ms": int((perf_counter() - started_at) * 1000)},
     }

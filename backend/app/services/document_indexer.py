@@ -11,13 +11,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.registry import config_registry
+from app.core.llm import get_llm_for_analysis
 from app.db.models import Document, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.services.embedding import embed_documents
-from app.services.graph_extraction import extract_chunk_graph
+from app.services.graph_extraction import extract_chunk_graphs_batch
 from app.services.graph_indexer import DEFAULT_GRAPH_BATCH_SIZE, GraphIndexer
-from app.services.graph_models import GraphChunkRecord, GraphEntityRecord, GraphRelationRecord
+from app.services.graph_models import ChunkGraphExtraction, GraphChunkRecord, GraphEntityRecord, GraphRelationRecord
 from app.services.graph_normalizer import normalize_chunk_graph
 from app.services.graph_summary import refresh_entity_summaries, refresh_relation_summaries
 from app.services.graph_store import get_graph_store
@@ -149,6 +150,8 @@ def _merge_entity_records(
         entity_type = incoming.entity_type
 
     return GraphEntityRecord(
+        team_id=existing.team_id,
+        knowledge_base_id=existing.knowledge_base_id,
         document_id=existing.document_id,
         document_chunk_id=existing.document_chunk_id,
         normalized_name=existing.normalized_name,
@@ -192,6 +195,33 @@ def _merge_relation_records(
         attributes=attributes,
         evidence=evidence,
     )
+
+
+def _graph_extraction_metadata(extraction: ChunkGraphExtraction) -> dict[str, Any]:
+    return {
+        "status": "indexed",
+        "entities": [
+            {
+                "normalized_name": entity.normalized_name,
+                "display_name": entity.display_name,
+                "entity_type": entity.entity_type,
+                "aliases": list(entity.aliases),
+                "attributes": entity.attributes,
+                "evidence": entity.evidence,
+            }
+            for entity in extraction.entities
+        ],
+        "relations": [
+            {
+                "source_normalized_name": relation.source_normalized_name,
+                "target_normalized_name": relation.target_normalized_name,
+                "relation_type": relation.relation_type,
+                "attributes": relation.attributes,
+                "evidence": relation.evidence,
+            }
+            for relation in extraction.relations
+        ],
+    }
 
 
 async def index_document(
@@ -350,6 +380,7 @@ async def index_document_graph(
     mention_rows: list[dict[str, Any]] = []
     relation_records: dict[tuple[str, str, str], Any] = {}
 
+    extraction_items: list[tuple[GraphChunkRecord, str]] = []
     for row in child_rows:
         chunk = GraphChunkRecord(
             team_id=int(document_scope.team_id),
@@ -359,10 +390,11 @@ async def index_document_graph(
             document_title=title,
             section_path=row.section_path,
         )
-        extracted = await extract_chunk_graph(
-            chunk=chunk,
-            chunk_text=row.content or "",
-        )
+        extraction_items.append((chunk, row.content or ""))
+    extracted_chunks = await extract_chunk_graphs_batch(extraction_items)
+
+    for extracted in extracted_chunks:
+        chunk = extracted.chunk
         normalized = normalize_chunk_graph(
             chunk=chunk,
             entities=extracted.entities,
@@ -416,17 +448,20 @@ async def index_document_graph(
 
     await store.prune_orphan_entities()
     try:
+        summary_llm = get_llm_for_analysis()
         await refresh_entity_summaries(
             store=store,
             knowledge_base_id=int(document_scope.knowledge_base_id),
             team_id=int(document_scope.team_id),
             normalized_names=list(entity_records.keys()),
+            llm=summary_llm,
         )
         await refresh_relation_summaries(
             store=store,
             knowledge_base_id=int(document_scope.knowledge_base_id),
             team_id=int(document_scope.team_id),
             document_id=document_id,
+            llm=summary_llm,
         )
         logger.bind(document_pipeline_log=True).info(
             "[文档管线] 图谱摘要刷新完成 doc_id={} entities={} relations={}",
@@ -463,19 +498,44 @@ async def index_document_graph_chunk(
     *,
     commit: bool = True,
 ) -> dict[str, int]:
+    return await index_document_graph_chunks(
+        db,
+        document_id=document_id,
+        document_chunk_ids=[document_chunk_id],
+        expected_content_hash=expected_content_hash,
+        title=title,
+        commit=commit,
+    )
+
+
+async def index_document_graph_chunks(
+    db: AsyncSession,
+    document_id: int,
+    document_chunk_ids: Sequence[int],
+    expected_content_hash: str,
+    title: str | None = None,
+    *,
+    commit: bool = True,
+) -> dict[str, int]:
     graph_cfg = config_registry.get_graph_config()
     if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
         logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱 chunk 索引跳过 doc_id={} chunk_id={} reason=disabled",
+            "[文档管线] 图谱 chunk 索引跳过 doc_id={} chunks={} reason=disabled",
             document_id,
-            document_chunk_id,
+            len(document_chunk_ids),
         )
+        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+    if not document_chunk_ids:
         return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
 
     repository = DocumentChunkRepository(db)
-    child_row = await repository.get_by_id(document_chunk_id)
-    if child_row is None or int(child_row.document_id) != int(document_id):
-        raise ValueError(f"Chunk {document_chunk_id} not found for document {document_id}")
+    child_rows = []
+    for document_chunk_id in document_chunk_ids:
+        child_row = await repository.get_by_id(int(document_chunk_id))
+        if child_row is None or int(child_row.document_id) != int(document_id):
+            raise ValueError(f"Chunk {document_chunk_id} not found for document {document_id}")
+        child_rows.append(child_row)
+
     document_row = await db.get(Document, document_id)
     if document_row is None or getattr(document_row, "content_hash", None) != expected_content_hash:
         raise ValueError(f"Document {document_id} content changed before graph chunk processing")
@@ -494,63 +554,52 @@ async def index_document_graph_chunk(
 
     store = get_graph_store()
     indexer = GraphIndexer(store)
-    chunk = GraphChunkRecord(
-        team_id=int(document_scope.team_id),
-        knowledge_base_id=int(document_scope.knowledge_base_id),
-        document_id=document_id,
-        document_chunk_id=int(child_row.id),
-        document_title=title,
-        section_path=child_row.section_path,
-    )
-    extracted = await extract_chunk_graph(
-        chunk=chunk,
-        chunk_text=child_row.content or "",
-    )
-    normalized = normalize_chunk_graph(
-        chunk=chunk,
-        entities=extracted.entities,
-        relations=extracted.relations,
-    )
-    summary = await indexer.index_chunk_graph(
-        chunk=chunk,
-        entities=list(normalized.entities),
-        relations=list(normalized.relations),
-    )
+    extraction_items = [
+        (
+            GraphChunkRecord(
+                team_id=int(document_scope.team_id),
+                knowledge_base_id=int(document_scope.knowledge_base_id),
+                document_id=document_id,
+                document_chunk_id=int(child_row.id),
+                document_title=title,
+                section_path=child_row.section_path,
+            ),
+            child_row.content or "",
+        )
+        for child_row in child_rows
+    ]
+    extracted_chunks = await extract_chunk_graphs_batch(extraction_items)
 
-    metadata = dict(child_row.metadata_ or {})
-    metadata["graph_extraction"] = {
-        "status": "indexed",
-        "entities": [
-            {
-                "normalized_name": entity.normalized_name,
-                "display_name": entity.display_name,
-                "entity_type": entity.entity_type,
-                "aliases": list(entity.aliases),
-                "attributes": entity.attributes,
-                "evidence": entity.evidence,
-            }
-            for entity in normalized.entities
-        ],
-        "relations": [
-            {
-                "source_normalized_name": relation.source_normalized_name,
-                "target_normalized_name": relation.target_normalized_name,
-                "relation_type": relation.relation_type,
-                "attributes": relation.attributes,
-                "evidence": relation.evidence,
-            }
-            for relation in normalized.relations
-        ],
-    }
-    await repository.update_metadata(int(child_row.id), metadata)
+    summary = {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+    rows_by_id = {int(row.id): row for row in child_rows}
+    for extracted in extracted_chunks:
+        chunk = extracted.chunk
+        normalized = normalize_chunk_graph(
+            chunk=chunk,
+            entities=extracted.entities,
+            relations=extracted.relations,
+        )
+        chunk_summary = await indexer.index_chunk_graph(
+            chunk=chunk,
+            entities=list(normalized.entities),
+            relations=list(normalized.relations),
+        )
+        for key in summary:
+            summary[key] += int(chunk_summary.get(key, 0))
+
+        child_row = rows_by_id[chunk.document_chunk_id]
+        metadata = dict(child_row.metadata_ or {})
+        metadata["graph_extraction"] = _graph_extraction_metadata(normalized)
+        await repository.update_metadata(int(child_row.id), metadata)
+
     if commit:
         await db.commit()
     logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 图谱 chunk 完成 doc_id={} chunk_id={} entities={} relations={}",
+        "[文档管线] 图谱 chunk 批量完成 doc_id={} chunks={} entities={} relations={}",
         document_id,
-        document_chunk_id,
-        len(normalized.entities),
-        len(normalized.relations),
+        len(document_chunk_ids),
+        summary.get("entities", 0),
+        summary.get("relations", 0),
     )
     return summary
 
@@ -617,17 +666,20 @@ async def finalize_document_graph(
         "relations": len(relation_keys),
     }
     try:
+        summary_llm = get_llm_for_analysis()
         await refresh_entity_summaries(
             store=store,
             knowledge_base_id=int(document_scope.knowledge_base_id),
             team_id=int(document_scope.team_id),
             normalized_names=sorted(entity_names),
+            llm=summary_llm,
         )
         await refresh_relation_summaries(
             store=store,
             knowledge_base_id=int(document_scope.knowledge_base_id),
             team_id=int(document_scope.team_id),
             document_id=document_id,
+            llm=summary_llm,
         )
         logger.bind(document_pipeline_log=True).info(
             "[文档管线] 图谱摘要刷新完成 doc_id={} entities={} chunks={}",

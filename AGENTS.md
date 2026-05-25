@@ -229,6 +229,23 @@ Do not describe `kb_curation`, `suggest_revision`, or `doc_to_prototype` as impl
 - There is no frontend test script in `frontend/package.json`.
 - Because project instructions say no build is needed, prefer targeted inspection, lint, or backend tests only when they are directly relevant and the user has not forbidden them.
 
+## Git change log summaries
+
+When the user asks to write logs, summarize the Git change area, or convert current changes into log mode:
+
+- First inspect `git status --short`, `git diff --stat`, and `git diff --cached --stat`.
+- Distinguish staged, unstaged, and untracked changes when they differ.
+- Read relevant diffs or current files before describing the purpose of a change.
+- Output a numbered list.
+- Each item must use the format `1. 工作项名称：作用描述`.
+- The work item name should summarize the change theme.
+- The description must explain the effect or purpose of the change, not only list filenames.
+- Prefer grouping by feature or workflow instead of listing every changed file.
+- Include verification as a numbered item when tests, lint, or build commands were run.
+- If no verification was run, explicitly include that no verification was run.
+- Do not claim unverified behavior as completed.
+- Do not attribute existing user changes to Codex unless the conversation clearly shows Codex made them.
+
 ## Documentation maintenance
 
 When updating this file:

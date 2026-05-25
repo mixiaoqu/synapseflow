@@ -635,9 +635,11 @@ def test_set_graph_processing_returns_true_when_document_is_claimed():
 
 def test_schedule_document_graph_chunks_enqueues_child_chunks_after_claim(monkeypatch):
     doc = SimpleNamespace(id=42, title="Doc 42", content_hash="hash-42")
-    queued_chunks = []
+    queued_batches = []
     status_updates = []
     failures = []
+    metadata_updates = []
+    graph_events = []
 
     async def fake_get_document(db, document_id):
         assert document_id == 42
@@ -656,12 +658,31 @@ def test_schedule_document_graph_chunks_enqueues_child_chunks_after_claim(monkey
         async def get_child_chunks_for_document(self, document_id):
             assert document_id == 42
             return [
-                SimpleNamespace(id=101),
-                SimpleNamespace(id=102),
+                SimpleNamespace(id=101, metadata_={"graph_extraction": {"status": "indexed"}, "keep": "a"}),
+                SimpleNamespace(id=102, metadata_={"graph_extraction": {"status": "indexed"}, "keep": "b"}),
             ]
 
-    def fake_enqueue_document_graph_chunk(*, document_id, document_chunk_id, job_id, title=None):
-        queued_chunks.append((document_id, document_chunk_id, job_id, title))
+        async def update_metadata(self, chunk_id, metadata):
+            metadata_updates.append((chunk_id, metadata))
+
+    class FakeGraphStore:
+        async def delete_document_graph(self, *, document_id):
+            graph_events.append(("delete", document_id))
+
+        async def prune_orphan_entities(self):
+            graph_events.append(("prune",))
+
+    def fake_enqueue_document_graph_chunks(
+        *,
+        document_id,
+        document_chunk_ids,
+        expected_content_hash,
+        job_id,
+        title=None,
+    ):
+        queued_batches.append(
+            (document_id, document_chunk_ids, expected_content_hash, job_id, title)
+        )
 
     class DummyExecuteResult:
         rowcount = 1
@@ -681,9 +702,13 @@ def test_schedule_document_graph_chunks_enqueues_child_chunks_after_claim(monkey
         FakeChunkRepository,
     )
     monkeypatch.setattr(
+        "app.application.indexing_service.get_graph_store",
+        lambda: FakeGraphStore(),
+    )
+    monkeypatch.setattr(
         indexing_service,
-        "enqueue_document_graph_chunk",
-        fake_enqueue_document_graph_chunk,
+        "enqueue_document_graph_chunks",
+        fake_enqueue_document_graph_chunks,
     )
 
     queued_count = asyncio.run(
@@ -698,6 +723,11 @@ def test_schedule_document_graph_chunks_enqueues_child_chunks_after_claim(monkey
 
     assert queued_count == 2
     assert failures == []
+    assert metadata_updates == [
+        (101, {"keep": "a"}),
+        (102, {"keep": "b"}),
+    ]
+    assert graph_events == [("delete", 42), ("prune",)]
     assert status_updates == [
         {
             "job_id": 9,
@@ -706,7 +736,220 @@ def test_schedule_document_graph_chunks_enqueues_child_chunks_after_claim(monkey
             "status": "processing",
         }
     ]
-    assert queued_chunks == [
-        (42, 101, 9, "Doc 42"),
-        (42, 102, 9, "Doc 42"),
+    assert queued_batches == [
+        (42, [101, 102], "hash-42", 9, "Doc 42"),
     ]
+
+
+def test_enqueue_document_graph_chunks_sends_expected_content_hash(monkeypatch):
+    captured = {}
+
+    class DummyActor:
+        def send(self, **kwargs):
+            captured["kwargs"] = kwargs
+
+    class DummyModule:
+        index_document_graph_chunks_actor = DummyActor()
+
+    monkeypatch.setattr(indexing_service, "_actor_module", lambda: DummyModule)
+
+    indexing_service.enqueue_document_graph_chunks(
+        document_id=42,
+        document_chunk_ids=[101, 102],
+        expected_content_hash="hash-42",
+        job_id=9,
+        title="Doc 42",
+    )
+
+    assert captured["kwargs"] == {
+        "document_id": 42,
+        "document_chunk_ids": [101, 102],
+        "expected_content_hash": "hash-42",
+        "job_id": 9,
+        "title": "Doc 42",
+    }
+
+
+def test_enqueue_document_graph_chunk_sends_expected_content_hash(monkeypatch):
+    captured = {}
+
+    class DummyActor:
+        def send(self, **kwargs):
+            captured["kwargs"] = kwargs
+
+    class DummyModule:
+        index_document_graph_chunk_actor = DummyActor()
+
+    monkeypatch.setattr(indexing_service, "_actor_module", lambda: DummyModule)
+
+    indexing_service.enqueue_document_graph_chunk(
+        document_id=42,
+        document_chunk_id=101,
+        expected_content_hash="hash-42",
+        job_id=9,
+        title="Doc 42",
+    )
+
+    assert captured["kwargs"] == {
+        "document_id": 42,
+        "document_chunk_id": 101,
+        "expected_content_hash": "hash-42",
+        "job_id": 9,
+        "title": "Doc 42",
+    }
+
+
+def test_index_document_graph_chunk_task_uses_scheduled_hash(monkeypatch):
+    captured = {}
+
+    class DummySession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeIndexJobRepository:
+        def __init__(self, db):
+            pass
+
+        async def refresh_job_state(self, *, job_id):
+            assert job_id == 9
+
+        async def is_job_active(self, *, job_id):
+            assert job_id == 9
+            return True
+
+    async def fake_get_document(db, document_id):
+        assert document_id == 42
+        return SimpleNamespace(id=42, title="Doc 42", content_hash="new-hash")
+
+    async def fake_index_document_graph_chunk(
+        db,
+        document_id,
+        document_chunk_id,
+        expected_content_hash,
+        title=None,
+    ):
+        captured["index"] = (
+            document_id,
+            document_chunk_id,
+            expected_content_hash,
+            title,
+        )
+        return {"chunks": 1, "entities": 0, "mentions": 0, "relations": 0}
+
+    def fake_enqueue_document_graph_finalize(**kwargs):
+        captured["finalize"] = kwargs
+
+    monkeypatch.setattr("app.application.indexing_service.AsyncSessionLocal", lambda: DummySession())
+    monkeypatch.setattr(
+        "app.application.indexing_service.IndexJobRepository",
+        FakeIndexJobRepository,
+    )
+    monkeypatch.setattr(indexing_service, "_get_document", fake_get_document)
+    monkeypatch.setattr(
+        "app.application.indexing_service.index_document_graph_chunk",
+        fake_index_document_graph_chunk,
+    )
+    monkeypatch.setattr(
+        indexing_service,
+        "enqueue_document_graph_finalize",
+        fake_enqueue_document_graph_finalize,
+    )
+
+    asyncio.run(
+        indexing_service.index_document_graph_chunk_task(
+            document_id=42,
+            document_chunk_id=101,
+            expected_content_hash="scheduled-hash",
+            job_id=9,
+            title="Scheduled title",
+        )
+    )
+
+    assert captured["index"] == (42, 101, "scheduled-hash", "Scheduled title")
+    assert captured["finalize"] == {
+        "document_id": 42,
+        "expected_content_hash": "scheduled-hash",
+        "job_id": 9,
+        "title": "Scheduled title",
+    }
+
+
+def test_index_document_graph_chunks_task_uses_scheduled_hash(monkeypatch):
+    captured = {}
+
+    class DummySession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeIndexJobRepository:
+        def __init__(self, db):
+            pass
+
+        async def refresh_job_state(self, *, job_id):
+            assert job_id == 9
+
+        async def is_job_active(self, *, job_id):
+            assert job_id == 9
+            return True
+
+    async def fake_get_document(db, document_id):
+        assert document_id == 42
+        return SimpleNamespace(id=42, title="Doc 42", content_hash="new-hash")
+
+    async def fake_index_document_graph_chunks(
+        db,
+        document_id,
+        document_chunk_ids,
+        expected_content_hash,
+        title=None,
+    ):
+        captured["index"] = (
+            document_id,
+            document_chunk_ids,
+            expected_content_hash,
+            title,
+        )
+        return {"chunks": len(document_chunk_ids), "entities": 0, "mentions": 0, "relations": 0}
+
+    def fake_enqueue_document_graph_finalize(**kwargs):
+        captured["finalize"] = kwargs
+
+    monkeypatch.setattr("app.application.indexing_service.AsyncSessionLocal", lambda: DummySession())
+    monkeypatch.setattr(
+        "app.application.indexing_service.IndexJobRepository",
+        FakeIndexJobRepository,
+    )
+    monkeypatch.setattr(indexing_service, "_get_document", fake_get_document)
+    monkeypatch.setattr(
+        "app.application.indexing_service.index_document_graph_chunks",
+        fake_index_document_graph_chunks,
+    )
+    monkeypatch.setattr(
+        indexing_service,
+        "enqueue_document_graph_finalize",
+        fake_enqueue_document_graph_finalize,
+    )
+
+    asyncio.run(
+        indexing_service.index_document_graph_chunks_task(
+            document_id=42,
+            document_chunk_ids=[101, 102],
+            expected_content_hash="scheduled-hash",
+            job_id=9,
+            title="Scheduled title",
+        )
+    )
+
+    assert captured["index"] == (42, [101, 102], "scheduled-hash", "Scheduled title")
+    assert captured["finalize"] == {
+        "document_id": 42,
+        "expected_content_hash": "scheduled-hash",
+        "job_id": 9,
+        "title": "Scheduled title",
+    }
