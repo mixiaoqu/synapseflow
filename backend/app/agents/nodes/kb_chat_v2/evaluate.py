@@ -47,6 +47,9 @@ def _fallback_evaluation(reason: str) -> dict[str, Any]:
 
 
 def _build_prompt(state: dict[str, Any]) -> str:
+    primary_context = str(state.get("primary_context") or "")[:5000]
+    supporting_context = str(state.get("supporting_context") or "")[:3000]
+    fallback_context = str(state.get("context") or "")[:7000]
     return f"""
 You are judging whether retrieved evidence can answer the user's question.
 
@@ -92,7 +95,14 @@ Retrieval trace:
 {_safe_json(state.get("retrieval_trace") or {})}
 
 Context:
-{str(state.get("context") or "")[:7000]}
+Primary evidence:
+{primary_context or "(none)"}
+
+Supporting evidence:
+{supporting_context or "(none)"}
+
+Combined context:
+{fallback_context}
 """.strip()
 
 

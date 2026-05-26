@@ -28,6 +28,7 @@ class GraphEntityRecord:
     aliases: tuple[str, ...]
     attributes: dict[str, Any]
     evidence: str
+    raw_attributes: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)

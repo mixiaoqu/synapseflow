@@ -230,6 +230,12 @@ class ProjectApp(Base):
     code = Column(String(120), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     default_assistant_id = Column(
         Integer,
         ForeignKey("assistant_profiles.id", ondelete="SET NULL"),
@@ -239,35 +245,6 @@ class ProjectApp(Base):
     is_active = Column(Boolean, nullable=False, default=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-
-
-class ProjectAppKnowledgeBase(Base):
-    """One project application binding to one knowledge base."""
-
-    __tablename__ = "project_app_knowledge_bases"
-    __table_args__ = (
-        UniqueConstraint(
-            "project_app_id",
-            "knowledge_base_id",
-            name="uq_project_app_kbs_app_kb",
-        ),
-    )
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    project_app_id = Column(
-        Integer,
-        ForeignKey("project_apps.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    knowledge_base_id = Column(
-        Integer,
-        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    created_at = Column(DateTime(timezone=True), default=utc_now)
-
 
 class DocumentCategory(Base):
     """Knowledge-base scoped document category."""

@@ -61,7 +61,6 @@ import {
 import { productsApi, type ProductResponse } from "@/lib/api/products";
 import {
   projectsApi,
-  type ProjectAppKnowledgeBaseBinding,
   type ProjectAppEmbedPreviewResponse,
   type ProjectAppPayload,
   type ProjectAppResponse,
@@ -81,10 +80,8 @@ interface AppFormState {
   name: string;
   code: string;
   description: string;
+  knowledge_base_id: string;
   default_assistant_id: number | null;
-  bindings: Array<{
-    knowledge_base_id: string;
-  }>;
   is_active: boolean;
 }
 
@@ -92,8 +89,8 @@ const EMPTY_APP_FORM: AppFormState = {
   name: "",
   code: "",
   description: "",
+  knowledge_base_id: "",
   default_assistant_id: null,
-  bindings: [{ knowledge_base_id: "" }],
   is_active: true,
 };
 
@@ -136,29 +133,19 @@ function toAppForm(app: ProjectAppResponse): AppFormState {
     name: app.name,
     code: app.code,
     description: app.description ?? "",
+    knowledge_base_id: app.knowledge_base_id ? String(app.knowledge_base_id) : "",
     default_assistant_id: app.default_assistant_id ?? null,
-    bindings:
-      app.bindings.length > 0
-        ? app.bindings.map((item) => ({
-          knowledge_base_id: String(item.knowledge_base_id),
-        }))
-        : [{ knowledge_base_id: "" }],
     is_active: app.is_active,
   };
 }
 
 function toAppPayload(form: AppFormState): ProjectAppPayload {
-  const bindings: ProjectAppKnowledgeBaseBinding[] = form.bindings
-    .filter((item) => item.knowledge_base_id)
-    .map((item) => ({
-      knowledge_base_id: Number(item.knowledge_base_id),
-    }));
   return {
     name: form.name.trim(),
     code: form.code.trim(),
     description: form.description.trim() || null,
+    knowledge_base_id: Number(form.knowledge_base_id),
     default_assistant_id: form.default_assistant_id,
-    bindings,
     is_active: form.is_active,
   };
 }
@@ -221,40 +208,6 @@ export default function ProjectDetailsPage() {
     }
   }, [projectId]);
 
-  const addBindingRow = () => {
-    setAppForm((current) => ({
-      ...current,
-      bindings: [...current.bindings, { knowledge_base_id: "" }],
-    }));
-  };
-
-  const updateBindingRow = (
-    index: number,
-    patch: Partial<{ knowledge_base_id: string }>,
-  ) => {
-    setAppForm((current) => ({
-      ...current,
-      bindings: current.bindings.map((item, itemIndex) =>
-        itemIndex === index
-          ? {
-              knowledge_base_id:
-                patch.knowledge_base_id !== undefined ? patch.knowledge_base_id : item.knowledge_base_id,
-            }
-          : item,
-      ),
-    }));
-  };
-
-  const removeBindingRow = (index: number) => {
-    setAppForm((current) => ({
-      ...current,
-      bindings:
-        current.bindings.length <= 1
-          ? [{ knowledge_base_id: "" }]
-          : current.bindings.filter((_, itemIndex) => itemIndex !== index),
-    }));
-  };
-
   useEffect(() => {
     void loadData();
   }, [loadData]);
@@ -310,8 +263,8 @@ export default function ProjectDetailsPage() {
 
   const saveApp = async () => {
     if (!project) return;
-    if (!appForm.name.trim() || !appForm.code.trim()) {
-      toast.error("应用名称和编码不能为空");
+    if (!appForm.name.trim() || !appForm.code.trim() || !appForm.knowledge_base_id) {
+      toast.error("应用名称、编码和知识库不能为空");
       return;
     }
 
@@ -342,10 +295,8 @@ export default function ProjectDetailsPage() {
         name: app.name,
         code: app.code,
         description: app.description ?? null,
+        knowledge_base_id: app.knowledge_base_id ?? 0,
         default_assistant_id: app.default_assistant_id ?? null,
-        bindings: app.bindings.map((binding) => ({
-          knowledge_base_id: binding.knowledge_base_id,
-        })),
         is_active: !app.is_active,
       });
       toast.success(app.is_active ? "应用已停用" : "应用已启用");
@@ -619,11 +570,7 @@ Content-Type: application/json
                     )}
                   </div>
                   <div className="col-span-2 text-sm text-slate-500">
-                    {app.bindings.length > 0
-                      ? app.bindings
-                          .map((item) => item.knowledge_base_name || "知识库")
-                          .join("、")
-                      : app.knowledge_base_name || "--"}
+                    {app.knowledge_base_name || "--"}
                   </div>
                   <div className="col-span-1">
                     <span
@@ -797,45 +744,26 @@ Content-Type: application/json
               />
             </div>
             <div className="grid gap-3">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-slate-700">知识库绑定</label>
-                <Button type="button" variant="outline" size="sm" onClick={addBindingRow}>
-                  新增绑定
-                </Button>
-              </div>
-              <div className="space-y-2">
-                {appForm.bindings.map((binding, index) => {
-                  return (
-                    <div key={`${index}-${binding.knowledge_base_id}`} className="grid grid-cols-[1fr_auto] gap-2">
-                      <select
-                        value={binding.knowledge_base_id}
-                        onChange={(event) =>
-                          updateBindingRow(index, { knowledge_base_id: event.target.value })
-                        }
-                        className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-50"
-                      >
-                        <option value="">选择知识库</option>
-                        {knowledgeBases.map((kb) => (
-                          <option key={kb.id} value={kb.id}>
-                            {kb.name}
-                          </option>
-                        ))}
-                      </select>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => removeBindingRow(index)}
-                        className="h-10 w-10"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
+              <label className="text-sm font-medium text-slate-700">知识库</label>
+              <select
+                value={appForm.knowledge_base_id}
+                onChange={(event) =>
+                  setAppForm((current) => ({
+                    ...current,
+                    knowledge_base_id: event.target.value,
+                  }))
+                }
+                className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-50"
+              >
+                <option value="">选择知识库</option>
+                {knowledgeBases.map((kb) => (
+                  <option key={kb.id} value={kb.id}>
+                    {kb.name}
+                  </option>
+                ))}
+              </select>
               <p className="text-xs text-slate-500">
-                一个应用可以绑定多个知识库，同一个知识库不应重复绑定。
+                一个应用绑定一个知识库。
               </p>
             </div>
             <div className="grid gap-2">

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Protocol
 
@@ -43,6 +44,31 @@ def _prepare_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
     return prepared
 
 
+def _serialize_raw_attributes(attributes: dict[str, Any] | None) -> str | None:
+    if not attributes:
+        return None
+    cleaned: dict[str, Any] = {}
+    for key, value in attributes.items():
+        normalized_key = _normalize_attribute_key(str(key))
+        if not normalized_key or value is None:
+            continue
+        if isinstance(value, str):
+            cleaned_value = value.strip()
+            if not cleaned_value:
+                continue
+            cleaned[normalized_key] = cleaned_value
+            continue
+        if isinstance(value, (int, float, bool)):
+            cleaned[normalized_key] = value
+            continue
+        cleaned_value = str(value).strip()
+        if cleaned_value:
+            cleaned[normalized_key] = cleaned_value
+    if not cleaned:
+        return None
+    return json.dumps(cleaned, ensure_ascii=False)
+
+
 class GraphStore(Protocol):
     """Minimal async graph-store contract for indexing services."""
 
@@ -71,6 +97,14 @@ class GraphStore(Protocol):
 
     async def prune_orphan_entities(self) -> None: ...
 
+    async def lookup_entities_for_grounding(
+        self,
+        *,
+        knowledge_base_id: int,
+        team_id: int,
+        candidate: str,
+    ) -> list[dict[str, Any]]: ...
+
     async def list_entity_summary_contexts(
         self,
         *,
@@ -95,6 +129,24 @@ class GraphStore(Protocol):
         self,
         *,
         entity_names: list[str],
+        knowledge_base_id: int,
+        team_id: int,
+        limit: int,
+    ) -> list[dict[str, Any]]: ...
+
+    async def search_relation_evidence_for_pairs(
+        self,
+        *,
+        relation_pairs: list[dict[str, Any]],
+        knowledge_base_id: int,
+        team_id: int,
+        limit: int,
+    ) -> list[dict[str, Any]]: ...
+
+    async def search_relation_evidence_for_queries(
+        self,
+        *,
+        relation_queries: list[dict[str, Any]],
         knowledge_base_id: int,
         team_id: int,
         limit: int,
@@ -139,6 +191,15 @@ class NullGraphStore:
     async def prune_orphan_entities(self) -> None:
         return None
 
+    async def lookup_entities_for_grounding(
+        self,
+        *,
+        knowledge_base_id: int,
+        team_id: int,
+        candidate: str,
+    ) -> list[dict[str, Any]]:
+        return []
+
     async def list_entity_summary_contexts(
         self,
         *,
@@ -167,6 +228,26 @@ class NullGraphStore:
         self,
         *,
         entity_names: list[str],
+        knowledge_base_id: int,
+        team_id: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    async def search_relation_evidence_for_pairs(
+        self,
+        *,
+        relation_pairs: list[dict[str, Any]],
+        knowledge_base_id: int,
+        team_id: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    async def search_relation_evidence_for_queries(
+        self,
+        *,
+        relation_queries: list[dict[str, Any]],
         knowledge_base_id: int,
         team_id: int,
         limit: int,
@@ -256,6 +337,7 @@ class Neo4jGraphStore:
                 "entity_type": entity.entity_type,
                 "aliases": list(entity.aliases),
                 "attributes": _prepare_attributes(entity.attributes),
+                "raw_attributes_json": _serialize_raw_attributes(entity.raw_attributes),
             }
             for entity in entities
         ]
@@ -269,7 +351,8 @@ class Neo4jGraphStore:
             })
             SET e.display_name = row.display_name,
                 e.entity_type = row.entity_type,
-                e.aliases = row.aliases
+                e.aliases = row.aliases,
+                e.raw_attributes_json = row.raw_attributes_json
             SET e += row.attributes
             """,
             rows=rows,
@@ -382,6 +465,43 @@ class Neo4jGraphStore:
             """
         )
 
+    async def lookup_entities_for_grounding(
+        self,
+        *,
+        knowledge_base_id: int,
+        team_id: int,
+        candidate: str,
+    ) -> list[dict[str, Any]]:
+        normalized_candidate = " ".join(str(candidate or "").split()).strip().casefold()
+        if not normalized_candidate:
+            return []
+        query = """
+        MATCH (e:Entity)
+        WHERE e.team_id = $team_id
+          AND e.knowledge_base_id = $knowledge_base_id
+          AND (
+            toLower(e.normalized_name) = $candidate
+            OR toLower(e.display_name) = $candidate
+            OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) = $candidate)
+          )
+        RETURN
+            e.normalized_name AS normalized_name,
+            e.display_name AS display_name,
+            e.entity_type AS entity_type,
+            coalesce(e.aliases, []) AS aliases
+        """
+        async with self._driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                knowledge_base_id=knowledge_base_id,
+                team_id=team_id,
+                candidate=normalized_candidate,
+            )
+            rows: list[dict[str, Any]] = []
+            async for record in result:
+                rows.append(dict(record))
+            return rows
+
     async def list_entity_summary_contexts(
         self,
         *,
@@ -416,6 +536,7 @@ class Neo4jGraphStore:
             coalesce(e.aliases, []) AS aliases,
             s.summary AS summary,
             properties(e) AS entity_props,
+            e.raw_attributes_json AS raw_attributes_json,
             collect(DISTINCT {
                 document_title: c.document_title,
                 section_path: c.section_path,
@@ -594,6 +715,118 @@ class Neo4jGraphStore:
             async for record in result:
                 rows.append(dict(record))
             return rows
+
+    async def search_relation_evidence_for_pairs(
+        self,
+        *,
+        relation_pairs: list[dict[str, Any]],
+        knowledge_base_id: int,
+        team_id: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        rows = [
+            {
+                "source": " ".join(str(item.get("source") or "").split()).strip().casefold(),
+                "target": " ".join(str(item.get("target") or "").split()).strip().casefold(),
+            }
+            for item in relation_pairs
+            if str(item.get("source") or "").strip() and str(item.get("target") or "").strip()
+        ]
+        if not rows:
+            return []
+        query = """
+        UNWIND $rows AS row
+        MATCH (source:Entity)-[rel:RELATED]->(target:Entity)
+        WHERE rel.knowledge_base_id = $knowledge_base_id
+          AND rel.team_id = $team_id
+          AND toLower(source.normalized_name) = row.source
+          AND toLower(target.normalized_name) = row.target
+        MATCH (chunk:Chunk {document_chunk_id: rel.document_chunk_id})
+        RETURN DISTINCT
+             chunk.knowledge_base_id AS knowledge_base_id,
+             chunk.team_id AS team_id,
+             chunk.document_id AS document_id,
+             chunk.document_chunk_id AS document_chunk_id,
+             chunk.document_title AS document_title,
+             chunk.section_path AS section_path,
+             rel.relation_type AS relation_type,
+             rel.evidence AS evidence,
+             [name IN [source.display_name, target.display_name] WHERE name IS NOT NULL] AS matched_entities
+        LIMIT $limit
+        """
+        async with self._driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                rows=rows,
+                knowledge_base_id=knowledge_base_id,
+                team_id=team_id,
+                limit=max(1, limit),
+            )
+            output: list[dict[str, Any]] = []
+            async for record in result:
+                output.append(dict(record))
+            return output
+
+    async def search_relation_evidence_for_queries(
+        self,
+        *,
+        relation_queries: list[dict[str, Any]],
+        knowledge_base_id: int,
+        team_id: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        rows = [
+            {
+                "anchor_entity": " ".join(str(item.get("anchor_entity") or "").split()).strip().casefold(),
+                "direction": str(item.get("direction") or "outgoing").strip().lower() or "outgoing",
+            }
+            for item in relation_queries
+            if str(item.get("anchor_entity") or "").strip()
+        ]
+        if not rows:
+            return []
+        query = """
+        UNWIND $rows AS row
+        MATCH (anchor:Entity)
+        WHERE anchor.team_id = $team_id
+          AND anchor.knowledge_base_id = $knowledge_base_id
+          AND toLower(anchor.normalized_name) = row.anchor_entity
+        CALL {
+          WITH anchor, row
+          MATCH (anchor)-[rel:RELATED]->(other:Entity)
+          WHERE row.direction <> 'incoming'
+          RETURN rel, other
+          UNION
+          WITH anchor, row
+          MATCH (other:Entity)-[rel:RELATED]->(anchor)
+          WHERE row.direction = 'incoming'
+          RETURN rel, other
+        }
+        MATCH (chunk:Chunk {document_chunk_id: rel.document_chunk_id})
+        RETURN DISTINCT
+             chunk.knowledge_base_id AS knowledge_base_id,
+             chunk.team_id AS team_id,
+             chunk.document_id AS document_id,
+             chunk.document_chunk_id AS document_chunk_id,
+             chunk.document_title AS document_title,
+             chunk.section_path AS section_path,
+             rel.relation_type AS relation_type,
+             rel.evidence AS evidence,
+             [name IN [anchor.display_name, other.display_name] WHERE name IS NOT NULL] AS matched_entities
+        LIMIT $limit
+        """
+        async with self._driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                rows=rows,
+                knowledge_base_id=knowledge_base_id,
+                team_id=team_id,
+                limit=max(1, limit),
+            )
+            output: list[dict[str, Any]] = []
+            async for record in result:
+                output.append(dict(record))
+            return output
 
     async def _run(self, query: str, **params) -> None:
         async with self._driver.session(database=self._database) as session:

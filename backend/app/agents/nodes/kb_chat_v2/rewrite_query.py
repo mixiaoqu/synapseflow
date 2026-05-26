@@ -5,6 +5,8 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any
 
+from loguru import logger
+
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
 from app.agents.states import KbChatV2State
 from app.services.kb_query_rewrite import build_kb_chat_retrieval_queries
@@ -37,6 +39,18 @@ async def build_kb_chat_v2_rewrite(
     )
     text_queries = list(rewrite_result.get("queries") or [])
     candidate_entities = list(rewrite_result.get("candidate_entities") or [])
+    relation_pairs = list(rewrite_result.get("relation_pairs") or [])
+    relation_queries = list(rewrite_result.get("relation_queries") or [])
+    target_attributes = [
+        str(item).strip()
+        for item in list(rewrite_result.get("target_attributes") or [])
+        if str(item).strip()
+    ]
+    entity_constraints = (
+        dict(rewrite_result.get("entity_constraints") or {})
+        if isinstance(rewrite_result.get("entity_constraints"), dict)
+        else {}
+    )
     trace = {
         "used": True,
         "engine": "llm",
@@ -44,12 +58,28 @@ async def build_kb_chat_v2_rewrite(
         "retrieval_complexity": retrieval_complexity,
         "query_count": len(text_queries),
         "entity_count": len(candidate_entities),
+        "relation_pair_count": len(relation_pairs),
+        "relation_query_count": len(relation_queries),
         "fallback_used": False,
         "latency_ms": int((perf_counter() - started_at) * 1000),
     }
+    logger.info(
+        "[KB Rewrite V2] done | question_type={} retrieval_complexity={} text_queries={} candidate_entities={} relation_pairs={} relation_queries={} latency_ms={}",
+        question_type,
+        retrieval_complexity,
+        text_queries,
+        candidate_entities,
+        relation_pairs,
+        relation_queries,
+        trace["latency_ms"],
+    )
     return {
         "text_queries": text_queries,
         "candidate_entities": candidate_entities,
+        "relation_pairs": relation_pairs,
+        "relation_queries": relation_queries,
+        "target_attributes": target_attributes,
+        "entity_constraints": entity_constraints,
         "rewrite_trace": trace,
         "retrieval_queries": text_queries,
     }
@@ -62,6 +92,10 @@ async def kb_chat_v2_rewrite_query_node(state: KbChatV2State) -> dict[str, Any]:
         return {
             "text_queries": [],
             "candidate_entities": [],
+            "relation_pairs": [],
+            "relation_queries": [],
+            "target_attributes": [],
+            "entity_constraints": {},
             "rewrite_trace": trace,
             "retrieval_queries": [],
         }

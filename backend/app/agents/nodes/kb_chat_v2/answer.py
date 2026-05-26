@@ -6,7 +6,7 @@ from time import perf_counter
 from typing import Any, AsyncGenerator, Callable
 
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
-from app.agents.prompts.kb_chat import build_kb_chat_answer_prompt
+from app.agents.prompts.kb_chat import build_kb_chat_answer_prompt, build_page_context_block
 from app.agents.states import KbChatV2State
 from app.core.llm import get_llm
 from app.services.chat_memory import format_chat_history
@@ -110,21 +110,22 @@ def _template_answer(state: dict[str, Any]) -> tuple[str | None, str | None]:
 
 def _build_prompt(state: dict[str, Any]) -> str:
     return build_kb_chat_answer_prompt(
-        state.get("query", ""),
-        state.get("context", ""),
-        chat_history_text=format_chat_history(state.get("chat_history") or [], max_messages=6),
-        memory_summary=state.get("memory_summary") or "",
+        query=state.get("query", ""),
         assistant_name=state.get("assistant_name") or "",
-        assistant_welcome_message=state.get("assistant_welcome_message") or "",
-        assistant_placeholder_text=state.get("assistant_placeholder_text") or "",
         assistant_persona_prompt=state.get("assistant_persona_prompt") or "",
         assistant_rule_template=state.get("assistant_rule_template") or "",
-        assistant_suggested_prompts=list(state.get("assistant_suggested_prompts") or []),
-        page_config=dict(state.get("page_config") or {}),
-        page_context=dict(state.get("page_context") or {}),
+        page_context=build_page_context_block(
+            page_config=dict(state.get("page_config") or {}),
+            page_context=dict(state.get("page_context") or {}),
+        ),
+        chat_history_text=format_chat_history(state.get("chat_history") or [], max_messages=6),
+        memory_summary=state.get("memory_summary") or "",
         evidence_status=str(
             (state.get("retrieval_evaluation") or {}).get("status") or "sufficient"
         ),
+        primary_context=state.get("primary_context") or "",
+        supporting_context=state.get("supporting_context") or "",
+        metadata_context=state.get("metadata_context") or "",
     )
 
 
