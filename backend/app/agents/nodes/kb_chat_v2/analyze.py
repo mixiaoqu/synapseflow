@@ -45,8 +45,8 @@ def _build_rewrite_plan(question_type: str, retrieval_complexity: str) -> dict[s
 
 
 def _build_retrieval_plan(
-    question_type: str,
     *,
+    retrieval_strategy: str,
     retrieval_complexity: str,
     final_top_k: int,
     llm_reference_top_k: int,
@@ -56,67 +56,22 @@ def _build_retrieval_plan(
     context_budget: int,
     rerank_enabled: bool,
 ) -> dict[str, Any]:
-    base_channels = {
-        "community": {
-            "enabled": False,
-            "limit": 0,
-            "reason": "community_summary_layer_unavailable",
-        },
-        "vector": {"enabled": True, "recall_k": recall_k},
-        "lexical": {"enabled": True, "recall_k": lexical_k},
-        "text": {"enabled": True, "recall_k": recall_k, "lexical_k": lexical_k},
-        "graph": {"enabled": True, "limit": graph_limit},
-    }
-    if question_type == "summary_lookup":
+    if retrieval_strategy == "skip":
         return {
-            "retrieval_mode": "global_priority",
-            "fallbacks": {"community_summary_empty": "local_hybrid"},
-            "channels": base_channels,
-            "rerank": {"enabled": rerank_enabled, "top_k": final_top_k},
-            "context": {
-                "final_top_k": final_top_k,
-                "budget_chars": context_budget,
-                "llm_reference_top_k": llm_reference_top_k,
-            },
-        }
-    if question_type == "relationship_lookup":
-        return {
-            "retrieval_mode": "local_hybrid",
-            "fallbacks": {},
-            "channels": base_channels,
-            "rerank": {"enabled": rerank_enabled, "top_k": final_top_k},
-            "context": {
-                "final_top_k": final_top_k,
-                "budget_chars": context_budget,
-                "llm_reference_top_k": llm_reference_top_k,
-            },
-        }
-    if question_type == "attribute_lookup":
-        return {
-            "retrieval_mode": "graph_first",
-            "fallbacks": {"graph_empty": "text_hybrid"},
+            "retrieval_strategy": "skip",
             "channels": {
-                **base_channels,
-                "text": {"enabled": True, "recall_k": recall_k, "lexical_k": lexical_k},
+                "text": {"enabled": False, "recall_k": 0, "lexical_k": 0},
+                "graph": {"enabled": False, "limit": 0},
             },
-            "rerank": {"enabled": rerank_enabled, "top_k": final_top_k},
-            "context": {
-                "final_top_k": final_top_k,
-                "budget_chars": context_budget,
-                "llm_reference_top_k": llm_reference_top_k,
-            },
+            "rerank": {"enabled": False, "top_k": 0},
+            "context": {"final_top_k": 0, "budget_chars": 0, "llm_reference_top_k": 0},
         }
+
     return {
-        "retrieval_mode": "text_hybrid",
-        "fallbacks": {},
+        "retrieval_strategy": "parallel_fusion",
         "channels": {
-            "community": {
-                "enabled": False,
-                "limit": 0,
-                "reason": "community_summary_layer_unavailable",
-            },
             "text": {"enabled": True, "recall_k": recall_k, "lexical_k": lexical_k},
-            "graph": {"enabled": False, "limit": 0},
+            "graph": {"enabled": True, "limit": graph_limit},
         },
         "rerank": {"enabled": rerank_enabled, "top_k": final_top_k},
         "context": {
@@ -124,16 +79,17 @@ def _build_retrieval_plan(
             "budget_chars": context_budget,
             "llm_reference_top_k": llm_reference_top_k,
         },
+        "retrieval_complexity": retrieval_complexity,
     }
 
 
 def build_kb_chat_v2_execution_plan(
     *,
     question_type: str,
-    retrieval_required: bool,
+    retrieval_strategy: str,
     retrieval_complexity: str,
 ) -> dict[str, Any]:
-    if not retrieval_required:
+    if retrieval_strategy == "skip":
         return {
             "rewrite": {
                 "enabled": False,
@@ -142,15 +98,11 @@ def build_kb_chat_v2_execution_plan(
                 "max_queries": 0,
                 "strategies": [],
             },
-            "retrieval_mode": "skip",
+            "retrieval_strategy": "skip",
             "channels": {
-                "community": {"enabled": False, "limit": 0, "reason": "retrieval_skipped"},
-                "vector": {"enabled": False, "recall_k": 0},
-                "lexical": {"enabled": False, "recall_k": 0},
                 "text": {"enabled": False, "recall_k": 0, "lexical_k": 0},
                 "graph": {"enabled": False, "limit": 0},
             },
-            "fallbacks": {},
             "rerank": {"enabled": False, "top_k": 0},
             "context": {"final_top_k": 0, "budget_chars": 0, "llm_reference_top_k": 0},
         }
@@ -166,7 +118,7 @@ def build_kb_chat_v2_execution_plan(
     return {
         "rewrite": _build_rewrite_plan(question_type, retrieval_complexity),
         **_build_retrieval_plan(
-            question_type,
+            retrieval_strategy=retrieval_strategy,
             retrieval_complexity=retrieval_complexity,
             final_top_k=final_top_k,
             llm_reference_top_k=llm_reference_top_k,
@@ -207,18 +159,19 @@ async def kb_chat_v2_analyze_node(
     plan_started_at = perf_counter()
     execution_plan = build_kb_chat_v2_execution_plan(
         question_type=route["question_type"],
-        retrieval_required=route["retrieval_required"],
+        retrieval_strategy=route["retrieval_strategy"],
         retrieval_complexity=route["retrieval_complexity"],
     )
     plan_latency_ms = int((perf_counter() - plan_started_at) * 1000)
 
     result: dict[str, Any] = {
         "question_type": route["question_type"],
+        "retrieval_strategy": route["retrieval_strategy"],
         "retrieval_complexity": route["retrieval_complexity"],
         "retrieval_required": route["retrieval_required"],
+        "needs_clarification": route["needs_clarification"],
         "route_reason": route["reason"],
         "route_trace": {"latency_ms": route_latency_ms},
-        "retrieval_mode": execution_plan.get("retrieval_mode"),
         "retrieval_execution_plan": execution_plan,
         "plan_trace": {"latency_ms": plan_latency_ms},
     }
@@ -235,11 +188,7 @@ async def kb_chat_v2_analyze_node(
                 },
                 "retrieval_trace": {
                     "text": {"skipped": True, "text_hits": 0},
-                    "graph": {
-                        "graph_used": False,
-                        "graph_hits": 0,
-                        "empty_reason": "skipped",
-                    },
+                    "graph": {"graph_used": False, "graph_hits": 0, "empty_reason": "skipped"},
                     "final_hits": 0,
                     "empty_reason": "skipped",
                 },

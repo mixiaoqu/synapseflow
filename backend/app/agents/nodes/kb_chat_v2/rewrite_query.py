@@ -57,7 +57,7 @@ async def build_kb_chat_v2_rewrite(
 
 async def kb_chat_v2_rewrite_query_node(state: KbChatV2State) -> dict[str, Any]:
     stream_writer = get_optional_stream_writer()
-    if state.get("retrieval_required") is False:
+    if str(state.get("retrieval_strategy") or "").strip().lower() == "skip":
         trace = {"used": False, "engine": "skip", "query_count": 0, "entity_count": 0}
         return {
             "text_queries": [],

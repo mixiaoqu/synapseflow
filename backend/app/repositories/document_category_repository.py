@@ -77,11 +77,12 @@ class DocumentCategoryRepository:
         *,
         knowledge_base_id: int,
         name: str,
+        parent_id: int | None = None,
     ) -> DocumentCategory | None:
         normalized_name = name.strip()
         if not normalized_name:
             return None
-        result = await self.db.execute(
+        stmt = (
             select(DocumentCategory)
             .join(KnowledgeBase, KnowledgeBase.id == DocumentCategory.knowledge_base_id)
             .where(
@@ -90,6 +91,11 @@ class DocumentCategoryRepository:
                 func.lower(DocumentCategory.name) == normalized_name.lower(),
             )
         )
+        if parent_id is not None:
+            stmt = stmt.where(DocumentCategory.parent_id == parent_id)
+        else:
+            stmt = stmt.where(DocumentCategory.parent_id.is_(None))
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def create(
@@ -97,9 +103,19 @@ class DocumentCategoryRepository:
         *,
         knowledge_base_id: int,
         name: str,
+        parent_id: int | None = None,
     ) -> DocumentCategory:
+        if parent_id is not None:
+            parent = await self.get_by_id(parent_id)
+            if not parent:
+                raise ValueError("Parent category not found")
+            if parent.knowledge_base_id != knowledge_base_id:
+                raise ValueError("Parent category does not belong to the same knowledge base")
+            if parent.parent_id is not None:
+                raise ValueError("Maximum nesting depth reached (2 levels)")
         category = DocumentCategory(
             knowledge_base_id=knowledge_base_id,
+            parent_id=parent_id,
             name=name.strip(),
         )
         self.db.add(category)
@@ -112,14 +128,16 @@ class DocumentCategoryRepository:
         *,
         knowledge_base_id: int,
         name: str,
+        parent_id: int | None = None,
     ) -> DocumentCategory:
         existing = await self.get_by_name(
             knowledge_base_id=knowledge_base_id,
             name=name,
+            parent_id=parent_id,
         )
         if existing:
             return existing
-        return await self.create(knowledge_base_id=knowledge_base_id, name=name)
+        return await self.create(knowledge_base_id=knowledge_base_id, name=name, parent_id=parent_id)
 
     async def update(
         self,
@@ -135,15 +153,31 @@ class DocumentCategoryRepository:
         await self.db.refresh(category)
         return category
 
+    async def get_subcategory_ids(self, parent_id: int) -> list[int]:
+        """Return all direct child category IDs for a given parent."""
+        result = await self.db.execute(
+            select(DocumentCategory.id).where(DocumentCategory.parent_id == parent_id)
+        )
+        return list(result.scalars().all())
+
+    async def get_subtree_ids(self, category_id: int) -> list[int]:
+        """Return the category ID plus all descendant IDs (max depth 2)."""
+        child_ids = await self.get_subcategory_ids(category_id)
+        return [category_id] + child_ids
+
     async def delete(self, category_id: int) -> bool:
         category = await self.get_by_id(category_id)
         if not category:
             return False
+        # Collect this category and all subcategory IDs
+        all_ids = await self.get_subtree_ids(category_id)
+        # Clear category_id on documents belonging to this category or subcategories
         await self.db.execute(
             update(Document)
-            .where(Document.category_id == category_id)
+            .where(Document.category_id.in_(all_ids))
             .values(category_id=None)
         )
+        # Subcategories are auto-deleted by CASCADE on parent_id FK
         await self.db.delete(category)
         await self.db.commit()
         return True

@@ -207,10 +207,18 @@ class DocumentService:
         title: str,
     ) -> None:
         plan = prepare_document_chunk_plan(parsed_document, title)
-        await persist_document_chunk_plan(
+        counts = await persist_document_chunk_plan(
             db,
             document_id=document_id,
             plan=plan,
+        )
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 切片完成 doc_id={} title={} parent_chunks={} child_chunks={} chars={}",
+            document_id,
+            title,
+            counts.get("parent", len(plan.parent_chunks)),
+            counts.get("child", len(plan.child_chunks)),
+            len(plan.full_text),
         )
 
     @staticmethod
@@ -228,11 +236,22 @@ class DocumentService:
         return str(PurePosixPath(*parts))
 
     @classmethod
-    def _infer_category_name(cls, source_path: str | None) -> str | None:
+    def _infer_category_parts(cls, source_path: str | None) -> tuple[str | None, str | None]:
+        """Extract (parent_name, child_name) from source_path segments.
+
+        "FolderA/SubFolder/file.txt" -> ("FolderA", "SubFolder")
+        "FolderA/file.txt"           -> ("FolderA", None)
+        "file.txt"                   -> (None, None)
+        """
         normalized = cls._normalize_source_path(source_path)
         if not normalized or "/" not in normalized:
-            return None
-        return normalized.split("/", 1)[0].strip() or None
+            return None, None
+        parts = normalized.split("/")
+        # parts[0..n-2] are folder segments, parts[-1] is the filename
+        folder_parts = parts[:-1]
+        parent_name = folder_parts[0].strip() or None if len(folder_parts) >= 1 else None
+        child_name = folder_parts[1].strip() or None if len(folder_parts) >= 2 else None
+        return parent_name, child_name
 
     async def _resolve_document_location(
         self,
@@ -262,12 +281,21 @@ class DocumentService:
                     detail="Category does not belong to the selected knowledge base",
                 )
         else:
-            inferred_name = self._infer_category_name(normalized_path)
-            if inferred_name:
-                category = await category_repo.get_or_create(
+            parent_name, child_name = self._infer_category_parts(normalized_path)
+            if parent_name:
+                parent_cat = await category_repo.get_or_create(
                     knowledge_base_id=knowledge_base_id,
-                    name=inferred_name,
+                    name=parent_name,
+                    parent_id=None,
                 )
+                if child_name:
+                    category = await category_repo.get_or_create(
+                        knowledge_base_id=knowledge_base_id,
+                        name=child_name,
+                        parent_id=parent_cat.id,
+                    )
+                else:
+                    category = parent_cat
         return knowledge_base_id, category.id if category else None, normalized_path
 
     def _to_response(
@@ -352,13 +380,20 @@ class DocumentService:
         )
         await db.commit()
         await db.refresh(doc)
-        await indexing_service.enqueue_document_job(
+        jobs = await indexing_service.enqueue_document_indexing_jobs(
             db=db,
             user_id=user_id,
             document_id=doc.id,
             expected_content_hash=doc.content_hash,
             knowledge_base_id=knowledge_base_id,
             title=f"索引《{doc.title}》",
+        )
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 索引任务已入队 doc_id={} title={} text_job_id={} graph_job_id={}",
+            doc.id,
+            doc.title,
+            jobs.get("job_id", 0),
+            jobs.get("graph_job_id", 0),
         )
         logger.info("Uploaded document id={} title={}", doc.id, doc.title)
         return self._to_response(doc, category_name=category_name)
@@ -464,7 +499,7 @@ class DocumentService:
             await db.refresh(doc)
         if not created:
             return []
-        await indexing_service.enqueue_documents_batch_job(
+        jobs = await indexing_service.enqueue_documents_batch_indexing_jobs(
             db=db,
             user_id=user_id,
             documents=[(doc.id, doc.content_hash) for doc in created],
@@ -478,6 +513,12 @@ class DocumentService:
                 if len(created) == 1
                 else f"批量索引 {len(created)} 个文档"
             ),
+        )
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 批量索引任务已入队 docs={} text_job_id={} graph_job_id={}",
+            len(created),
+            jobs.get("job_id", 0),
+            jobs.get("graph_job_id", 0),
         )
         return [
             self._to_response(
@@ -536,13 +577,20 @@ class DocumentService:
         )
         await db.commit()
         await db.refresh(doc)
-        await indexing_service.enqueue_document_job(
+        jobs = await indexing_service.enqueue_document_indexing_jobs(
             db=db,
             user_id=user_id,
             document_id=doc.id,
             expected_content_hash=doc.content_hash,
             knowledge_base_id=knowledge_base_id,
             title=f"索引《{doc.title}》",
+        )
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 索引任务已入队 doc_id={} title={} text_job_id={} graph_job_id={}",
+            doc.id,
+            doc.title,
+            jobs.get("job_id", 0),
+            jobs.get("graph_job_id", 0),
         )
         logger.info("Created document from content id={} title={}", doc.id, doc.title)
         return self._to_response(doc, category_name=category_name)
@@ -564,6 +612,12 @@ class DocumentService:
         page_size = 20 if page_size < 1 or page_size > 100 else page_size
 
         repo = DocumentRepository(db, user_id=user_id)
+        status_counts = await repo.get_status_counts(
+            keyword=keyword,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+        )
         rows, total = await repo.list_paginated(
             page=page,
             page_size=page_size,
@@ -602,7 +656,7 @@ class DocumentService:
             )
             for doc, knowledge_base_name, category_name in rows
         ]
-        return DocumentListResponse(items=items, total=total, page=page, page_size=page_size)
+        return DocumentListResponse(items=items, total=total, page=page, page_size=page_size, status_counts=status_counts)
 
     async def get_indexing_panel_summary(
         self,
@@ -816,13 +870,20 @@ class DocumentService:
         )
         await db.commit()
         await db.refresh(doc)
-        await indexing_service.enqueue_document_job(
+        jobs = await indexing_service.enqueue_document_indexing_jobs(
             db=db,
             user_id=user_id,
             document_id=doc.id,
             expected_content_hash=doc.content_hash,
             knowledge_base_id=getattr(doc, "knowledge_base_id", None),
             title=f"重新索引《{doc.title}》",
+        )
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 内容替换后索引任务已入队 doc_id={} title={} text_job_id={} graph_job_id={}",
+            doc.id,
+            doc.title,
+            jobs.get("job_id", 0),
+            jobs.get("graph_job_id", 0),
         )
         logger.info("Replaced document content id={}", doc_id)
         category_name = await repo.get_category_name(getattr(doc, "category_id", None))
@@ -859,7 +920,7 @@ class DocumentService:
         )
         await db.commit()
         await db.refresh(new_doc)
-        await indexing_service.enqueue_current_document_reindex_job(
+        jobs = await indexing_service.enqueue_current_document_indexing_jobs(
             db=db,
             user_id=user_id,
             target_document_id=new_doc.id,
@@ -869,6 +930,13 @@ class DocumentService:
             previous_document_id=(
                 current_doc.id if current_doc and current_doc.id != new_doc.id else None
             ),
+        )
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 新版本索引任务已入队 doc_id={} title={} text_job_id={} graph_job_id={}",
+            new_doc.id,
+            new_doc.title,
+            jobs.get("job_id", 0),
+            jobs.get("graph_job_id", 0),
         )
         logger.info("Created document version id={} from doc_id={}", new_doc.id, doc_id)
         category_name = await repo.get_category_name(getattr(new_doc, "category_id", None))
@@ -885,7 +953,7 @@ class DocumentService:
         target, previous_current = await repo.switch_current_version(doc_id, commit=True)
         if not target:
             raise HTTPException(status_code=404, detail="Document not found")
-        await indexing_service.enqueue_current_document_reindex_job(
+        jobs = await indexing_service.enqueue_current_document_indexing_jobs(
             db=db,
             user_id=user_id,
             target_document_id=target.id,
@@ -897,6 +965,13 @@ class DocumentService:
                 if previous_current and previous_current.id != target.id
                 else None
             ),
+        )
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 当前版本切换索引任务已入队 doc_id={} title={} text_job_id={} graph_job_id={}",
+            target.id,
+            target.title,
+            jobs.get("job_id", 0),
+            jobs.get("graph_job_id", 0),
         )
         logger.info("Switched current document version id={}", target.id)
         category_name = await repo.get_category_name(getattr(target, "category_id", None))

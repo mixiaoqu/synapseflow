@@ -148,7 +148,7 @@ async function loadPage() {
 
     const [assistantResponses, knowledgeBaseResponses] = await Promise.all([
       listAssistants({ team_id: projectResponse.team_id }),
-      listKnowledgeBases(projectResponse.team_id),
+      listKnowledgeBases(projectResponse.team_id, true),
     ]);
     assistants.value = assistantResponses;
     knowledgeBases.value = knowledgeBaseResponses;

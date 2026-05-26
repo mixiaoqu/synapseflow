@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.registry import config_registry
@@ -112,6 +112,18 @@ class DocumentChunkRepository:
             )
         )
         return len(result.scalars().all())
+
+    async def get_by_id(self, chunk_id: int) -> DocumentChunk | None:
+        result = await self.db.execute(select(DocumentChunk).where(DocumentChunk.id == chunk_id))
+        return result.scalar_one_or_none()
+
+    async def update_metadata(self, chunk_id: int, metadata: dict) -> None:
+        await self.db.execute(
+            update(DocumentChunk)
+            .where(DocumentChunk.id == chunk_id)
+            .values(metadata_=metadata)
+        )
+        await self.db.flush()
 
     async def expand_parent_windows(
         self,

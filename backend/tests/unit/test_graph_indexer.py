@@ -18,12 +18,15 @@ def test_graph_models_expose_minimal_document_and_chunk_fields():
         section_path="安装 / 数据库",
     )
     entity = GraphEntityRecord(
+        team_id=7,
+        knowledge_base_id=8,
         document_id=12,
         document_chunk_id=34,
         normalized_name="postgresql",
         display_name="PostgreSQL",
         entity_type="DATABASE",
         aliases=("Postgres",),
+        attributes={"version": "15"},
         evidence="结果写入 PostgreSQL",
     )
     relation = GraphRelationRecord(
@@ -34,6 +37,7 @@ def test_graph_models_expose_minimal_document_and_chunk_fields():
         source_normalized_name="projectapp",
         target_normalized_name="postgresql",
         relation_type="USES",
+        attributes={"mode": "direct"},
         evidence="ProjectApp 使用 PostgreSQL",
     )
 
@@ -71,21 +75,27 @@ def test_graph_indexer_writes_chunk_entities_and_relations():
     )
     entities = [
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=3,
             document_id=1,
             document_chunk_id=101,
             normalized_name="projectapp",
             display_name="ProjectApp",
             entity_type="COMPONENT",
             aliases=(),
+            attributes={},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         ),
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=3,
             document_id=1,
             document_chunk_id=101,
             normalized_name="assistantprofile",
             display_name="AssistantProfile",
             entity_type="COMPONENT",
             aliases=(),
+            attributes={},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         ),
     ]
@@ -98,6 +108,7 @@ def test_graph_indexer_writes_chunk_entities_and_relations():
             source_normalized_name="projectapp",
             target_normalized_name="assistantprofile",
             relation_type="USES",
+            attributes={},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         )
     ]
@@ -144,12 +155,15 @@ def test_graph_indexer_skips_relation_without_known_entities():
     )
     entities = [
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=3,
             document_id=2,
             document_chunk_id=202,
             normalized_name="neo4j",
             display_name="Neo4j",
             entity_type="DATABASE",
             aliases=(),
+            attributes={},
             evidence="Neo4j 作为图数据库",
         )
     ]
@@ -162,6 +176,7 @@ def test_graph_indexer_skips_relation_without_known_entities():
             source_normalized_name="neo4j",
             target_normalized_name="unknown-service",
             relation_type="USES",
+            attributes={},
             evidence="无效关系",
         )
     ]
@@ -199,12 +214,15 @@ def test_graph_indexer_batches_writes_by_default_batch_size():
     )
     entities = [
         GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=3,
             document_id=9,
             document_chunk_id=index + 1,
             normalized_name=f"entity-{index}",
             display_name=f"Entity {index}",
             entity_type="OTHER",
             aliases=(),
+            attributes={},
             evidence="batch",
         )
         for index in range(DEFAULT_GRAPH_BATCH_SIZE + 1)

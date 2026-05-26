@@ -76,6 +76,7 @@ class KnowledgeBaseRepository:
         self,
         *,
         team_id: int | None = None,
+        active_only: bool = False,
     ) -> list[KnowledgeBaseSummaryRecord]:
         """List knowledge bases with dashboard summary metrics."""
         indexed_count = func.sum(case((Document.index_status == INDEX_STATUS_INDEXED, 1), else_=0))
@@ -135,6 +136,8 @@ class KnowledgeBaseRepository:
         )
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if active_only:
+            stmt = stmt.where(KnowledgeBase.is_active.is_(True))
         stmt = stmt.group_by(KnowledgeBase.id).order_by(KnowledgeBase.created_at.desc())
         rows = (await self.db.execute(stmt)).all()
         knowledge_base_ids = [knowledge_base.id for knowledge_base, *_ in rows]

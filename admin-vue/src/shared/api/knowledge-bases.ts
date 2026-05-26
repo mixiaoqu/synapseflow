@@ -10,11 +10,14 @@ export interface CreateKnowledgeBasePayload extends KnowledgeBasePayload {
   team_id: number;
 }
 
-export function listKnowledgeBases(teamId?: number) {
+export function listKnowledgeBases(teamId?: number, activeOnly?: boolean) {
   return request<KnowledgeBaseSummary[]>({
     url: "/knowledge-bases",
     method: "GET",
-    params: teamId ? { team_id: teamId } : undefined,
+    params: {
+      ...(teamId ? { team_id: teamId } : {}),
+      ...(activeOnly ? { active_only: true } : {}),
+    },
   });
 }
 
@@ -41,6 +44,14 @@ export function deleteKnowledgeBase(knowledgeBaseId: number) {
   return request<{ message: string }>({
     url: `/knowledge-bases/${knowledgeBaseId}`,
     method: "DELETE",
+  });
+}
+
+export function toggleKnowledgeBaseActive(knowledgeBaseId: number, isActive: boolean) {
+  return request<KnowledgeBaseSummary>({
+    url: `/knowledge-bases/${knowledgeBaseId}/toggle-active`,
+    method: "PATCH",
+    data: { is_active: isActive },
   });
 }
 

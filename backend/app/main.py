@@ -1,15 +1,36 @@
 """FastAPI应用主入口"""
+import asyncio
 import os
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.v1.router import api_router
 from app.core.config import config_registry, settings
 from app.core.logging_config import setup_logging
-from app.api.v1.router import api_router
 
 app_config = config_registry.get_app_config()
+
+
+def _load_docling_converter() -> None:
+    from importlib import import_module
+
+    converter_module = import_module("docling.document_converter")
+    converter_module.DocumentConverter()
+
+
+async def _warmup_docling_models() -> None:
+    """后台初始化 Docling，避免首次解析文档时才触发模型加载。"""
+    from loguru import logger
+
+    try:
+        await asyncio.to_thread(_load_docling_converter)
+        logger.info("Docling 模型预热完成")
+    except Exception as exc:
+        logger.warning("Docling 模型预热失败: {}", exc)
+
 
 
 @asynccontextmanager
@@ -28,8 +49,8 @@ async def lifespan(app: FastAPI):
             os.environ["LANGSMITH_WORKSPACE_ID"] = settings.LANGSMITH_WORKSPACE_ID
         logger.info("LangSmith 追踪已启用")
 
-    os.makedirs(settings.PREVIEW_DIR, exist_ok=True)
-    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    # 后台预热 docling 模型下载，不阻塞服务启动
+    asyncio.create_task(_warmup_docling_models())
 
     logger.info("应用就绪，预览目录: {}", settings.PREVIEW_DIR)
     yield

@@ -147,6 +147,11 @@ class ProjectService:
             knowledge_base = await kb_repository.get_by_id(knowledge_base_id)
             if knowledge_base is None:
                 raise HTTPException(status_code=404, detail="Knowledge base not found")
+            if not getattr(knowledge_base, "is_active", True):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Knowledge base '{knowledge_base.name}' is disabled",
+                )
             if knowledge_base.team_id != project.team_id:
                 raise HTTPException(
                     status_code=400,

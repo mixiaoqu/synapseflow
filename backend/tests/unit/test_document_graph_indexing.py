@@ -9,7 +9,7 @@ from app.services.graph_models import (
     GraphEntityRecord,
     GraphRelationRecord,
 )
-from app.services.document_indexer import index_document_graph
+from app.services.document_indexer import finalize_document_graph, index_document_graph
 
 
 def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
@@ -52,6 +52,20 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
         async def prune_orphan_entities(self):
             events.append(("prune",))
 
+        async def list_entity_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names):
+            events.append(("summary-list", knowledge_base_id, team_id, tuple(normalized_names)))
+            return []
+
+        async def upsert_entity_summaries(self, rows):
+            events.append(("summary-upsert", len(rows)))
+
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+            events.append(("relation-summary-list", knowledge_base_id, team_id, document_id))
+            return []
+
+        async def upsert_relation_summaries(self, rows):
+            events.append(("relation-summary-upsert", len(rows)))
+
     extraction = ChunkGraphExtraction(
         chunk=GraphChunkRecord(
             team_id=2,
@@ -63,12 +77,15 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
         ),
         entities=[
             GraphEntityRecord(
+                team_id=2,
+                knowledge_base_id=9,
                 document_id=1,
                 document_chunk_id=101,
                 normalized_name="projectapp",
                 display_name="ProjectApp",
                 entity_type="COMPONENT",
                 aliases=(),
+                attributes={"owner": "平台组"},
                 evidence="ProjectApp 默认绑定 AssistantProfile",
             )
         ],
@@ -81,6 +98,7 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
                 source_normalized_name="projectapp",
                 target_normalized_name="assistantprofile",
                 relation_type="USES",
+                attributes={"mode": "auto"},
                 evidence="ProjectApp 默认绑定 AssistantProfile",
             )
         ],
@@ -96,21 +114,27 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
         ),
         entities=[
             GraphEntityRecord(
+                team_id=2,
+                knowledge_base_id=9,
                 document_id=1,
                 document_chunk_id=102,
                 normalized_name="projectapp",
                 display_name="ProjectApp",
                 entity_type="COMPONENT",
                 aliases=(),
+                attributes={"owner": "平台组"},
                 evidence="ProjectApp 也关联 AssistantProfile",
             ),
             GraphEntityRecord(
+                team_id=2,
+                knowledge_base_id=9,
                 document_id=1,
                 document_chunk_id=102,
                 normalized_name="assistantprofile",
                 display_name="AssistantProfile",
                 entity_type="COMPONENT",
                 aliases=(),
+                attributes={"scope": "default"},
                 evidence="ProjectApp 也关联 AssistantProfile",
             ),
         ],
@@ -123,6 +147,7 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
                 source_normalized_name="projectapp",
                 target_normalized_name="assistantprofile",
                 relation_type="USES",
+                attributes={"mode": "auto"},
                 evidence="ProjectApp 也关联 AssistantProfile",
             )
         ],
@@ -148,10 +173,13 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
         lambda: FakeStore(),
     )
     monkeypatch.setattr(
-        "app.services.document_indexer.extract_chunk_graph",
-        lambda *, chunk, chunk_text: asyncio.sleep(
+        "app.services.document_indexer.extract_chunk_graphs_batch",
+        lambda items: asyncio.sleep(
             0,
-            result=extraction if chunk.document_chunk_id == 101 else second_extraction,
+            result=[
+                extraction if chunk.document_chunk_id == 101 else second_extraction
+                for chunk, _chunk_text in items
+            ],
         ),
     )
     monkeypatch.setattr(
@@ -178,7 +206,10 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
     assert ("entities", ["projectapp", "assistantprofile"]) in events
     assert ("mentions", [("projectapp", 101), ("projectapp", 102), ("assistantprofile", 102)]) in events
     assert ("relations", ["USES"]) in events
-    assert events[-1] == ("prune",)
+    assert any(item[0] == "summary-list" for item in events)
+    assert ("relation-summary-list", 9, 2, 1) in events
+    assert any(item == ("summary-upsert", 0) for item in events)
+    assert ("prune",) in events
 
 
 def test_index_document_graph_requires_document_team_and_knowledge_base(monkeypatch):
@@ -214,3 +245,86 @@ def test_index_document_graph_requires_document_team_and_knowledge_base(monkeypa
                 commit=False,
             )
         )
+
+
+def test_finalize_document_graph_refreshes_relation_summaries_for_current_document(monkeypatch):
+    events = []
+
+    class FakeChunkRepository:
+        def __init__(self, db):
+            pass
+
+        async def get_child_chunks_for_document(self, document_id):
+            return [
+                SimpleNamespace(
+                    id=101,
+                    metadata_={
+                        "graph_extraction": {
+                            "status": "indexed",
+                            "entities": [
+                                {"normalized_name": "projectapp"},
+                                {"normalized_name": "assistantprofile"},
+                            ],
+                            "relations": [
+                                {
+                                    "source_normalized_name": "projectapp",
+                                    "target_normalized_name": "assistantprofile",
+                                    "relation_type": "USES",
+                                }
+                            ],
+                        }
+                    },
+                )
+            ]
+
+    class FakeStore:
+        async def prune_orphan_entities(self):
+            events.append(("prune",))
+
+        async def list_entity_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names):
+            events.append(("entity-summary-list", knowledge_base_id, team_id, tuple(normalized_names)))
+            return []
+
+        async def upsert_entity_summaries(self, rows):
+            events.append(("entity-summary-upsert", len(rows)))
+
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+            events.append(("relation-summary-list", knowledge_base_id, team_id, document_id))
+            return []
+
+        async def upsert_relation_summaries(self, rows):
+            events.append(("relation-summary-upsert", len(rows)))
+
+    class DummyGraphConfig:
+        enabled = True
+        indexing_enabled = True
+
+    async def fake_execute(stmt):
+        return SimpleNamespace(one_or_none=lambda: SimpleNamespace(team_id=2, knowledge_base_id=9))
+
+    monkeypatch.setattr(
+        "app.services.document_indexer.DocumentChunkRepository",
+        FakeChunkRepository,
+    )
+    monkeypatch.setattr(
+        "app.services.document_indexer.config_registry.get_graph_config",
+        lambda: DummyGraphConfig(),
+    )
+    monkeypatch.setattr(
+        "app.services.document_indexer.get_graph_store",
+        lambda: FakeStore(),
+    )
+
+    summary = asyncio.run(
+        finalize_document_graph(
+            SimpleNamespace(execute=fake_execute),
+            document_id=1,
+            title="系统说明",
+            commit=False,
+        )
+    )
+
+    assert summary == {"chunks": 1, "entities": 2, "mentions": 2, "relations": 1}
+    assert ("prune",) in events
+    assert ("entity-summary-list", 9, 2, ("assistantprofile", "projectapp")) in events
+    assert ("relation-summary-list", 9, 2, 1) in events

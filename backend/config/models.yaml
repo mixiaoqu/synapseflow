@@ -4,6 +4,12 @@ providers:
     api_key_env: MOYU_API_KEY
     description: Moyu OpenAI compatible proxy
 
+  deepseek:
+    api_base: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+    description: DeepSeek official OpenAI-compatible API
+
+
 model_assets:
   glm-5-1:
     type: chat
@@ -41,20 +47,20 @@ model_assets:
     streaming: true
     max_tokens: 4096
 
-  deepseek-v3-2:
+  deepseek-v4-flash:
     type: chat
-    provider: moyu
-    model: deepseek-v3.2
-    name:  DeepSeek V3.2
+    provider: deepseek
+    model: deepseek-chat
+    name:  DeepSeek V4 Flash
     request_timeout: 180
     streaming: true
     max_tokens: 4096
 
-  deepseek-v4-flash:
+    deepseek-v4-pro:
     type: chat
-    provider: moyu
-    model: deepseek-v4-flash
-    name:  DeepSeek V4 Flash
+    provider: deepseek
+    model: deepseek-chat
+    name:  DeepSeek V4 pro
     request_timeout: 180
     streaming: true
     max_tokens: 4096
@@ -69,7 +75,7 @@ model_assets:
     max_tokens: 4096
 
 system_roles:
-  planner: deepseek-v3-2
+  planner: deepseek-v4-flash
   analysis: deepseek-v4-flash
-  generation: deepseek-v3-2
-  tool: deepseek-v3-2
+  generation: deepseek-v4-flash
+  tool: deepseek-v4-flash

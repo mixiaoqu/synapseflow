@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.utils.time import serialize_utc_datetime
 
 DocumentIndexStatus = Literal["queued", "processing", "indexed", "failed"]
-GraphIndexStatus = Literal["queued", "processing", "indexed", "failed"]
+GraphIndexStatus = Literal["queued", "processing", "finalizing", "indexed", "failed"]
 DocumentLifecycleStatus = Literal[
     "draft",
     "pending_review",
@@ -107,6 +107,7 @@ class DocumentListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+    status_counts: dict[str, int] = {}
 
 
 class DocumentContentUpdate(BaseModel):

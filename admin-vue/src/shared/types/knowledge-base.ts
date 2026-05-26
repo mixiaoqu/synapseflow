@@ -18,6 +18,7 @@ export interface KnowledgeBaseSummary {
   name: string;
   team_id: number;
   description: string | null;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
   document_count: number;

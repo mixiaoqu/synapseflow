@@ -57,8 +57,8 @@ class FakeAnswerLlm:
 def test_kb_chat_v2_graph_routes_chitchat_directly_to_answer():
     graph = create_kb_chat_v2_graph(
         planner_llm_factory=lambda: FakeJsonLlm(
-            '{"question_type":"chitchat","retrieval_complexity":"fast",'
-            '"retrieval_required":false,"reason":"Greeting."}'
+            '{"question_type":"chitchat","retrieval_strategy":"skip","retrieval_complexity":"fast",'
+            '"needs_clarification":false,"reason":"Greeting."}'
         ),
         answer_llm_factory=lambda: UnexpectedAnswerLlm(),
     )
@@ -76,6 +76,7 @@ def test_kb_chat_v2_graph_routes_chitchat_directly_to_answer():
     )
 
     assert result["question_type"] == "chitchat"
+    assert result["retrieval_strategy"] == "skip"
     assert result["retrieval_required"] is False
     assert result["text_queries"] == []
     assert result["retrieval_trace"]["text"]["skipped"] is True
@@ -86,8 +87,8 @@ def test_kb_chat_v2_graph_routes_chitchat_directly_to_answer():
 def test_kb_chat_v2_graph_builds_execution_plan():
     graph = create_kb_chat_v2_graph(
         planner_llm_factory=lambda: FakeJsonLlm(
-            '{"question_type":"summary_lookup","retrieval_complexity":"broad",'
-            '"retrieval_required":true,"reason":"The user asks for an end-to-end process."}'
+            '{"question_type":"summary_lookup","retrieval_strategy":"parallel_fusion","retrieval_complexity":"broad",'
+            '"needs_clarification":false,"reason":"The user asks for an end-to-end process."}'
         ),
         answer_llm_factory=lambda: FakeJsonLlm("Grounded answer."),
     )
@@ -106,12 +107,25 @@ def test_kb_chat_v2_graph_builds_execution_plan():
 
     assert result["question_type"] == "summary_lookup"
     assert result["retrieval_complexity"] == "broad"
+    assert result["retrieval_strategy"] == "parallel_fusion"
     assert result["retrieval_required"] is True
     assert result["retrieval_execution_plan"]["context"]["final_top_k"] == 12
+    assert result["retrieval_execution_plan"]["retrieval_strategy"] == "parallel_fusion"
     assert result["retrieval_execution_plan"]["channels"]["graph"]["limit"] == 12
 
 
-def test_kb_chat_v2_rewrite_extracts_queries_and_candidate_entities():
+def test_kb_chat_v2_rewrite_extracts_queries_and_candidate_entities(monkeypatch):
+    async def fake_build_kb_chat_retrieval_queries(*args, **kwargs):
+        return {
+            "queries": ["Prescription Flow relationship"],
+            "candidate_entities": ["Prescription Flow", "Payment"],
+        }
+
+    monkeypatch.setattr(
+        "app.agents.nodes.kb_chat_v2.rewrite_query.build_kb_chat_retrieval_queries",
+        fake_build_kb_chat_retrieval_queries,
+    )
+
     result = asyncio.run(
         build_kb_chat_v2_rewrite(
             "What is the relationship between `Prescription Flow` and Payment?",
@@ -138,42 +152,41 @@ def test_kb_chat_v2_rewrite_extracts_queries_and_candidate_entities():
 def test_kb_chat_v2_execution_plan_maps_complexity():
     plan = build_kb_chat_v2_execution_plan(
         question_type="summary_lookup",
-        retrieval_required=True,
+        retrieval_strategy="parallel_fusion",
         retrieval_complexity="broad",
     )
 
     assert plan["rewrite"]["max_queries"] == 5
-    assert plan["channels"]["vector"]["recall_k"] == 40
-    assert plan["channels"]["lexical"]["recall_k"] == 32
+    assert plan["channels"]["text"]["recall_k"] == 40
+    assert plan["channels"]["text"]["lexical_k"] == 32
     assert plan["rerank"]["top_k"] == 12
     assert plan["context"]["budget_chars"] == 15000
+    assert plan["retrieval_strategy"] == "parallel_fusion"
 
 
 def test_kb_chat_v2_execution_plan_routes_by_intent():
     summary_plan = build_kb_chat_v2_execution_plan(
         question_type="summary_lookup",
-        retrieval_required=True,
+        retrieval_strategy="parallel_fusion",
         retrieval_complexity="standard",
     )
     attribute_plan = build_kb_chat_v2_execution_plan(
         question_type="attribute_lookup",
-        retrieval_required=True,
+        retrieval_strategy="parallel_fusion",
         retrieval_complexity="standard",
     )
     definition_plan = build_kb_chat_v2_execution_plan(
         question_type="definition_lookup",
-        retrieval_required=True,
+        retrieval_strategy="parallel_fusion",
         retrieval_complexity="standard",
     )
 
-    assert summary_plan["retrieval_mode"] == "global_priority"
-    assert summary_plan["fallbacks"]["community_summary_empty"] == "local_hybrid"
-    assert summary_plan["channels"]["graph"]["enabled"] is True
-    assert attribute_plan["retrieval_mode"] == "graph_first"
-    assert attribute_plan["fallbacks"]["graph_empty"] == "text_hybrid"
+    assert summary_plan["rewrite"]["strategies"][:2] == ["query_compaction", "terminology_normalization"]
+    assert "multi_aspect_split" in summary_plan["rewrite"]["strategies"]
+    assert "attribute_focus" in attribute_plan["rewrite"]["strategies"]
+    assert "definition_focus" in definition_plan["rewrite"]["strategies"]
+    assert summary_plan["retrieval_strategy"] == "parallel_fusion"
     assert attribute_plan["channels"]["graph"]["enabled"] is True
-    assert definition_plan["retrieval_mode"] == "text_hybrid"
-    assert definition_plan["channels"]["graph"]["enabled"] is False
     assert definition_plan["channels"]["text"]["enabled"] is True
 
 
@@ -188,17 +201,18 @@ def test_kb_chat_v2_analyze_node_merges_route_and_plan():
                 "page_config": {},
             },
             llm_factory=lambda: FakeJsonLlm(
-                '{"question_type":"summary_lookup","retrieval_complexity":"broad",'
-                '"retrieval_required":true,"reason":"The user asks for an end-to-end process."}'
+                '{"question_type":"summary_lookup","retrieval_strategy":"parallel_fusion","retrieval_complexity":"broad",'
+                '"needs_clarification":false,"reason":"The user asks for an end-to-end process."}'
             ),
         )
     )
 
     assert result["question_type"] == "summary_lookup"
     assert result["retrieval_required"] is True
+    assert result["retrieval_strategy"] == "parallel_fusion"
+    assert result["needs_clarification"] is False
     assert result["retrieval_execution_plan"]["rewrite"]["max_queries"] == 5
     assert result["retrieval_execution_plan"]["channels"]["graph"]["limit"] == 12
-    assert result["retrieval_mode"] == "global_priority"
     assert "route_trace" in result
     assert "plan_trace" in result
 
@@ -354,12 +368,11 @@ def test_kb_chat_v2_merge_prefers_document_chunk_id_over_chunk_index():
 
 
 def test_kb_chat_v2_doc_key_requires_document_chunk_id():
-    try:
-        _doc_key({"metadata": {"document_id": 1, "chunk_index": 7}})
-    except ValueError as exc:
-        assert "document_chunk_id" in str(exc)
-    else:
-        raise AssertionError("expected _doc_key to reject missing document_chunk_id")
+    assert _doc_key({"metadata": {"source": "graph_summary", "normalized_name": "prescription flow"}}) == (
+        "summary",
+        "",
+        "prescription flow",
+    )
 
 
 def test_kb_chat_v2_route_raises_when_planner_fails():
