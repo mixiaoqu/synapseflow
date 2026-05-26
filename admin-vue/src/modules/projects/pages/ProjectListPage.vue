@@ -1,23 +1,44 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { Search } from "@element-plus/icons-vue";
+import { ElMessage } from "element-plus";
+import { Plus, Search } from "@element-plus/icons-vue";
 
-import { listProjects } from "@/shared/api/projects";
+import { createProduct, listProducts } from "@/shared/api/products";
+import { createProject, listProjects } from "@/shared/api/projects";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import { useTeamScopeStore } from "@/stores/team-scope";
 import { isForbiddenError } from "@/shared/utils/error";
-import type { ProjectSummary } from "@/shared/types/project";
+import type { ProductSummary, ProductUpsertPayload } from "@/shared/types/product";
+import type { ProjectSummary, ProjectUpsertPayload } from "@/shared/types/project";
 
 const router = useRouter();
 const teamScopeStore = useTeamScopeStore();
 
 const keyword = ref("");
 const projects = ref<ProjectSummary[]>([]);
+const products = ref<ProductSummary[]>([]);
 const loading = ref(false);
 const loadError = ref<unknown>(null);
+const createProductDialogVisible = ref(false);
+const createDialogVisible = ref(false);
+const creatingProduct = ref(false);
+const creating = ref(false);
+const createProductForm = ref({
+  name: "",
+  code: "",
+  description: "",
+  is_active: true,
+});
+const createForm = ref({
+  name: "",
+  code: "",
+  product_id: null as number | null,
+  description: "",
+  is_active: true,
+});
 
 const displayedProjects = computed(() => {
   const normalizedKeyword = keyword.value.trim().toLowerCase();
@@ -33,6 +54,27 @@ const displayedProjects = computed(() => {
 });
 
 const isForbidden = computed(() => Boolean(loadError.value) && isForbiddenError(loadError.value));
+const selectedTeamName = computed(() => teamScopeStore.selectedTeam?.name ?? "");
+const hasAvailableProducts = computed(() => products.value.length > 0);
+
+function resetCreateForm() {
+  createForm.value = {
+    name: "",
+    code: "",
+    product_id: products.value[0]?.id ?? null,
+    description: "",
+    is_active: true,
+  };
+}
+
+function resetCreateProductForm() {
+  createProductForm.value = {
+    name: "",
+    code: "",
+    description: "",
+    is_active: true,
+  };
+}
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -56,7 +98,10 @@ async function loadProjectList() {
   loadError.value = null;
 
   try {
-    projects.value = await listProjects(teamScopeStore.selectedTeamId ?? undefined);
+    const teamId = teamScopeStore.selectedTeamId ?? undefined;
+    const [projectList, productList] = await Promise.all([listProjects(teamId), listProducts(teamId)]);
+    projects.value = projectList;
+    products.value = productList;
   } catch (error) {
     loadError.value = error;
   } finally {
@@ -66,6 +111,113 @@ async function loadProjectList() {
 
 function openProjectApps(projectId: number) {
   void router.push(`/projects/${projectId}/apps`);
+}
+
+function openCreateProductDialog() {
+  if (!teamScopeStore.selectedTeamId) {
+    ElMessage.warning("请先选择所属团队，再创建产品。");
+    return;
+  }
+
+  resetCreateProductForm();
+  createProductDialogVisible.value = true;
+}
+
+function openCreateProjectDialog() {
+  if (!teamScopeStore.selectedTeamId) {
+    ElMessage.warning("请先选择所属团队，再创建项目。");
+    return;
+  }
+
+  if (!hasAvailableProducts.value) {
+    ElMessage.warning("当前团队下还没有可用产品，暂时无法创建项目。");
+    return;
+  }
+
+  resetCreateForm();
+  createDialogVisible.value = true;
+}
+
+async function submitCreateProduct() {
+  if (creatingProduct.value) {
+    return;
+  }
+
+  if (!teamScopeStore.selectedTeamId) {
+    ElMessage.warning("请先选择所属团队，再创建产品。");
+    return;
+  }
+
+  if (!createProductForm.value.name.trim() || !createProductForm.value.code.trim()) {
+    ElMessage.warning("请填写产品名称和产品编码。");
+    return;
+  }
+
+  creatingProduct.value = true;
+
+  try {
+    const payload: ProductUpsertPayload = {
+      team_id: teamScopeStore.selectedTeamId,
+      code: createProductForm.value.code.trim(),
+      name: createProductForm.value.name.trim(),
+      description: createProductForm.value.description.trim() || null,
+      is_active: createProductForm.value.is_active,
+    };
+    const created = await createProduct(payload);
+    ElMessage.success(`已创建产品“${created.name}”。`);
+    createProductDialogVisible.value = false;
+    await loadProjectList();
+    createForm.value.product_id = created.id;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "创建产品失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    creatingProduct.value = false;
+  }
+}
+
+async function submitCreateProject() {
+  if (creating.value) {
+    return;
+  }
+
+  if (!teamScopeStore.selectedTeamId) {
+    ElMessage.warning("请先选择所属团队，再创建项目。");
+    return;
+  }
+
+  if (!createForm.value.name.trim() || !createForm.value.code.trim()) {
+    ElMessage.warning("请填写项目名称和项目编码。");
+    return;
+  }
+
+  if (!createForm.value.product_id) {
+    ElMessage.warning("请选择所属产品。");
+    return;
+  }
+
+  creating.value = true;
+
+  try {
+    const payload: ProjectUpsertPayload = {
+      team_id: teamScopeStore.selectedTeamId,
+      product_id: createForm.value.product_id,
+      code: createForm.value.code.trim(),
+      name: createForm.value.name.trim(),
+      description: createForm.value.description.trim() || null,
+      is_active: createForm.value.is_active,
+    };
+    const created = await createProject(payload);
+    ElMessage.success(`已创建项目“${created.name}”。`);
+    createDialogVisible.value = false;
+    await loadProjectList();
+    await router.push(`/projects/${created.id}/apps`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "创建项目失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    creating.value = false;
+  }
 }
 
 onMounted(() => {
@@ -88,17 +240,28 @@ watch(
         <p class="project-list-page__description">先选择业务项目，再进入该项目下的发布渠道与接入配置。</p>
       </div>
 
-      <el-input
-        v-model="keyword"
-        size="large"
-        clearable
-        placeholder="搜索项目名称、编码或产品..."
-        class="project-list-page__search"
-      >
-        <template #prefix>
-          <el-icon><Search /></el-icon>
-        </template>
-      </el-input>
+      <div class="project-list-page__header-actions">
+        <el-input
+          v-model="keyword"
+          size="large"
+          clearable
+          placeholder="搜索项目名称、编码或产品..."
+          class="project-list-page__search"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+
+        <el-button size="large" @click="openCreateProductDialog">
+          <el-icon><Plus /></el-icon>
+          新建产品
+        </el-button>
+        <el-button type="primary" size="large" @click="openCreateProjectDialog">
+          <el-icon><Plus /></el-icon>
+          新建项目
+        </el-button>
+      </div>
     </header>
 
     <AppLoading
@@ -128,7 +291,10 @@ watch(
       v-else-if="displayedProjects.length === 0"
       title="暂无项目"
       description="当前筛选条件下没有可管理的业务项目。"
-    />
+    >
+      <el-button @click="openCreateProductDialog">新建产品</el-button>
+      <el-button type="primary" @click="openCreateProjectDialog">新建项目</el-button>
+    </AppEmpty>
 
     <section v-else class="project-list-page__table-panel">
       <el-table :data="displayedProjects" row-key="id" class="project-list-page__table">
@@ -181,6 +347,132 @@ watch(
         </el-table-column>
       </el-table>
     </section>
+
+    <el-dialog
+      v-model="createProductDialogVisible"
+      title="新建产品"
+      width="520px"
+      destroy-on-close
+    >
+      <el-form label-position="top" @submit.prevent="submitCreateProduct">
+        <el-form-item label="所属团队">
+          <el-input :model-value="selectedTeamName || '未选择团队'" disabled />
+        </el-form-item>
+        <el-form-item label="产品名称" required>
+          <el-input
+            v-model="createProductForm.name"
+            maxlength="100"
+            show-word-limit
+            placeholder="请输入产品名称"
+          />
+        </el-form-item>
+        <el-form-item label="产品编码" required>
+          <el-input
+            v-model="createProductForm.code"
+            maxlength="120"
+            show-word-limit
+            placeholder="请输入产品编码"
+          />
+        </el-form-item>
+        <el-form-item label="产品说明">
+          <el-input
+            v-model="createProductForm.description"
+            type="textarea"
+            :rows="4"
+            maxlength="500"
+            show-word-limit
+            placeholder="可选，补充说明这个产品的业务范围"
+          />
+        </el-form-item>
+        <el-form-item label="产品状态">
+          <el-switch
+            v-model="createProductForm.is_active"
+            inline-prompt
+            active-text="启用"
+            inactive-text="停用"
+          />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <div class="project-list-page__dialog-footer">
+          <el-button @click="createProductDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="creatingProduct" @click="submitCreateProduct">
+            创建产品
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="createDialogVisible"
+      title="新建项目"
+      width="520px"
+      destroy-on-close
+    >
+      <el-form label-position="top" @submit.prevent="submitCreateProject">
+        <el-form-item label="所属团队">
+          <el-input :model-value="selectedTeamName || '未选择团队'" disabled />
+        </el-form-item>
+        <el-form-item label="所属产品" required>
+          <el-select
+            v-model="createForm.product_id"
+            placeholder="请选择所属产品"
+            class="project-list-page__dialog-field"
+          >
+            <el-option
+              v-for="product in products"
+              :key="product.id"
+              :label="product.name"
+              :value="product.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="项目名称" required>
+          <el-input
+            v-model="createForm.name"
+            maxlength="100"
+            show-word-limit
+            placeholder="请输入项目名称"
+          />
+        </el-form-item>
+        <el-form-item label="项目编码" required>
+          <el-input
+            v-model="createForm.code"
+            maxlength="120"
+            show-word-limit
+            placeholder="请输入项目编码"
+          />
+        </el-form-item>
+        <el-form-item label="项目说明">
+          <el-input
+            v-model="createForm.description"
+            type="textarea"
+            :rows="4"
+            maxlength="500"
+            show-word-limit
+            placeholder="可选，补充说明这个项目的业务用途"
+          />
+        </el-form-item>
+        <el-form-item label="项目状态">
+          <el-switch
+            v-model="createForm.is_active"
+            inline-prompt
+            active-text="启用"
+            inactive-text="停用"
+          />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <div class="project-list-page__dialog-footer">
+          <el-button @click="createDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="creating" @click="submitCreateProject">
+            创建并进入配置
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
@@ -203,6 +495,14 @@ watch(
   padding: 16px 18px;
 }
 
+.project-list-page__header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .project-list-page__title {
   margin: 0;
   color: #0f172a;
@@ -220,6 +520,16 @@ watch(
 .project-list-page__search {
   width: 360px;
   max-width: 100%;
+}
+
+.project-list-page__dialog-field {
+  width: 100%;
+}
+
+.project-list-page__dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
 }
 
 .project-list-page__table-panel {
@@ -255,6 +565,10 @@ watch(
   .project-list-page__header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .project-list-page__header-actions {
+    justify-content: stretch;
   }
 
   .project-list-page__search {

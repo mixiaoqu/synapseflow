@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import type { FormInstance, FormRules } from "element-plus";
-import { ArrowLeft, Link, Plus, Setting } from "@element-plus/icons-vue";
+import { ArrowLeft, Link, Setting } from "@element-plus/icons-vue";
 
 import { listAssistants } from "@/shared/api/assistants";
 import { listKnowledgeBases } from "@/shared/api/knowledge-bases";
@@ -26,7 +26,7 @@ interface ProjectAppFormState {
   name: string;
   description: string;
   default_assistant_id: number | null;
-  knowledge_base_ids: number[];
+  knowledge_base_id: number | null;
   is_active: boolean;
 }
 
@@ -36,7 +36,7 @@ function createDefaultForm(): ProjectAppFormState {
     name: "",
     description: "",
     default_assistant_id: null,
-    knowledge_base_ids: [],
+    knowledge_base_id: null,
     is_active: true,
   };
 }
@@ -63,8 +63,6 @@ const pageLoading = ref(false);
 const pageError = ref<unknown>(null);
 const saveLoading = ref(false);
 const previewLoading = ref(false);
-const kbDialogVisible = ref(false);
-const tempSelectedKnowledgeBaseIds = ref<number[]>([]);
 const previewEmbedUrl = ref("");
 const codeEditedManually = ref(false);
 
@@ -83,20 +81,8 @@ const appId = computed(() => {
 const isCreateMode = computed(() => route.name === "project-app-create");
 const pageTitle = computed(() => (isCreateMode.value ? "新建发布渠道" : "编辑发布渠道"));
 
-const selectedKnowledgeBases = computed(() =>
-  form.knowledge_base_ids
-    .map((id) => knowledgeBases.value.find((item) => item.id === id))
-    .filter((item): item is KnowledgeBaseSummary => Boolean(item)),
-);
-
-const availableKnowledgeBases = computed(() =>
-  knowledgeBases.value.filter((item) => !tempSelectedKnowledgeBaseIds.value.includes(item.id)),
-);
-
-const temporarySelectedKnowledgeBases = computed(() =>
-  tempSelectedKnowledgeBaseIds.value
-    .map((id) => knowledgeBases.value.find((item) => item.id === id))
-    .filter((item): item is KnowledgeBaseSummary => Boolean(item)),
+const selectedKnowledgeBase = computed(() =>
+  knowledgeBases.value.find((item) => item.id === form.knowledge_base_id) ?? null,
 );
 
 const canGeneratePreview = computed(
@@ -115,7 +101,7 @@ function applyApp(app: ProjectAppSummary) {
   form.name = app.name;
   form.description = app.description ?? "";
   form.default_assistant_id = app.default_assistant_id;
-  form.knowledge_base_ids = app.bindings.map((item) => item.knowledge_base_id);
+  form.knowledge_base_id = app.knowledge_base_id;
   form.is_active = app.is_active;
 }
 
@@ -124,10 +110,8 @@ function buildPayload(): ProjectAppUpsertPayload {
     code: form.code.trim(),
     name: form.name.trim(),
     description: form.description.trim() || null,
+    knowledge_base_id: Number(form.knowledge_base_id),
     default_assistant_id: form.default_assistant_id,
-    bindings: form.knowledge_base_ids.map((id) => ({
-      knowledge_base_id: id,
-    })),
     is_active: form.is_active,
   };
 }
@@ -185,30 +169,6 @@ function handleCodeInput() {
   codeEditedManually.value = true;
 }
 
-function openKnowledgeBaseDialog() {
-  tempSelectedKnowledgeBaseIds.value = [...form.knowledge_base_ids];
-  kbDialogVisible.value = true;
-}
-
-function addKnowledgeBase(knowledgeBaseId: number) {
-  if (!tempSelectedKnowledgeBaseIds.value.includes(knowledgeBaseId)) {
-    tempSelectedKnowledgeBaseIds.value = [...tempSelectedKnowledgeBaseIds.value, knowledgeBaseId];
-  }
-}
-
-function removeTemporaryKnowledgeBase(knowledgeBaseId: number) {
-  tempSelectedKnowledgeBaseIds.value = tempSelectedKnowledgeBaseIds.value.filter((id) => id !== knowledgeBaseId);
-}
-
-function confirmKnowledgeBaseSelection() {
-  form.knowledge_base_ids = [...tempSelectedKnowledgeBaseIds.value];
-  kbDialogVisible.value = false;
-}
-
-function removeKnowledgeBase(knowledgeBaseId: number) {
-  form.knowledge_base_ids = form.knowledge_base_ids.filter((id) => id !== knowledgeBaseId);
-}
-
 async function handleSave() {
   if (!projectId.value || !formRef.value || saveLoading.value) {
     return;
@@ -223,8 +183,8 @@ async function handleSave() {
     return;
   }
 
-  if (form.knowledge_base_ids.length === 0) {
-    ElMessage.warning("请至少绑定一个知识库。");
+  if (!form.knowledge_base_id) {
+    ElMessage.warning("请选择一个知识库。");
     return;
   }
 
@@ -312,14 +272,6 @@ watch(
   },
 );
 
-watch(
-  () => previewEmbedUrl.value,
-  () => {
-    nextTick(() => {
-      // no-op placeholder to keep iframe refresh tied to reactive url updates
-    });
-  },
-);
 </script>
 
 <template>
@@ -441,32 +393,39 @@ watch(
 
             <h2 class="project-app-detail-page__section-title project-app-detail-page__section-title--with-action">
               <span>绑定知识库</span>
-              <el-button type="primary" link :icon="Plus" @click="openKnowledgeBaseDialog">
-                选择知识库
-              </el-button>
             </h2>
 
-            <div v-if="selectedKnowledgeBases.length > 0" class="project-app-detail-page__kb-list">
-              <div
-                v-for="item in selectedKnowledgeBases"
-                :key="item.id"
-                class="project-app-detail-page__kb-item"
+            <el-form-item label="知识库">
+              <el-select
+                v-model="form.knowledge_base_id"
+                placeholder="选择一个知识库"
+                class="project-app-detail-page__full"
               >
+                <el-option
+                  v-for="item in knowledgeBases"
+                  :key="item.id"
+                  :label="item.name"
+                  :value="item.id"
+                >
+                  <div class="project-app-detail-page__option-row">
+                    <span>{{ item.name }}</span>
+                    <span>{{ item.description?.trim() || "暂无说明" }}</span>
+                  </div>
+                </el-option>
+              </el-select>
+              <div class="project-app-detail-page__hint">
+                当前发布渠道绑定一个知识库。
+              </div>
+            </el-form-item>
+
+            <div v-if="selectedKnowledgeBase" class="project-app-detail-page__kb-list">
+              <div class="project-app-detail-page__kb-item">
                 <div class="project-app-detail-page__kb-copy">
-                  <strong>{{ item.name }}</strong>
-                  <span>{{ item.description?.trim() || "暂无说明" }}</span>
+                  <strong>{{ selectedKnowledgeBase.name }}</strong>
+                  <span>{{ selectedKnowledgeBase.description?.trim() || "暂无说明" }}</span>
                 </div>
-                <el-button link type="danger" @click="removeKnowledgeBase(item.id)">移除</el-button>
               </div>
             </div>
-
-            <AppEmpty
-              v-else
-              title="暂未绑定知识库"
-              description="当前发布渠道至少需要绑定一个知识库，才能在嵌入端提供 RAG 问答能力。"
-            >
-              <el-button type="primary" plain @click="openKnowledgeBaseDialog">选择知识库</el-button>
-            </AppEmpty>
           </el-form>
         </div>
       </section>
@@ -514,63 +473,6 @@ watch(
         </div>
       </section>
     </section>
-
-    <el-dialog
-      v-model="kbDialogVisible"
-      title="选择知识库"
-      width="760px"
-      destroy-on-close
-    >
-      <div class="project-app-detail-page__kb-dialog">
-        <section class="project-app-detail-page__kb-panel">
-          <header class="project-app-detail-page__kb-panel-header">可选知识库</header>
-          <div class="project-app-detail-page__kb-panel-body">
-            <div
-              v-for="item in availableKnowledgeBases"
-              :key="item.id"
-              class="project-app-detail-page__kb-pick-item"
-            >
-              <div class="project-app-detail-page__kb-copy">
-                <strong>{{ item.name }}</strong>
-                <span>{{ item.description?.trim() || "暂无说明" }}</span>
-              </div>
-              <el-button type="primary" link @click="addKnowledgeBase(item.id)">添加</el-button>
-            </div>
-          </div>
-        </section>
-
-        <section class="project-app-detail-page__kb-panel">
-          <header class="project-app-detail-page__kb-panel-header">已选知识库</header>
-          <div class="project-app-detail-page__kb-panel-body">
-            <div
-              v-for="item in temporarySelectedKnowledgeBases"
-              :key="item.id"
-              class="project-app-detail-page__kb-pick-item"
-            >
-              <div class="project-app-detail-page__kb-copy">
-                <strong>{{ item.name }}</strong>
-                <span>{{ item.description?.trim() || "暂无说明" }}</span>
-              </div>
-              <el-button link type="danger" @click="removeTemporaryKnowledgeBase(item.id)">移除</el-button>
-            </div>
-
-            <div
-              v-if="temporarySelectedKnowledgeBases.length === 0"
-              class="project-app-detail-page__kb-empty"
-            >
-              暂未选择知识库
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <template #footer>
-        <div class="project-app-detail-page__dialog-footer">
-          <el-button @click="kbDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="confirmKnowledgeBaseSelection">确认绑定</el-button>
-        </div>
-      </template>
-    </el-dialog>
   </section>
 </template>
 
@@ -801,52 +703,6 @@ watch(
   background: #ffffff;
 }
 
-.project-app-detail-page__kb-dialog {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
-}
-
-.project-app-detail-page__kb-panel {
-  display: flex;
-  min-height: 420px;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid #dbe2ea;
-  border-radius: 16px;
-  background: #ffffff;
-}
-
-.project-app-detail-page__kb-panel-header {
-  border-bottom: 1px solid #e2e8f0;
-  background: #f8fafc;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 700;
-  padding: 12px 14px;
-}
-
-.project-app-detail-page__kb-panel-body {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
-  padding: 12px;
-}
-
-.project-app-detail-page__kb-empty {
-  margin: auto;
-  color: #94a3b8;
-  font-size: 13px;
-}
-
-.project-app-detail-page__dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
-
 @media (max-width: 1280px) {
   .project-app-detail-page__layout {
     grid-template-columns: 1fr;
@@ -875,10 +731,6 @@ watch(
     display: flex;
     flex-direction: column;
     overflow: visible;
-  }
-
-  .project-app-detail-page__kb-dialog {
-    grid-template-columns: 1fr;
   }
 }
 </style>

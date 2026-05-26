@@ -1,7 +1,7 @@
 """project apps use single knowledge base
 
 Revision ID: ab1c2d3e4f5a
-Revises: 2c3d4e5f6a7b, ff7a8b9c0d1e
+Revises: 2c3d4e5f6a7b, ff7a8b9c0d1e, 4b5c6d7e8f9a
 Create Date: 2026-05-26 12:40:00.000000
 """
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "ab1c2d3e4f5a"
-down_revision = ("2c3d4e5f6a7b", "ff7a8b9c0d1e")
+down_revision = ("2c3d4e5f6a7b", "ff7a8b9c0d1e", "4b5c6d7e8f9a")
 branch_labels = None
 depends_on = None
 

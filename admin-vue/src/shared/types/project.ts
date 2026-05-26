@@ -14,13 +14,13 @@ export interface ProjectSummary {
   updated_at: string;
 }
 
-export interface ProjectAppKnowledgeBaseBinding {
-  knowledge_base_id: number;
-}
-
-export interface ProjectAppKnowledgeBaseBindingResponse
-  extends ProjectAppKnowledgeBaseBinding {
-  knowledge_base_name: string | null;
+export interface ProjectUpsertPayload {
+  team_id: number;
+  product_id: number;
+  code: string;
+  name: string;
+  description?: string | null;
+  is_active: boolean;
 }
 
 export interface ProjectAppSummary {
@@ -29,9 +29,10 @@ export interface ProjectAppSummary {
   code: string;
   name: string;
   description: string | null;
+  knowledge_base_id: number | null;
+  knowledge_base_name: string | null;
   default_assistant_id: number | null;
   default_assistant_name: string | null;
-  bindings: ProjectAppKnowledgeBaseBindingResponse[];
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -41,8 +42,8 @@ export interface ProjectAppUpsertPayload {
   code: string;
   name: string;
   description?: string | null;
+  knowledge_base_id: number;
   default_assistant_id?: number | null;
-  bindings: ProjectAppKnowledgeBaseBinding[];
   is_active: boolean;
 }
 

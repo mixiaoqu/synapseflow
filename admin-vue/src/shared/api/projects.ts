@@ -4,6 +4,7 @@ import type {
   ProjectAppSummary,
   ProjectAppUpsertPayload,
   ProjectSummary,
+  ProjectUpsertPayload,
 } from "@/shared/types/project";
 
 export function listProjects(teamId?: number) {
@@ -18,6 +19,14 @@ export function getProject(projectId: number) {
   return request<ProjectSummary>({
     url: `/projects/${projectId}`,
     method: "GET",
+  });
+}
+
+export function createProject(payload: ProjectUpsertPayload) {
+  return request<ProjectSummary>({
+    url: "/projects",
+    method: "POST",
+    data: payload,
   });
 }
 

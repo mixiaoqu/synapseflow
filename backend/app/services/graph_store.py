@@ -74,6 +74,8 @@ class GraphStore(Protocol):
 
     async def delete_document_graph(self, *, document_id: int) -> None: ...
 
+    async def delete_knowledge_base_graph(self, *, knowledge_base_id: int, team_id: int) -> None: ...
+
     async def upsert_chunk(self, chunk: GraphChunkRecord) -> None: ...
 
     async def upsert_chunks(self, chunks: list[GraphChunkRecord]) -> None: ...
@@ -157,6 +159,9 @@ class NullGraphStore:
     """No-op graph store used before a real Neo4j driver is wired in."""
 
     async def delete_document_graph(self, *, document_id: int) -> None:
+        return None
+
+    async def delete_knowledge_base_graph(self, *, knowledge_base_id: int, team_id: int) -> None:
         return None
 
     async def upsert_chunk(self, chunk: GraphChunkRecord) -> None:
@@ -290,6 +295,36 @@ class Neo4jGraphStore:
             DETACH DELETE c
             """,
             document_id=document_id,
+        )
+
+    async def delete_knowledge_base_graph(self, *, knowledge_base_id: int, team_id: int) -> None:
+        params = {"knowledge_base_id": knowledge_base_id, "team_id": team_id}
+        await self._run(
+            """
+            MATCH (s:EntitySummary)
+            WHERE s.team_id = $team_id
+              AND s.knowledge_base_id = $knowledge_base_id
+            DETACH DELETE s
+            """,
+            **params,
+        )
+        await self._run(
+            """
+            MATCH (e:Entity)
+            WHERE e.team_id = $team_id
+              AND e.knowledge_base_id = $knowledge_base_id
+            DETACH DELETE e
+            """,
+            **params,
+        )
+        await self._run(
+            """
+            MATCH (c:Chunk)
+            WHERE c.team_id = $team_id
+              AND c.knowledge_base_id = $knowledge_base_id
+            DETACH DELETE c
+            """,
+            **params,
         )
 
     async def upsert_chunk(self, chunk: GraphChunkRecord) -> None:
