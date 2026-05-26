@@ -9,6 +9,7 @@ from langgraph.graph import END, StateGraph
 from app.agents.nodes.kb_chat_v2 import (
     build_kb_chat_v2_answer_node,
     kb_chat_v2_analyze_node,
+    kb_chat_v2_entity_grounding_node,
     kb_chat_v2_evaluate_node,
     kb_chat_v2_retrieve_node,
     kb_chat_v2_rewrite_query_node,
@@ -41,6 +42,7 @@ def create_kb_chat_v2_graph(
 
     workflow.add_node("analyze", _analyze_node)
     workflow.add_node("rewrite_query", kb_chat_v2_rewrite_query_node)
+    workflow.add_node("entity_grounding", kb_chat_v2_entity_grounding_node)
     workflow.add_node("retrieve", kb_chat_v2_retrieve_node)
     workflow.add_node("evaluate", _evaluate_node)
     workflow.add_node("answer", build_kb_chat_v2_answer_node(llm_factory=answer_factory))
@@ -50,7 +52,8 @@ def create_kb_chat_v2_graph(
         _route_after_analyze,
         {"answer": "answer", "rewrite_query": "rewrite_query"},
     )
-    workflow.add_edge("rewrite_query", "retrieve")
+    workflow.add_edge("rewrite_query", "entity_grounding")
+    workflow.add_edge("entity_grounding", "retrieve")
     workflow.add_edge("retrieve", "evaluate")
     workflow.add_edge("evaluate", "answer")
     workflow.add_edge("answer", END)

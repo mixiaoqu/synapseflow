@@ -6,6 +6,8 @@ import asyncio
 from time import perf_counter
 from typing import Any
 
+from loguru import logger
+
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
 from app.agents.states import KbChatV2State
 from app.services.chat_memory import format_chat_history
@@ -14,6 +16,7 @@ from app.services.kb_text_retrieval import (
     run_kb_text_retrieval,
     run_multi_query_kb_text_retrieval,
 )
+from app.services.reranker import rerank
 
 
 def _doc_key(doc: dict[str, Any]) -> tuple[Any, ...]:
@@ -81,11 +84,203 @@ def _build_context(docs: list[dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
+def _build_rerank_text(doc: dict[str, Any]) -> str:
+    metadata = dict(doc.get("metadata") or {})
+    title = str(metadata.get("document_title") or "").strip()
+    section_path = str(metadata.get("section_path") or "").strip()
+    content = str(doc.get("content") or "").strip()
+    graph_evidence = str(metadata.get("graph_evidence") or metadata.get("graph_summary") or "").strip()
+
+    lines: list[str] = []
+    if title:
+        lines.append(f"[标题] {title}")
+    if section_path:
+        lines.append(f"[位置] {section_path}")
+    if content:
+        lines.append(f"[原文] {content}")
+    if graph_evidence:
+        lines.append(f"[图谱关系] {graph_evidence}")
+    return "\n".join(lines).strip() or content
+
+
+async def rerank_retrieved_docs(query: str, docs: list[dict[str, Any]], top_k: int) -> list[dict[str, Any]]:
+    if not docs:
+        return []
+    rerank_inputs = [
+        {
+            "chunk_text": str(doc.get("content") or ""),
+            "search_text": _build_rerank_text(doc),
+            "document_chunk_id": (doc.get("metadata") or {}).get("document_chunk_id"),
+            "_index": index,
+        }
+        for index, doc in enumerate(docs)
+    ]
+    reranked_rows = await rerank(query, rerank_inputs, top_k=top_k)
+    ordered_docs: list[dict[str, Any]] = []
+    seen_indexes: set[int] = set()
+    for row in reranked_rows:
+        index = row.get("_index")
+        if not isinstance(index, int) or index in seen_indexes or index >= len(docs):
+            continue
+        metadata = {**dict(docs[index].get("metadata") or {})}
+        if row.get("rerank_score") is not None:
+            metadata["rerank_score"] = row.get("rerank_score")
+        ordered_docs.append({"content": docs[index].get("content") or "", "metadata": metadata})
+        seen_indexes.add(index)
+    if len(ordered_docs) < min(top_k, len(docs)):
+        for index, doc in enumerate(docs):
+            if index in seen_indexes:
+                continue
+            ordered_docs.append(doc)
+            if len(ordered_docs) >= min(top_k, len(docs)):
+                break
+    return ordered_docs[:top_k]
+
+
+def _resolve_graph_mode_from_plan(graph_plan: dict[str, Any]) -> str | None:
+    explicit_mode = str(graph_plan.get("graph_mode") or "").strip()
+    if explicit_mode:
+        return explicit_mode
+
+    intent = str(graph_plan.get("intent") or "").strip().lower()
+    if intent == "entity_summary":
+        return "entity_summary"
+    if intent == "neighborhood_lookup":
+        return "neighborhood_summary"
+    if intent == "relation_lookup":
+        return "relation_evidence"
+    return None
+
+
+def _contains_business_signal(text: str) -> bool:
+    normalized = " ".join(str(text or "").split()).strip().lower()
+    if not normalized:
+        return False
+
+    keywords = (
+        "用于",
+        "用来",
+        "作用",
+        "用途",
+        "负责",
+        "影响",
+        "用于实现",
+        "配置后",
+        "会在",
+        "控制",
+        "决定",
+        "流程",
+        "步骤",
+        "规则",
+        "限制",
+        "依赖",
+        "触发",
+        "影响到",
+    )
+    return any(keyword in normalized for keyword in keywords)
+
+
+def _is_metadata_like(doc: dict[str, Any]) -> bool:
+    metadata = dict(doc.get("metadata") or {})
+    source = str(metadata.get("source") or "").strip()
+    content = str(doc.get("content") or "").strip()
+
+    if source == "graph_summary" and not _contains_business_signal(content):
+        return True
+
+    weak_keywords = (
+        "别名",
+        "alias",
+        "实体类型",
+        "类型",
+        "出现在",
+        "出现于",
+        "归属于",
+        "属于",
+        "数据库类型",
+        "database",
+    )
+    lowered = content.lower()
+    return any(keyword in lowered for keyword in weak_keywords) and not _contains_business_signal(content)
+
+
+def _classify_evidence(doc: dict[str, Any], *, question_type: str) -> str:
+    metadata = dict(doc.get("metadata") or {})
+    source = str(metadata.get("source") or "").strip()
+    content = str(doc.get("content") or "").strip()
+    document_chunk_id = metadata.get("document_chunk_id")
+
+    if _is_metadata_like(doc):
+        return "metadata"
+
+    if source == "graph_relation_summary":
+        return "supporting"
+
+    if source == "graph_summary":
+        return "supporting" if _contains_business_signal(content) else "metadata"
+
+    if source == "graph":
+        return "primary" if document_chunk_id is not None else "supporting"
+
+    if source in {"text_graph", "text", ""}:
+        return "primary"
+
+    return "primary"
+
+
+def _format_doc_for_layer(doc: dict[str, Any], *, index: int) -> str:
+    metadata = dict(doc.get("metadata") or {})
+    title = str(metadata.get("document_title") or f"Evidence {index}").strip()
+    section_path = str(metadata.get("section_path") or "").strip()
+    content = str(doc.get("content") or "").strip()
+    graph_evidence = str(metadata.get("graph_evidence") or metadata.get("graph_summary") or "").strip()
+
+    lines = [f"[{index}] {title}"]
+    if section_path:
+        lines.append(f"位置：{section_path}")
+    if content:
+        lines.append(content)
+    if graph_evidence and graph_evidence not in content:
+        lines.append(f"补充关系：{graph_evidence}")
+    return "\n".join(lines).strip()
+
+
+def _build_layer_context(docs: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for index, doc in enumerate(docs, start=1):
+        block = _format_doc_for_layer(doc, index=index)
+        if block:
+            parts.append(block)
+    return "\n\n".join(parts)
+
+
+def _compose_full_context(
+    *,
+    primary_context: str,
+    supporting_context: str,
+    metadata_context: str,
+) -> str:
+    sections: list[str] = []
+    if primary_context.strip():
+        sections.append(f"[Primary evidence]\n{primary_context.strip()}")
+    if supporting_context.strip():
+        sections.append(f"[Supporting evidence]\n{supporting_context.strip()}")
+    if metadata_context.strip():
+        sections.append(f"[Metadata]\n{metadata_context.strip()}")
+    return "\n\n".join(sections).strip()
+
+
 async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
     stream_writer = get_optional_stream_writer()
     if str(state.get("retrieval_strategy") or "").strip().lower() == "skip":
         return {
             "retrieved_docs": [],
+            "primary_evidence_docs": [],
+            "supporting_evidence_docs": [],
+            "metadata_evidence_docs": [],
+            "primary_context": "",
+            "supporting_context": "",
+            "metadata_context": "",
             "context": "",
             "retrieval_trace": {
                 "retrieval_strategy": "skip",
@@ -123,8 +318,10 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
     recall_k = int(text_plan.get("recall_k") or final_top_k)
     lexical_k = int(text_plan.get("lexical_k") or final_top_k)
     graph_limit = int(graph_plan.get("limit") or final_top_k)
+    graph_enabled = bool(graph_plan.get("enabled", True))
+    graph_mode = _resolve_graph_mode_from_plan(graph_plan)
     context_budget = int(context_plan.get("budget_chars") or 9000)
-    rerank_enabled = bool(rerank_plan.get("enabled", True))
+    rerank_enabled = bool(rerank_plan.get("enabled"))
     question_type = str(state.get("question_type") or "definition_lookup").strip().lower()
 
     common_kwargs = {
@@ -154,11 +351,15 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
         return await run_kb_text_retrieval(query=text_queries[0], **common_kwargs)
 
     async def _run_graph_retrieval() -> dict[str, Any]:
-        return await GraphRetriever().retrieve(
-            candidate_entities=list(state.get("candidate_entities") or []),
+        return await GraphRetriever(enabled=graph_enabled).retrieve(
             knowledge_base_id=int(state.get("knowledge_base_id") or 0),
             team_id=int(state.get("team_id") or 0),
+            candidate_entities=list(state.get("candidate_entities") or []),
+            grounded_entities=list(state.get("grounded_entities") or []),
+            relation_pairs=list(state.get("relation_pairs") or []),
+            relation_queries=list(state.get("relation_queries") or []),
             question_type=question_type,
+            graph_mode=graph_mode,
             limit=graph_limit,
         )
 
@@ -169,16 +370,46 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
     text_docs = list(text_result.get("retrieved_docs") or [])
     graph_docs = list(graph_result.get("retrieved_docs") or [])
     merge_started_at = perf_counter()
-    merged_docs = _merge_text_and_graph_docs(text_docs, graph_docs, final_top_k=final_top_k)
-    context = _build_context(merged_docs) or str(text_result.get("context") or "")
+    merged_docs = _merge_text_and_graph_docs(
+        text_docs,
+        graph_docs,
+        final_top_k=max(final_top_k, len(text_docs) + len(graph_docs)),
+    )
+    primary_docs: list[dict[str, Any]] = []
+    supporting_docs: list[dict[str, Any]] = []
+    metadata_docs: list[dict[str, Any]] = []
+    for doc in merged_docs:
+        layer = _classify_evidence(doc, question_type=question_type)
+        if layer == "primary":
+            primary_docs.append(doc)
+        elif layer == "supporting":
+            supporting_docs.append(doc)
+        else:
+            metadata_docs.append(doc)
+    reranked_primary_docs = (
+        await rerank_retrieved_docs(query, primary_docs, final_top_k)
+        if rerank_enabled
+        else primary_docs[:final_top_k]
+    )
+    primary_context = _build_layer_context(reranked_primary_docs)
+    supporting_context = _build_layer_context(supporting_docs)
+    metadata_context = _build_layer_context(metadata_docs)
+    context = _compose_full_context(
+        primary_context=primary_context,
+        supporting_context=supporting_context,
+        metadata_context=metadata_context,
+    )
     merge_latency_ms = int((perf_counter() - merge_started_at) * 1000)
     if format_chat_history(state.get("chat_history") or [], max_messages=4):
         text_result["chat_history"] = state.get("chat_history") or []
 
-    final_hits = len(merged_docs)
+    final_hits = len(reranked_primary_docs)
     text_trace = dict(text_result.get("retrieval_trace") or {})
     graph_trace = dict(graph_result.get("trace") or {})
     rerank_trace = dict(text_trace.get("rerank") or {})
+    rerank_trace["enabled_for_primary_evidence"] = rerank_enabled
+    rerank_trace["input_count"] = len(primary_docs)
+    rerank_trace["output_count"] = len(reranked_primary_docs)
     trace = {
         "retrieval_strategy": retrieval_strategy,
         "text": {
@@ -202,20 +433,48 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
         "execution_plan": execution_plan,
         "total_latency_ms": text_trace.get("total_latency_ms"),
         "merge_latency_ms": merge_latency_ms,
+        "primary_count": len(reranked_primary_docs),
+        "supporting_count": len(supporting_docs),
+        "metadata_count": len(metadata_docs),
         "text_evidence_count": len(
-            [doc for doc in merged_docs if (doc.get("metadata") or {}).get("source") != "graph"]
+            [doc for doc in reranked_primary_docs if (doc.get("metadata") or {}).get("source") != "graph"]
         ),
         "graph_evidence_count": len(
             [
                 doc
-                for doc in merged_docs
+                for doc in reranked_primary_docs
                 if (doc.get("metadata") or {}).get("source") in {"graph", "text_graph", "graph_summary", "graph_relation_summary"}
             ]
         ),
-        "final_context_docs": len(merged_docs),
+        "final_context_docs": len(reranked_primary_docs),
     }
+    logger.info(
+        "[KB Retrieve V2] done | strategy={} question_type={} text_queries={} candidate_entities={} grounded_entities={} relation_pairs={} relation_queries={} text_hits={} graph_hits={} graph_empty_reason={} primary_count={} supporting_count={} metadata_count={} final_hits={} graph_evidence_count={}",
+        retrieval_strategy,
+        question_type,
+        text_queries,
+        list(state.get("candidate_entities") or []),
+        list(state.get("grounded_entities") or []),
+        list(state.get("relation_pairs") or []),
+        list(state.get("relation_queries") or []),
+        len(text_docs),
+        graph_trace.get("graph_hits"),
+        graph_trace.get("empty_reason"),
+        len(reranked_primary_docs),
+        len(supporting_docs),
+        len(metadata_docs),
+        final_hits,
+        trace["graph_evidence_count"],
+    )
     return {
-        "retrieved_docs": merged_docs,
+        "retrieved_docs": reranked_primary_docs,
+        "reranked_primary_evidence_docs": reranked_primary_docs,
+        "primary_evidence_docs": reranked_primary_docs,
+        "supporting_evidence_docs": supporting_docs,
+        "metadata_evidence_docs": metadata_docs,
+        "primary_context": primary_context,
+        "supporting_context": supporting_context,
+        "metadata_context": metadata_context,
         "context": context,
         "retrieval_trace": trace,
     }

@@ -36,8 +36,11 @@ def test_extract_chunk_graph_parses_llm_json_into_records():
         }
         """
 
+    seen_prompts = []
+
     class FakeLLM:
         async def ainvoke(self, prompt: str):
+            seen_prompts.append(prompt)
             assert "ProjectApp 默认绑定 AssistantProfile" in prompt
             return FakeResponse()
 
@@ -62,6 +65,9 @@ def test_extract_chunk_graph_parses_llm_json_into_records():
         "ProjectApp",
         "AssistantProfile",
     ]
+    assert "PAGE" in seen_prompts[0]
+    assert "BUTTON" in seen_prompts[0]
+    assert "WORKFLOW" in seen_prompts[0]
     assert result.entities[0].attributes == {"owner": "平台组"}
     assert result.relations[0].source_normalized_name == "projectapp"
     assert result.relations[0].target_normalized_name == "assistantprofile"

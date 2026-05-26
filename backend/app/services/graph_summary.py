@@ -21,6 +21,17 @@ _FIXED_RELATION_KEYS = {
     "evidence",
 }
 
+_ENTITY_SUMMARY_TEMPLATE = (
+    "请按固定三句骨架生成摘要：\n"
+    "第一句：定义该实体是什么。\n"
+    "第二句：只写它在当前知识库中的核心角色或最关键用途，不要重复罗列关系。\n"
+    "第三句：写最重要的范围、约束、别名、状态；如果有 extra_attributes，请优先挑选最能补全实体理解的一两个点。\n"
+    "要求：\n"
+    "1. 只能基于提供的信息总结，不要补充外部知识。\n"
+    "2. 信息不足时允许只输出1-2句，不要为了凑满三句而编造内容。\n"
+    "3. 输出纯文本，不要 JSON，不要使用项目符号。"
+)
+
 
 def _coerce_text(content: Any) -> str:
     if isinstance(content, str):
@@ -48,6 +59,21 @@ def _extract_attribute_map(raw_props: dict[str, Any] | None) -> dict[str, Any]:
             continue
         attributes[attr_key] = value
     return attributes
+
+
+def _extract_raw_attribute_map(raw_value: Any) -> dict[str, Any]:
+    if not raw_value:
+        return {}
+    if isinstance(raw_value, dict):
+        return {str(key).strip(): value for key, value in raw_value.items() if str(key).strip()}
+    if isinstance(raw_value, str):
+        try:
+            parsed = json.loads(raw_value)
+        except Exception:
+            return {}
+        if isinstance(parsed, dict):
+            return {str(key).strip(): value for key, value in parsed.items() if str(key).strip()}
+    return {}
 
 
 def _normalize_summary_context(context: dict[str, Any]) -> dict[str, Any]:
@@ -89,12 +115,20 @@ def _normalize_summary_context(context: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
+    entity_attributes = _extract_attribute_map(context.get("entity_props"))
+    raw_attributes = _extract_raw_attribute_map(context.get("raw_attributes_json"))
+    extra_attributes = {
+        key: value
+        for key, value in raw_attributes.items()
+        if key and key not in entity_attributes
+    }
     return {
         "normalized_name": context.get("normalized_name"),
         "display_name": context.get("display_name"),
         "entity_type": context.get("entity_type"),
         "aliases": list(context.get("aliases") or []),
-        "attributes": _extract_attribute_map(context.get("entity_props")),
+        "attributes": entity_attributes,
+        "extra_attributes": extra_attributes,
         "mentions": mentions[:8],
         "relations": relations[:12],
     }
@@ -125,12 +159,7 @@ def build_entity_summary_prompt(context: dict[str, Any]) -> str:
     payload = _normalize_summary_context(context)
     return (
         "你是知识库图谱摘要器。\n"
-        "请仅根据输入内容，为该实体生成 1-3 句中文摘要。\n"
-        "要求：\n"
-        "1. 只能基于提供的信息总结，不要补充外部知识。\n"
-        "2. 优先说明该实体是什么、关键特征以及在当前知识库中的作用。\n"
-        "3. 如果信息不足，就如实保持简洁，不要猜测。\n"
-        "4. 输出纯文本，不要 JSON，不要使用项目符号。\n\n"
+        f"{_ENTITY_SUMMARY_TEMPLATE}\n\n"
         f"实体上下文：\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -158,11 +187,7 @@ def build_entity_summary_batch_prompt(contexts: list[dict[str, Any]]) -> str:
     payload = [_normalize_summary_context(context) for context in contexts]
     return (
         "你是知识库图谱摘要器。\n"
-        "请仅根据输入内容，为每个实体生成 1-3 句中文摘要。\n"
-        "要求：\n"
-        "1. 只能基于提供的信息总结，不要补充外部知识。\n"
-        "2. 优先说明实体是什么、关键特征以及在当前知识库中的作用。\n"
-        "3. 如果某个实体信息不足，就如实保持简洁，不要猜测。\n"
+        f"{_ENTITY_SUMMARY_TEMPLATE}\n"
         "4. 输出 JSON，不要输出 JSON 之外的文字。\n"
         "5. 每个结果必须保留输入中的 normalized_name。\n\n"
         "返回格式：\n"
@@ -351,6 +376,8 @@ async def refresh_relation_summaries(
                     "source_normalized_name": context.get("source_normalized_name"),
                     "target_normalized_name": context.get("target_normalized_name"),
                     "relation_type": context.get("relation_type"),
+                    "team_id": team_id,
+                    "knowledge_base_id": knowledge_base_id,
                     "summary": summary,
                 }
             )

@@ -38,6 +38,26 @@ def test_build_entity_summary_prompt_includes_context_payload():
     assert "ProjectApp" in prompt
     assert "平台组" in prompt
     assert "USES" in prompt
+    assert "固定三句骨架" in prompt
+    assert "不要重复罗列关系" in prompt
+
+
+def test_build_entity_summary_prompt_emphasizes_definition_role_scope():
+    prompt = build_entity_summary_prompt(
+        {
+            "normalized_name": "assistantprofile",
+            "display_name": "AssistantProfile",
+            "entity_type": "COMPONENT",
+            "aliases": [],
+            "entity_props": {},
+            "mentions": [],
+            "relations": [],
+        }
+    )
+
+    assert "第一句：定义该实体是什么" in prompt
+    assert "第二句：只写它在当前知识库中的核心角色或最关键用途" in prompt
+    assert "第三句：写最重要的范围、约束、别名、状态；如果有 extra_attributes" in prompt
 
 
 def test_refresh_entity_summaries_writes_generated_summary(monkeypatch):
@@ -255,6 +275,8 @@ def test_refresh_relation_summaries_writes_generated_summary(monkeypatch):
     assert calls[0] == ("list", 2, 1, 9)
     assert calls[1][0] == "upsert"
     assert calls[1][1][0]["summary"] == "ProjectApp 通过默认绑定使用 AssistantProfile。"
+    assert calls[1][1][0]["team_id"] == 1
+    assert calls[1][1][0]["knowledge_base_id"] == 2
 
 
 def test_refresh_relation_summaries_batches_contexts_and_reuses_llm(monkeypatch):
@@ -331,6 +353,8 @@ def test_refresh_relation_summaries_batches_contexts_and_reuses_llm(monkeypatch)
     assert [row["summary"] for row in calls[-1][1]] == [
         f"Relation {index} summary" for index in range(9)
     ]
+    assert all(row["team_id"] == 1 for row in calls[-1][1])
+    assert all(row["knowledge_base_id"] == 2 for row in calls[-1][1])
 
 
 def test_entity_and_relation_refresh_can_share_llm_instance(monkeypatch):

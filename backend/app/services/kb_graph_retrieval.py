@@ -29,6 +29,25 @@ def _normalize_entities(candidate_entities: list[str] | None) -> list[str]:
     return out
 
 
+def _normalize_grounded_entities(grounded_entities: list[dict[str, Any]] | None) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in list(grounded_entities or []):
+        if not isinstance(item, dict):
+            continue
+        value = " ".join(str(item.get("normalized_name") or item.get("display_name") or "").split()).strip()
+        if len(value) < 2:
+            continue
+        key = value.casefold()
+        if key in seen:
+            continue
+        out.append(value)
+        seen.add(key)
+        if len(out) >= 8:
+            break
+    return out
+
+
 def _resolve_graph_mode(question_type: str | None) -> str:
     normalized = str(question_type or "").strip().lower()
     if normalized in {"definition_lookup", "attribute_lookup"}:
@@ -176,10 +195,14 @@ class GraphRetriever:
     async def retrieve(
         self,
         *,
-        candidate_entities: list[str] | None,
         knowledge_base_id: int,
         team_id: int,
+        candidate_entities: list[str] | None = None,
+        grounded_entities: list[dict[str, Any]] | None = None,
+        relation_pairs: list[dict[str, Any]] | None = None,
+        relation_queries: list[dict[str, Any]] | None = None,
         question_type: str | None = None,
+        graph_mode: str | None = None,
         limit: int = 8,
     ) -> dict[str, Any]:
         """Retrieve graph evidence and return prompt-ready docs plus trace."""
@@ -189,22 +212,52 @@ class GraphRetriever:
         resolved_enabled = (
             graph_cfg.enabled if self._enabled is None else bool(self._enabled)
         )
-        entities = _normalize_entities(candidate_entities)
-        graph_mode = _resolve_graph_mode(question_type)
+        entities = _normalize_grounded_entities(grounded_entities) or _normalize_entities(candidate_entities)
+        resolved_relation_pairs = [dict(item) for item in list(relation_pairs or []) if isinstance(item, dict)]
+        resolved_relation_queries = [dict(item) for item in list(relation_queries or []) if isinstance(item, dict)]
+        resolved_graph_mode = str(graph_mode or "").strip() or _resolve_graph_mode(question_type)
+        logger.info(
+            "[KB Graph Retrieval] start | kb_id={} team_id={} question_type={} graph_mode={} enabled={} entities={} relation_pairs={} relation_queries={} limit={}",
+            knowledge_base_id,
+            team_id,
+            question_type or "-",
+            resolved_graph_mode,
+            resolved_enabled,
+            entities,
+            len(resolved_relation_pairs),
+            len(resolved_relation_queries),
+            limit,
+        )
         base_trace = {
             "graph_used": resolved_enabled,
-            "graph_mode": graph_mode,
+            "graph_mode": resolved_graph_mode,
             "entity_count": len(entities),
+            "relation_pair_count": len(resolved_relation_pairs),
+            "relation_query_count": len(resolved_relation_queries),
             "graph_hits": 0,
             "empty_reason": None,
             "error": None,
         }
         if not resolved_enabled:
+            logger.info(
+                "[KB Graph Retrieval] skip | reason=disabled graph_mode={} entities={} relation_pairs={} relation_queries={}",
+                resolved_graph_mode,
+                entities,
+                resolved_relation_pairs,
+                resolved_relation_queries,
+            )
             return {
                 "retrieved_docs": [],
                 "trace": {**base_trace, "empty_reason": "disabled", "latency_ms": 0},
             }
-        if not entities:
+        if not entities and not resolved_relation_pairs and not resolved_relation_queries:
+            logger.info(
+                "[KB Graph Retrieval] skip | reason=no_entities graph_mode={} entities={} relation_pairs={} relation_queries={}",
+                resolved_graph_mode,
+                entities,
+                resolved_relation_pairs,
+                resolved_relation_queries,
+            )
             return {
                 "retrieved_docs": [],
                 "trace": {**base_trace, "empty_reason": "no_entities", "latency_ms": 0},
@@ -213,7 +266,7 @@ class GraphRetriever:
         try:
             resolved_store = self._store or get_graph_store(require_indexing=False)
             tasks: list[tuple[str, Any]] = []
-            if graph_mode in {"entity_summary", "neighborhood_summary"}:
+            if resolved_graph_mode in {"entity_summary", "neighborhood_summary"}:
                 tasks.append(
                     (
                         "entity_summary",
@@ -224,7 +277,7 @@ class GraphRetriever:
                         ),
                     )
                 )
-            if graph_mode == "neighborhood_summary":
+            if resolved_graph_mode == "neighborhood_summary":
                 tasks.append(
                     (
                         "relation_summary",
@@ -234,7 +287,34 @@ class GraphRetriever:
                         ),
                     )
                 )
-            if graph_mode in {"relation_evidence", "neighborhood_summary"}:
+            if resolved_graph_mode in {"relation_evidence", "neighborhood_summary"}:
+                if resolved_relation_pairs:
+                    tasks.append(
+                        (
+                            "pair_evidence",
+                            resolved_store.search_relation_evidence_for_pairs(
+                                relation_pairs=resolved_relation_pairs,
+                                knowledge_base_id=knowledge_base_id,
+                                team_id=team_id,
+                                limit=limit,
+                            ),
+                        )
+                    )
+                if resolved_relation_queries:
+                    tasks.append(
+                        (
+                            "query_evidence",
+                            resolved_store.search_relation_evidence_for_queries(
+                                relation_queries=resolved_relation_queries,
+                                knowledge_base_id=knowledge_base_id,
+                                team_id=team_id,
+                                limit=limit,
+                            ),
+                        )
+                    )
+            if resolved_graph_mode in {"relation_evidence", "neighborhood_summary"} and not (
+                resolved_relation_pairs or resolved_relation_queries
+            ):
                 tasks.append(
                     (
                         "evidence",
@@ -246,6 +326,12 @@ class GraphRetriever:
                         ),
                     )
                 )
+            logger.debug(
+                "[KB Graph Retrieval] scheduled subtasks | mode={} task_count={} task_names={}",
+                resolved_graph_mode,
+                len(tasks),
+                [name for name, _task in tasks],
+            )
             if not tasks:
                 tasks.append(
                     (
@@ -258,6 +344,11 @@ class GraphRetriever:
                         ),
                     )
                 )
+            logger.debug(
+                "[KB Graph Retrieval] executing subtasks | mode={} task_names={}",
+                resolved_graph_mode,
+                [name for name, _task in tasks],
+            )
 
             results = await asyncio.gather(
                 *(task for _name, task in tasks),
@@ -286,6 +377,11 @@ class GraphRetriever:
                     first_error = str(result)
                 continue
             rows = list(result or [])
+            logger.debug(
+                "[KB Graph Retrieval] subtask result | mode={} rows={}",
+                name,
+                len(rows),
+            )
             if name == "entity_summary":
                 docs.extend(
                     _build_entity_summary_doc(dict(row), index)
@@ -300,13 +396,24 @@ class GraphRetriever:
                 )
             else:
                 docs.extend(
-                    _normalize_graph_row(dict(row), index + offset, graph_mode=graph_mode)
+                    _normalize_graph_row(dict(row), index + offset, graph_mode=resolved_graph_mode)
                     for offset, row in enumerate(rows)
                     if isinstance(row, dict)
                 )
 
         docs = [doc for doc in docs if str(doc.get("content") or "").strip()]
         docs = docs[: max(1, limit)]
+        logger.info(
+            "[KB Graph Retrieval] done | graph_mode={} graph_hits={} empty_reason={} error={} entities={} relation_pairs={} relation_queries={} latency_ms={}",
+            resolved_graph_mode,
+            len(docs),
+            None if docs else ("error" if had_errors else "no_hits"),
+            first_error or "-",
+            entities,
+            resolved_relation_pairs,
+            resolved_relation_queries,
+            int((perf_counter() - started_at) * 1000),
+        )
         return {
             "retrieved_docs": docs,
             "trace": {
@@ -321,20 +428,28 @@ class GraphRetriever:
 
 async def run_kb_graph_retrieval(
     *,
-    candidate_entities: list[str] | None,
     knowledge_base_id: int,
     team_id: int,
+    candidate_entities: list[str] | None = None,
+    grounded_entities: list[dict[str, Any]] | None = None,
+    relation_pairs: list[dict[str, Any]] | None = None,
+    relation_queries: list[dict[str, Any]] | None = None,
     store: GraphStore | None = None,
     enabled: bool | None = None,
     limit: int = 8,
     question_type: str | None = None,
+    graph_mode: str | None = None,
 ) -> dict[str, Any]:
     """Retrieve KB graph evidence through the graph retriever."""
 
     return await GraphRetriever(store=store, enabled=enabled).retrieve(
         candidate_entities=candidate_entities,
+        grounded_entities=grounded_entities,
+        relation_pairs=relation_pairs,
+        relation_queries=relation_queries,
         knowledge_base_id=knowledge_base_id,
         team_id=team_id,
         question_type=question_type,
+        graph_mode=graph_mode,
         limit=limit,
     )

@@ -44,8 +44,80 @@ def _build_rewrite_plan(question_type: str, retrieval_complexity: str) -> dict[s
     }
 
 
+def _build_graph_plan(
+    *,
+    question_type: str,
+    retrieval_strategy: str,
+    graph_limit: int,
+) -> dict[str, Any]:
+    if retrieval_strategy == "skip":
+        return {
+            "enabled": False,
+            "limit": 0,
+            "intent": None,
+            "graph_mode": None,
+            "requires_grounding": False,
+            "max_hops": 0,
+            "boost": "none",
+        }
+
+    if question_type == "relationship_lookup":
+        return {
+            "enabled": True,
+            "limit": graph_limit,
+            "intent": "relation_lookup",
+            "graph_mode": "relation_evidence",
+            "requires_grounding": True,
+            "max_hops": 1,
+            "boost": "high",
+        }
+
+    if question_type == "summary_lookup":
+        return {
+            "enabled": True,
+            "limit": graph_limit,
+            "intent": "neighborhood_lookup",
+            "graph_mode": "neighborhood_summary",
+            "requires_grounding": True,
+            "max_hops": 1,
+            "boost": "medium",
+        }
+
+    if question_type in {"attribute_lookup", "definition_lookup"}:
+        return {
+            "enabled": True,
+            "limit": graph_limit,
+            "intent": "entity_summary",
+            "graph_mode": "entity_summary",
+            "requires_grounding": True,
+            "max_hops": 0,
+            "boost": "low",
+        }
+
+    return {
+        "enabled": True,
+        "limit": graph_limit,
+        "intent": "relation_lookup",
+        "graph_mode": "relation_evidence",
+        "requires_grounding": True,
+        "max_hops": 1,
+        "boost": "medium",
+    }
+
+
+def _build_fusion_plan(*, question_type: str, retrieval_strategy: str) -> dict[str, Any]:
+    if retrieval_strategy == "skip":
+        return {"policy": "none", "graph_boost": "none"}
+    if question_type == "relationship_lookup":
+        return {"policy": "balanced", "graph_boost": "high"}
+    if question_type == "summary_lookup":
+        return {"policy": "text_primary", "graph_boost": "medium"}
+    return {"policy": "text_primary", "graph_boost": "low"}
+
+
 def _build_retrieval_plan(
     *,
+    question_type: str,
     retrieval_strategy: str,
     retrieval_complexity: str,
     final_top_k: int,
@@ -56,22 +128,32 @@ def _build_retrieval_plan(
     context_budget: int,
     rerank_enabled: bool,
 ) -> dict[str, Any]:
+    graph_plan = _build_graph_plan(
+        question_type=question_type,
+        retrieval_strategy=retrieval_strategy,
+        graph_limit=graph_limit,
+    )
+    fusion_plan = _build_fusion_plan(
+        question_type=question_type,
+        retrieval_strategy=retrieval_strategy,
+    )
     if retrieval_strategy == "skip":
         return {
             "retrieval_strategy": "skip",
             "channels": {
                 "text": {"enabled": False, "recall_k": 0, "lexical_k": 0},
-                "graph": {"enabled": False, "limit": 0},
+                "graph": graph_plan,
             },
             "rerank": {"enabled": False, "top_k": 0},
             "context": {"final_top_k": 0, "budget_chars": 0, "llm_reference_top_k": 0},
+            "fusion": fusion_plan,
         }
 
     return {
         "retrieval_strategy": "parallel_fusion",
         "channels": {
             "text": {"enabled": True, "recall_k": recall_k, "lexical_k": lexical_k},
-            "graph": {"enabled": True, "limit": graph_limit},
+            "graph": graph_plan,
         },
         "rerank": {"enabled": rerank_enabled, "top_k": final_top_k},
         "context": {
@@ -80,6 +162,7 @@ def _build_retrieval_plan(
             "llm_reference_top_k": llm_reference_top_k,
         },
         "retrieval_complexity": retrieval_complexity,
+        "fusion": fusion_plan,
     }
 
 
@@ -101,10 +184,18 @@ def build_kb_chat_v2_execution_plan(
             "retrieval_strategy": "skip",
             "channels": {
                 "text": {"enabled": False, "recall_k": 0, "lexical_k": 0},
-                "graph": {"enabled": False, "limit": 0},
+                "graph": _build_graph_plan(
+                    question_type=question_type,
+                    retrieval_strategy=retrieval_strategy,
+                    graph_limit=0,
+                ),
             },
             "rerank": {"enabled": False, "top_k": 0},
             "context": {"final_top_k": 0, "budget_chars": 0, "llm_reference_top_k": 0},
+            "fusion": _build_fusion_plan(
+                question_type=question_type,
+                retrieval_strategy=retrieval_strategy,
+            ),
         }
 
     retrieval_cfg = config_registry.get_rag_config().retrieval
@@ -118,6 +209,7 @@ def build_kb_chat_v2_execution_plan(
     return {
         "rewrite": _build_rewrite_plan(question_type, retrieval_complexity),
         **_build_retrieval_plan(
+            question_type=question_type,
             retrieval_strategy=retrieval_strategy,
             retrieval_complexity=retrieval_complexity,
             final_top_k=final_top_k,
@@ -174,6 +266,18 @@ async def kb_chat_v2_analyze_node(
         "route_trace": {"latency_ms": route_latency_ms},
         "retrieval_execution_plan": execution_plan,
         "plan_trace": {"latency_ms": plan_latency_ms},
+        "graph_enabled": bool((((execution_plan.get("channels") or {}).get("graph") or {}).get("enabled"))),
+        "graph_intent": (((execution_plan.get("channels") or {}).get("graph") or {}).get("intent")),
+        "graph_mode": (((execution_plan.get("channels") or {}).get("graph") or {}).get("graph_mode")),
+        "graph_requires_grounding": bool(
+            (((execution_plan.get("channels") or {}).get("graph") or {}).get("requires_grounding"))
+        ),
+        "graph_max_hops": int(
+            (((execution_plan.get("channels") or {}).get("graph") or {}).get("max_hops") or 0)
+        ),
+        "graph_budget": int((((execution_plan.get("channels") or {}).get("graph") or {}).get("limit") or 0)),
+        "fusion_policy": (((execution_plan.get("fusion") or {}).get("policy"))),
+        "graph_boost": (((execution_plan.get("fusion") or {}).get("graph_boost"))),
     }
     if not route["retrieval_required"]:
         result.update(

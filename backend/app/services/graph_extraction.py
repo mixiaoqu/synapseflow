@@ -31,6 +31,13 @@ def _coerce_text(content: Any) -> str:
     return str(content or "")
 
 
+_ENTITY_ATTRIBUTE_GUIDANCE = """实体 attributes 只存该实体自身的稳定结构化事实,只保留实体类型专属属性。
+例如 PAGE 的 route/title/module，MENU 的 title/path/parent，FORM 的 title/fields/submit_label/validation，TABLE 的 title/columns/actions/data_source，LIST 的 title/item_label/filter/sort，BUTTON 的 label/action/permission/target，DIALOG 的 title/trigger/confirm_text/cancel_text，WORKFLOW 的 name/steps/start/end，STEP 的 name/order/action/status，ROLE 的 name/description/permissions，PERMISSION 的 code/name/description，STATUS 的 value/meaning/type，BUSINESS_OBJECT 的 name/description/category，API 的 method/path/route，CONFIG 的 key/default_value，PERSON 的 name/role/company/age/weight/height，PRODUCT 的 brand/sku/price/spec。
+
+如果没有明确、可直接确认的稳定属性，可以返回空对象。
+属性 key 要简短且有业务含义，值尽量保持短文本、枚举值或可直接比较的结构化值。"""
+
+
 def _build_graph_extraction_prompt(
     *,
     chunk: GraphChunkRecord,
@@ -45,6 +52,7 @@ def _build_graph_extraction_prompt(
 2. 关系不明确时不要强行生成。
 3. 输出必须是 JSON。
 4. 如果没有结果，返回空数组。
+5. 实体的 attributes 只写稳定结构化事实，不要写关系、路径、原文长句或临时推断。
 
 允许的实体类型：
 - SYSTEM
@@ -53,6 +61,19 @@ def _build_graph_extraction_prompt(
 - FEATURE
 - COMPONENT
 - CONFIG
+- PAGE
+- MENU
+- FORM
+- TABLE
+- LIST
+- BUTTON
+- DIALOG
+- WORKFLOW
+- STEP
+- PERMISSION
+- ROLE
+- STATUS
+- BUSINESS_OBJECT
 - DATABASE
 - API
 - SERVICE
@@ -76,10 +97,13 @@ def _build_graph_extraction_prompt(
    "entities": [
     {{"name": "实体名", "type": "实体类型", "aliases": ["别名"], "attributes": {{"key": "value"}}, "evidence": "证据"}}
    ],
-   "relations": [
-    {{"source": "实体A", "target": "实体B", "type": "关系类型", "attributes": {{"key": "value"}}, "evidence": "证据"}}
-   ]
- }}
+  "relations": [
+     {{"source": "实体A", "target": "实体B", "type": "关系类型", "attributes": {{"key": "value"}}, "evidence": "证据"}}
+    ]
+  }}
+
+属性规则：
+{_ENTITY_ATTRIBUTE_GUIDANCE}
 
 document_id: {chunk.document_id}
 document_chunk_id: {chunk.document_chunk_id}
@@ -199,6 +223,7 @@ def _build_graph_extraction_batch_prompt(
 3. 关系不明确时不要强行生成。
 4. 输出必须是 JSON。
 5. 如果某个 chunk 没有结果，它的 entities 和 relations 返回空数组。
+6. 实体的 attributes 只写稳定结构化事实，不要写关系、路径、原文长句或临时推断。
 
 允许的实体类型：
 - SYSTEM
@@ -207,6 +232,19 @@ def _build_graph_extraction_batch_prompt(
 - FEATURE
 - COMPONENT
 - CONFIG
+- PAGE
+- MENU
+- FORM
+- TABLE
+- LIST
+- BUTTON
+- DIALOG
+- WORKFLOW
+- STEP
+- PERMISSION
+- ROLE
+- STATUS
+- BUSINESS_OBJECT
 - DATABASE
 - API
 - SERVICE
@@ -239,6 +277,9 @@ def _build_graph_extraction_batch_prompt(
     }}
   ]
 }}
+
+属性规则：
+{_ENTITY_ATTRIBUTE_GUIDANCE}
 
 chunks:
 {json.dumps(chunks_payload, ensure_ascii=False)}

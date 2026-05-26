@@ -224,6 +224,26 @@ def _graph_extraction_metadata(extraction: ChunkGraphExtraction) -> dict[str, An
     }
 
 
+def _build_graph_write_preview(
+    entities: Sequence[GraphEntityRecord],
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    preview: list[dict[str, Any]] = []
+    for entity in entities[: max(0, limit)]:
+        preview.append(
+            {
+                "normalized_name": entity.normalized_name,
+                "display_name": entity.display_name,
+                "team_id": entity.team_id,
+                "knowledge_base_id": entity.knowledge_base_id,
+                "document_id": entity.document_id,
+                "document_chunk_id": entity.document_chunk_id,
+            }
+        )
+    return preview
+
+
 async def index_document(
     db: AsyncSession,
     doc_id: int,
@@ -438,6 +458,21 @@ async def index_document_graph(
         len(mention_rows),
         len(relation_records),
     )
+    logger.bind(document_pipeline_log=True).info(
+        "[文档管线] 图谱写入前 doc_id={} team_id={} knowledge_base_id={} chunks={} entities={} mentions={} relations={}",
+        document_id,
+        int(document_scope.team_id),
+        int(document_scope.knowledge_base_id),
+        len(chunk_records),
+        len(entity_records),
+        len(mention_rows),
+        len(relation_records),
+    )
+    logger.bind(document_pipeline_log=True).info(
+        "[文档管线] 图谱写入前实体样本 doc_id={} sample={}",
+        document_id,
+        _build_graph_write_preview(list(entity_records.values())),
+    )
     summary = await indexer.index_batch_graph(
         chunks=chunk_records,
         entities=list(entity_records.values()),
@@ -578,6 +613,16 @@ async def index_document_graph_chunks(
             chunk=chunk,
             entities=extracted.entities,
             relations=extracted.relations,
+        )
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 图谱 chunk 写入前 doc_id={} chunk_id={} team_id={} knowledge_base_id={} entities={} relations={} entity_sample={}",
+            document_id,
+            chunk.document_chunk_id,
+            int(chunk.team_id),
+            int(chunk.knowledge_base_id),
+            len(normalized.entities),
+            len(normalized.relations),
+            _build_graph_write_preview(list(normalized.entities)),
         )
         chunk_summary = await indexer.index_chunk_graph(
             chunk=chunk,

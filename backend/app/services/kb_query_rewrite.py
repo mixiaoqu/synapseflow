@@ -231,7 +231,7 @@ async def build_kb_chat_retrieval_queries(
     retrieval_label: str = "standard",
     max_queries: int | None = None,
     strategies: list[str] | None = None,
-) -> dict[str, list[str]]:
+) -> dict[str, Any]:
     """Build retrieval-focused queries for single-round KB chat."""
 
     del strategies
@@ -239,7 +239,14 @@ async def build_kb_chat_retrieval_queries(
 
     original = _normalize_query(query)
     if not original:
-        return {"queries": [], "candidate_entities": []}
+        return {
+            "queries": [],
+            "candidate_entities": [],
+            "relation_pairs": [],
+            "relation_queries": [],
+            "target_attributes": [],
+            "entity_constraints": {},
+        }
 
     limit = max(1, min(max_queries or _MAX_RETRIEVAL_QUERIES, _MAX_RETRIEVAL_QUERIES))
     protected_tokens = _extract_protected_tokens(original)
@@ -284,7 +291,26 @@ async def build_kb_chat_retrieval_queries(
         return {
             "queries": validated or fallback or [original],
             "candidate_entities": _dedupe_keep_order(llm_entities, limit=8),
+            "relation_pairs": list(parsed.get("relation_pairs") or []),
+            "relation_queries": list(parsed.get("relation_queries") or []),
+            "target_attributes": [
+                _normalize_query(item)
+                for item in list(parsed.get("target_attributes") or [])
+                if isinstance(item, str) and _normalize_query(item)
+            ],
+            "entity_constraints": (
+                dict(parsed.get("entity_constraints") or {})
+                if isinstance(parsed.get("entity_constraints"), dict)
+                else {}
+            ),
         }
     except Exception as exc:
         logger.warning("KB chat query rewrite failed, fallback to backup queries: {}", exc)
-        return {"queries": fallback or [original], "candidate_entities": []}
+        return {
+            "queries": fallback or [original],
+            "candidate_entities": [],
+            "relation_pairs": [],
+            "relation_queries": [],
+            "target_attributes": [],
+            "entity_constraints": {},
+        }

@@ -77,6 +77,55 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
     assert normalized.relations == []
 
 
+def test_normalize_chunk_graph_keeps_only_type_specific_entity_attributes():
+    chunk = GraphChunkRecord(
+        team_id=1,
+        knowledge_base_id=2,
+        document_id=1,
+        document_chunk_id=11,
+        document_title="按钮",
+        section_path="说明",
+    )
+    entities = [
+        GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=2,
+            document_id=1,
+            document_chunk_id=11,
+            normalized_name="submit-button",
+            display_name="提交按钮",
+            entity_type="BUTTON",
+            aliases=(),
+            attributes={
+                "label": "提交",
+                "action": "submit",
+                "permission": "project:edit",
+                "target": "保存项目",
+                "meaning": "should drop",
+                "owner": "平台组",
+            },
+            evidence="提交按钮用于提交表单",
+        )
+    ]
+
+    normalized = normalize_chunk_graph(chunk=chunk, entities=entities, relations=[])
+
+    assert normalized.entities[0].attributes == {
+        "label": "提交",
+        "action": "submit",
+        "permission": "project:edit",
+        "target": "保存项目",
+    }
+    assert normalized.entities[0].raw_attributes == {
+        "label": "提交",
+        "action": "submit",
+        "permission": "project:edit",
+        "target": "保存项目",
+        "meaning": "should drop",
+        "owner": "平台组",
+    }
+
+
 def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
     chunk = GraphChunkRecord(
         team_id=1,
@@ -96,7 +145,7 @@ def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
             display_name="ProjectApp",
             entity_type="COMPONENT",
             aliases=(),
-            attributes={"owner": "平台组"},
+            attributes={"module": "项目管理"},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         ),
         GraphEntityRecord(
@@ -108,7 +157,7 @@ def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
             display_name="AssistantProfile",
             entity_type="COMPONENT",
             aliases=(),
-            attributes={"scope": "default"},
+            attributes={"module_path": "/admin/projects"},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         ),
     ]

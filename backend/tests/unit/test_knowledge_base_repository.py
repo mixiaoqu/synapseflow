@@ -26,34 +26,20 @@ class _FakeSession:
 async def test_delete_knowledge_base_removes_documents_before_deleting_kb(monkeypatch):
     db = _FakeSession()
     repo = KnowledgeBaseRepository(db, user_id=7)
-    knowledge_base = SimpleNamespace(id=12)
+    knowledge_base = SimpleNamespace(id=12, team_id=34)
     graph_events = []
 
     async def fake_get_by_id(knowledge_base_id: int):
         assert knowledge_base_id == 12
         return knowledge_base
 
-    class _Scalars:
-        def all(self):
-            return [101, 102]
-
-    class _ExecuteResult:
-        def scalars(self):
-            return _Scalars()
-
     async def fake_execute(statement):
         db.executed.append(statement)
-        text = str(statement)
-        if "SELECT documents.id" in text:
-            return _ExecuteResult()
         return None
 
     class FakeStore:
-        async def delete_document_graph(self, *, document_id):
-            graph_events.append(("delete", document_id))
-
-        async def prune_orphan_entities(self):
-            graph_events.append(("prune",))
+        async def delete_knowledge_base_graph(self, *, knowledge_base_id, team_id):
+            graph_events.append(("delete_kb", knowledge_base_id, team_id))
 
     monkeypatch.setattr(repo, "get_by_id", fake_get_by_id)
     monkeypatch.setattr(db, "execute", fake_execute)
@@ -69,11 +55,10 @@ async def test_delete_knowledge_base_removes_documents_before_deleting_kb(monkey
     ok = await repo.delete(12)
 
     assert ok is True
-    assert graph_events == [("delete", 101), ("delete", 102), ("prune",)]
-    assert len(db.executed) == 3
-    assert "SELECT documents.id" in str(db.executed[0])
-    assert "DELETE FROM documents" in str(db.executed[1])
-    assert "documents.knowledge_base_id = :knowledge_base_id_1" in str(db.executed[1])
+    assert graph_events == [("delete_kb", 12, 34)]
+    assert len(db.executed) == 1
+    assert "DELETE FROM documents" in str(db.executed[0])
+    assert "documents.knowledge_base_id = :knowledge_base_id_1" in str(db.executed[0])
     assert db.deleted == [knowledge_base]
     assert db.commits == 1
 

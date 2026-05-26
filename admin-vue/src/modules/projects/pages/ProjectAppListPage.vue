@@ -80,10 +80,8 @@ function buildUpdatePayload(app: ProjectAppSummary, isActive: boolean): ProjectA
     code: app.code,
     name: app.name,
     description: app.description,
+    knowledge_base_id: app.knowledge_base_id ?? 0,
     default_assistant_id: app.default_assistant_id,
-    bindings: app.bindings.map((item) => ({
-      knowledge_base_id: item.knowledge_base_id,
-    })),
     is_active: isActive,
   };
 }
@@ -345,7 +343,7 @@ watch(
                 助手：{{ row.default_assistant_name || "未绑定" }}
               </el-tag>
               <el-tag size="small" type="info" effect="light">
-                知识库：{{ row.bindings.length }} 个
+                知识库：{{ row.knowledge_base_name || "未绑定" }}
               </el-tag>
             </div>
           </template>

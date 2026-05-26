@@ -131,3 +131,38 @@ def test_upsert_relations_scopes_related_identity_by_team_and_knowledge_base():
     assert "source_normalized_name: row.source_normalized_name" in query
     assert "target_normalized_name: row.target_normalized_name" in query
     assert "relation_type: row.relation_type" in query
+
+
+def test_delete_knowledge_base_graph_detaches_scoped_summary_entity_and_chunk_nodes():
+    calls = []
+    store = object.__new__(graph_store.Neo4jGraphStore)
+
+    async def fake_run(query, **params):
+        calls.append((query, params))
+
+    store._run = fake_run
+
+    asyncio.run(store.delete_knowledge_base_graph(knowledge_base_id=2, team_id=1))
+
+    assert len(calls) == 3
+
+    summary_query, summary_params = calls[0]
+    assert "MATCH (s:EntitySummary)" in summary_query
+    assert "s.team_id = $team_id" in summary_query
+    assert "s.knowledge_base_id = $knowledge_base_id" in summary_query
+    assert "DETACH DELETE s" in summary_query
+    assert summary_params == {"knowledge_base_id": 2, "team_id": 1}
+
+    entity_query, entity_params = calls[1]
+    assert "MATCH (e:Entity)" in entity_query
+    assert "e.team_id = $team_id" in entity_query
+    assert "e.knowledge_base_id = $knowledge_base_id" in entity_query
+    assert "DETACH DELETE e" in entity_query
+    assert entity_params == {"knowledge_base_id": 2, "team_id": 1}
+
+    chunk_query, chunk_params = calls[2]
+    assert "MATCH (c:Chunk)" in chunk_query
+    assert "c.team_id = $team_id" in chunk_query
+    assert "c.knowledge_base_id = $knowledge_base_id" in chunk_query
+    assert "DETACH DELETE c" in chunk_query
+    assert chunk_params == {"knowledge_base_id": 2, "team_id": 1}

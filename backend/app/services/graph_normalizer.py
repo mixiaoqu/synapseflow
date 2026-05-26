@@ -25,6 +25,148 @@ _GENERIC_ENTITY_NAMES = {
     "模块",
     "页面",
 }
+_ENTITY_TYPE_ATTRIBUTE_KEYS = {
+    "API": {
+        "method",
+        "path",
+        "request_method",
+        "route",
+        "route_name",
+        "route_path",
+    },
+    "COMPONENT": {
+        "module",
+        "module_path",
+        "route",
+        "route_name",
+        "route_path",
+    },
+    "CONFIG": {
+        "module",
+        "module_path",
+    },
+    "MENU": {
+        "title",
+        "path",
+        "parent",
+    },
+    "FORM": {
+        "title",
+        "fields",
+        "submit_label",
+        "validation",
+    },
+    "TABLE": {
+        "title",
+        "columns",
+        "actions",
+        "data_source",
+    },
+    "LIST": {
+        "title",
+        "item_label",
+        "filter",
+        "sort",
+    },
+    "DATABASE": {
+        "table_name",
+        "table_type",
+    },
+    "DOCUMENT": {
+        "page",
+        "section",
+        "title",
+    },
+    "FEATURE": {
+        "module",
+        "module_path",
+        "route",
+        "route_name",
+        "route_path",
+    },
+    "WORKFLOW": {
+        "name",
+        "steps",
+        "start",
+        "end",
+    },
+    "STEP": {
+        "name",
+        "order",
+        "action",
+        "status",
+    },
+    "MODULE": {
+        "module",
+        "module_path",
+        "route",
+        "route_name",
+        "route_path",
+    },
+    "PERMISSION": {
+        "code",
+        "name",
+        "description",
+    },
+    "PAGE": {
+        "route",
+        "route_name",
+        "route_path",
+        "title",
+        "module",
+    },
+    "BUTTON": {
+        "label",
+        "action",
+        "permission",
+        "target",
+    },
+    "DIALOG": {
+        "title",
+        "trigger",
+        "confirm_text",
+        "cancel_text",
+    },
+    "SERVICE": {
+        "module",
+        "module_path",
+        "route",
+        "route_name",
+        "route_path",
+    },
+    "ROLE": {
+        "name",
+        "description",
+        "permissions",
+    },
+    "STATUS": {
+        "value",
+        "meaning",
+        "type",
+    },
+    "PERSON": {
+        "name",
+        "role",
+        "company",
+        "age",
+        "weight",
+        "height",
+    },
+    "TEAM": {
+        "role",
+    },
+    "BUSINESS_OBJECT": {
+        "name",
+        "description",
+        "category",
+    },
+    "PRODUCT": {
+        "brand",
+        "sku",
+        "price",
+        "spec",
+    },
+}
 
 
 def _clean_text(value: str) -> str:
@@ -44,6 +186,41 @@ def _is_noise_entity(name: str) -> bool:
     if cleaned in _GENERIC_ENTITY_NAMES:
         return True
     return False
+
+
+def _allowed_entity_attribute_keys(entity_type: str) -> set[str]:
+    return set(_ENTITY_TYPE_ATTRIBUTE_KEYS.get(_clean_text(entity_type or "OTHER").upper(), set()))
+
+
+def _clean_entity_attributes(
+    raw_attributes: dict[str, object] | None,
+    *,
+    entity_type: str | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    if not raw_attributes:
+        return {}, {}
+    attributes: dict[str, object] = {}
+    extras: dict[str, object] = {}
+    allowed_keys = _allowed_entity_attribute_keys(entity_type) if entity_type else set()
+    for key, value in raw_attributes.items():
+        cleaned_key = _clean_text(str(key)).casefold()
+        if not cleaned_key:
+            continue
+        target = attributes if cleaned_key in allowed_keys else extras
+        if isinstance(value, str):
+            cleaned_value = _clean_text(value)
+            if cleaned_value:
+                target[cleaned_key] = cleaned_value
+            continue
+        if isinstance(value, (int, float, bool)):
+            target[cleaned_key] = value
+            continue
+        if value is None:
+            continue
+        cleaned_value = _clean_text(str(value))
+        if cleaned_value:
+            target[cleaned_key] = cleaned_value
+    return attributes, extras
 
 
 def _clean_attributes(raw_attributes: dict[str, object] | None) -> dict[str, object]:
@@ -91,6 +268,8 @@ def normalize_chunk_graph(
         )
         deduped_entities.setdefault(
             normalized_name,
+            # Keep raw entity attributes for summary generation, but only
+            # persist the filtered subset as node properties.
             GraphEntityRecord(
                 team_id=chunk.team_id,
                 knowledge_base_id=chunk.knowledge_base_id,
@@ -100,8 +279,9 @@ def normalize_chunk_graph(
                 display_name=display_name,
                 entity_type=_clean_text(entity.entity_type or "OTHER") or "OTHER",
                 aliases=cleaned_aliases,
-                attributes=_clean_attributes(entity.attributes),
+                attributes=_clean_entity_attributes(entity.attributes, entity_type=entity.entity_type)[0],
                 evidence=_clean_text(entity.evidence),
+                raw_attributes=dict(entity.attributes or {}),
             ),
         )
 
