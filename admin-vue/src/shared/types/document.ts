@@ -58,6 +58,7 @@ export interface DocumentListResponse {
   total: number;
   page: number;
   page_size: number;
+  status_counts: Record<string, number>;
 }
 
 export interface DocumentChunksResponse {

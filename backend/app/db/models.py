@@ -121,6 +121,7 @@ class KnowledgeBase(Base):
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, default=1, index=True)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -256,6 +257,12 @@ class DocumentCategory(Base):
         Integer,
         ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+    parent_id = Column(
+        Integer,
+        ForeignKey("document_categories.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     name = Column(String(100), nullable=False)

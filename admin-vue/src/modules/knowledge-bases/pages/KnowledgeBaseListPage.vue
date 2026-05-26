@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import {
   Check,
   Clock,
+  Close,
   Delete,
   Plus,
   RefreshRight,
@@ -18,6 +19,7 @@ import {
   deleteKnowledgeBase,
   listKnowledgeBases,
   reindexKnowledgeBaseDocuments,
+  toggleKnowledgeBaseActive,
   updateKnowledgeBase,
 } from "@/shared/api/knowledge-bases";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
@@ -38,6 +40,7 @@ interface KnowledgeBaseCardItem {
   indexedDocumentCount: number;
   pendingDocumentCount: number;
   status: KnowledgeBaseStatus;
+  isActive: boolean;
   updateTime: string;
 }
 
@@ -54,6 +57,7 @@ const loading = ref(false);
 const loadError = ref<unknown>(null);
 const selectedKnowledgeBaseIds = ref<number[]>([]);
 const batchActionLoading = ref<"" | "enable" | "reindex" | "delete">("");
+const deleteOverlay = reactive({ active: false, title: "", description: "" });
 const dialogMode = ref<"create" | "edit">("create");
 const editingKnowledgeBaseId = ref<number | null>(null);
 const isKnowledgeBaseDialogVisible = ref(false);
@@ -72,6 +76,7 @@ const cardItems = computed<KnowledgeBaseCardItem[]>(() =>
     indexedDocumentCount: item.indexed_document_count,
     pendingDocumentCount: item.queued_document_count + item.processing_document_count,
     status: item.status,
+    isActive: item.is_active,
     updateTime: formatDateTime(item.last_document_updated_at ?? item.updated_at),
   })),
 );
@@ -241,7 +246,7 @@ async function submitKnowledgeBaseForm() {
         team_id: teamScopeStore.selectedTeamId,
         description: description || null,
       });
-      ElMessage.success(`已在“${selectedTeamName.value}”下创建知识库“${name}”。`);
+      ElMessage.success(`已在"${selectedTeamName.value}"下创建知识库"${name}"。`);
     } else {
       if (!editingKnowledgeBaseId.value) {
         ElMessage.error("缺少知识库标识，无法保存。");
@@ -252,7 +257,7 @@ async function submitKnowledgeBaseForm() {
         name,
         description: description || null,
       });
-      ElMessage.success(`已更新知识库“${name}”。`);
+      ElMessage.success(`已更新知识库"${name}"。`);
     }
 
     closeKnowledgeBaseDialog(true);
@@ -268,7 +273,7 @@ async function submitKnowledgeBaseForm() {
 async function openDelete(knowledgeBaseId: number, knowledgeBaseName: string) {
   try {
     await ElMessageBox.confirm(
-      `确定删除“${knowledgeBaseName}”吗？删除后该知识库及其文档将不可恢复。`,
+      `确定删除"${knowledgeBaseName}"吗？删除后该知识库及其文档将不可恢复。`,
       "删除知识库",
       {
         type: "warning",
@@ -280,16 +285,21 @@ async function openDelete(knowledgeBaseId: number, knowledgeBaseName: string) {
     return;
   }
 
+  deleteOverlay.active = true;
+  deleteOverlay.title = "正在删除";
+  deleteOverlay.description = knowledgeBaseName;
   batchActionLoading.value = "delete";
+
   try {
     await deleteKnowledgeBases([knowledgeBaseId]);
-    ElMessage.success(`已删除“${knowledgeBaseName}”。`);
+    ElMessage.success(`已删除"${knowledgeBaseName}"。`);
     selectedKnowledgeBaseIds.value = selectedKnowledgeBaseIds.value.filter((item) => item !== knowledgeBaseId);
     await loadKnowledgeBaseList();
   } catch (error) {
     const message = error instanceof Error ? error.message : "删除知识库失败，请稍后重试。";
     ElMessage.error(message);
   } finally {
+    deleteOverlay.active = false;
     batchActionLoading.value = "";
   }
 }
@@ -325,8 +335,64 @@ function getStatusClass(status: KnowledgeBaseStatus) {
   return statusClassMap[status];
 }
 
-function handleBatchEnable() {
-  ElMessage.info("当前后端尚未提供知识库启用接口，暂时只能展示该批量入口。");
+async function handleToggleActive(knowledgeBaseId: number, knowledgeBaseName: string, targetActive: boolean) {
+  if (batchActionLoading.value) {
+    return;
+  }
+
+  const actionText = targetActive ? "启用" : "禁用";
+  try {
+    await ElMessageBox.confirm(
+      `确定${actionText}知识库"${knowledgeBaseName}"吗？`,
+      `${actionText}知识库`,
+      { type: "warning", confirmButtonText: "确定", cancelButtonText: "取消" },
+    );
+  } catch {
+    return;
+  }
+
+  batchActionLoading.value = "enable";
+  try {
+    await toggleKnowledgeBaseActive(knowledgeBaseId, targetActive);
+    ElMessage.success(`已${actionText}"${knowledgeBaseName}"。`);
+    await loadKnowledgeBaseList();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : `${actionText}失败，请稍后重试。`;
+    ElMessage.error(message);
+  } finally {
+    batchActionLoading.value = "";
+  }
+}
+
+async function handleBatchEnable() {
+  if (selectedKnowledgeBaseIds.value.length === 0 || batchActionLoading.value) {
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确定批量启用 ${selectedKnowledgeBaseIds.value.length} 个知识库吗？`,
+      "批量启用",
+      { type: "info", confirmButtonText: "确定", cancelButtonText: "取消" },
+    );
+  } catch {
+    return;
+  }
+
+  batchActionLoading.value = "enable";
+  try {
+    await Promise.all(
+      selectedKnowledgeBaseIds.value.map((id) => toggleKnowledgeBaseActive(id, true)),
+    );
+    ElMessage.success(`已批量启用 ${selectedKnowledgeBaseIds.value.length} 个知识库。`);
+    selectedKnowledgeBaseIds.value = [];
+    await loadKnowledgeBaseList();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "批量启用失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    batchActionLoading.value = "";
+  }
 }
 
 async function confirmReindexKnowledgeBases(targetLabel: string) {
@@ -351,7 +417,7 @@ async function handleSingleReindex(knowledgeBaseId: number, knowledgeBaseName: s
     return;
   }
 
-  const isConfirmed = await confirmReindexKnowledgeBases(`“${knowledgeBaseName}”`);
+  const isConfirmed = await confirmReindexKnowledgeBases(`"${knowledgeBaseName}"`);
   if (!isConfirmed) {
     return;
   }
@@ -359,7 +425,7 @@ async function handleSingleReindex(knowledgeBaseId: number, knowledgeBaseName: s
   batchActionLoading.value = "reindex";
   try {
     await reindexKnowledgeBases([knowledgeBaseId]);
-    ElMessage.success(`已提交“${knowledgeBaseName}”的重建索引任务。`);
+    ElMessage.success(`已提交"${knowledgeBaseName}"的重建索引任务。`);
     await loadKnowledgeBaseList();
   } catch (error) {
     const message = error instanceof Error ? error.message : "重建索引失败，请稍后重试。";
@@ -413,9 +479,13 @@ async function handleBatchDelete() {
     return;
   }
 
+  const deleteCount = selectedKnowledgeBaseIds.value.length;
+  deleteOverlay.active = true;
+  deleteOverlay.title = "正在批量删除";
+  deleteOverlay.description = `${deleteCount} 个知识库`;
   batchActionLoading.value = "delete";
+
   try {
-    const deleteCount = selectedKnowledgeBaseIds.value.length;
     await deleteKnowledgeBases(selectedKnowledgeBaseIds.value);
     selectedKnowledgeBaseIds.value = [];
     ElMessage.success(`已删除 ${deleteCount} 个知识库。`);
@@ -424,6 +494,7 @@ async function handleBatchDelete() {
     const message = error instanceof Error ? error.message : "批量删除知识库失败，请稍后重试。";
     ElMessage.error(message);
   } finally {
+    deleteOverlay.active = false;
     batchActionLoading.value = "";
   }
 }
@@ -567,6 +638,7 @@ watch(
         :class="[
           'kb-card',
           selectedKnowledgeBaseIds.includes(item.id) ? 'kb-card--selected' : '',
+          !item.isActive ? 'kb-card--disabled' : '',
         ]"
       >
         <div class="kb-card__topbar">
@@ -592,6 +664,7 @@ watch(
             ]"
             :title="getStatusText(item.status)"
           />
+          <span v-if="!item.isActive" class="kb-card__disabled-badge">已禁用</span>
         </div>
 
         <button
@@ -645,6 +718,26 @@ watch(
           >
             <el-icon><Setting /></el-icon>
             <span>设置</span>
+          </button>
+          <button
+            v-if="item.isActive"
+            type="button"
+            class="kb-card__action-button kb-card__action-button--danger"
+            :disabled="Boolean(batchActionLoading)"
+            @click.stop="handleToggleActive(item.id, item.name, false)"
+          >
+            <el-icon><Close /></el-icon>
+            <span>禁用</span>
+          </button>
+          <button
+            v-else
+            type="button"
+            class="kb-card__action-button"
+            :disabled="Boolean(batchActionLoading)"
+            @click.stop="handleToggleActive(item.id, item.name, true)"
+          >
+            <el-icon><Check /></el-icon>
+            <span>启用</span>
           </button>
           <button
             type="button"
@@ -710,6 +803,29 @@ watch(
         </div>
       </template>
     </el-dialog>
+
+    <Teleport to="body">
+      <Transition name="delete-overlay">
+        <div v-if="deleteOverlay.active" class="delete-overlay">
+          <div class="delete-overlay__card">
+            <div class="delete-overlay__icon-ring">
+              <div class="delete-overlay__icon-inner">
+                <el-icon :size="28" color="#dc2626"><Delete /></el-icon>
+              </div>
+            </div>
+
+            <h3 class="delete-overlay__title">{{ deleteOverlay.title }}</h3>
+            <p class="delete-overlay__desc">{{ deleteOverlay.description }}</p>
+
+            <div class="delete-overlay__dots">
+              <span class="delete-overlay__dot" />
+              <span class="delete-overlay__dot" />
+              <span class="delete-overlay__dot" />
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </section>
 </template>
 
@@ -890,6 +1006,25 @@ watch(
   box-shadow:
     0 0 0 1px #3b82f6,
     0 12px 28px rgba(59, 130, 246, 0.14);
+}
+
+.kb-card--disabled {
+  opacity: 0.55;
+}
+
+.kb-card--disabled:hover {
+  transform: none;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+}
+
+.kb-card__disabled-badge {
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  margin-left: 4px;
 }
 
 .kb-card__topbar {
@@ -1136,6 +1271,137 @@ watch(
 @media (max-width: 720px) {
   .kb-list-page__grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ── Delete overlay ── */
+.delete-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(6px);
+}
+
+.delete-overlay__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 340px;
+  padding: 40px 32px 36px;
+  border-radius: 24px;
+  background: #ffffff;
+  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.14);
+}
+
+.delete-overlay__icon-ring {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 999px;
+  background: rgba(220, 38, 38, 0.08);
+  animation: breathe 2s ease-in-out infinite;
+}
+
+.delete-overlay__icon-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.delete-overlay__title {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.delete-overlay__desc {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+  text-align: center;
+  word-break: break-all;
+}
+
+.delete-overlay__dots {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.delete-overlay__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #94a3b8;
+  animation: dotPulse 1.4s ease-in-out infinite;
+}
+
+.delete-overlay__dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.delete-overlay__dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* Transitions */
+.delete-overlay-enter-active {
+  transition: opacity 0.25s ease;
+}
+
+.delete-overlay-enter-active .delete-overlay__card {
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+
+.delete-overlay-enter-from {
+  opacity: 0;
+}
+
+.delete-overlay-enter-from .delete-overlay__card {
+  transform: scale(0.92) translateY(8px);
+  opacity: 0;
+}
+
+.delete-overlay-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.delete-overlay-leave-to {
+  opacity: 0;
+}
+
+/* Animations */
+@keyframes breathe {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.12);
+  }
+  50% {
+    transform: scale(1.06);
+    box-shadow: 0 0 0 12px rgba(220, 38, 38, 0);
+  }
+}
+
+@keyframes dotPulse {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
   }
 }
 </style>

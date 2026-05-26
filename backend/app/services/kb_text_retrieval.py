@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.config.registry import config_registry
-from app.db.models import Document, KnowledgeBase
+from app.db.models import Document, DocumentCategory, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 from app.repositories.access_scope import accessible_document_condition
 from app.repositories.document_chunk_repository import DocumentChunkRepository
@@ -99,7 +99,11 @@ async def _knowledge_base_has_documents(
                 KnowledgeBase.team_id == team_id
             )
         if category_id is not None:
-            stmt = stmt.where(Document.category_id == category_id)
+            child_result = await db.execute(
+                select(DocumentCategory.id).where(DocumentCategory.parent_id == category_id)
+            )
+            all_cat_ids = [category_id] + list(child_result.scalars().all())
+            stmt = stmt.where(Document.category_id.in_(all_cat_ids))
         if user_id is not None:
             stmt = stmt.where(accessible_document_condition(user_id))
         if document_statuses:

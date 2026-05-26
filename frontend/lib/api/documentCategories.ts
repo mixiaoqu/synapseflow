@@ -4,7 +4,19 @@ export interface DocumentCategory {
   id: number;
   knowledge_base_id: number;
   name: string;
+  parent_id: number | null;
   document_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DocumentCategoryTreeNode {
+  id: number;
+  knowledge_base_id: number;
+  name: string;
+  parent_id: number | null;
+  document_count: number;
+  children: DocumentCategoryTreeNode[];
   created_at: string;
   updated_at: string;
 }
@@ -17,9 +29,19 @@ export async function listDocumentCategories(
   return apiClient.get(`/api/v1/document-categories?${sp.toString()}`);
 }
 
+export async function listDocumentCategoriesTree(
+  knowledgeBaseId: number,
+): Promise<DocumentCategoryTreeNode[]> {
+  const sp = new URLSearchParams();
+  sp.set("knowledge_base_id", String(knowledgeBaseId));
+  sp.set("format", "tree");
+  return apiClient.get(`/api/v1/document-categories?${sp.toString()}`);
+}
+
 export async function createDocumentCategory(body: {
   knowledge_base_id: number;
   name: string;
+  parent_id?: number | null;
 }): Promise<DocumentCategory> {
   return apiClient.post("/api/v1/document-categories", body);
 }
