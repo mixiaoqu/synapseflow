@@ -52,16 +52,19 @@ class McpService:
         return self.auth_context.mcp_token if self.auth_context is not None else None
 
     def _build_scope_response(self, runtime) -> McpScopeResolveResponse:
-        bindings = [
-            McpBindingItem(
-                knowledge_base_id=item.knowledge_base_id,
-                knowledge_base_name=item.knowledge_base_name,
-                knowledge_base_branch_id=None,
-                knowledge_base_branch_name=None,
+        knowledge_base_id = runtime.app.knowledge_base_id
+        bindings = []
+        knowledge_base_ids: list[int] = []
+        if knowledge_base_id is not None:
+            knowledge_base_ids.append(int(knowledge_base_id))
+            bindings.append(
+                McpBindingItem(
+                    knowledge_base_id=int(knowledge_base_id),
+                    knowledge_base_name=runtime.knowledge_base_name,
+                    knowledge_base_branch_id=None,
+                    knowledge_base_branch_name=None,
+                )
             )
-            for item in runtime.bindings
-        ]
-        knowledge_base_ids = [item.knowledge_base_id for item in runtime.bindings]
         assistant = runtime.assistant
         return McpScopeResolveResponse(
             team_id=runtime.project.team_id,
@@ -190,11 +193,9 @@ class McpService:
         if len(scope.knowledge_base_ids) != 1:
             raise HTTPException(
                 status_code=400,
-                detail="MCP search currently supports exactly one bound knowledge base",
+                detail="MCP search requires one bound knowledge base",
             )
-        knowledge_base_id = (
-            scope.knowledge_base_ids[0] if len(scope.knowledge_base_ids) == 1 else None
-        )
+        knowledge_base_id = scope.knowledge_base_ids[0]
         retrieval = await run_multi_query_kb_text_retrieval(
             query=request.query,
             retrieval_queries=[request.query],
@@ -229,7 +230,7 @@ class McpService:
         if len(scope.knowledge_base_ids) != 1:
             raise HTTPException(
                 status_code=400,
-                detail="MCP answer currently supports exactly one bound knowledge base",
+                detail="MCP answer requires one bound knowledge base",
             )
         runtime_request = SimpleNamespace(
             query=request.query,
@@ -238,9 +239,7 @@ class McpService:
             product_id=scope.product_id,
             project_id=scope.project_id,
             project_app_id=scope.project_app_id,
-            knowledge_base_id=(
-                scope.knowledge_base_ids[0] if len(scope.knowledge_base_ids) == 1 else None
-            ),
+            knowledge_base_id=scope.knowledge_base_ids[0],
             knowledge_base_ids=list(scope.knowledge_base_ids),
             knowledge_base_branch_ids=[],
         )

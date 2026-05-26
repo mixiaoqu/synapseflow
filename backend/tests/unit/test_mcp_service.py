@@ -6,7 +6,6 @@ from fastapi import HTTPException
 
 import app.application.mcp_service as mcp_service_module
 from app.application.mcp_service import McpService
-from app.repositories.project_repository import ProjectAppBindingRecord
 
 
 @dataclass
@@ -29,6 +28,7 @@ class _FakeApp:
     id: int
     code: str
     name: str
+    knowledge_base_id: int | None = None
 
 
 @dataclass
@@ -43,7 +43,7 @@ class _FakeRuntime:
     project: _FakeProject
     app: _FakeApp
     assistant: _FakeAssistant | None
-    bindings: list[ProjectAppBindingRecord]
+    knowledge_base_name: str | None = None
 
 
 @dataclass
@@ -118,25 +118,20 @@ def _build_service(
     return service
 
 
+def _build_runtime(*, knowledge_base_id: int | None, knowledge_base_name: str | None) -> _FakeRuntime:
+    return _FakeRuntime(
+        product=_FakeProduct(id=1, code="crm", name="CRM"),
+        project=_FakeProject(id=2, team_id=3, code="console", name="Console"),
+        app=_FakeApp(id=4, code="web", name="Web", knowledge_base_id=knowledge_base_id),
+        assistant=_FakeAssistant(id=5, name="Project Assistant"),
+        knowledge_base_name=knowledge_base_name,
+    )
+
+
 @pytest.mark.asyncio
 async def test_mcp_service_resolve_scope_returns_bound_runtime_scope():
     service = _build_service(
-    runtime=_FakeRuntime(
-            product=_FakeProduct(id=1, code="crm", name="CRM"),
-            project=_FakeProject(id=2, team_id=3, code="console", name="Console"),
-            app=_FakeApp(id=4, code="web", name="Web"),
-            assistant=_FakeAssistant(id=5, name="Project Assistant"),
-            bindings=[
-                ProjectAppBindingRecord(
-                    knowledge_base_id=10,
-                    knowledge_base_name="CRM KB",
-                ),
-                ProjectAppBindingRecord(
-                    knowledge_base_id=11,
-                    knowledge_base_name="Billing KB",
-                ),
-            ],
-        ),
+        runtime=_build_runtime(knowledge_base_id=10, knowledge_base_name="CRM KB"),
         can_access_team=True,
     )
 
@@ -151,7 +146,7 @@ async def test_mcp_service_resolve_scope_returns_bound_runtime_scope():
     assert result.project_id == 2
     assert result.project_app_id == 4
     assert result.assistant_id == 5
-    assert result.knowledge_base_ids == [10, 11]
+    assert result.knowledge_base_ids == [10]
     assert result.knowledge_base_branch_ids == []
     assert result.bindings[0].knowledge_base_name == "CRM KB"
     assert service.project_repository.calls == [
@@ -168,13 +163,7 @@ async def test_mcp_service_resolve_scope_returns_bound_runtime_scope():
 @pytest.mark.asyncio
 async def test_mcp_service_resolve_scope_rejects_team_without_access():
     service = _build_service(
-        runtime=_FakeRuntime(
-            product=_FakeProduct(id=1, code="crm", name="CRM"),
-            project=_FakeProject(id=2, team_id=3, code="console", name="Console"),
-            app=_FakeApp(id=4, code="web", name="Web"),
-            assistant=_FakeAssistant(id=5, name="Project Assistant"),
-            bindings=[],
-        ),
+        runtime=_build_runtime(knowledge_base_id=10, knowledge_base_name="CRM KB"),
         can_access_team=False,
     )
 
@@ -207,18 +196,7 @@ async def test_mcp_service_resolve_scope_returns_404_when_runtime_missing():
 @pytest.mark.asyncio
 async def test_mcp_service_search_returns_mapped_retrieval_items(monkeypatch: pytest.MonkeyPatch):
     service = _build_service(
-        runtime=_FakeRuntime(
-            product=_FakeProduct(id=1, code="crm", name="CRM"),
-            project=_FakeProject(id=2, team_id=3, code="console", name="Console"),
-            app=_FakeApp(id=4, code="web", name="Web"),
-            assistant=_FakeAssistant(id=5, name="Project Assistant"),
-            bindings=[
-                ProjectAppBindingRecord(
-                    knowledge_base_id=10,
-                    knowledge_base_name="CRM KB",
-                ),
-            ],
-        ),
+        runtime=_build_runtime(knowledge_base_id=10, knowledge_base_name="CRM KB"),
         can_access_team=True,
     )
 
@@ -233,6 +211,7 @@ async def test_mcp_service_search_returns_mapped_retrieval_items(monkeypatch: py
                     "metadata": {
                         "document_id": 101,
                         "document_title": "Frontend SSE Guide",
+                        "knowledge_base_id": 10,
                         "section_path": "frontend/sse",
                         "score": 0.12,
                         "rerank_score": 0.91,
@@ -263,24 +242,9 @@ async def test_mcp_service_search_returns_mapped_retrieval_items(monkeypatch: py
 
 
 @pytest.mark.asyncio
-async def test_mcp_service_search_rejects_multi_knowledge_base_scope():
+async def test_mcp_service_search_rejects_scope_without_bound_knowledge_base():
     service = _build_service(
-        runtime=_FakeRuntime(
-            product=_FakeProduct(id=1, code="crm", name="CRM"),
-            project=_FakeProject(id=2, team_id=3, code="console", name="Console"),
-            app=_FakeApp(id=4, code="web", name="Web"),
-            assistant=_FakeAssistant(id=5, name="Project Assistant"),
-            bindings=[
-                ProjectAppBindingRecord(
-                    knowledge_base_id=10,
-                    knowledge_base_name="CRM KB",
-                ),
-                ProjectAppBindingRecord(
-                    knowledge_base_id=11,
-                    knowledge_base_name="Billing KB",
-                ),
-            ],
-        ),
+        runtime=_build_runtime(knowledge_base_id=None, knowledge_base_name=None),
         can_access_team=True,
     )
 
@@ -295,7 +259,7 @@ async def test_mcp_service_search_rejects_multi_knowledge_base_scope():
         )
 
     assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == "MCP search currently supports exactly one bound knowledge base"
+    assert exc_info.value.detail == "MCP search requires one bound knowledge base"
 
 
 @pytest.mark.asyncio
@@ -303,18 +267,7 @@ async def test_mcp_service_answer_uses_stateless_preview_response(
     monkeypatch: pytest.MonkeyPatch,
 ):
     service = _build_service(
-        runtime=_FakeRuntime(
-            product=_FakeProduct(id=1, code="crm", name="CRM"),
-            project=_FakeProject(id=2, team_id=3, code="console", name="Console"),
-            app=_FakeApp(id=4, code="web", name="Web"),
-            assistant=_FakeAssistant(id=5, name="Project Assistant"),
-            bindings=[
-                ProjectAppBindingRecord(
-                    knowledge_base_id=10,
-                    knowledge_base_name="CRM KB",
-                ),
-            ],
-        ),
+        runtime=_build_runtime(knowledge_base_id=10, knowledge_base_name="CRM KB"),
         can_access_team=True,
     )
 
@@ -363,24 +316,9 @@ async def test_mcp_service_answer_uses_stateless_preview_response(
 
 
 @pytest.mark.asyncio
-async def test_mcp_service_answer_rejects_multi_knowledge_base_scope():
+async def test_mcp_service_answer_rejects_scope_without_bound_knowledge_base():
     service = _build_service(
-        runtime=_FakeRuntime(
-            product=_FakeProduct(id=1, code="crm", name="CRM"),
-            project=_FakeProject(id=2, team_id=3, code="console", name="Console"),
-            app=_FakeApp(id=4, code="web", name="Web"),
-            assistant=_FakeAssistant(id=5, name="Project Assistant"),
-            bindings=[
-                ProjectAppBindingRecord(
-                    knowledge_base_id=10,
-                    knowledge_base_name="CRM KB",
-                ),
-                ProjectAppBindingRecord(
-                    knowledge_base_id=11,
-                    knowledge_base_name="Billing KB",
-                ),
-            ],
-        ),
+        runtime=_build_runtime(knowledge_base_id=None, knowledge_base_name=None),
         can_access_team=True,
     )
 
@@ -395,7 +333,7 @@ async def test_mcp_service_answer_rejects_multi_knowledge_base_scope():
         )
 
     assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == "MCP answer currently supports exactly one bound knowledge base"
+    assert exc_info.value.detail == "MCP answer requires one bound knowledge base"
 
 
 @pytest.mark.asyncio
@@ -404,14 +342,9 @@ async def test_mcp_service_bootstrap_returns_short_lived_token(monkeypatch: pyte
         runtime=_FakeRuntime(
             product=_FakeProduct(id=1, code="test", name="B2C"),
             project=_FakeProject(id=2, team_id=3, code="test", name="Retail"),
-            app=_FakeApp(id=4, code="test", name="Mini Program"),
+            app=_FakeApp(id=4, code="test", name="Mini Program", knowledge_base_id=10),
             assistant=_FakeAssistant(id=5, name="Project Assistant"),
-            bindings=[
-                ProjectAppBindingRecord(
-                    knowledge_base_id=10,
-                    knowledge_base_name="Retail KB",
-                ),
-            ],
+            knowledge_base_name="Retail KB",
         ),
         can_access_team=True,
     )
@@ -451,14 +384,9 @@ async def test_mcp_service_bootstrap_allows_missing_optional_client_fields(
         runtime=_FakeRuntime(
             product=_FakeProduct(id=1, code="test", name="B2C"),
             project=_FakeProject(id=2, team_id=3, code="test", name="Retail"),
-            app=_FakeApp(id=4, code="test", name="Mini Program"),
+            app=_FakeApp(id=4, code="test", name="Mini Program", knowledge_base_id=10),
             assistant=_FakeAssistant(id=5, name="Project Assistant"),
-            bindings=[
-                ProjectAppBindingRecord(
-                    knowledge_base_id=10,
-                    knowledge_base_name="Retail KB",
-                ),
-            ],
+            knowledge_base_name="Retail KB",
         ),
         can_access_team=True,
     )
@@ -508,14 +436,9 @@ async def test_mcp_service_resolve_scope_uses_bound_mcp_token_context():
         _FakeRuntime(
             product=_FakeProduct(id=1, code="test", name="B2C"),
             project=_FakeProject(id=2, team_id=3, code="test", name="Retail"),
-            app=_FakeApp(id=4, code="test", name="Mini Program"),
+            app=_FakeApp(id=4, code="test", name="Mini Program", knowledge_base_id=10),
             assistant=_FakeAssistant(id=5, name="Project Assistant"),
-            bindings=[
-                ProjectAppBindingRecord(
-                    knowledge_base_id=10,
-                    knowledge_base_name="Retail KB",
-                ),
-            ],
+            knowledge_base_name="Retail KB",
         )
     )
     service.team_repository = _FakeTeamRepository(can_access=True)
