@@ -1,5 +1,8 @@
 import { request } from "@/shared/api/http";
-import type { DocumentCategorySummary } from "@/shared/types/document-category";
+import type {
+  DocumentCategorySummary,
+  DocumentCategoryTreeNode,
+} from "@/shared/types/document-category";
 
 export function listDocumentCategories(knowledgeBaseId: number) {
   return request<DocumentCategorySummary[]>({
@@ -11,9 +14,21 @@ export function listDocumentCategories(knowledgeBaseId: number) {
   });
 }
 
+export function listDocumentCategoriesTree(knowledgeBaseId: number) {
+  return request<DocumentCategoryTreeNode[]>({
+    url: "/document-categories",
+    method: "GET",
+    params: {
+      knowledge_base_id: knowledgeBaseId,
+      format: "tree",
+    },
+  });
+}
+
 export function createDocumentCategory(payload: {
   knowledge_base_id: number;
   name: string;
+  parent_id?: number | null;
 }) {
   return request<DocumentCategorySummary>({
     url: "/document-categories",

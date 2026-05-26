@@ -2,7 +2,7 @@
 
 import { ChangeEvent, DragEvent, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, LibraryBig, Loader2, RefreshCcw, Search, UploadCloud, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, LibraryBig, Loader2, RefreshCcw, Search, UploadCloud, X } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import {
   uploadDocumentsBatch,
   type DocumentListItem,
 } from "@/lib/api/documents";
-import { listDocumentCategories, type DocumentCategory } from "@/lib/api/documentCategories";
+import { listDocumentCategoriesTree, type DocumentCategoryTreeNode } from "@/lib/api/documentCategories";
 import { listKnowledgeBases, type KnowledgeBaseWithCount } from "@/lib/api/knowledgeBases";
 import { listTeams, type Team } from "@/lib/api/teams";
 import { cn } from "@/lib/utils";
@@ -60,6 +60,82 @@ export default function KnowledgeBaseDetailPage() {
   );
 }
 
+function CategoryTreeItem({
+  node,
+  selectedCategoryId,
+  onSelect,
+  depth = 0,
+}: {
+  node: DocumentCategoryTreeNode;
+  selectedCategoryId: number | null;
+  onSelect: (categoryId: number | null) => void;
+  depth?: number;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const selected = selectedCategoryId === node.id;
+  const hasChildren = node.children.length > 0;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => onSelect(node.id)}
+        className={cn(
+          "flex w-full items-center justify-between rounded-2xl py-3 text-left text-sm transition",
+          depth > 0 ? "pl-10 pr-3" : "px-3",
+          selected
+            ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200"
+            : "text-slate-600 hover:bg-white hover:text-slate-900",
+        )}
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          {hasChildren && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded((v) => !v);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  setExpanded((v) => !v);
+                }
+              }}
+              className="shrink-0 cursor-pointer rounded p-0.5 hover:bg-slate-200"
+            >
+              {expanded ? (
+                <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+              )}
+            </span>
+          )}
+          {!hasChildren && depth > 0 && <span className="w-5" />}
+          <span className="truncate font-medium">{node.name}</span>
+        </span>
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+          {node.document_count}
+        </span>
+      </button>
+      {expanded && hasChildren && (
+        <div className="space-y-1">
+          {node.children.map((child) => (
+            <CategoryTreeItem
+              key={child.id}
+              node={child}
+              selectedCategoryId={selectedCategoryId}
+              onSelect={onSelect}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function KnowledgeBaseDetailPageContent() {
   const params = useParams<{ knowledgeBaseId: string }>();
   const searchParams = useSearchParams();
@@ -79,7 +155,7 @@ function KnowledgeBaseDetailPageContent() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<number | null>(teamIdFromQuery);
   const [kb, setKb] = useState<KnowledgeBaseWithCount | null>(null);
-  const [allCategories, setAllCategories] = useState<DocumentCategory[]>([]);
+  const [allCategories, setAllCategories] = useState<DocumentCategoryTreeNode[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(categoryIdFromQuery);
   const [focusedDocumentId, setFocusedDocumentId] = useState<number | null>(documentIdFromQuery);
   const [docs, setDocs] = useState<DocumentListItem[]>([]);
@@ -111,9 +187,29 @@ function KnowledgeBaseDetailPageContent() {
   const docsRequestSeqRef = useRef(0);
 
   const activeTeam = teams.find((item) => item.id === teamId) ?? null;
-  const uploadCategory = allCategories.find((item) => item.id === uploadCategoryId) ?? null;
+  const uploadCategory = (() => {
+    const find = (nodes: DocumentCategoryTreeNode[]): DocumentCategoryTreeNode | null => {
+      for (const node of nodes) {
+        if (node.id === uploadCategoryId) return node;
+        const found = find(node.children);
+        if (found) return found;
+      }
+      return null;
+    };
+    return find(allCategories);
+  })();
 
-  const activeCategory = allCategories.find((item) => item.id === selectedCategoryId) ?? null;
+  const activeCategory = (() => {
+    const find = (nodes: DocumentCategoryTreeNode[]): DocumentCategoryTreeNode | null => {
+      for (const node of nodes) {
+        if (node.id === selectedCategoryId) return node;
+        const found = find(node.children);
+        if (found) return found;
+      }
+      return null;
+    };
+    return find(allCategories);
+  })();
   const pageTitle = activeCategory?.name || "全部文档";
 
   const openConfirmDialog = (options: Omit<ConfirmDialogState, "open">) => {
@@ -228,20 +324,30 @@ function KnowledgeBaseDetailPageContent() {
       setLoadingStructure(true);
 
       try {
-        const categoryItems = await listDocumentCategories(kbId);
+        const categoryTree = await listDocumentCategoriesTree(kbId);
         if (cancelled) return;
 
+        // Flatten tree to check if a category ID exists
+        const flatIds = new Set<number>();
+        const collectIds = (nodes: DocumentCategoryTreeNode[]) => {
+          for (const node of nodes) {
+            flatIds.add(node.id);
+            collectIds(node.children);
+          }
+        };
+        collectIds(categoryTree);
+
         const fallbackCategoryId =
-          categoryIdFromQuery != null && categoryItems.some((item) => item.id === categoryIdFromQuery)
+          categoryIdFromQuery != null && flatIds.has(categoryIdFromQuery)
             ? categoryIdFromQuery
             : null;
 
-        setAllCategories(categoryItems);
+        setAllCategories(categoryTree);
         setSelectedCategoryId((prev) =>
-          prev != null && categoryItems.some((item) => item.id === prev) ? prev : fallbackCategoryId,
+          prev != null && flatIds.has(prev) ? prev : fallbackCategoryId,
         );
         setUploadCategoryId((prev) =>
-          prev != null && categoryItems.some((item) => item.id === prev) ? prev : fallbackCategoryId,
+          prev != null && flatIds.has(prev) ? prev : fallbackCategoryId,
         );
       } catch (error) {
         if (!cancelled) {
@@ -313,7 +419,15 @@ function KnowledgeBaseDetailPageContent() {
 
   useEffect(() => {
     if (selectedCategoryId == null) return;
-    if (allCategories.some((item) => item.id === selectedCategoryId)) return;
+    // Check if the selected ID exists anywhere in the tree
+    const exists = (nodes: DocumentCategoryTreeNode[]): boolean => {
+      for (const node of nodes) {
+        if (node.id === selectedCategoryId) return true;
+        if (exists(node.children)) return true;
+      }
+      return false;
+    };
+    if (exists(allCategories)) return;
     setSelectedCategoryId(null);
   }, [allCategories, selectedCategoryId]);
 
@@ -511,27 +625,14 @@ function KnowledgeBaseDetailPageContent() {
                 </button>
 
                 <div className="mt-3 space-y-1">
-                  {allCategories.map((category) => {
-                    const selected = selectedCategoryId === category.id;
-                    return (
-                      <button
-                        key={category.id}
-                        type="button"
-                        onClick={() => handleCategorySelect(category.id)}
-                        className={cn(
-                          "flex w-full items-center justify-between rounded-2xl px-3 py-3 text-left text-sm transition",
-                          selected
-                            ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200"
-                            : "text-slate-600 hover:bg-white hover:text-slate-900",
-                        )}
-                      >
-                        <span className="truncate font-medium">{category.name}</span>
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                          {category.document_count}
-                        </span>
-                      </button>
-                    );
-                  })}
+                  {allCategories.map((category) => (
+                    <CategoryTreeItem
+                      key={category.id}
+                      node={category}
+                      selectedCategoryId={selectedCategoryId}
+                      onSelect={handleCategorySelect}
+                    />
+                  ))}
                 </div>
               </div>
             </aside>
@@ -682,11 +783,16 @@ function KnowledgeBaseDetailPageContent() {
                   className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
                 >
                   <option value="">不指定分类</option>
-                  {allCategories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}（{category.document_count}）
-                    </option>
-                  ))}
+                  {allCategories.flatMap((parent) => [
+                    <option key={parent.id} value={parent.id}>
+                      {parent.name}（{parent.document_count}）
+                    </option>,
+                    ...parent.children.map((child) => (
+                      <option key={child.id} value={child.id}>
+                        &nbsp;&nbsp;{child.name}（{child.document_count}）
+                      </option>
+                    )),
+                  ])}
                 </select>
                 <p className="mt-2 text-xs text-slate-500">
                   当前选择：{uploadCategory?.name || "不指定分类"}

@@ -236,11 +236,22 @@ class DocumentService:
         return str(PurePosixPath(*parts))
 
     @classmethod
-    def _infer_category_name(cls, source_path: str | None) -> str | None:
+    def _infer_category_parts(cls, source_path: str | None) -> tuple[str | None, str | None]:
+        """Extract (parent_name, child_name) from source_path segments.
+
+        "FolderA/SubFolder/file.txt" -> ("FolderA", "SubFolder")
+        "FolderA/file.txt"           -> ("FolderA", None)
+        "file.txt"                   -> (None, None)
+        """
         normalized = cls._normalize_source_path(source_path)
         if not normalized or "/" not in normalized:
-            return None
-        return normalized.split("/", 1)[0].strip() or None
+            return None, None
+        parts = normalized.split("/")
+        # parts[0..n-2] are folder segments, parts[-1] is the filename
+        folder_parts = parts[:-1]
+        parent_name = folder_parts[0].strip() or None if len(folder_parts) >= 1 else None
+        child_name = folder_parts[1].strip() or None if len(folder_parts) >= 2 else None
+        return parent_name, child_name
 
     async def _resolve_document_location(
         self,
@@ -270,12 +281,21 @@ class DocumentService:
                     detail="Category does not belong to the selected knowledge base",
                 )
         else:
-            inferred_name = self._infer_category_name(normalized_path)
-            if inferred_name:
-                category = await category_repo.get_or_create(
+            parent_name, child_name = self._infer_category_parts(normalized_path)
+            if parent_name:
+                parent_cat = await category_repo.get_or_create(
                     knowledge_base_id=knowledge_base_id,
-                    name=inferred_name,
+                    name=parent_name,
+                    parent_id=None,
                 )
+                if child_name:
+                    category = await category_repo.get_or_create(
+                        knowledge_base_id=knowledge_base_id,
+                        name=child_name,
+                        parent_id=parent_cat.id,
+                    )
+                else:
+                    category = parent_cat
         return knowledge_base_id, category.id if category else None, normalized_path
 
     def _to_response(
@@ -592,6 +612,12 @@ class DocumentService:
         page_size = 20 if page_size < 1 or page_size > 100 else page_size
 
         repo = DocumentRepository(db, user_id=user_id)
+        status_counts = await repo.get_status_counts(
+            keyword=keyword,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+        )
         rows, total = await repo.list_paginated(
             page=page,
             page_size=page_size,
@@ -630,7 +656,7 @@ class DocumentService:
             )
             for doc, knowledge_base_name, category_name in rows
         ]
-        return DocumentListResponse(items=items, total=total, page=page, page_size=page_size)
+        return DocumentListResponse(items=items, total=total, page=page, page_size=page_size, status_counts=status_counts)
 
     async def get_indexing_panel_summary(
         self,

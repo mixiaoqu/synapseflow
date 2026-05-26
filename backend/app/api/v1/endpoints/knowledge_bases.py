@@ -10,6 +10,7 @@ from app.models.schemas.knowledge_base import (
     KnowledgeBaseCreate,
     KnowledgeBaseRecentDocument,
     KnowledgeBaseResponse,
+    KnowledgeBaseToggleActive,
     KnowledgeBaseUpdate,
     KnowledgeBaseWithCount,
 )
@@ -37,20 +38,24 @@ def _resolve_knowledge_base_status(
     if indexed_document_count > 0 or unindexed_document_count <= 0:
         return "available"
     return "error"
+
+
 @router.get("", response_model=list[KnowledgeBaseWithCount])
 async def list_knowledge_bases(
     team_id: int | None = Query(None, description="Filter by team id"),
+    active_only: bool = Query(False, description="Only return active knowledge bases"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
     repo = KnowledgeBaseRepository(db, user_id=current_user.id)
-    rows = await repo.list_with_count(team_id=team_id)
+    rows = await repo.list_with_count(team_id=team_id, active_only=active_only)
     return [
         KnowledgeBaseWithCount(
             id=row.knowledge_base.id,
             name=row.knowledge_base.name,
             team_id=row.knowledge_base.team_id,
             description=getattr(row.knowledge_base, "description", None),
+            is_active=getattr(row.knowledge_base, "is_active", True),
             created_at=row.knowledge_base.created_at,
             updated_at=row.knowledge_base.updated_at,
             document_count=row.document_count,
@@ -122,6 +127,23 @@ async def update_knowledge_base(
     )
     if not knowledge_base:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
+    return knowledge_base
+
+
+@router.patch("/{knowledge_base_id}/toggle-active", response_model=KnowledgeBaseResponse)
+async def toggle_knowledge_base_active(
+    knowledge_base_id: int,
+    body: KnowledgeBaseToggleActive,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    knowledge_base = await repo.get_by_id(knowledge_base_id)
+    if not knowledge_base:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    knowledge_base.is_active = body.is_active
+    await db.commit()
+    await db.refresh(knowledge_base)
     return knowledge_base
 
 

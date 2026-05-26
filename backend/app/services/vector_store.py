@@ -180,7 +180,11 @@ async def search(
     if knowledge_base_id is not None:
         stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)
     if category_id is not None:
-        stmt = stmt.where(Document.category_id == category_id)
+        child_result = await db.execute(
+            select(DocumentCategory.id).where(DocumentCategory.parent_id == category_id)
+        )
+        all_cat_ids = [category_id] + list(child_result.scalars().all())
+        stmt = stmt.where(Document.category_id.in_(all_cat_ids))
     if document_statuses:
         stmt = stmt.where(Document.status.in_(list(document_statuses)))
     stmt = stmt.order_by(dist_col).limit(k)
@@ -398,8 +402,12 @@ async def _search_lexical_fts(
         )
         params["team_id"] = team_id
     if category_id is not None:
-        sql_lines.append("  AND d.category_id = :category_id")
-        params["category_id"] = category_id
+        child_result = await db.execute(
+            select(DocumentCategory.id).where(DocumentCategory.parent_id == category_id)
+        )
+        all_cat_ids = [category_id] + list(child_result.scalars().all())
+        sql_lines.append("  AND d.category_id = ANY(:category_ids)")
+        params["category_ids"] = all_cat_ids
     sql_lines.extend(
         [
             "ORDER BY lr DESC NULLS LAST",
@@ -544,8 +552,12 @@ async def _search_lexical_trgm(
         )
         params["team_id"] = team_id
     if category_id is not None:
-        sql_lines.append("  AND d.category_id = :category_id")
-        params["category_id"] = category_id
+        child_result = await db.execute(
+            select(DocumentCategory.id).where(DocumentCategory.parent_id == category_id)
+        )
+        all_cat_ids = [category_id] + list(child_result.scalars().all())
+        sql_lines.append("  AND d.category_id = ANY(:category_ids)")
+        params["category_ids"] = all_cat_ids
     sql_lines.extend(
         [
             "ORDER BY lr DESC NULLS LAST",

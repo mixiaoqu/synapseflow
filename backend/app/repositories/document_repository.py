@@ -148,7 +148,8 @@ class DocumentRepository:
             if category_id == 0:
                 base_filter = base_filter & Document.category_id.is_(None)
             else:
-                base_filter = base_filter & (Document.category_id == category_id)
+                subtree_ids = await self._get_category_subtree_ids(category_id)
+                base_filter = base_filter & Document.category_id.in_(subtree_ids)
         if status:
             base_filter = base_filter & (Document.status == status)
 
@@ -213,7 +214,17 @@ class DocumentRepository:
             if category_id == 0:
                 base_filter = base_filter & Document.category_id.is_(None)
             else:
-                base_filter = base_filter & (Document.category_id == category_id)
+                subtree = (
+                    select(DocumentCategory.id)
+                    .where(
+                        or_(
+                            DocumentCategory.id == category_id,
+                            DocumentCategory.parent_id == category_id,
+                        )
+                    )
+                    .correlate(None)
+                )
+                base_filter = base_filter & Document.category_id.in_(subtree)
         if status:
             base_filter = base_filter & (Document.status == status)
         if team_id is not None:
@@ -221,6 +232,33 @@ class DocumentRepository:
                 Document.knowledge_base_id.is_not(None) & (KnowledgeBase.team_id == team_id)
             )
         return base_filter
+
+    async def get_status_counts(
+        self,
+        *,
+        keyword: str | None = None,
+        team_id: int | None = None,
+        knowledge_base_id: int | None = None,
+        category_id: int | None = None,
+    ) -> dict[str, int]:
+        """Return document counts grouped by lifecycle status for the given filters."""
+        base_filter = self._build_document_filter(
+            keyword=keyword,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            status=None,
+        )
+        stmt = (
+            select(Document.status, func.count())
+            .select_from(Document)
+            .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
+            .where(base_filter)
+            .group_by(Document.status)
+        )
+        result = await self.db.execute(stmt)
+        return {status: count for status, count in result.all()}
 
     async def list_ids(
         self,
@@ -248,6 +286,13 @@ class DocumentRepository:
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    async def _get_category_subtree_ids(self, category_id: int) -> list[int]:
+        """Return the category ID plus all direct child IDs."""
+        result = await self.db.execute(
+            select(DocumentCategory.id).where(DocumentCategory.parent_id == category_id)
+        )
+        return [category_id] + list(result.scalars().all())
 
     async def get_category_name(self, category_id: int | None) -> str | None:
         """Fetch a category name scoped to the current user."""

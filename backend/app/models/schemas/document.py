@@ -107,6 +107,7 @@ class DocumentListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+    status_counts: dict[str, int] = {}
 
 
 class DocumentContentUpdate(BaseModel):

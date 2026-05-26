@@ -33,6 +33,7 @@ class KnowledgeBaseResponse(BaseModel):
     name: str
     team_id: int
     description: str | None = None
+    is_active: bool = True
     created_at: datetime
     updated_at: datetime
 
@@ -69,3 +70,9 @@ class KnowledgeBaseWithCount(KnowledgeBaseResponse):
     last_uploaded_at: datetime | None = None
     status: KnowledgeBaseStatus = "empty"
     recent_documents: list[KnowledgeBaseRecentDocument] = Field(default_factory=list)
+
+
+class KnowledgeBaseToggleActive(BaseModel):
+    """Toggle knowledge-base active state."""
+
+    is_active: bool
