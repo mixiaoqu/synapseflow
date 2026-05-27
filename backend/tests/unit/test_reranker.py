@@ -44,3 +44,12 @@ def test_rerank_connection_error_falls_back_without_exception_log(monkeypatch):
 
     assert result == chunks[:1]
     assert warnings
+
+
+def test_rerank_headers_use_siliconflow_api_key(monkeypatch):
+    monkeypatch.setattr(reranker.settings, "RERANK_API_KEY", "")
+    monkeypatch.setattr(reranker.settings, "SILICONFLOW_API_KEY", "sf-key")
+
+    _, headers = reranker._get_url_and_headers()
+
+    assert headers["Authorization"] == "Bearer sf-key"

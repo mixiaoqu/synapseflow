@@ -38,10 +38,14 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class EmbeddingConfig:
+    provider: str
     model: str
     dim: int
     device: str
     batch_size: int
+    api_url: str
+    api_key: str
+    dimensions: int | None
 
 
 @dataclass(frozen=True)

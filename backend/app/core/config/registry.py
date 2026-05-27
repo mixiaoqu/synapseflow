@@ -167,10 +167,14 @@ class ConfigRegistry:
         emb = data.get("embedding", {}) or {}
         model_override = (settings.EMBEDDING_MODEL or "").strip()
         return EmbeddingConfig(
+            provider=(settings.EMBEDDING_PROVIDER or emb.get("provider", "local")),
             model=model_override or emb.get("model", "BAAI/bge-m3"),
             dim=int(emb.get("dim", 1024)),
             device=str(emb.get("device", "cpu")),
             batch_size=max(1, int(emb.get("batch_size", 32))),
+            api_url=(settings.EMBEDDING_API_URL or emb.get("api_url", "")).strip(),
+            api_key=settings.SILICONFLOW_API_KEY.strip(),
+            dimensions=settings.EMBEDDING_DIMENSIONS,
         )
 
     @functools.lru_cache(maxsize=1)
@@ -276,7 +280,7 @@ class ConfigRegistry:
             enabled=settings.RERANK_ENABLED,
             provider=(settings.RERANK_PROVIDER or rerank.get("provider", "local")),
             api_url=settings.RERANK_API_URL,
-            model=rerank.get("model", "BAAI/bge-reranker-v2-m3"),
+            model=(settings.RERANK_MODEL or rerank.get("model", "BAAI/bge-reranker-v2-m3")),
             instruct=rerank.get("instruct", ""),
         )
 
