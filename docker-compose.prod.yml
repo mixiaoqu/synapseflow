@@ -179,7 +179,28 @@ services:
       start_period: 25s
     logging: *default-logging
 
-  backend-worker:
+  backend-worker-indexing:
+    <<: *backend-image
+    restart: unless-stopped
+    environment: *backend-env
+    volumes:
+      - backend_hf_cache:/app/.cache/huggingface
+      - backend_previews:/app/previews
+      - backend_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synapseflow-network
+    command:
+      - sh
+      - -c
+      - uv run dramatiq --queues ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing} --processes ${SF_DRAMATIQ_INDEXING_PROCESSES:-1} --threads ${SF_DRAMATIQ_INDEXING_THREADS:-2} app.workers.indexing_tasks
+    logging: *default-logging
+
+  backend-worker-graph-indexing:
     <<: *backend-image
     restart: unless-stopped
     environment: *backend-env
@@ -199,7 +220,7 @@ services:
     command:
       - sh
       - -c
-      - uv run dramatiq app.workers.indexing_tasks --processes ${SF_DRAMATIQ_PROCESSES:-2} --threads ${SF_DRAMATIQ_THREADS:-2}
+      - uv run dramatiq --queues ${SF_DRAMATIQ_GRAPH_INDEXING_QUEUE:-graph_indexing} --processes ${SF_DRAMATIQ_GRAPH_PROCESSES:-1} --threads ${SF_DRAMATIQ_GRAPH_THREADS:-1} app.workers.indexing_tasks
     logging: *default-logging
 
   frontend:
