@@ -16,6 +16,6 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 COPY . .
 
-EXPOSE 5174
+EXPOSE 5173
 
-CMD ["pnpm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5174"]
+CMD ["pnpm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
