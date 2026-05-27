@@ -80,6 +80,28 @@ services:
       retries: 5
     logging: *default-logging
 
+  neo4j:
+    image: neo4j:5-community
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
+    ports:
+      - ${SF_BIND_HOST:-127.0.0.1}:${SF_NEO4J_HTTP_PORT:-7474}:7474
+      - ${SF_BIND_HOST:-127.0.0.1}:${SF_NEO4J_BOLT_PORT:-7687}:7687
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - synapseflow-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q --spider http://127.0.0.1:7474 || exit 1
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    logging: *default-logging
+
   reranker:
     image: synapseflow-reranker:prod
     build:
@@ -132,6 +154,12 @@ services:
       RERANK_ENABLED: ${SF_RERANK_ENABLED:-true}
       RERANK_TOP_K: ${SF_RERANK_TOP_K:-}
       RERANK_API_URL: ${SF_RERANK_API_URL:-http://reranker:8012}
+      GRAPH_ENABLED: ${GRAPH_ENABLED:-false}
+      GRAPH_INDEXING_ENABLED: ${GRAPH_INDEXING_ENABLED:-false}
+      GRAPH_URI: ${GRAPH_URI:-bolt://neo4j:7687}
+      GRAPH_USERNAME: ${GRAPH_USERNAME:-neo4j}
+      GRAPH_PASSWORD: ${GRAPH_PASSWORD:?set GRAPH_PASSWORD}
+      GRAPH_DATABASE: ${GRAPH_DATABASE:-neo4j}
       PREVIEW_DIR: /app/previews
       UPLOAD_DIR: /app/uploads
       LANGSMITH_TRACING: ${SF_LANGSMITH_TRACING:-false}
@@ -158,6 +186,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      neo4j:
         condition: service_healthy
       reranker:
         condition: service_healthy
@@ -191,6 +221,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      neo4j:
         condition: service_healthy
     networks:
       - synapseflow-network
@@ -236,6 +268,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  neo4j_data:
   backend_hf_cache:
   backend_previews:
   backend_uploads:

@@ -4,13 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { Delete, EditPen, Link, Plus, Search } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
-import {
-  createProjectAppEmbedPreview,
-  deleteProjectApp,
-  getProject,
-  listProjectApps,
-  updateProjectApp,
-} from "@/shared/api/projects";
+import { deleteProjectApp, getProject, listProjectApps, updateProjectApp } from "@/shared/api/projects";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
@@ -32,10 +26,7 @@ const statusLoadingId = ref<number | null>(null);
 const deletingAppId = ref<number | null>(null);
 
 const integrationDialogVisible = ref(false);
-const integrationLoading = ref(false);
 const integrationApp = ref<ProjectAppSummary | null>(null);
-const integrationEmbedUrl = ref("");
-const integrationExpiresInSeconds = ref<number | null>(null);
 
 const projectId = computed(() => {
   const raw = Number(route.params.projectId);
@@ -185,33 +176,18 @@ async function handleDeleteApp(app: ProjectAppSummary) {
   }
 }
 
-async function openIntegration(app: ProjectAppSummary) {
+function openIntegration(app: ProjectAppSummary) {
   if (!projectId.value) {
     return;
   }
 
   if (!app.is_active) {
-    ElMessage.warning("当前发布渠道已停用，请先启用后再生成嵌入预览链接。");
+    ElMessage.warning("当前发布渠道已停用，请先启用后再查看接入说明。");
     return;
   }
 
   integrationDialogVisible.value = true;
-  integrationLoading.value = true;
   integrationApp.value = app;
-  integrationEmbedUrl.value = "";
-  integrationExpiresInSeconds.value = null;
-
-  try {
-    const response = await createProjectAppEmbedPreview(projectId.value, app.id);
-    integrationEmbedUrl.value = response.embed_url;
-    integrationExpiresInSeconds.value = response.expires_in_seconds;
-  } catch (error) {
-    integrationDialogVisible.value = false;
-    const message = error instanceof Error ? error.message : "生成嵌入预览链接失败，请稍后重试。";
-    ElMessage.error(message);
-  } finally {
-    integrationLoading.value = false;
-  }
 }
 
 async function copyText(value: string, successMessage: string) {
@@ -223,19 +199,33 @@ async function copyText(value: string, successMessage: string) {
   }
 }
 
-const iframeCode = computed(() => {
-  if (!integrationEmbedUrl.value) {
-    return "";
-  }
+const embedSessionRequestCode = computed(() => {
+  const selectedProject = project.value;
+  const selectedApp = integrationApp.value;
+  const productCode = selectedProject?.product_code || "product_code";
+  const projectCode = selectedProject?.code || "project_code";
+  const appCode = selectedApp?.code || "app_code";
 
-  return `<iframe
-  src="${integrationEmbedUrl.value}"
+  return `POST https://你的SynapseFlow域名/api/v1/embed/sessions
+Authorization: Bearer <ENTERPRISE_SERVICE_TOKEN>
+Content-Type: application/json
+
+{
+  "product_code": "${productCode}",
+  "project_code": "${projectCode}",
+  "app_code": "${appCode}",
+  "external_user_id": "YOUR_USER_ID",
+  "external_user_name": "张三"
+}`;
+});
+
+const businessIframeCode = `<iframe
+  src="{embed_url}"
   width="100%"
   height="720"
   frameborder="0"
   allow="microphone"
 ></iframe>`;
-});
 
 onMounted(() => {
   void loadPage();
@@ -392,45 +382,44 @@ watch(
       :title="integrationApp ? `接入集成：${integrationApp.name}` : '接入集成'"
       destroy-on-close
     >
-      <AppLoading
-        v-if="integrationLoading"
-        title="生成预览链接中"
-        description="正在为当前发布渠道生成嵌入预览地址，请稍候。"
-        :blocks="3"
-      />
+      <p class="project-app-list-page__integration-hint">
+        正式业务端接入时，由业务后端先换取短期 embed_url，再交给业务前端放入 iframe。
+        不要把服务端 token 暴露给浏览器长期使用。
+      </p>
 
-      <template v-else>
-        <p class="project-app-list-page__integration-hint">
-          当前后端已支持嵌入预览链接，可直接用于 iframe 内嵌或独立页面访问。
-        </p>
+      <div class="project-app-list-page__integration-meta">
+        <span>当前应用：{{ integrationApp?.name }} / {{ integrationApp?.code }}</span>
+      </div>
 
-        <div class="project-app-list-page__integration-meta">
-          <span>有效期：{{ integrationExpiresInSeconds ? `${integrationExpiresInSeconds} 秒` : "-" }}</span>
-        </div>
+      <h3 class="project-app-list-page__dialog-title">1. 业务后端获取 embed_url</h3>
+      <p class="project-app-list-page__integration-note">
+        该请求必须在业务后端发起，Authorization 中的 ENTERPRISE_SERVICE_TOKEN 不能出现在前端代码中。
+      </p>
+      <div class="project-app-list-page__code-block">
+        <button
+          type="button"
+          class="project-app-list-page__copy-button"
+          @click="copyText(embedSessionRequestCode, '服务端请求示例已复制。')"
+        >
+          复制代码
+        </button>
+        <pre>{{ embedSessionRequestCode }}</pre>
+      </div>
 
-        <div class="project-app-list-page__code-block">
-          <button
-            type="button"
-            class="project-app-list-page__copy-button"
-            @click="copyText(integrationEmbedUrl, '预览链接已复制。')"
-          >
-            复制链接
-          </button>
-          <pre>{{ integrationEmbedUrl }}</pre>
-        </div>
-
-        <h3 class="project-app-list-page__dialog-title">Iframe 嵌入示例</h3>
-        <div class="project-app-list-page__code-block">
-          <button
-            type="button"
-            class="project-app-list-page__copy-button"
-            @click="copyText(iframeCode, 'Iframe 代码已复制。')"
-          >
-            复制代码
-          </button>
-          <pre>{{ iframeCode }}</pre>
-        </div>
-      </template>
+      <h3 class="project-app-list-page__dialog-title">2. 业务前端嵌入 iframe</h3>
+      <p class="project-app-list-page__integration-note">
+        将上一步接口返回的 embed_url 填入 iframe src，iframe 内部会携带短期 token 调用嵌入助手接口。
+      </p>
+      <div class="project-app-list-page__code-block">
+        <button
+          type="button"
+          class="project-app-list-page__copy-button"
+          @click="copyText(businessIframeCode, 'Iframe 代码已复制。')"
+        >
+          复制代码
+        </button>
+        <pre>{{ businessIframeCode }}</pre>
+      </div>
     </el-dialog>
   </section>
 </template>
@@ -566,6 +555,13 @@ watch(
   margin-bottom: 12px;
   color: #64748b;
   font-size: 12px;
+}
+
+.project-app-list-page__integration-note {
+  margin: -4px 0 10px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .project-app-list-page__dialog-title {

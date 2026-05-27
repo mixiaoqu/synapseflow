@@ -591,7 +591,9 @@ async def run_kb_text_retrieval(
         if llm_reference_top_k is not None
         else rag.llm_reference_top_k
     )
-    resolved_rerank = settings.RERANK_ENABLED if rerank_enabled is None else bool(rerank_enabled)
+    resolved_rerank = bool(settings.RERANK_ENABLED) and (
+        True if rerank_enabled is None else bool(rerank_enabled)
+    )
 
     text_started_at = perf_counter()
     results, has_documents = await _retrieve_candidate_rows(
@@ -718,7 +720,9 @@ async def run_multi_query_kb_text_retrieval(
         if llm_reference_top_k is not None
         else rag.llm_reference_top_k
     )
-    resolved_rerank = settings.RERANK_ENABLED if rerank_enabled is None else bool(rerank_enabled)
+    resolved_rerank = bool(settings.RERANK_ENABLED) and (
+        True if rerank_enabled is None else bool(rerank_enabled)
+    )
     per_query_recall_k = _scaled_candidate_k(len(queries), resolved_recall_k, final_top_k)
     per_query_lexical_k = (
         _scaled_candidate_k(len(queries), resolved_lexical_k, 1)

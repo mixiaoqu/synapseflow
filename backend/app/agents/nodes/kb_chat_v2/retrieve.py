@@ -10,6 +10,7 @@ from loguru import logger
 
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
 from app.agents.states import KbChatV2State
+from app.core.config.settings import settings
 from app.services.chat_memory import format_chat_history
 from app.services.kb_graph_retrieval import GraphRetriever
 from app.services.kb_text_retrieval import (
@@ -321,7 +322,7 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
     graph_enabled = bool(graph_plan.get("enabled", True))
     graph_mode = _resolve_graph_mode_from_plan(graph_plan)
     context_budget = int(context_plan.get("budget_chars") or 9000)
-    rerank_enabled = bool(rerank_plan.get("enabled"))
+    rerank_enabled = bool(settings.RERANK_ENABLED) and bool(rerank_plan.get("enabled"))
     question_type = str(state.get("question_type") or "definition_lookup").strip().lower()
 
     common_kwargs = {
