@@ -389,12 +389,6 @@ class KbChatService(BaseAgentService):
     def _resolve_answer_status(result: dict[str, Any]) -> str:
         if isinstance(result.get("answer_status"), str) and result.get("answer_status"):
             return str(result["answer_status"])
-        evaluation = dict(result.get("retrieval_evaluation") or {})
-        evaluation_status = str(evaluation.get("status") or "").strip().lower()
-        if evaluation_status == "sufficient":
-            return "answered"
-        if evaluation_status in {"insufficient", "empty", "clarification_needed"}:
-            return evaluation_status
         if result.get("answer"):
             return "answered"
         return "partial"

@@ -14,19 +14,14 @@ from app.core.config.registry import config_registry
 from app.db.models import Document, DocumentCategory, DocumentChunk, Embedding, KnowledgeBase
 from app.repositories.access_scope import accessible_document_condition
 from app.services.document_index_state import INDEX_STATUS_INDEXED
-from app.services.document_lifecycle import RETRIEVAL_VERSION_LIVE
 from app.services.semantic_chunk import VectorIndexChunk
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _SQL_SPACE_CLASS = "[[:space:]]+"
 
 
-def _is_live_retrieval(retrieval_version_mode: str | None) -> bool:
-    return retrieval_version_mode == RETRIEVAL_VERSION_LIVE
-
-
 def _document_version_sql_condition(retrieval_version_mode: str | None) -> str:
-    return "d.is_live IS TRUE" if _is_live_retrieval(retrieval_version_mode) else "d.is_current IS TRUE"
+    return "TRUE"
 
 
 async def add_document_chunks(
@@ -165,11 +160,6 @@ async def search(
         .join(DocumentChunk, DocumentChunk.id == Embedding.document_chunk_id)
         .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
         .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
-        .where(
-            Document.is_live.is_(True)
-            if _is_live_retrieval(retrieval_version_mode)
-            else Document.is_current.is_(True)
-        )
         .where(Document.index_status == INDEX_STATUS_INDEXED)
         .where(DocumentChunk.chunk_kind == "child")
     )

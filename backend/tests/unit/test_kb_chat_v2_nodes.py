@@ -8,11 +8,13 @@ from app.agents.nodes.kb_chat_v2.analyze import (
 )
 from app.agents.nodes.kb_chat_v2.answer import (
     KB_V2_CHITCHAT_REPLY,
-    KB_V2_NO_ANSWER_REPLY,
     build_kb_chat_v2_answer_text,
 )
 from app.agents.nodes.kb_chat_v2.entity_grounding import kb_chat_v2_entity_grounding_node
-from app.agents.nodes.kb_chat_v2.evaluate import evaluate_retrieval_evidence
+from app.agents.nodes.kb_chat_v2.evaluate import (
+    evaluate_retrieval_evidence,
+    kb_chat_v2_evaluate_node,
+)
 from app.agents.nodes.kb_chat_v2.retrieve import (
     _doc_key,
     _merge_text_and_graph_docs,
@@ -344,6 +346,7 @@ def test_kb_chat_v2_execution_plan_maps_complexity():
     assert plan["rewrite"]["max_queries"] == 5
     assert plan["channels"]["text"]["recall_k"] == 40
     assert plan["channels"]["text"]["lexical_k"] == 32
+    assert plan["rerank"]["enabled"] is True
     assert plan["rerank"]["top_k"] == 12
     assert plan["context"]["budget_chars"] == 15000
     assert plan["retrieval_strategy"] == "parallel_fusion"
@@ -472,22 +475,26 @@ def test_kb_chat_v2_evaluate_falls_back_to_sufficient_on_llm_error():
     assert result["diagnostic"]["failure_stage"] == "evaluate"
 
 
-def test_kb_chat_v2_answer_templates_no_answer_without_answer_llm():
+def test_kb_chat_v2_answer_ignores_no_answer_evaluation():
+    llm = FakeAnswerLlm("根据已召回内容，A 和 B 存在依赖关系。")
+
     answer, _trace = asyncio.run(
         build_kb_chat_v2_answer_text(
             {
                 "query": "How are A and B related?",
+                "primary_context": "[1] 文档A\nA depends on B.",
                 "retrieval_evaluation": {
                     "status": "empty",
                     "next_action": "no_answer",
                     "reason": "No usable evidence.",
                 },
             },
-            llm_factory=lambda: UnexpectedAnswerLlm(),
+            llm_factory=lambda: llm,
         )
     )
 
-    assert answer == KB_V2_NO_ANSWER_REPLY
+    assert answer == "根据已召回内容，A 和 B 存在依赖关系。"
+    assert llm.prompts
 
 
 def test_kb_chat_v2_answer_uses_llm_when_no_answer_has_retrieved_docs():
@@ -518,11 +525,14 @@ def test_kb_chat_v2_answer_uses_llm_when_no_answer_has_retrieved_docs():
     assert llm.prompts
 
 
-def test_kb_chat_v2_answer_templates_clarification_without_answer_llm():
+def test_kb_chat_v2_answer_ignores_clarification_evaluation():
+    llm = FakeAnswerLlm("根据资料，项目应用需要绑定助手配置。")
+
     answer, _trace = asyncio.run(
         build_kb_chat_v2_answer_text(
             {
                 "query": "How are they related?",
+                "primary_context": "[1] 文档A\n项目应用需要绑定助手配置。",
                 "retrieval_evaluation": {
                     "status": "clarification_needed",
                     "next_action": "clarify",
@@ -532,12 +542,33 @@ def test_kb_chat_v2_answer_templates_clarification_without_answer_llm():
                     },
                 },
             },
-            llm_factory=lambda: UnexpectedAnswerLlm(),
+            llm_factory=lambda: llm,
         )
     )
 
-    assert "实体或模块" in answer
-    assert "Order module" in answer
+    assert answer == "根据资料，项目应用需要绑定助手配置。"
+    assert llm.prompts
+
+
+def test_kb_chat_v2_evaluate_node_does_not_set_answer_status():
+    result = asyncio.run(
+        kb_chat_v2_evaluate_node(
+            {
+                "query": "How are A and B related?",
+                "retrieved_docs": [],
+                "context": "",
+                "retrieval_trace": {"final_hits": 0},
+            },
+            llm_factory=lambda: FakeJsonLlm(
+                '{"status":"empty","next_action":"no_answer","reason":"No hits.",'
+                '"diagnostic":{"failure_stage":"retrieve","details":"no hits"}}'
+            ),
+        )
+    )
+
+    assert result["retrieval_evaluation"]["status"] == "empty"
+    assert "evaluate_trace" in result
+    assert "answer_status" not in result
 
 
 def test_kb_chat_v2_merge_prefers_document_chunk_id_over_chunk_index():

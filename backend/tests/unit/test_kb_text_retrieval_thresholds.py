@@ -8,6 +8,7 @@ from app.core.config.schemas import (
     RagRetrievalProfileConfig,
 )
 from app.services import kb_text_retrieval
+from app.services import vector_store
 
 
 def _rag_config(*, rerank_threshold: float | None = 0.35) -> RagConfig:
@@ -159,3 +160,9 @@ def test_expand_results_with_parent_context_skips_missing_parent_windows(monkeyp
     assert len(expanded) == 1
     assert expanded[0]["metadata"]["parent_chunk_id"] == 101
     assert expanded[0]["metadata"]["merged_child_chunk_ids"] == [11, 12]
+
+
+def test_retrieval_document_version_condition_does_not_filter_versions():
+    assert vector_store._document_version_sql_condition("live") == "TRUE"
+    assert vector_store._document_version_sql_condition("current") == "TRUE"
+    assert vector_store._document_version_sql_condition(None) == "TRUE"

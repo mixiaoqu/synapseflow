@@ -161,9 +161,7 @@ async def kb_chat_v2_evaluate_node(
     )
     started_at = perf_counter()
     evaluation = await evaluate_retrieval_evidence(state, llm_factory=llm_factory)
-    status = evaluation.get("status")
     return {
         "retrieval_evaluation": evaluation,
-        "answer_status": "answered" if status == "sufficient" else status,
         "evaluate_trace": {"latency_ms": int((perf_counter() - started_at) * 1000)},
     }
