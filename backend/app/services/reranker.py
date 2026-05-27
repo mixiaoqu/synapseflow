@@ -11,17 +11,18 @@ from app.core.config.registry import config_registry
 
 
 def _get_url_and_headers():
-    """返回本地 reranker 请求 URL 和 headers。"""
+    """返回 reranker 请求 URL 和 headers。"""
     rerank_cfg = config_registry.get_rerank_config()
     provider = (rerank_cfg.provider or "local").strip().lower()
-    if provider not in {"local", "vllm"}:
+    if provider not in {"local", "vllm", "siliconflow"}:
         logger.warning("未知 RERANK_PROVIDER={}，按本地 reranker 服务处理", rerank_cfg.provider)
     url = rerank_cfg.api_url.rstrip("/")
     if "/rerank" not in url:
         url = f"{url}/v1/rerank"
     headers = {"Content-Type": "application/json"}
-    if settings.RERANK_API_KEY:
-        headers["Authorization"] = f"Bearer {settings.RERANK_API_KEY}"
+    api_key = settings.RERANK_API_KEY or settings.SILICONFLOW_API_KEY
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     return url, headers
 
 

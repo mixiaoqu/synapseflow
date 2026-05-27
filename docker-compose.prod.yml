@@ -102,40 +102,6 @@ services:
       start_period: 30s
     logging: *default-logging
 
-  reranker:
-    image: synapseflow-reranker:prod
-    build:
-      context: ./docker/reranker
-      args:
-        PIP_INDEX_URL: ${SF_PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
-        PYTORCH_CPU_FIND_LINKS: ${SF_PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
-        TORCH_VERSION: ${SF_TORCH_VERSION:-2.11.0+cpu}
-    restart: unless-stopped
-    environment:
-      RERANK_MODEL: ${SF_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
-      RERANK_USE_FP16: ${SF_RERANK_USE_FP16:-false}
-      RERANK_MODEL_LOAD_RETRIES: ${SF_RERANK_MODEL_LOAD_RETRIES:-10}
-      RERANK_MODEL_LOAD_RETRY_DELAY: ${SF_RERANK_MODEL_LOAD_RETRY_DELAY:-15}
-      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
-      HF_HOME: /models/huggingface
-      HF_HUB_DOWNLOAD_TIMEOUT: ${HF_HUB_DOWNLOAD_TIMEOUT:-600}
-      HF_HUB_ETAG_TIMEOUT: ${HF_HUB_ETAG_TIMEOUT:-60}
-    volumes:
-      - reranker_models:/models/huggingface
-    networks:
-      - synapseflow-network
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8012/health", timeout=5)
-      interval: 30s
-      timeout: 10s
-      retries: 20
-      start_period: 20m
-    logging: *default-logging
-
   backend:
     <<: *backend-image
     restart: unless-stopped
@@ -148,12 +114,18 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-synapseflow}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-synapseflow}
       REDIS_URL: redis://redis:6379/0
       DRAMATIQ_INDEXING_QUEUE: ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:?set SILICONFLOW_API_KEY}
+      EMBEDDING_PROVIDER: ${SF_EMBEDDING_PROVIDER:-siliconflow}
+      EMBEDDING_API_URL: ${SF_EMBEDDING_API_URL:-https://api.siliconflow.cn/v1/embeddings}
       EMBEDDING_MODEL: ${SF_EMBEDDING_MODEL:-BAAI/bge-m3}
+      EMBEDDING_DIMENSIONS: ${SF_EMBEDDING_DIMENSIONS:-}
       HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
       MOYU_API_KEY: ${MOYU_API_KEY:?set MOYU_API_KEY}
       RERANK_ENABLED: ${SF_RERANK_ENABLED:-true}
+      RERANK_PROVIDER: ${SF_RERANK_PROVIDER:-siliconflow}
+      RERANK_MODEL: ${SF_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
       RERANK_TOP_K: ${SF_RERANK_TOP_K:-}
-      RERANK_API_URL: ${SF_RERANK_API_URL:-http://reranker:8012}
+      RERANK_API_URL: ${SF_RERANK_API_URL:-https://api.siliconflow.cn/v1/rerank}
       GRAPH_ENABLED: ${GRAPH_ENABLED:-false}
       GRAPH_INDEXING_ENABLED: ${GRAPH_INDEXING_ENABLED:-false}
       GRAPH_URI: ${GRAPH_URI:-bolt://neo4j:7687}
@@ -188,8 +160,6 @@ services:
       redis:
         condition: service_healthy
       neo4j:
-        condition: service_healthy
-      reranker:
         condition: service_healthy
     networks:
       - synapseflow-network
@@ -272,7 +242,6 @@ volumes:
   backend_hf_cache:
   backend_previews:
   backend_uploads:
-  reranker_models:
 
 networks:
   synapseflow-network:

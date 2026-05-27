@@ -37,10 +37,15 @@ class Settings(BaseSettings):
 
     MOYU_API_KEY: str = ""
     DEEPSEEK_API_KEY: str = ""
+    SILICONFLOW_API_KEY: str = ""
 
+    EMBEDDING_PROVIDER: str = "local"
+    EMBEDDING_API_URL: str = "https://api.siliconflow.cn/v1/embeddings"
+    EMBEDDING_DIMENSIONS: Optional[int] = None
     RERANK_ENABLED: bool = True
     RERANK_PROVIDER: str = "local"
     RERANK_TOP_K: Optional[int] = None
+    RERANK_MODEL: Optional[str] = None
     RERANK_API_URL: str = "http://localhost:8012"
     RERANK_API_KEY: str = ""
 
@@ -87,6 +92,13 @@ class Settings(BaseSettings):
                 return False
             if normalized in {"debug", "dev", "development"}:
                 return True
+        return value
+
+    @field_validator("EMBEDDING_DIMENSIONS", "RERANK_TOP_K", mode="before")
+    @classmethod
+    def _coerce_blank_optional_int(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
 
 

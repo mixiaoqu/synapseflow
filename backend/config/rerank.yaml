@@ -1,6 +1,6 @@
 # 检索结果重排配置。
 rerank:
-  # 重排服务提供方标识；local 表示使用 docker/reranker 中的本地 BGE 服务。
+  # 重排服务提供方标识；local 表示使用 docker/reranker 中的本地 BGE 服务，siliconflow 表示线上服务。
   provider: local
   # 实际使用的重排模型名称。
   model: BAAI/bge-reranker-v2-m3

@@ -26,6 +26,37 @@ def test_embedding_model_env_override(monkeypatch):
         config_registry.get_embedding_config.cache_clear()
 
 
+def test_embedding_config_reads_siliconflow_runtime_settings(monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.registry.load_embedding_raw",
+        lambda: {
+            "embedding": {
+                "provider": "local",
+                "model": "BAAI/bge-m3",
+                "dim": 1024,
+                "device": "cpu",
+                "batch_size": 32,
+            }
+        },
+    )
+    monkeypatch.setattr(settings, "EMBEDDING_PROVIDER", "siliconflow")
+    monkeypatch.setattr(settings, "EMBEDDING_API_URL", "https://api.siliconflow.cn/v1/embeddings")
+    monkeypatch.setattr(settings, "EMBEDDING_MODEL", "BAAI/bge-m3")
+    monkeypatch.setattr(settings, "EMBEDDING_DIMENSIONS", 1024)
+    monkeypatch.setattr(settings, "SILICONFLOW_API_KEY", "sf-key")
+    config_registry.get_embedding_config.cache_clear()
+
+    try:
+        config = config_registry.get_embedding_config()
+        assert config.provider == "siliconflow"
+        assert config.api_url == "https://api.siliconflow.cn/v1/embeddings"
+        assert config.api_key == "sf-key"
+        assert config.model == "BAAI/bge-m3"
+        assert config.dimensions == 1024
+    finally:
+        config_registry.get_embedding_config.cache_clear()
+
+
 def test_rag_chunk_config_reads_structured_chunk_fields(monkeypatch):
     monkeypatch.setattr(
         "app.core.config.registry.load_embedding_raw",

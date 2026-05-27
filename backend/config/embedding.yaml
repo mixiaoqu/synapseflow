@@ -1,5 +1,7 @@
 # Embedding, indexing, and RAG retrieval configuration.
 embedding:
+  # local uses sentence-transformers; siliconflow uses the online /v1/embeddings API.
+  provider: local
   # Model name used to embed queries and document chunks.
   model: BAAI/bge-m3
   # Must match the model output dimension and database vector column dimension.
