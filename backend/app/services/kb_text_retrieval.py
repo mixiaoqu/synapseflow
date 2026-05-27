@@ -16,7 +16,6 @@ from app.db.session import AsyncSessionLocal
 from app.repositories.access_scope import accessible_document_condition
 from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.services.document_index_state import INDEX_STATUS_INDEXED
-from app.services.document_lifecycle import RETRIEVAL_VERSION_LIVE
 from app.services.embedding import embed_query
 from app.services.reranker import rerank
 from app.services.vector_store import reciprocal_rank_fusion_many, search, search_hybrid_rrf
@@ -87,11 +86,6 @@ async def _knowledge_base_has_documents(
     async with AsyncSessionLocal() as db:
         stmt = select(Document.id).where(
             Document.knowledge_base_id == knowledge_base_id,
-            (
-                Document.is_live.is_(True)
-                if retrieval_version_mode == RETRIEVAL_VERSION_LIVE
-                else Document.is_current.is_(True)
-            ),
             Document.index_status == INDEX_STATUS_INDEXED,
         )
         if team_id is not None:

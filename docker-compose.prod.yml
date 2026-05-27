@@ -201,19 +201,21 @@ services:
     logging: *default-logging
 
   frontend:
-    image: synapseflow-frontend:prod
+    image: synapseflow-admin-vue:prod
     build:
-      context: ./frontend
-      dockerfile: ../docker/frontend/Dockerfile.prod
+      context: ./admin-vue
+      dockerfile: ../docker/admin-vue/Dockerfile.prod
       args:
-        NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:-}
+        VITE_API_BASE_URL: ${SF_ADMIN_VUE_API_BASE_URL:-/api/v1}
+        VITE_API_TIMEOUT_MS: ${SF_ADMIN_VUE_API_TIMEOUT_MS:-15000}
         NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmmirror.com}
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:-}
+      VITE_API_BASE_URL: ${SF_ADMIN_VUE_API_BASE_URL:-/api/v1}
+      VITE_API_TIMEOUT_MS: ${SF_ADMIN_VUE_API_TIMEOUT_MS:-15000}
     ports:
-      - ${SF_BIND_HOST:-127.0.0.1}:${SF_FRONTEND_PORT:-3000}:3000
+      - ${SF_BIND_HOST:-127.0.0.1}:${SF_FRONTEND_PORT:-5173}:5173
     depends_on:
       backend:
         condition: service_healthy
@@ -224,7 +226,7 @@ services:
         - CMD
         - node
         - -e
-        - 'fetch("http://127.0.0.1:3000").then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))'
+        - 'fetch("http://127.0.0.1:5173").then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))'
       interval: 20s
       timeout: 5s
       retries: 5

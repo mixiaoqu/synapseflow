@@ -17,9 +17,6 @@ KB_V2_CHITCHAT_REPLY = (
 KB_V2_OUT_OF_SCOPE_REPLY = (
     "这个问题超出了当前知识库问答范围。请尽量询问已经收录到知识库中的内容。"
 )
-KB_V2_NO_ANSWER_REPLY = (
-    "我没有在当前知识库中找到足以回答这个问题的有效依据。"
-)
 
 
 def _coerce_text(content: Any) -> str:
@@ -83,28 +80,6 @@ def _template_answer(state: dict[str, Any]) -> tuple[str | None, str | None]:
         return KB_V2_CHITCHAT_REPLY, "chitchat"
     if question_type == "out_of_scope":
         return KB_V2_OUT_OF_SCOPE_REPLY, "out_of_scope"
-
-    evaluation = dict(state.get("retrieval_evaluation") or {})
-    next_action = str(evaluation.get("next_action") or "").strip().lower()
-    if next_action == "clarify":
-        need = evaluation.get("clarification_need")
-        examples = []
-        if isinstance(need, dict):
-            examples = [str(item) for item in list(need.get("examples") or []) if str(item)]
-        suffix = f" 例如：{', '.join(examples[:3])}。" if examples else ""
-        return f"你指的是哪个具体实体或模块？{suffix}", "clarification_needed"
-    if next_action == "no_answer":
-        retrieved_docs = list(state.get("retrieved_docs") or [])
-        retrieval_trace = dict(state.get("retrieval_trace") or {})
-        final_hits = retrieval_trace.get("final_hits")
-        if retrieved_docs:
-            return None, None
-        try:
-            if final_hits is not None and int(final_hits) > 0:
-                return None, None
-        except (TypeError, ValueError):
-            pass
-        return KB_V2_NO_ANSWER_REPLY, "empty"
     return None, None
 
 
@@ -120,9 +95,7 @@ def _build_prompt(state: dict[str, Any]) -> str:
         ),
         chat_history_text=format_chat_history(state.get("chat_history") or [], max_messages=6),
         memory_summary=state.get("memory_summary") or "",
-        evidence_status=str(
-            (state.get("retrieval_evaluation") or {}).get("status") or "sufficient"
-        ),
+        evidence_status="sufficient",
         primary_context=state.get("primary_context") or "",
         supporting_context=state.get("supporting_context") or "",
         metadata_context=state.get("metadata_context") or "",

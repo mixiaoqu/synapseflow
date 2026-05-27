@@ -38,13 +38,14 @@ def _build_runtime_request(
     query: str,
     session_id: str | None,
 ) -> SimpleNamespace:
+    knowledge_base_id = getattr(assistant, "knowledge_base_id", None)
     return SimpleNamespace(
         query=query,
         session_id=session_id,
         team_id=assistant.team_id,
-        knowledge_base_id=None,
-        knowledge_base_ids=[],
-        category_id=None,
+        knowledge_base_id=knowledge_base_id,
+        knowledge_base_ids=[knowledge_base_id] if knowledge_base_id is not None else [],
+        category_id=getattr(assistant, "category_id", None),
         assistant_id=assistant.id,
         assistant_name=assistant.name,
         assistant_welcome_message=assistant.welcome_message,

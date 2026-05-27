@@ -128,6 +128,9 @@ async def rerank(query: str, chunks: List[dict], top_k: int | None = None) -> Li
             body = body[:120] + "…"
         logger.error("精排 HTTP {} {}", e.response.status_code, body)
         return chunks[:top_k]
+    except httpx.RequestError as e:
+        logger.warning("精排 服务不可用，回退原始排序: {}", e)
+        return chunks[:top_k]
     except Exception as e:
         logger.exception("精排 请求异常: {}", e)
         return chunks[:top_k]
