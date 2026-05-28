@@ -1,25 +1,35 @@
 <script setup lang="ts">
 import { computed, nextTick, useTemplateRef } from "vue";
-import { ChatDotRound, Opportunity, Plus, RefreshRight, Warning } from "@element-plus/icons-vue";
+import { ChatDotRound, Opportunity, RefreshRight, Warning } from "@element-plus/icons-vue";
 
 import EmbedChatComposer from "@/modules/embed/components/EmbedChatComposer.vue";
 import EmbedMessageItem, {
   type EmbedRenderableMessage,
 } from "@/modules/embed/components/EmbedMessageItem.vue";
+import EmbedSessionHistoryPanel from "@/modules/embed/components/EmbedSessionHistoryPanel.vue";
 import EmbedSuggestionChips from "@/modules/embed/components/EmbedSuggestionChips.vue";
 import { useEmbeddedAssistant } from "@/modules/embed/composables/useEmbeddedAssistant";
 
 const {
   assistantName,
   contextLabel,
+  currentSessionId,
   error,
   greeting,
   isInitializing,
   isTyping,
   messages,
   placeholder,
+  deletingSessionId,
   retrievedCount,
   scrollContainerRef,
+  deleteSession,
+  loadSessions,
+  selectSession,
+  sessions,
+  sessionsError,
+  sessionsLoading,
+  streamPhase,
   streamStatus,
   suggestions,
   sendMessage,
@@ -61,29 +71,51 @@ const showThinkingState = computed(() => {
   );
 });
 
+const STREAM_PHASE_META: Record<string, { title: string; accentClass: string }> = {
+  plan_query: {
+    title: "正在理解问题",
+    accentClass: "is-sky",
+  },
+  analyze: {
+    title: "正在分析问题",
+    accentClass: "is-sky",
+  },
+  rewrite_query: {
+    title: "正在整理检索线索",
+    accentClass: "is-indigo",
+  },
+  retrieve: {
+    title: "正在检索知识库",
+    accentClass: "is-blue",
+  },
+  evaluate: {
+    title: "正在核对答案依据",
+    accentClass: "is-violet",
+  },
+  answer: {
+    title: "正在生成回复",
+    accentClass: "is-emerald",
+  },
+};
+
 const thinkingPhase = computed(() => {
-  const detail = streamStatus.value || "正在匹配相关内容";
-
-  if (/整理|组织|已匹配|未匹配/.test(detail)) {
-    return {
-      main: "正在组织答案",
-      detail,
-    };
-  }
-
-  if (/生成|回答|回复/.test(detail)) {
-    return {
-      main: "正在生成回复",
-      detail,
-    };
-  }
+  const nodeId = streamPhase.value.nodeId;
+  const phaseMeta = nodeId ? STREAM_PHASE_META[nodeId] : null;
+  const fallbackTitle =
+    typeof retrievedCount.value === "number" && retrievedCount.value > 0
+      ? "正在组织答案"
+      : streamStatus.value?.includes("连接")
+        ? "正在连接助手"
+        : "正在处理中";
+  const detail =
+    typeof retrievedCount.value === "number" && retrievedCount.value > 0 && nodeId === "retrieve"
+      ? `已匹配 ${retrievedCount.value} 条相关内容`
+      : streamStatus.value || "正在处理你的问题";
 
   return {
-    main: "正在检索知识库",
-    detail:
-      typeof retrievedCount.value === "number" && retrievedCount.value > 0
-        ? `已匹配 ${retrievedCount.value} 条相关内容`
-        : detail,
+    title: phaseMeta?.title ?? fallbackTitle,
+    detail,
+    accentClass: phaseMeta?.accentClass ?? "is-blue",
   };
 });
 
@@ -141,15 +173,17 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
               </div>
             </div>
 
-            <button
-              type="button"
-              class="embed-assistant-page__header-action"
-              title="新会话"
-              aria-label="新会话"
-              @click="startNewConversation"
-            >
-              <el-icon><Plus /></el-icon>
-            </button>
+            <EmbedSessionHistoryPanel
+              :current-session-id="currentSessionId"
+              :sessions="sessions"
+              :loading="sessionsLoading"
+              :error="sessionsError"
+              :deleting-session-id="deletingSessionId"
+              @refresh="loadSessions"
+              @select="selectSession"
+              @create="startNewConversation"
+              @delete="deleteSession"
+            />
           </header>
 
           <div v-if="contextLabel" class="embed-assistant-page__context-bar">
@@ -199,12 +233,13 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
                     <span class="dot" />
                     <span class="dot" />
                   </div>
-                  <span class="embed-assistant-page__thinking-title">{{ thinkingPhase.main }}</span>
+                  <span
+                    class="embed-assistant-page__thinking-title"
+                    :class="thinkingPhase.accentClass"
+                  >
+                    {{ thinkingPhase.title }}
+                  </span>
                 </div>
-                <div class="embed-assistant-page__thinking-progress">
-                  <div class="embed-assistant-page__thinking-progress-bar" />
-                </div>
-                <span class="embed-assistant-page__thinking-detail">{{ thinkingPhase.detail }}</span>
               </div>
             </div>
           </section>
@@ -582,7 +617,7 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
 .embed-assistant-page__thinking-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
   width: 260px;
   max-width: calc(100% - 42px);
   padding: 14px 16px;
@@ -625,25 +660,24 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
   color: #475569;
 }
 
-.embed-assistant-page__thinking-progress {
-  width: 96px;
-  height: 4px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #e2e8f0;
+.embed-assistant-page__thinking-title.is-sky {
+  color: #0284c7;
 }
 
-.embed-assistant-page__thinking-progress-bar {
-  width: 48px;
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #60a5fa 0%, #4f46e5 100%);
-  animation: embed-thinking-progress 1.4s infinite linear;
+.embed-assistant-page__thinking-title.is-indigo {
+  color: #4f46e5;
 }
 
-.embed-assistant-page__thinking-detail {
-  font-size: 11px;
-  color: #94a3b8;
+.embed-assistant-page__thinking-title.is-blue {
+  color: #2563eb;
+}
+
+.embed-assistant-page__thinking-title.is-violet {
+  color: #7c3aed;
+}
+
+.embed-assistant-page__thinking-title.is-emerald {
+  color: #059669;
 }
 
 .embed-assistant-page__composer {
@@ -777,13 +811,4 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
   }
 }
 
-@keyframes embed-thinking-progress {
-  0% {
-    transform: translateX(-100%);
-  }
-
-  100% {
-    transform: translateX(220%);
-  }
-}
 </style>

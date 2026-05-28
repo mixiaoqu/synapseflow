@@ -6,6 +6,9 @@ import {
   type EmbedAssistantBootstrap,
   type EmbedPageConfig,
   type EmbedPageContext,
+  type EmbedSessionDetail,
+  type EmbedSessionMessage,
+  type EmbedSessionSummary,
 } from "@/shared/api/embed";
 import { consumeSseStream } from "@/shared/lib/stream/sse";
 import { AppRequestError } from "@/shared/utils/error";
@@ -25,6 +28,18 @@ export interface EmbedMessage {
   logId?: number | null;
   feedbackValue?: string | null;
   feedbackSubmitting?: boolean;
+}
+
+export interface SessionSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  preview?: string | null;
+}
+
+export interface StreamPhase {
+  nodeId: string | null;
+  status: string | null;
 }
 
 function findMessageById(messages: EmbedMessage[], messageId: string) {
@@ -71,6 +86,42 @@ function buildContextLabel(bootstrap: EmbedAssistantBootstrap, pageConfig: Embed
   return segments.filter(Boolean).join(" / ");
 }
 
+function toSessionSummary(session: EmbedSessionSummary): SessionSummary {
+  return {
+    id: session.session_id,
+    title: session.title || "新对话",
+    createdAt: session.updated_at || session.created_at,
+    preview: session.preview ?? null,
+  };
+}
+
+function toEmbedMessage(message: EmbedSessionMessage): EmbedMessage | null {
+  const role = message.role.trim().toLowerCase();
+  if ((role !== "user" && role !== "assistant") || !message.content.trim()) {
+    return null;
+  }
+
+  return {
+    id: createMessageId(role),
+    role: role as "user" | "assistant",
+    content: message.content,
+    createdAt: message.created_at,
+    retrievedDocs: Array.isArray(message.retrieved_docs)
+      ? (message.retrieved_docs as RetrievedDoc[])
+      : [],
+    answerStatus: message.answer_status ?? null,
+    logId: message.log_id ?? null,
+    feedbackValue: null,
+    feedbackSubmitting: false,
+  };
+}
+
+function toEmbedMessages(detail: EmbedSessionDetail): EmbedMessage[] {
+  return detail.messages
+    .map((message) => toEmbedMessage(message))
+    .filter((message): message is EmbedMessage => message != null);
+}
+
 export function useEmbeddedAssistant() {
   const route = useRoute();
   const token = computed(() => {
@@ -88,11 +139,16 @@ export function useEmbeddedAssistant() {
   const contextLabel = ref("");
   const error = ref<string | null>(null);
   const streamStatus = ref<string | null>(null);
+  const streamPhase = ref<StreamPhase>({ nodeId: null, status: null });
   const retrievedCount = ref<number | null>(null);
   const currentSessionId = ref<string | null>(null);
   const pageContext = ref<EmbedPageContext | null>(null);
   const pageConfig = ref<EmbedPageConfig | null>(null);
   const scrollContainerRef = ref<HTMLElement | null>(null);
+  const sessions = ref<SessionSummary[]>([]);
+  const sessionsLoading = ref(false);
+  const sessionsError = ref<string | null>(null);
+  const deletingSessionId = ref<string | null>(null);
 
   let activeAbortController: AbortController | null = null;
 
@@ -100,6 +156,7 @@ export function useEmbeddedAssistant() {
     messages.value = [];
     error.value = null;
     streamStatus.value = null;
+    streamPhase.value = { nodeId: null, status: null };
     retrievedCount.value = null;
     currentSessionId.value = null;
   }
@@ -116,6 +173,26 @@ export function useEmbeddedAssistant() {
     activeAbortController = null;
     isTyping.value = false;
     streamStatus.value = null;
+    streamPhase.value = { nodeId: null, status: null };
+  }
+
+  async function loadSessions() {
+    if (!token.value) {
+      sessions.value = [];
+      sessionsError.value = null;
+      return;
+    }
+
+    sessionsLoading.value = true;
+    sessionsError.value = null;
+    try {
+      const response = await embedApi.listSessions(token.value);
+      sessions.value = response.map((session) => toSessionSummary(session));
+    } catch (err) {
+      sessionsError.value = formatEmbedError(err, "加载历史对话失败。");
+    } finally {
+      sessionsLoading.value = false;
+    }
   }
 
   async function initialize() {
@@ -155,6 +232,7 @@ export function useEmbeddedAssistant() {
       suggestions.value = bootstrap.page_config
         ? [...bootstrap.page_config.suggested_questions]
         : [...bootstrap.suggested_prompts];
+      await loadSessions();
     } catch (err) {
       error.value = formatEmbedError(err, "初始化助手失败。");
     } finally {
@@ -191,6 +269,7 @@ export function useEmbeddedAssistant() {
     messages.value = [...messages.value, userMessage, assistantMessage];
     error.value = null;
     streamStatus.value = "正在连接助手...";
+    streamPhase.value = { nodeId: null, status: "正在连接助手..." };
     retrievedCount.value = null;
     isTyping.value = true;
     await scrollToBottom();
@@ -215,16 +294,39 @@ export function useEmbeddedAssistant() {
         }
 
         switch (event.type) {
+          case "start": {
+            streamStatus.value = "正在准备问题...";
+            streamPhase.value = { nodeId: null, status: "正在准备问题..." };
+            break;
+          }
+          case "node_start": {
+            const nodeId = typeof event.node_id === "string" ? event.node_id.trim() : "";
+            const statusMap: Record<string, string> = {
+              plan_query: "正在理解问题并规划检索...",
+              analyze: "正在分析问题并生成检索方案...",
+              rewrite_query: "正在整理检索线索...",
+              retrieve: "正在检索知识库...",
+              evaluate: "正在核对答案依据...",
+              answer: "正在生成回答...",
+            };
+            const status = statusMap[nodeId] ?? "正在处理...";
+            streamStatus.value = status;
+            streamPhase.value = { nodeId: nodeId || null, status };
+            break;
+          }
           case "node_complete": {
             if (event.node_id === "retrieve") {
               const count = event.data.retrieved_count;
               if (typeof count === "number") {
                 retrievedCount.value = count;
-                streamStatus.value =
+                const status =
                   count > 0 ? "已匹配相关内容，正在生成回答..." : "未匹配到相关内容，正在整理说明...";
+                streamStatus.value = status;
+                streamPhase.value = { nodeId: "retrieve", status };
               }
             } else if (event.node_id === "answer") {
               streamStatus.value = "正在整理回答...";
+              streamPhase.value = { nodeId: "answer", status: "正在整理回答..." };
             }
             break;
           }
@@ -234,6 +336,7 @@ export function useEmbeddedAssistant() {
               break;
             }
             streamStatus.value = "正在生成回答...";
+            streamPhase.value = { nodeId: "answer", status: "正在生成回答..." };
             const targetMessage = findMessageById(messages.value, assistantMessageId);
             if (targetMessage) {
               targetMessage.content += text;
@@ -246,8 +349,10 @@ export function useEmbeddedAssistant() {
               break;
             }
             retrievedCount.value = docs.length;
-            streamStatus.value =
+            const status =
               docs.length > 0 ? "已匹配相关内容，正在生成回答..." : "未匹配到相关内容，正在整理说明...";
+            streamStatus.value = status;
+            streamPhase.value = { nodeId: "retrieve", status };
             const targetMessage = findMessageById(messages.value, assistantMessageId);
             if (targetMessage) {
               targetMessage.retrievedDocs = docs as RetrievedDoc[];
@@ -256,6 +361,7 @@ export function useEmbeddedAssistant() {
           }
           case "complete": {
             streamStatus.value = null;
+            streamPhase.value = { nodeId: null, status: null };
             const answer = event.data.answer;
             const sessionId = event.data.session_id;
             const docs = event.data.retrieved_docs;
@@ -263,9 +369,9 @@ export function useEmbeddedAssistant() {
               typeof event.data.answer_status === "string" ? event.data.answer_status : null;
             const logId = typeof event.data.log_id === "number" ? event.data.log_id : null;
 
-            if (typeof sessionId === "string" && sessionId) {
-              currentSessionId.value = sessionId;
-            }
+              if (typeof sessionId === "string" && sessionId) {
+                currentSessionId.value = sessionId;
+              }
 
             const targetMessage = findMessageById(messages.value, assistantMessageId);
             if (targetMessage) {
@@ -287,6 +393,7 @@ export function useEmbeddedAssistant() {
                 : "请求失败";
             error.value = message;
             streamStatus.value = null;
+            streamPhase.value = { nodeId: null, status: null };
             const targetMessage = findMessageById(messages.value, assistantMessageId);
             if (targetMessage) {
               targetMessage.content = message;
@@ -314,6 +421,8 @@ export function useEmbeddedAssistant() {
       }
       isTyping.value = false;
       streamStatus.value = null;
+      streamPhase.value = { nodeId: null, status: null };
+      await loadSessions();
       await scrollToBottom();
     }
   }
@@ -321,6 +430,47 @@ export function useEmbeddedAssistant() {
   function startNewConversation() {
     stopGenerating();
     resetAssistantState();
+  }
+
+  async function selectSession(sessionId: string) {
+    if (!sessionId || !token.value) {
+      return;
+    }
+
+    stopGenerating();
+    error.value = null;
+    currentSessionId.value = sessionId;
+    retrievedCount.value = null;
+
+    try {
+      const detail = await embedApi.getSession(token.value, sessionId);
+      messages.value = toEmbedMessages(detail);
+      await scrollToBottom();
+    } catch (err) {
+      error.value = formatEmbedError(err, "加载历史对话失败。");
+    }
+  }
+
+  async function deleteSession(sessionId: string) {
+    if (!sessionId || !token.value || deletingSessionId.value) {
+      return false;
+    }
+
+    deletingSessionId.value = sessionId;
+    sessionsError.value = null;
+    try {
+      await embedApi.deleteSession(token.value, sessionId);
+      sessions.value = sessions.value.filter((session) => session.id !== sessionId);
+      if (currentSessionId.value === sessionId) {
+        startNewConversation();
+      }
+      return true;
+    } catch (err) {
+      sessionsError.value = formatEmbedError(err, "删除历史对话失败。");
+      return false;
+    } finally {
+      deletingSessionId.value = null;
+    }
   }
 
   async function submitFeedback(logId: number, feedbackValue: string) {
@@ -366,8 +516,16 @@ export function useEmbeddedAssistant() {
     messages,
     pageConfig,
     placeholder,
+    deletingSessionId,
     retrievedCount,
     scrollContainerRef,
+    deleteSession,
+    loadSessions,
+    selectSession,
+    sessions,
+    sessionsError,
+    sessionsLoading,
+    streamPhase,
     streamStatus,
     suggestions,
     sendMessage,

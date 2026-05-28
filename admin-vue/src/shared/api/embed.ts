@@ -36,6 +36,40 @@ export interface EmbedPageContext {
   page_type: string;
 }
 
+export interface EmbedSessionMessage {
+  role: string;
+  content: string;
+  retrieved_docs?: Array<Record<string, unknown>>;
+  answer_status?: string | null;
+  log_id?: number | null;
+  created_at: string;
+}
+
+export interface EmbedSessionSummary {
+  session_id: string;
+  title: string;
+  preview?: string | null;
+  project_id?: number | null;
+  project_app_id?: number | null;
+  external_user_id?: string | null;
+  external_user_name?: string | null;
+  source?: string | null;
+  team_id?: number | null;
+  knowledge_base_id?: number | null;
+  knowledge_base_name?: string | null;
+  assistant_id?: number | null;
+  assistant_name?: string | null;
+  category_id?: number | null;
+  category_name?: string | null;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmbedSessionDetail extends EmbedSessionSummary {
+  messages: EmbedSessionMessage[];
+}
+
 export interface EmbedAssistantStreamPayload {
   query: string;
   session_id?: string | null;
@@ -183,6 +217,28 @@ export const embedApi = {
   bootstrap(token: string) {
     return getJson<EmbedAssistantBootstrap>("/embed/assistant/bootstrap", {
       token,
+    });
+  },
+
+  listSessions(token: string, limit: number = 30) {
+    return getJson<EmbedSessionSummary[]>(`/embed/assistant/sessions?limit=${limit}`, {
+      token,
+    });
+  },
+
+  getSession(token: string, sessionId: string) {
+    return getJson<EmbedSessionDetail>(
+      `/embed/assistant/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        token,
+      },
+    );
+  },
+
+  deleteSession(token: string, sessionId: string) {
+    return getJson<void>(`/embed/assistant/sessions/${encodeURIComponent(sessionId)}`, {
+      token,
+      method: "DELETE",
     });
   },
 
