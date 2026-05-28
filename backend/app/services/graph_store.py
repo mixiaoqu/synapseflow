@@ -122,6 +122,7 @@ class GraphStore(Protocol):
         *,
         knowledge_base_id: int,
         team_id: int,
+        normalized_names: list[str],
         document_id: int | None = None,
     ) -> list[dict[str, Any]]: ...
 
@@ -222,6 +223,7 @@ class NullGraphStore:
         *,
         knowledge_base_id: int,
         team_id: int,
+        normalized_names: list[str],
         document_id: int | None = None,
     ) -> list[dict[str, Any]]:
         return []
@@ -627,13 +629,24 @@ class Neo4jGraphStore:
         *,
         knowledge_base_id: int,
         team_id: int,
+        normalized_names: list[str],
         document_id: int | None = None,
     ) -> list[dict[str, Any]]:
+        lookup_names = [" ".join(item.split()).strip().casefold() for item in normalized_names]
+        lookup_names = [item for item in lookup_names if item]
+        if not lookup_names:
+            return []
         query = """
         MATCH (source:Entity)-[r:RELATED]->(target:Entity)
         WHERE r.knowledge_base_id = $knowledge_base_id
           AND r.team_id = $team_id
           AND ($document_id IS NULL OR r.document_id = $document_id)
+          AND (
+            toLower(source.normalized_name) IN $lookup_names
+            OR toLower(target.normalized_name) IN $lookup_names
+            OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) IN $lookup_names)
+            OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) IN $lookup_names)
+          )
         OPTIONAL MATCH (source)-[:HAS_SUMMARY]->(source_summary:EntitySummary)
         OPTIONAL MATCH (target)-[:HAS_SUMMARY]->(target_summary:EntitySummary)
         RETURN
@@ -659,6 +672,7 @@ class Neo4jGraphStore:
                 query,
                 knowledge_base_id=knowledge_base_id,
                 team_id=team_id,
+                lookup_names=lookup_names,
                 document_id=document_id,
             )
             rows: list[dict[str, Any]] = []

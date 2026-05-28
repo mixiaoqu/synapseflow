@@ -115,6 +115,26 @@ async def _load_indexable_chunks(
     return document_chunk_ids, vector_chunks
 
 
+def _contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
+def _choose_preferred_display_name(existing_name: str, incoming_name: str, normalized_name: str) -> str:
+    existing_clean = str(existing_name or "").strip()
+    incoming_clean = str(incoming_name or "").strip()
+    normalized_clean = str(normalized_name or "").strip()
+    candidates = [name for name in [existing_clean, incoming_clean] if name]
+    if not candidates:
+        return normalized_clean
+
+    def _score(name: str) -> tuple[int, int, int]:
+        exact_penalty = 0 if name.casefold() != normalized_clean.casefold() else 1
+        cjk_bonus = 1 if _contains_cjk(name) else 0
+        return (exact_penalty, -cjk_bonus, len(name))
+
+    return min(candidates, key=_score)
+
+
 def _merge_entity_records(
     existing: GraphEntityRecord,
     incoming: GraphEntityRecord,
@@ -155,7 +175,11 @@ def _merge_entity_records(
         document_id=existing.document_id,
         document_chunk_id=existing.document_chunk_id,
         normalized_name=existing.normalized_name,
-        display_name=existing.display_name or incoming.display_name,
+        display_name=_choose_preferred_display_name(
+            existing.display_name,
+            incoming.display_name,
+            existing.normalized_name,
+        ),
         entity_type=entity_type,
         aliases=tuple(aliases),
         attributes=attributes,

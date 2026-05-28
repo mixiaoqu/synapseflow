@@ -18,9 +18,10 @@ class FakeGraphStore:
         assert normalized_names == ["Prescription Flow", "Payment"]
         return []
 
-    async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+    async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
         assert knowledge_base_id == 7
         assert team_id == 3
+        assert normalized_names == ["Prescription Flow", "Payment"]
         return []
 
     async def search_related_evidence(self, *, entity_names, knowledge_base_id, team_id, limit):
@@ -50,7 +51,7 @@ class FailingGraphStore:
     async def list_entity_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names):
         raise RuntimeError("neo4j unavailable")
 
-    async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+    async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
         raise RuntimeError("neo4j unavailable")
 
     async def search_related_evidence(self, *, entity_names, knowledge_base_id, team_id, limit):
@@ -77,8 +78,12 @@ def test_graph_retriever_returns_normalized_docs_and_trace():
     assert metadata["document_id"] == 10
     assert "chunk_index" not in metadata
     assert metadata["graph_relation_type"] == "CONNECTS_TO"
+    assert result["graph_primary_docs"][0]["metadata"]["source"] == "graph"
+    assert result["graph_supporting_docs"][0]["metadata"]["supporting_section"] == "关联证据"
     assert result["trace"]["graph_used"] is True
-    assert result["trace"]["graph_hits"] == 1
+    assert result["trace"]["graph_hits"] == 2
+    assert result["trace"]["graph_primary_hits"] == 1
+    assert result["trace"]["graph_supporting_hits"] == 1
     assert result["trace"]["graph_mode"] == "relation_evidence"
 
 
@@ -129,7 +134,7 @@ def test_graph_retriever_uses_entity_summary_mode_for_definition_lookup():
                 }
             ]
 
-        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
             return []
 
         async def search_related_evidence(self, *, entity_names, knowledge_base_id, team_id, limit):
@@ -152,7 +157,10 @@ def test_graph_retriever_uses_entity_summary_mode_for_definition_lookup():
         )
     )
 
-    assert result["retrieved_docs"][0]["metadata"]["source"] == "graph_summary"
+    assert result["retrieved_docs"] == []
+    assert result["graph_primary_docs"] == []
+    assert result["graph_supporting_docs"][0]["metadata"]["source"] == "graph_summary"
+    assert result["graph_supporting_docs"][0]["metadata"]["supporting_section"] == "实体摘要"
     assert result["trace"]["graph_mode"] == "entity_summary"
 
 
@@ -170,7 +178,7 @@ def test_graph_retriever_respects_explicit_graph_mode():
                 }
             ]
 
-        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
             raise AssertionError("relation summaries should not be queried in explicit entity_summary mode")
 
         async def search_related_evidence(self, *, entity_names, knowledge_base_id, team_id, limit):
@@ -194,7 +202,8 @@ def test_graph_retriever_respects_explicit_graph_mode():
         )
     )
 
-    assert result["retrieved_docs"][0]["metadata"]["source"] == "graph_summary"
+    assert result["retrieved_docs"] == []
+    assert result["graph_supporting_docs"][0]["metadata"]["source"] == "graph_summary"
     assert result["trace"]["graph_mode"] == "entity_summary"
 
 
@@ -203,7 +212,7 @@ def test_graph_retriever_uses_relation_pairs_for_direct_relation_lookup():
         async def list_entity_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names):
             return []
 
-        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
             return []
 
         async def search_related_evidence(self, *, entity_names, knowledge_base_id, team_id, limit):
@@ -244,7 +253,9 @@ def test_graph_retriever_uses_relation_pairs_for_direct_relation_lookup():
     )
 
     assert result["trace"]["graph_mode"] == "relation_evidence"
-    assert result["trace"]["graph_hits"] == 1
+    assert result["trace"]["graph_hits"] == 2
+    assert result["trace"]["graph_primary_hits"] == 1
+    assert result["trace"]["graph_supporting_hits"] == 1
 
 
 def test_graph_retriever_uses_relation_query_for_outgoing_child_lookup():
@@ -252,7 +263,7 @@ def test_graph_retriever_uses_relation_query_for_outgoing_child_lookup():
         async def list_entity_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names):
             return []
 
-        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
             return []
 
         async def search_related_evidence(self, *, entity_names, knowledge_base_id, team_id, limit):
@@ -305,4 +316,97 @@ def test_graph_retriever_uses_relation_query_for_outgoing_child_lookup():
         )
     )
 
-    assert result["retrieved_docs"]
+    assert result["graph_primary_docs"]
+    assert result["graph_supporting_docs"][0]["metadata"]["supporting_section"] == "关联证据"
+
+
+def test_graph_retriever_skips_summary_modes_without_grounded_entities():
+    class CandidateOnlySummaryStore:
+        async def list_entity_summary_contexts(self, **kwargs):  # pragma: no cover
+            raise AssertionError("entity summaries should be skipped without grounded entities")
+
+        async def list_relation_summary_contexts(self, **kwargs):  # pragma: no cover
+            raise AssertionError("relation summaries should be skipped without grounded entities")
+
+        async def search_related_evidence(self, **kwargs):  # pragma: no cover
+            raise AssertionError("generic graph evidence should be skipped without grounded entities")
+
+        async def search_relation_evidence_for_pairs(self, **kwargs):
+            return []
+
+        async def search_relation_evidence_for_queries(self, **kwargs):
+            return []
+
+    result = asyncio.run(
+        GraphRetriever(store=CandidateOnlySummaryStore(), enabled=True).retrieve(
+            candidate_entities=["商品视频"],
+            grounded_entities=[],
+            relation_pairs=[],
+            relation_queries=[],
+            knowledge_base_id=7,
+            team_id=3,
+            question_type="summary_lookup",
+            graph_mode="neighborhood_summary",
+        )
+    )
+
+    assert result["retrieved_docs"] == []
+    assert result["trace"]["empty_reason"] == "no_grounded_entities"
+    assert result["trace"]["graph_hits"] == 0
+
+
+def test_graph_retriever_filters_relation_summary_by_grounded_entities():
+    class NeighborhoodSummaryStore:
+        async def list_entity_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names):
+            assert normalized_names == ["商品视频"]
+            return []
+
+        async def list_relation_summary_contexts(
+            self,
+            *,
+            knowledge_base_id,
+            team_id,
+            normalized_names,
+            document_id=None,
+        ):
+            assert normalized_names == ["商品视频"]
+            return [
+                {
+                    "source_normalized_name": "商品视频",
+                    "source_display_name": "商品视频",
+                    "target_normalized_name": "上传限制",
+                    "target_display_name": "上传限制",
+                    "relation_type": "LIMITED_BY",
+                    "summary": "商品视频受上传限制约束。",
+                    "source_summary": "商品视频用于商品详情展示。",
+                    "target_summary": "上传限制定义格式、大小和时长要求。",
+                    "evidence": "商品视频 上传限制",
+                }
+            ]
+
+        async def search_related_evidence(self, *, entity_names, knowledge_base_id, team_id, limit):
+            assert entity_names == ["商品视频"]
+            return []
+
+        async def search_relation_evidence_for_pairs(self, *, relation_pairs, knowledge_base_id, team_id, limit):
+            return []
+
+        async def search_relation_evidence_for_queries(self, *, relation_queries, knowledge_base_id, team_id, limit):
+            return []
+
+    result = asyncio.run(
+        GraphRetriever(store=NeighborhoodSummaryStore(), enabled=True).retrieve(
+            grounded_entities=[{"normalized_name": "商品视频", "display_name": "商品视频"}],
+            relation_pairs=[],
+            relation_queries=[],
+            knowledge_base_id=7,
+            team_id=3,
+            question_type="summary_lookup",
+            graph_mode="neighborhood_summary",
+        )
+    )
+
+    assert result["trace"]["graph_mode"] == "neighborhood_summary"
+    assert result["graph_primary_docs"] == []
+    assert any(doc["metadata"]["source"] == "graph_relation_summary" for doc in result["graph_supporting_docs"])
+    assert not any(doc["metadata"]["supporting_section"] == "邻域补充" for doc in result["graph_supporting_docs"])

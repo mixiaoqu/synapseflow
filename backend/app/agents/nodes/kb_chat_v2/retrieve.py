@@ -85,6 +85,41 @@ def _build_context(docs: list[dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
+def _build_supporting_context(docs: list[dict[str, Any]]) -> str:
+    section_order = ("实体摘要", "关键关系", "邻域补充", "关联证据")
+    grouped: dict[str, list[dict[str, Any]]] = {name: [] for name in section_order}
+    extras: list[dict[str, Any]] = []
+    for doc in docs:
+        section = str((doc.get("metadata") or {}).get("supporting_section") or "").strip()
+        if section in grouped:
+            grouped[section].append(doc)
+        else:
+            extras.append(doc)
+
+    parts: list[str] = []
+    for section in section_order:
+        section_docs = grouped[section]
+        if not section_docs:
+            continue
+        blocks = [
+            _format_doc_for_layer(doc, index=index)
+            for index, doc in enumerate(section_docs, start=1)
+            if _format_doc_for_layer(doc, index=index)
+        ]
+        if blocks:
+            parts.append(f"[{section}]\n" + "\n\n".join(blocks))
+
+    if extras:
+        extra_blocks = [
+            _format_doc_for_layer(doc, index=index)
+            for index, doc in enumerate(extras, start=1)
+            if _format_doc_for_layer(doc, index=index)
+        ]
+        if extra_blocks:
+            parts.append("[补充信息]\n" + "\n\n".join(extra_blocks))
+    return "\n\n".join(parts)
+
+
 def _build_rerank_text(doc: dict[str, Any]) -> str:
     metadata = dict(doc.get("metadata") or {})
     title = str(metadata.get("document_title") or "").strip()
@@ -153,80 +188,18 @@ def _resolve_graph_mode_from_plan(graph_plan: dict[str, Any]) -> str | None:
     return None
 
 
-def _contains_business_signal(text: str) -> bool:
-    normalized = " ".join(str(text or "").split()).strip().lower()
-    if not normalized:
-        return False
-
-    keywords = (
-        "用于",
-        "用来",
-        "作用",
-        "用途",
-        "负责",
-        "影响",
-        "用于实现",
-        "配置后",
-        "会在",
-        "控制",
-        "决定",
-        "流程",
-        "步骤",
-        "规则",
-        "限制",
-        "依赖",
-        "触发",
-        "影响到",
-    )
-    return any(keyword in normalized for keyword in keywords)
-
-
-def _is_metadata_like(doc: dict[str, Any]) -> bool:
-    metadata = dict(doc.get("metadata") or {})
-    source = str(metadata.get("source") or "").strip()
-    content = str(doc.get("content") or "").strip()
-
-    if source == "graph_summary" and not _contains_business_signal(content):
-        return True
-
-    weak_keywords = (
-        "别名",
-        "alias",
-        "实体类型",
-        "类型",
-        "出现在",
-        "出现于",
-        "归属于",
-        "属于",
-        "数据库类型",
-        "database",
-    )
-    lowered = content.lower()
-    return any(keyword in lowered for keyword in weak_keywords) and not _contains_business_signal(content)
-
-
 def _classify_evidence(doc: dict[str, Any], *, question_type: str) -> str:
     metadata = dict(doc.get("metadata") or {})
     source = str(metadata.get("source") or "").strip()
-    content = str(doc.get("content") or "").strip()
     document_chunk_id = metadata.get("document_chunk_id")
 
-    if _is_metadata_like(doc):
-        return "metadata"
-
-    if source == "graph_relation_summary":
-        return "supporting"
-
-    if source == "graph_summary":
-        return "supporting" if _contains_business_signal(content) else "metadata"
-
     if source == "graph":
-        return "primary" if document_chunk_id is not None else "supporting"
+        return "primary" if document_chunk_id is not None else "metadata"
 
     if source in {"text_graph", "text", ""}:
         return "primary"
 
-    return "primary"
+    return "metadata"
 
 
 def _format_doc_for_layer(doc: dict[str, Any], *, index: int) -> str:
@@ -276,6 +249,8 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
     if str(state.get("retrieval_strategy") or "").strip().lower() == "skip":
         return {
             "retrieved_docs": [],
+            "graph_primary_docs": [],
+            "graph_supporting_docs": [],
             "primary_evidence_docs": [],
             "supporting_evidence_docs": [],
             "metadata_evidence_docs": [],
@@ -369,22 +344,20 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
     text_result, graph_result = await asyncio.gather(_run_text_retrieval(), _run_graph_retrieval())
 
     text_docs = list(text_result.get("retrieved_docs") or [])
-    graph_docs = list(graph_result.get("retrieved_docs") or [])
+    graph_primary_docs = list(graph_result.get("graph_primary_docs") or [])
+    graph_supporting_docs = list(graph_result.get("graph_supporting_docs") or [])
     merge_started_at = perf_counter()
     merged_docs = _merge_text_and_graph_docs(
         text_docs,
-        graph_docs,
-        final_top_k=max(final_top_k, len(text_docs) + len(graph_docs)),
+        graph_primary_docs,
+        final_top_k=max(final_top_k, len(text_docs) + len(graph_primary_docs)),
     )
     primary_docs: list[dict[str, Any]] = []
-    supporting_docs: list[dict[str, Any]] = []
     metadata_docs: list[dict[str, Any]] = []
     for doc in merged_docs:
         layer = _classify_evidence(doc, question_type=question_type)
         if layer == "primary":
             primary_docs.append(doc)
-        elif layer == "supporting":
-            supporting_docs.append(doc)
         else:
             metadata_docs.append(doc)
     reranked_primary_docs = (
@@ -392,8 +365,9 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
         if rerank_enabled
         else primary_docs[:final_top_k]
     )
+    supporting_docs = graph_supporting_docs
     primary_context = _build_layer_context(reranked_primary_docs)
-    supporting_context = _build_layer_context(supporting_docs)
+    supporting_context = _build_supporting_context(supporting_docs)
     metadata_context = _build_layer_context(metadata_docs)
     context = _compose_full_context(
         primary_context=primary_context,
@@ -437,6 +411,13 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
         "primary_count": len(reranked_primary_docs),
         "supporting_count": len(supporting_docs),
         "metadata_count": len(metadata_docs),
+        "graph_primary_count": len(graph_primary_docs),
+        "graph_supporting_count": len(supporting_docs),
+        "supporting_sections": [
+            str((doc.get("metadata") or {}).get("supporting_section") or "").strip()
+            for doc in supporting_docs
+            if str((doc.get("metadata") or {}).get("supporting_section") or "").strip()
+        ],
         "text_evidence_count": len(
             [doc for doc in reranked_primary_docs if (doc.get("metadata") or {}).get("source") != "graph"]
         ),
@@ -450,7 +431,7 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
         "final_context_docs": len(reranked_primary_docs),
     }
     logger.info(
-        "[KB Retrieve V2] done | strategy={} question_type={} text_queries={} candidate_entities={} grounded_entities={} relation_pairs={} relation_queries={} text_hits={} graph_hits={} graph_empty_reason={} primary_count={} supporting_count={} metadata_count={} final_hits={} graph_evidence_count={}",
+        "[KB Retrieve V2] done | strategy={} question_type={} text_queries={} candidate_entities={} grounded_entities={} relation_pairs={} relation_queries={} text_hits={} graph_hits={} graph_primary_count={} graph_supporting_count={} graph_empty_reason={} primary_count={} supporting_count={} metadata_count={} final_hits={} graph_evidence_count={}",
         retrieval_strategy,
         question_type,
         text_queries,
@@ -460,6 +441,8 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
         list(state.get("relation_queries") or []),
         len(text_docs),
         graph_trace.get("graph_hits"),
+        len(graph_primary_docs),
+        len(supporting_docs),
         graph_trace.get("empty_reason"),
         len(reranked_primary_docs),
         len(supporting_docs),
@@ -469,6 +452,8 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
     )
     return {
         "retrieved_docs": reranked_primary_docs,
+        "graph_primary_docs": graph_primary_docs,
+        "graph_supporting_docs": supporting_docs,
         "reranked_primary_evidence_docs": reranked_primary_docs,
         "primary_evidence_docs": reranked_primary_docs,
         "supporting_evidence_docs": supporting_docs,

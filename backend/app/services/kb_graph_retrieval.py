@@ -48,6 +48,10 @@ def _normalize_grounded_entities(grounded_entities: list[dict[str, Any]] | None)
     return out
 
 
+def _requires_grounded_entities(graph_mode: str) -> bool:
+    return graph_mode in {"entity_summary", "neighborhood_summary"}
+
+
 def _resolve_graph_mode(question_type: str | None) -> str:
     normalized = str(question_type or "").strip().lower()
     if normalized in {"definition_lookup", "attribute_lookup"}:
@@ -95,6 +99,7 @@ def _build_entity_summary_doc(row: dict[str, Any], rank: int) -> dict[str, Any]:
         "graph_mode": "entity_summary",
         "graph_summary": summary,
         "matched_entities": [display_name] if display_name else [],
+        "supporting_section": "实体摘要",
     }
     return {"content": content, "metadata": metadata}
 
@@ -132,6 +137,52 @@ def _build_relation_summary_doc(row: dict[str, Any], rank: int) -> dict[str, Any
             for name in [source_display, target_display]
             if name
         ],
+        "supporting_section": "关键关系",
+    }
+    return {"content": content, "metadata": metadata}
+
+
+def _build_neighborhood_doc(row: dict[str, Any], rank: int) -> dict[str, Any] | None:
+    display_name = str(row.get("display_name") or row.get("normalized_name") or "").strip()
+    mentions = [
+        item
+        for item in list(row.get("mentions") or [])
+        if isinstance(item, dict) and (item.get("document_title") or item.get("section_path"))
+    ]
+    relations = [
+        item
+        for item in list(row.get("relations") or [])
+        if isinstance(item, dict) and (item.get("relation_type") or item.get("other"))
+    ]
+    if not mentions and not relations:
+        return None
+
+    lines: list[str] = []
+    if relations:
+        relation_texts = [
+            f"{item.get('relation_type') or 'RELATED_TO'} -> {item.get('other') or 'Unknown'}"
+            for item in relations[:5]
+        ]
+        lines.append(f"{display_name or '该实体'}的邻域关系：{'; '.join(relation_texts)}")
+    if mentions:
+        mention_texts = [
+            f"{item.get('document_title') or 'Unknown'} / {item.get('section_path') or '-'}"
+            for item in mentions[:5]
+        ]
+        lines.append(f"{display_name or '该实体'}相关证据位置：{'; '.join(mention_texts)}")
+    content = "\n".join(lines).strip()
+    if not content:
+        return None
+
+    metadata = {
+        "source": "graph_neighborhood",
+        "rank": rank,
+        "normalized_name": row.get("normalized_name"),
+        "document_title": display_name or "邻域补充",
+        "section_path": None,
+        "graph_mode": "neighborhood_summary",
+        "matched_entities": [display_name] if display_name else [],
+        "supporting_section": "邻域补充",
     }
     return {"content": content, "metadata": metadata}
 
@@ -154,6 +205,34 @@ def _normalize_graph_row(row: dict[str, Any], rank: int, *, graph_mode: str) -> 
     }
     if row.get("chunk_index") is not None:
         metadata["chunk_index"] = row.get("chunk_index")
+    return {"content": content, "metadata": metadata}
+
+
+def _build_evidence_supporting_doc(row: dict[str, Any], rank: int, *, graph_mode: str) -> dict[str, Any] | None:
+    evidence = str(row.get("evidence") or "").strip()
+    chunk_text = str(row.get("chunk_text") or "").strip()
+    title = str(row.get("document_title") or "关联证据").strip()
+    section_path = str(row.get("section_path") or "").strip()
+    matched_entities = list(row.get("matched_entities") or [])
+
+    lines = [evidence or chunk_text]
+    if section_path:
+        lines.append(f"位置：{section_path}")
+    content = "\n".join(line for line in lines if line).strip()
+    if not content:
+        return None
+
+    metadata = {
+        "source": "graph_evidence_summary",
+        "rank": rank,
+        "normalized_name": str(row.get("document_chunk_id") or title),
+        "document_title": title,
+        "section_path": section_path or None,
+        "graph_mode": graph_mode,
+        "graph_evidence": evidence,
+        "matched_entities": matched_entities,
+        "supporting_section": "关联证据",
+    }
     return {"content": content, "metadata": metadata}
 
 
@@ -212,10 +291,15 @@ class GraphRetriever:
         resolved_enabled = (
             graph_cfg.enabled if self._enabled is None else bool(self._enabled)
         )
-        entities = _normalize_grounded_entities(grounded_entities) or _normalize_entities(candidate_entities)
+        grounded_entity_names = _normalize_grounded_entities(grounded_entities)
+        candidate_entity_names = _normalize_entities(candidate_entities)
+        resolved_graph_mode = str(graph_mode or "").strip() or _resolve_graph_mode(question_type)
+        if _requires_grounded_entities(resolved_graph_mode):
+            entities = grounded_entity_names
+        else:
+            entities = grounded_entity_names or candidate_entity_names
         resolved_relation_pairs = [dict(item) for item in list(relation_pairs or []) if isinstance(item, dict)]
         resolved_relation_queries = [dict(item) for item in list(relation_queries or []) if isinstance(item, dict)]
-        resolved_graph_mode = str(graph_mode or "").strip() or _resolve_graph_mode(question_type)
         logger.info(
             "[KB Graph Retrieval] start | kb_id={} team_id={} question_type={} graph_mode={} enabled={} entities={} relation_pairs={} relation_queries={} limit={}",
             knowledge_base_id,
@@ -235,6 +319,8 @@ class GraphRetriever:
             "relation_pair_count": len(resolved_relation_pairs),
             "relation_query_count": len(resolved_relation_queries),
             "graph_hits": 0,
+            "graph_primary_hits": 0,
+            "graph_supporting_hits": 0,
             "empty_reason": None,
             "error": None,
         }
@@ -249,6 +335,17 @@ class GraphRetriever:
             return {
                 "retrieved_docs": [],
                 "trace": {**base_trace, "empty_reason": "disabled", "latency_ms": 0},
+            }
+        if _requires_grounded_entities(resolved_graph_mode) and not grounded_entity_names:
+            logger.info(
+                "[KB Graph Retrieval] skip | reason=no_grounded_entities graph_mode={} candidate_entities={} grounded_entities={}",
+                resolved_graph_mode,
+                candidate_entity_names,
+                grounded_entity_names,
+            )
+            return {
+                "retrieved_docs": [],
+                "trace": {**base_trace, "empty_reason": "no_grounded_entities", "latency_ms": 0},
             }
         if not entities and not resolved_relation_pairs and not resolved_relation_queries:
             logger.info(
@@ -284,6 +381,7 @@ class GraphRetriever:
                         resolved_store.list_relation_summary_contexts(
                             knowledge_base_id=knowledge_base_id,
                             team_id=team_id,
+                            normalized_names=entities,
                         ),
                     )
                 )
@@ -366,7 +464,8 @@ class GraphRetriever:
                 },
             }
 
-        docs: list[dict[str, Any]] = []
+        primary_docs: list[dict[str, Any]] = []
+        supporting_docs: list[dict[str, Any]] = []
         had_errors = False
         first_error: str | None = None
         for index, ((name, _task), result) in enumerate(zip(tasks, results), start=1):
@@ -383,31 +482,70 @@ class GraphRetriever:
                 len(rows),
             )
             if name == "entity_summary":
-                docs.extend(
-                    _build_entity_summary_doc(dict(row), index)
-                    for row in rows
-                    if isinstance(row, dict)
-                )
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    supporting_docs.append(_build_entity_summary_doc(dict(row), index))
+                    neighborhood_doc = _build_neighborhood_doc(dict(row), index)
+                    if neighborhood_doc is not None:
+                        supporting_docs.append(neighborhood_doc)
             elif name == "relation_summary":
-                docs.extend(
+                supporting_docs.extend(
                     _build_relation_summary_doc(dict(row), index)
                     for row in rows
                     if isinstance(row, dict)
                 )
             else:
-                docs.extend(
-                    _normalize_graph_row(dict(row), index + offset, graph_mode=resolved_graph_mode)
-                    for offset, row in enumerate(rows)
-                    if isinstance(row, dict)
-                )
+                for offset, row in enumerate(rows):
+                    if not isinstance(row, dict):
+                        continue
+                    normalized_row = dict(row)
+                    primary_docs.append(
+                        _normalize_graph_row(
+                            normalized_row,
+                            index + offset,
+                            graph_mode=resolved_graph_mode,
+                        )
+                    )
+                    evidence_doc = _build_evidence_supporting_doc(
+                        normalized_row,
+                        index + offset,
+                        graph_mode=resolved_graph_mode,
+                    )
+                    if evidence_doc is not None:
+                        supporting_docs.append(evidence_doc)
 
-        docs = [doc for doc in docs if str(doc.get("content") or "").strip()]
-        docs = docs[: max(1, limit)]
+        primary_docs = [doc for doc in primary_docs if str(doc.get("content") or "").strip()]
+        supporting_docs = [doc for doc in supporting_docs if str(doc.get("content") or "").strip()]
+
+        deduped_primary_docs: list[dict[str, Any]] = []
+        seen_primary_keys: set[tuple[Any, ...]] = set()
+        for doc in primary_docs:
+            key = _doc_key(doc)
+            if key in seen_primary_keys:
+                continue
+            deduped_primary_docs.append(doc)
+            seen_primary_keys.add(key)
+
+        deduped_supporting_docs: list[dict[str, Any]] = []
+        seen_supporting_keys: set[tuple[Any, ...]] = set()
+        for doc in supporting_docs:
+            key = _doc_key(doc)
+            if key in seen_supporting_keys:
+                continue
+            deduped_supporting_docs.append(doc)
+            seen_supporting_keys.add(key)
+
+        primary_docs = deduped_primary_docs[: max(1, limit)]
+        supporting_docs = deduped_supporting_docs[: max(4, limit)]
+        all_docs = [*primary_docs, *supporting_docs]
         logger.info(
-            "[KB Graph Retrieval] done | graph_mode={} graph_hits={} empty_reason={} error={} entities={} relation_pairs={} relation_queries={} latency_ms={}",
+            "[KB Graph Retrieval] done | graph_mode={} primary_hits={} supporting_hits={} graph_hits={} empty_reason={} error={} entities={} relation_pairs={} relation_queries={} latency_ms={}",
             resolved_graph_mode,
-            len(docs),
-            None if docs else ("error" if had_errors else "no_hits"),
+            len(primary_docs),
+            len(supporting_docs),
+            len(all_docs),
+            None if all_docs else ("error" if had_errors else "no_hits"),
             first_error or "-",
             entities,
             resolved_relation_pairs,
@@ -415,11 +553,15 @@ class GraphRetriever:
             int((perf_counter() - started_at) * 1000),
         )
         return {
-            "retrieved_docs": docs,
+            "retrieved_docs": primary_docs,
+            "graph_primary_docs": primary_docs,
+            "graph_supporting_docs": supporting_docs,
             "trace": {
                 **base_trace,
-                "graph_hits": len(docs),
-                "empty_reason": None if docs else ("error" if had_errors else "no_hits"),
+                "graph_hits": len(all_docs),
+                "graph_primary_hits": len(primary_docs),
+                "graph_supporting_hits": len(supporting_docs),
+                "empty_reason": None if all_docs else ("error" if had_errors else "no_hits"),
                 "error": first_error,
                 "latency_ms": int((perf_counter() - started_at) * 1000),
             },

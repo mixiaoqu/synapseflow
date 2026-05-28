@@ -51,6 +51,8 @@ class KbChatV2State(BaseAgentContext, total=False):
     retrieval_evaluation: Dict[str, Any]
     evaluate_trace: Dict[str, Any]
     retrieved_docs: List[Dict[str, Any]]
+    graph_primary_docs: List[Dict[str, Any]]
+    graph_supporting_docs: List[Dict[str, Any]]
     primary_evidence_docs: List[Dict[str, Any]]
     supporting_evidence_docs: List[Dict[str, Any]]
     metadata_evidence_docs: List[Dict[str, Any]]

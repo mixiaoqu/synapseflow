@@ -566,7 +566,8 @@ def test_kb_chat_v2_evaluate_node_does_not_set_answer_status():
         )
     )
 
-    assert result["retrieval_evaluation"]["status"] == "empty"
+    assert result["retrieval_evaluation"]["status"] == "sufficient"
+    assert result["retrieval_evaluation"]["diagnostic"]["failure_stage"] == "evaluate_bypassed"
     assert "evaluate_trace" in result
     assert "answer_status" not in result
 
@@ -633,13 +634,16 @@ def test_kb_chat_v2_retrieve_splits_primary_supporting_and_metadata(monkeypatch)
 
     async def fake_graph_retrieve(self, **kwargs):
         return {
-            "retrieved_docs": [
+            "retrieved_docs": [],
+            "graph_primary_docs": [],
+            "graph_supporting_docs": [
                 {
                     "content": "热词影响搜索结果的命中效率。",
                     "metadata": {
                         "source": "graph_relation_summary",
                         "document_title": "热词 -> 搜索结果",
                         "graph_relation_type": "AFFECTS",
+                        "supporting_section": "关键关系",
                     },
                 },
                 {
@@ -648,6 +652,7 @@ def test_kb_chat_v2_retrieve_splits_primary_supporting_and_metadata(monkeypatch)
                         "source": "graph_summary",
                         "document_title": "热词",
                         "normalized_name": "hot_word",
+                        "supporting_section": "实体摘要",
                     },
                 },
             ],
@@ -687,14 +692,16 @@ def test_kb_chat_v2_retrieve_splits_primary_supporting_and_metadata(monkeypatch)
     )
 
     assert len(result["primary_evidence_docs"]) == 1
-    assert len(result["supporting_evidence_docs"]) == 1
-    assert len(result["metadata_evidence_docs"]) == 1
+    assert len(result["supporting_evidence_docs"]) == 2
+    assert len(result["metadata_evidence_docs"]) == 0
     assert "热词用于提升搜索召回效率" in result["primary_context"]
+    assert "[实体摘要]" in result["supporting_context"]
+    assert "[关键关系]" in result["supporting_context"]
     assert "热词影响搜索结果的命中效率" in result["supporting_context"]
-    assert "DATABASE 类型实体" in result["metadata_context"]
+    assert "DATABASE 类型实体" in result["supporting_context"]
     assert result["retrieval_trace"]["primary_count"] == 1
-    assert result["retrieval_trace"]["supporting_count"] == 1
-    assert result["retrieval_trace"]["metadata_count"] == 1
+    assert result["retrieval_trace"]["supporting_count"] == 2
+    assert result["retrieval_trace"]["metadata_count"] == 0
 
 
 def test_kb_chat_v2_retrieve_reranks_primary_evidence_after_dedupe(monkeypatch):
@@ -733,6 +740,29 @@ def test_kb_chat_v2_retrieve_reranks_primary_evidence_after_dedupe(monkeypatch):
                         "graph_relation_type": "DEPENDS_ON",
                         "graph_evidence": "项目应用依赖助手配置。",
                         "matched_entities": ["项目应用", "助手配置"],
+                    },
+                }
+            ],
+            "graph_primary_docs": [
+                {
+                    "content": "项目应用需要绑定助手配置。",
+                    "metadata": {
+                        "document_chunk_id": 11,
+                        "document_title": "文档A",
+                        "source": "graph",
+                        "graph_relation_type": "DEPENDS_ON",
+                        "graph_evidence": "项目应用依赖助手配置。",
+                        "matched_entities": ["项目应用", "助手配置"],
+                    },
+                }
+            ],
+            "graph_supporting_docs": [
+                {
+                    "content": "项目应用依赖助手配置。",
+                    "metadata": {
+                        "source": "graph_evidence_summary",
+                        "document_title": "文档A",
+                        "supporting_section": "关联证据",
                     },
                 }
             ],
@@ -793,6 +823,7 @@ def test_kb_chat_v2_retrieve_reranks_primary_evidence_after_dedupe(monkeypatch):
 
     assert result["retrieved_docs"][0]["metadata"]["document_chunk_id"] == 12
     assert result["primary_evidence_docs"][1]["metadata"]["source"] == "text_graph"
+    assert "[关联证据]" in result["supporting_context"]
 
 
 def test_kb_chat_v2_answer_prompt_prefers_primary_evidence_and_keeps_supporting_context():

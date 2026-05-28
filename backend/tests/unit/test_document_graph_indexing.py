@@ -9,7 +9,11 @@ from app.services.graph_models import (
     GraphEntityRecord,
     GraphRelationRecord,
 )
-from app.services.document_indexer import finalize_document_graph, index_document_graph
+from app.services.document_indexer import (
+    _merge_entity_records,
+    finalize_document_graph,
+    index_document_graph,
+)
 
 
 def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
@@ -59,7 +63,8 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
         async def upsert_entity_summaries(self, rows):
             events.append(("summary-upsert", len(rows)))
 
-        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
+            assert normalized_names == []
             events.append(("relation-summary-list", knowledge_base_id, team_id, document_id))
             return []
 
@@ -288,7 +293,8 @@ def test_finalize_document_graph_refreshes_relation_summaries_for_current_docume
         async def upsert_entity_summaries(self, rows):
             events.append(("entity-summary-upsert", len(rows)))
 
-        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
+            assert normalized_names == []
             events.append(("relation-summary-list", knowledge_base_id, team_id, document_id))
             return []
 
@@ -328,3 +334,34 @@ def test_finalize_document_graph_refreshes_relation_summaries_for_current_docume
     assert ("prune",) in events
     assert ("entity-summary-list", 9, 2, ("assistantprofile", "projectapp")) in events
     assert ("relation-summary-list", 9, 2, 1) in events
+
+
+def test_merge_entity_records_prefers_human_display_name_over_normalized_name():
+    existing = GraphEntityRecord(
+        team_id=1,
+        knowledge_base_id=40,
+        document_id=1,
+        document_chunk_id=1,
+        normalized_name="commodity",
+        display_name="commodity",
+        entity_type="BUSINESS_OBJECT",
+        aliases=("商品",),
+        attributes={"attr_description": "商品基础信息"},
+        evidence="commodity",
+    )
+    incoming = GraphEntityRecord(
+        team_id=1,
+        knowledge_base_id=40,
+        document_id=1,
+        document_chunk_id=2,
+        normalized_name="commodity",
+        display_name="商品",
+        entity_type="BUSINESS_OBJECT",
+        aliases=("商品信息",),
+        attributes={},
+        evidence="商品基础信息",
+    )
+
+    merged = _merge_entity_records(existing, incoming)
+
+    assert merged.display_name == "商品"

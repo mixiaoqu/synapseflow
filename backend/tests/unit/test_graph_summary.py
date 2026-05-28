@@ -218,8 +218,9 @@ def test_refresh_relation_summaries_writes_generated_summary(monkeypatch):
     calls = []
 
     class FakeStore:
-        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
             calls.append(("list", knowledge_base_id, team_id, document_id))
+            assert normalized_names == []
             return [
                 {
                     "source_normalized_name": "projectapp",
@@ -303,7 +304,8 @@ def test_refresh_relation_summaries_batches_contexts_and_reuses_llm(monkeypatch)
     ]
 
     class FakeStore:
-        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
+            assert normalized_names == []
             return contexts
 
         async def upsert_relation_summaries(self, rows):
@@ -377,7 +379,8 @@ def test_entity_and_relation_refresh_can_share_llm_instance(monkeypatch):
         async def upsert_entity_summaries(self, rows):
             calls.append(("entity-upsert", rows))
 
-        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, document_id=None):
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
+            assert normalized_names == []
             return [
                 {
                     "source_normalized_name": "projectapp",

@@ -358,6 +358,7 @@ async def refresh_relation_summaries(
     contexts = await store.list_relation_summary_contexts(
         knowledge_base_id=knowledge_base_id,
         team_id=team_id,
+        normalized_names=[],
         document_id=document_id,
     )
     resolved_llm = llm or (llm_factory or get_llm_for_analysis)()

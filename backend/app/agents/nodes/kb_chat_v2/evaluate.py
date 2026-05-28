@@ -160,7 +160,17 @@ async def kb_chat_v2_evaluate_node(
         message="正在核对答案依据",
     )
     started_at = perf_counter()
-    evaluation = await evaluate_retrieval_evidence(state, llm_factory=llm_factory)
+    # evaluation = await evaluate_retrieval_evidence(state, llm_factory=llm_factory)
+    # 临时短路评估节点以降低一次额外的 LLM 调用时延。
+    evaluation = {
+        "status": "sufficient",
+        "next_action": "answer",
+        "reason": "Retrieval evaluation temporarily bypassed for latency reduction.",
+        "diagnostic": {
+            "failure_stage": "evaluate_bypassed",
+            "details": "Retrieval evaluation temporarily bypassed for latency reduction.",
+        },
+    }
     return {
         "retrieval_evaluation": evaluation,
         "evaluate_trace": {"latency_ms": int((perf_counter() - started_at) * 1000)},
