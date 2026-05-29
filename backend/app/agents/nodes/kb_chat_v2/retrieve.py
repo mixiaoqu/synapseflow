@@ -71,6 +71,21 @@ def _merge_text_and_graph_docs(
     return merged[:final_top_k]
 
 
+def _dedupe_query_terms(items: list[str]) -> list[str]:
+    queries: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        value = " ".join(str(item or "").split()).strip()
+        if not value:
+            continue
+        key = value.casefold()
+        if key in seen:
+            continue
+        queries.append(value)
+        seen.add(key)
+    return queries
+
+
 def _build_context(docs: list[dict[str, Any]]) -> str:
     parts: list[str] = []
     for index, doc in enumerate(docs, start=1):
@@ -274,11 +289,17 @@ async def kb_chat_v2_retrieve_node(state: KbChatV2State) -> dict[str, Any]:
         message="正在查找知识库内容",
     )
     query = str(state.get("query") or "").strip()
-    text_queries = [
+    rewritten_text_queries = [
         str(item).strip()
         for item in list(state.get("text_queries") or [])
         if str(item or "").strip()
-    ] or [query]
+    ]
+    candidate_entity_queries = [
+        str(item).strip()
+        for item in list(state.get("candidate_entities") or [])
+        if str(item or "").strip()
+    ]
+    text_queries = _dedupe_query_terms([*rewritten_text_queries, *candidate_entity_queries]) or [query]
 
     execution_plan = dict(state.get("retrieval_execution_plan") or {})
     channels = dict(execution_plan.get("channels") or {})

@@ -10,7 +10,7 @@ from loguru import logger
 from app.core.llm import get_llm_for_analysis
 from app.utils import extract_json_from_llm_response
 
-_MAX_RETRIEVAL_QUERIES = 4
+_FALLBACK_RETRIEVAL_QUERY_LIMIT = 4
 _MAX_QUERY_LENGTH = 160
 
 _CODE_TOKEN_PATTERN = re.compile(
@@ -55,6 +55,14 @@ def _dedupe_keep_order(items: list[str], *, limit: int) -> list[str]:
     return out
 
 
+def _is_unquoted_protected_token(token: str) -> bool:
+    if re.search(r"[0-9_./:-]", token):
+        return True
+    if token.isupper() and len(token) > 1:
+        return True
+    return any(char.isupper() for char in token[1:])
+
+
 def _extract_protected_tokens(text: str) -> list[str]:
     tokens: list[str] = []
     seen: set[str] = set()
@@ -62,6 +70,8 @@ def _extract_protected_tokens(text: str) -> list[str]:
         token = next((group for group in match.groups() if group), "")
         cleaned = _normalize_query(token.strip("`\"'"))
         if len(cleaned) < 2:
+            continue
+        if match.group(5) and not _is_unquoted_protected_token(cleaned):
             continue
         key = cleaned.casefold()
         if key in seen:
@@ -141,7 +151,6 @@ def _build_rewrite_prompt(
     *,
     question_type: str,
     retrieval_label: str,
-    max_queries: int,
     chat_history: list[dict[str, str]] | None = None,
     memory_summary: str | None = None,
     runtime_context: dict[str, Any] | None = None,
@@ -160,42 +169,50 @@ def _build_rewrite_prompt(
     context_text = "\n".join(history_lines) or "(none)"
     runtime_context_text = _format_runtime_context(runtime_context)
     return f"""
-You are rewriting a single user question into retrieval-focused queries for a knowledge base.
+你是知识库检索查询翻译器，需要把用户问题翻译成适合检索系统使用的查询。
 
-Return JSON only:
+目标：
+把口语化、模糊、依赖上下文的用户问题，翻译成完整、无歧义、关键词密集的检索查询。
+
+只返回 JSON：
 {{
-  "queries": ["query 1", "query 2"],
-  "candidate_entities": ["entity 1", "entity 2"]
+  "queries": ["主检索查询", "可选补充检索查询"],
+  "candidate_entities": ["实体 1", "实体 2"]
 }}
 
-Rules:
-- Do not answer the question.
-- Do not invent facts.
-- Return at most {max_queries} queries.
-- Preserve these protected tokens exactly when relevant: {protected}
-- question_type determines the rewrite policy.
-- retrieval_label controls retrieval breadth: fast = minimal expansion, standard = balanced, broad = wider coverage.
-- followup_lookup must resolve short references from recent history when possible.
-- procedural_lookup should favor process, step, setup, or handling terms.
-- relationship_lookup should favor relation, dependency, ownership, or connection phrasing.
-- compare_lookup should prefer comparison-oriented queries.
-- summary_lookup can include multi-aspect overview queries.
-- candidate_entities should contain the main entities, modules, products,流程名, or objects mentioned in the question or rewritten queries.
-- Return empty arrays if nothing is explicit.
+规则：
+- 不要回答问题。
+- 不要编造事实。
+- 第一条 queries 必须是最适合作为独立检索输入的主检索查询。
+- 每条查询都应关键词密集、面向检索，不要保留聊天式表达。
+- 能从最近对话、会话摘要、用户环境中确定指代时，要补全代词、省略主语和模糊引用。
+- 尽量包含明确的实体、模块、产品、功能名、流程名、属性、错误名、标识符和约束条件。
+- 去掉“怎么”“这个”“那个”“帮我看看”“是什么意思”等口语填充词，除非它们属于真实术语。
+- 根据问题需要返回有效查询，不要为了凑数量生成重复或空泛查询。
+- 相关时必须原样保留这些受保护 token：{protected}
+- question_type 用于决定改写策略。
+- retrieval_label 用于决定检索宽度：fast 表示最小扩展，standard 表示均衡，broad 表示更宽召回。
+- followup_lookup 必须尽量根据最近对话补全短指代。
+- procedural_lookup 应偏向流程、步骤、配置、处理方式等词。
+- relationship_lookup 应偏向关系、依赖、归属、连接等词。
+- compare_lookup 应偏向对比类查询。
+- summary_lookup 可以包含多方面概览查询。
+- candidate_entities 应包含问题或改写查询中的主要实体、模块、产品、流程名或对象。
+- 如果没有明确内容，返回空数组。
 
-Question type: {question_type}
-Retrieval label: {retrieval_label}
+问题类型：{question_type}
+检索宽度：{retrieval_label}
 
-Conversation summary:
+会话摘要：
 {summary_text}
 
-Recent chat turns:
+最近对话：
 {context_text}
 
-User environment:
+用户环境：
 {runtime_context_text}
 
-User question:
+用户问题：
 {query}
 """.strip()
 
@@ -205,9 +222,10 @@ def _validate_queries(
     original: str,
     queries: list[str],
     protected_tokens: list[str],
-    limit: int,
 ) -> list[str]:
-    normalized = _dedupe_keep_order([original, *queries], limit=limit)
+    normalized = _dedupe_keep_order(queries, limit=max(len(queries), 1))
+    if not normalized:
+        normalized = _dedupe_keep_order([original], limit=1)
     if not normalized:
         return []
 
@@ -248,14 +266,15 @@ async def build_kb_chat_retrieval_queries(
             "entity_constraints": {},
         }
 
-    limit = max(1, min(max_queries or _MAX_RETRIEVAL_QUERIES, _MAX_RETRIEVAL_QUERIES))
+    del max_queries
+
     protected_tokens = _extract_protected_tokens(original)
     fallback = _build_fallback_queries(
         original,
         chat_history=chat_history,
         memory_summary=memory_summary,
         runtime_context=runtime_context,
-        limit=limit,
+        limit=_FALLBACK_RETRIEVAL_QUERY_LIMIT,
     )
 
     try:
@@ -266,7 +285,6 @@ async def build_kb_chat_retrieval_queries(
                 original,
                 question_type=question_type,
                 retrieval_label=retrieval_label,
-                max_queries=limit,
                 chat_history=chat_history,
                 memory_summary=memory_summary,
                 runtime_context=runtime_context,
@@ -286,7 +304,6 @@ async def build_kb_chat_retrieval_queries(
             original=original,
             queries=llm_queries,
             protected_tokens=protected_tokens,
-            limit=limit,
         )
         return {
             "queries": validated or fallback or [original],
