@@ -66,7 +66,7 @@ onMounted(() => {
           <el-icon class="text-white text-xs"><MagicStick /></el-icon>
         </div>
         <h1 class="text-[15px] font-bold tracking-wide text-slate-100">
-          AI 企业知识库
+          三圆AI知识库软件
         </h1>
       </div>
 

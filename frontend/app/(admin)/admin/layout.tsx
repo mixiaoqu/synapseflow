@@ -140,7 +140,7 @@ function AdminLayoutContent({
                 <Settings className="h-4.5 w-4.5 text-white" />
               </div>
               <div>
-                <p className="text-base font-semibold leading-tight text-white">知识运营后台</p>
+                <p className="text-base font-semibold leading-tight text-white">三圆AI知识库软件</p>
                 <p className="mt-0.5 text-[11px] text-gray-500">Knowledge Ops Console</p>
               </div>
             </div>
