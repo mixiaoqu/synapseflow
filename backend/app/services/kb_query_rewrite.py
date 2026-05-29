@@ -55,6 +55,17 @@ def _dedupe_keep_order(items: list[str], *, limit: int) -> list[str]:
     return out
 
 
+def _dedupe_all_keep_order(items: list[str]) -> list[str]:
+    return _dedupe_keep_order(items, limit=max(len(items), 1))
+
+
+def _split_lexical_terms(items: list[str]) -> list[str]:
+    terms: list[str] = []
+    for item in items:
+        terms.extend(str(item or "").split())
+    return _dedupe_all_keep_order(terms)
+
+
 def _is_unquoted_protected_token(token: str) -> bool:
     if re.search(r"[0-9_./:-]", token):
         return True
@@ -176,15 +187,19 @@ def _build_rewrite_prompt(
 
 只返回 JSON：
 {{
-  "queries": ["主检索查询", "可选补充检索查询"],
+  "semantic_queries": ["完整语义查询，给向量检索"],
+  "lexical_terms": ["关键词或短语，给关键词检索"],
   "candidate_entities": ["实体 1", "实体 2"]
 }}
 
 规则：
 - 不要回答问题。
 - 不要编造事实。
-- 第一条 queries 必须是最适合作为独立检索输入的主检索查询。
-- 每条查询都应关键词密集、面向检索，不要保留聊天式表达。
+- semantic_queries 用于向量检索，必须完整、无歧义、保留问题语义。
+- lexical_terms 用于关键词检索，只放单个关键词或不可拆短语，不要放一整句。
+- candidate_entities 用于图谱检索，只放可作为实体匹配的对象名。
+- 第一条 semantic_queries 必须是最适合作为独立向量检索输入的主查询。
+- 每条 lexical_terms 都应短、准、面向命中，不要保留聊天式表达。
 - 能从最近对话、会话摘要、用户环境中确定指代时，要补全代词、省略主语和模糊引用。
 - 尽量包含明确的实体、模块、产品、功能名、流程名、属性、错误名、标识符和约束条件。
 - 去掉“怎么”“这个”“那个”“帮我看看”“是什么意思”等口语填充词，除非它们属于真实术语。
@@ -244,29 +259,22 @@ async def build_kb_chat_retrieval_queries(
     memory_summary: str | None = None,
     runtime_context: dict[str, Any] | None = None,
     llm_factory: Callable[[], Any] | None = None,
-    mode: str | None = None,
     question_type: str = "entity_lookup",
     retrieval_label: str = "standard",
-    max_queries: int | None = None,
-    strategies: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build retrieval-focused queries for single-round KB chat."""
-
-    del strategies
-    del mode
 
     original = _normalize_query(query)
     if not original:
         return {
-            "queries": [],
+            "semantic_queries": [],
+            "lexical_terms": [],
             "candidate_entities": [],
             "relation_pairs": [],
             "relation_queries": [],
             "target_attributes": [],
             "entity_constraints": {},
         }
-
-    del max_queries
 
     protected_tokens = _extract_protected_tokens(original)
     fallback = _build_fallback_queries(
@@ -292,21 +300,25 @@ async def build_kb_chat_retrieval_queries(
             )
         )
         parsed = extract_json_from_llm_response(_coerce_text(getattr(response, "content", response)))
-        raw_queries = parsed.get("queries") or []
-        llm_queries = [item for item in raw_queries if isinstance(item, str)]
+        raw_semantic_queries = parsed.get("semantic_queries") or []
+        llm_semantic_queries = [item for item in raw_semantic_queries if isinstance(item, str)]
+        raw_lexical_terms = parsed.get("lexical_terms") or []
+        llm_lexical_terms = [item for item in raw_lexical_terms if isinstance(item, str)]
         raw_entities = parsed.get("candidate_entities") or []
         llm_entities = [
             _normalize_query(item)
             for item in raw_entities
             if isinstance(item, str) and _normalize_query(item)
         ]
-        validated = _validate_queries(
+        semantic_queries = _validate_queries(
             original=original,
-            queries=llm_queries,
+            queries=llm_semantic_queries,
             protected_tokens=protected_tokens,
         )
+        lexical_terms = _split_lexical_terms(llm_lexical_terms)
         return {
-            "queries": validated or fallback or [original],
+            "semantic_queries": semantic_queries or fallback or [original],
+            "lexical_terms": lexical_terms,
             "candidate_entities": _dedupe_keep_order(llm_entities, limit=8),
             "relation_pairs": list(parsed.get("relation_pairs") or []),
             "relation_queries": list(parsed.get("relation_queries") or []),
@@ -324,7 +336,8 @@ async def build_kb_chat_retrieval_queries(
     except Exception as exc:
         logger.warning("KB chat query rewrite failed, fallback to backup queries: {}", exc)
         return {
-            "queries": fallback or [original],
+            "semantic_queries": fallback or [original],
+            "lexical_terms": [],
             "candidate_entities": [],
             "relation_pairs": [],
             "relation_queries": [],

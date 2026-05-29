@@ -18,7 +18,12 @@ from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.services.document_index_state import INDEX_STATUS_INDEXED
 from app.services.embedding import embed_query
 from app.services.reranker import rerank
-from app.services.vector_store import reciprocal_rank_fusion_many, search, search_hybrid_rrf
+from app.services.vector_store import (
+    reciprocal_rank_fusion_many,
+    search,
+    search_hybrid_rrf,
+    search_lexical,
+)
 
 
 def _format_kb_chunk(doc: dict[str, Any], content: str) -> str:
@@ -238,6 +243,81 @@ async def _retrieve_candidate_rows(
             retrieval_version_mode=retrieval_version_mode,
         )
 
+    return results, has_documents
+
+
+async def _retrieve_vector_candidate_rows(
+    *,
+    query: str,
+    team_id: int | None,
+    knowledge_base_id: int | None,
+    category_id: int | None,
+    user_id: int | None,
+    recall_k: int,
+    document_statuses: list[str] | None = None,
+    retrieval_version_mode: str | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    query_embedding = await asyncio.to_thread(embed_query, query)
+    async with AsyncSessionLocal() as db:
+        results = await search(
+            db,
+            query_embedding,
+            k=recall_k,
+            user_id=user_id,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            document_statuses=document_statuses,
+            retrieval_version_mode=retrieval_version_mode,
+        )
+
+    has_documents = True
+    if knowledge_base_id is not None and not results:
+        has_documents = await _knowledge_base_has_documents(
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            user_id=user_id,
+            document_statuses=document_statuses,
+            retrieval_version_mode=retrieval_version_mode,
+        )
+    return results, has_documents
+
+
+async def _retrieve_lexical_candidate_rows(
+    *,
+    term: str,
+    team_id: int | None,
+    knowledge_base_id: int | None,
+    category_id: int | None,
+    user_id: int | None,
+    lexical_k: int,
+    document_statuses: list[str] | None = None,
+    retrieval_version_mode: str | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    async with AsyncSessionLocal() as db:
+        results = await search_lexical(
+            db,
+            term,
+            k=lexical_k,
+            user_id=user_id,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            document_statuses=document_statuses,
+            retrieval_version_mode=retrieval_version_mode,
+        )
+
+    has_documents = True
+    if knowledge_base_id is not None and not results:
+        has_documents = await _knowledge_base_has_documents(
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            user_id=user_id,
+            document_statuses=document_statuses,
+            retrieval_version_mode=retrieval_version_mode,
+        )
     return results, has_documents
 
 
@@ -817,5 +897,163 @@ async def run_multi_query_kb_text_retrieval(
         "raw_candidate_count": recalled_count,
         "merged_candidate_count": len(fused_results),
         "query_count": len(queries),
+    }
+    return output
+
+
+async def run_kb_channel_text_retrieval(
+    *,
+    query: str,
+    semantic_queries: list[str],
+    lexical_terms: list[str],
+    team_id: int | None,
+    knowledge_base_id: int | None,
+    category_id: int | None = None,
+    log_prefix: str = "[KB Text Retrieval]",
+    user_id: int | None = None,
+    result_limit: int | None = None,
+    llm_reference_top_k: int | None = None,
+    context_budget: int | None = None,
+    document_statuses: list[str] | None = None,
+    retrieval_version_mode: str | None = None,
+    recall_k: int | None = None,
+    lexical_k: int | None = None,
+    rerank_enabled: bool | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """Retrieve text evidence with separated vector and lexical inputs."""
+
+    started_at = perf_counter()
+    rag = config_registry.get_rag_config().retrieval
+    vector_queries = _dedupe_queries(semantic_queries or [query])
+    terms = _dedupe_queries(lexical_terms)
+    resolved_recall_k = recall_k if recall_k is not None else rag.k_first
+    resolved_lexical_k = lexical_k if lexical_k is not None else rag.lexical_k
+    final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
+    llm_ref_k = (
+        max(1, llm_reference_top_k)
+        if llm_reference_top_k is not None
+        else rag.llm_reference_top_k
+    )
+    resolved_rerank = bool(settings.RERANK_ENABLED) and (
+        True if rerank_enabled is None else bool(rerank_enabled)
+    )
+    vector_k = _scaled_candidate_k(len(vector_queries), resolved_recall_k, final_top_k)
+    term_k = _scaled_candidate_k(len(terms), resolved_lexical_k, 1) if terms else 0
+
+    logger.debug(
+        "{} channel retrieval using semantic_queries={} lexical_terms={}",
+        log_prefix,
+        vector_queries,
+        terms,
+    )
+    text_started_at = perf_counter()
+    vector_batches = await asyncio.gather(
+        *[
+            _retrieve_vector_candidate_rows(
+                query=item,
+                team_id=team_id,
+                knowledge_base_id=knowledge_base_id,
+                category_id=category_id,
+                user_id=user_id,
+                recall_k=vector_k,
+                document_statuses=document_statuses,
+                retrieval_version_mode=retrieval_version_mode,
+            )
+            for item in vector_queries
+        ]
+    )
+    lexical_batches = await asyncio.gather(
+        *[
+            _retrieve_lexical_candidate_rows(
+                term=item,
+                team_id=team_id,
+                knowledge_base_id=knowledge_base_id,
+                category_id=category_id,
+                user_id=user_id,
+                lexical_k=term_k,
+                document_statuses=document_statuses,
+                retrieval_version_mode=retrieval_version_mode,
+            )
+            for item in terms
+        ]
+    )
+    text_retrieval_latency_ms = int((perf_counter() - text_started_at) * 1000)
+
+    rankings = [rows for rows, _ in [*vector_batches, *lexical_batches]]
+    vector_stats = [
+        {"query": item, "chunk_count": len(rows)}
+        for item, (rows, _) in zip(vector_queries, vector_batches, strict=False)
+    ]
+    lexical_stats = [
+        {"query": item, "chunk_count": len(rows)}
+        for item, (rows, _) in zip(terms, lexical_batches, strict=False)
+    ]
+    recalled_count = sum(item["chunk_count"] for item in [*vector_stats, *lexical_stats])
+    has_documents = all(has_docs for _, has_docs in [*vector_batches, *lexical_batches])
+    fused_limit = min(rag.hybrid_pool_limit, max(final_top_k, final_top_k * max(1, len(rankings))))
+    weights = [1.25] * len(vector_batches) + [1.0] * len(lexical_batches)
+    fused_results = reciprocal_rank_fusion_many(
+        rankings,
+        rrf_k=rag.rrf_k,
+        limit=fused_limit,
+        weights=weights,
+    )
+    if progress_callback is not None and resolved_rerank and fused_results:
+        progress_callback(
+            {
+                "stage": "rerank",
+                "message": "正在筛选相关资料...",
+                "candidate_count": len(fused_results),
+            }
+        )
+    results, rerank_trace = await _finalize_ranked_rows(
+        query=query,
+        results=fused_results,
+        rerank_enabled=resolved_rerank,
+        final_top_k=final_top_k,
+    )
+    retrieval_funnel = _build_retrieval_funnel(
+        mode="vector_lexical",
+        query_stats=[*vector_stats, *lexical_stats],
+        recalled_count=recalled_count,
+        merged_count=len(fused_results),
+        reranked_count=len(results),
+        context_count=len(results),
+    )
+    retrieval_funnel["semantic_queries"] = vector_stats
+    retrieval_funnel["lexical_terms"] = lexical_stats
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "context",
+                "message": "正在组织回答上下文...",
+                "retrieved_count": len(results),
+            }
+        )
+    output = await _build_retrieval_output(
+        results=results,
+        has_documents=has_documents,
+        knowledge_base_id=knowledge_base_id,
+        category_id=category_id,
+        log_prefix=log_prefix,
+        retrieval_mode="vector_lexical",
+        recall_k=vector_k,
+        final_top_k=final_top_k,
+        llm_ref_k=llm_ref_k,
+        query_count=len(vector_queries) + len(terms),
+        context_budget=context_budget,
+        retrieval_funnel=retrieval_funnel,
+    )
+    output["semantic_queries"] = vector_queries
+    output["lexical_terms"] = terms
+    output["retrieval_trace"] = {
+        "text_retrieval_latency_ms": text_retrieval_latency_ms,
+        "total_latency_ms": int((perf_counter() - started_at) * 1000),
+        "rerank": rerank_trace,
+        "raw_candidate_count": recalled_count,
+        "merged_candidate_count": len(fused_results),
+        "semantic_query_count": len(vector_queries),
+        "lexical_term_count": len(terms),
     }
     return output

@@ -1,4 +1,4 @@
-"""Route helper for kb_chat_v2."""
+"""Route helper for knowledge-base chat."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from loguru import logger
 
 from app.agents.common.llm_json import parse_llm_json_object
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
-from app.agents.states import KbChatV2State
+from app.agents.states import KbChatState
 from app.core.llm import get_llm_for_planner
 
 ALLOWED_QUESTION_TYPES = {
@@ -115,7 +115,7 @@ User question:
 """.strip()
 
 
-async def build_kb_chat_v2_route(
+async def build_kb_chat_route(
     query: str,
     *,
     chat_history: list[dict[str, Any]] | None = None,
@@ -172,12 +172,12 @@ async def build_kb_chat_v2_route(
         "retrieval_required": retrieval_strategy != "skip",
         "needs_clarification": needs_clarification,
         "reason": _compact_text(str(parsed.get("reason") or ""), limit=240)
-        or "V2 router selected the route.",
+        or "Router selected the route.",
     }
 
 
-async def kb_chat_v2_route_node(
-    state: KbChatV2State,
+async def kb_chat_route_node(
+    state: KbChatState,
     *,
     llm_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
@@ -192,7 +192,7 @@ async def kb_chat_v2_route_node(
     page_config = dict(state.get("page_config") or {})
     started_at = perf_counter()
     try:
-        route = await build_kb_chat_v2_route(
+        route = await build_kb_chat_route(
             str(state.get("query") or ""),
             chat_history=list(state.get("chat_history") or []),
             memory_summary=state.get("memory_summary"),
@@ -200,8 +200,8 @@ async def kb_chat_v2_route_node(
             llm_factory=llm_factory,
         )
     except Exception as exc:
-        logger.exception("kb_chat_v2 route failed")
-        raise RuntimeError("kb_chat_v2 route failed") from exc
+        logger.exception("kb_chat route failed")
+        raise RuntimeError("kb_chat route failed") from exc
 
     return {
         "question_type": route["question_type"],

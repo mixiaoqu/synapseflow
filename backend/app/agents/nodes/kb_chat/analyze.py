@@ -1,4 +1,4 @@
-"""Analyze node for kb_chat_v2."""
+"""Analyze node for knowledge-base chat."""
 
 from __future__ import annotations
 
@@ -6,41 +6,16 @@ from time import perf_counter
 from typing import Any, Callable
 
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
-from app.agents.nodes.kb_chat_v2.route import build_kb_chat_v2_route
-from app.agents.states import KbChatV2State
+from app.agents.nodes.kb_chat.route import build_kb_chat_route
+from app.agents.states import KbChatState
 from app.core.config.registry import config_registry
 
 
 def _build_rewrite_plan(question_type: str, retrieval_complexity: str) -> dict[str, Any]:
-    max_queries_matrix = {
-        "summary_lookup": {"fast": 2, "standard": 3, "broad": 5},
-        "relationship_lookup": {"fast": 2, "standard": 3, "broad": 3},
-        "attribute_lookup": {"fast": 1, "standard": 2, "broad": 2},
-        "definition_lookup": {"fast": 1, "standard": 1, "broad": 2},
-    }
-    max_queries = (
-        max_queries_matrix.get(question_type, max_queries_matrix["definition_lookup"]).get(
-            retrieval_complexity,
-            1,
-        )
-    )
-    strategies = ["query_compaction", "terminology_normalization"]
-    if question_type == "relationship_lookup":
-        strategies.extend(["context_completion", "relationship_focus"])
-    elif question_type == "summary_lookup":
-        strategies.append("multi_aspect_split")
-        if retrieval_complexity == "broad":
-            strategies.append("subtopic_expansion")
-    elif question_type == "attribute_lookup":
-        strategies.append("attribute_focus")
-    elif question_type == "definition_lookup":
-        strategies.append("definition_focus")
     return {
         "enabled": True,
         "question_type": question_type,
         "retrieval_complexity": retrieval_complexity,
-        "max_queries": max_queries,
-        "strategies": strategies,
     }
 
 
@@ -56,7 +31,6 @@ def _build_graph_plan(
             "limit": 0,
             "intent": None,
             "graph_mode": None,
-            "requires_grounding": False,
             "max_hops": 0,
             "boost": "none",
         }
@@ -67,7 +41,6 @@ def _build_graph_plan(
             "limit": graph_limit,
             "intent": "relation_lookup",
             "graph_mode": "relation_evidence",
-            "requires_grounding": True,
             "max_hops": 1,
             "boost": "high",
         }
@@ -78,7 +51,6 @@ def _build_graph_plan(
             "limit": graph_limit,
             "intent": "neighborhood_lookup",
             "graph_mode": "neighborhood_summary",
-            "requires_grounding": True,
             "max_hops": 1,
             "boost": "medium",
         }
@@ -89,7 +61,6 @@ def _build_graph_plan(
             "limit": graph_limit,
             "intent": "entity_summary",
             "graph_mode": "entity_summary",
-            "requires_grounding": True,
             "max_hops": 0,
             "boost": "low",
         }
@@ -99,7 +70,6 @@ def _build_graph_plan(
         "limit": graph_limit,
         "intent": "relation_lookup",
         "graph_mode": "relation_evidence",
-        "requires_grounding": True,
         "max_hops": 1,
         "boost": "medium",
     }
@@ -141,7 +111,8 @@ def _build_retrieval_plan(
         return {
             "retrieval_strategy": "skip",
             "channels": {
-                "text": {"enabled": False, "recall_k": 0, "lexical_k": 0},
+                "vector": {"enabled": False, "recall_k": 0},
+                "lexical": {"enabled": False, "lexical_k": 0},
                 "graph": graph_plan,
             },
             "rerank": {"enabled": False, "top_k": 0},
@@ -152,7 +123,8 @@ def _build_retrieval_plan(
     return {
         "retrieval_strategy": "parallel_fusion",
         "channels": {
-            "text": {"enabled": True, "recall_k": recall_k, "lexical_k": lexical_k},
+            "vector": {"enabled": True, "recall_k": recall_k},
+            "lexical": {"enabled": True, "lexical_k": lexical_k},
             "graph": graph_plan,
         },
         "rerank": {"enabled": rerank_enabled, "top_k": final_top_k},
@@ -166,7 +138,7 @@ def _build_retrieval_plan(
     }
 
 
-def build_kb_chat_v2_execution_plan(
+def build_kb_chat_execution_plan(
     *,
     question_type: str,
     retrieval_strategy: str,
@@ -178,12 +150,11 @@ def build_kb_chat_v2_execution_plan(
                 "enabled": False,
                 "question_type": question_type,
                 "retrieval_complexity": retrieval_complexity,
-                "max_queries": 0,
-                "strategies": [],
             },
             "retrieval_strategy": "skip",
             "channels": {
-                "text": {"enabled": False, "recall_k": 0, "lexical_k": 0},
+                "vector": {"enabled": False, "recall_k": 0},
+                "lexical": {"enabled": False, "lexical_k": 0},
                 "graph": _build_graph_plan(
                     question_type=question_type,
                     retrieval_strategy=retrieval_strategy,
@@ -223,8 +194,8 @@ def build_kb_chat_v2_execution_plan(
     }
 
 
-async def kb_chat_v2_analyze_node(
-    state: KbChatV2State,
+async def kb_chat_analyze_node(
+    state: KbChatState,
     *,
     llm_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
@@ -239,7 +210,7 @@ async def kb_chat_v2_analyze_node(
     page_config = dict(state.get("page_config") or {})
 
     route_started_at = perf_counter()
-    route = await build_kb_chat_v2_route(
+    route = await build_kb_chat_route(
         str(state.get("query") or ""),
         chat_history=list(state.get("chat_history") or []),
         memory_summary=state.get("memory_summary"),
@@ -249,7 +220,7 @@ async def kb_chat_v2_analyze_node(
     route_latency_ms = int((perf_counter() - route_started_at) * 1000)
 
     plan_started_at = perf_counter()
-    execution_plan = build_kb_chat_v2_execution_plan(
+    execution_plan = build_kb_chat_execution_plan(
         question_type=route["question_type"],
         retrieval_strategy=route["retrieval_strategy"],
         retrieval_complexity=route["retrieval_complexity"],
@@ -282,7 +253,6 @@ async def kb_chat_v2_analyze_node(
     if not route["retrieval_required"]:
         result.update(
             {
-                "text_queries": [],
                 "candidate_entities": [],
                 "rewrite_trace": {
                     "used": False,
@@ -296,7 +266,9 @@ async def kb_chat_v2_analyze_node(
                     "final_hits": 0,
                     "empty_reason": "skipped",
                 },
-                "retrieval_queries": [],
+                "semantic_queries": [],
+                "lexical_terms": [],
+                "candidate_entities": [],
                 "retrieved_docs": [],
                 "context": "",
             }

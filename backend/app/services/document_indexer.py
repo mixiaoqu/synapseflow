@@ -629,7 +629,10 @@ async def index_document_graph_chunks(
     ]
     extracted_chunks = await extract_chunk_graphs_batch(extraction_items)
 
-    summary = {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+    chunk_records: list[GraphChunkRecord] = []
+    entity_records: dict[str, GraphEntityRecord] = {}
+    mention_rows: list[dict[str, Any]] = []
+    relation_records: dict[tuple[str, str, str], GraphRelationRecord] = {}
     rows_by_id = {int(row.id): row for row in child_rows}
     for extracted in extracted_chunks:
         chunk = extracted.chunk
@@ -648,18 +651,48 @@ async def index_document_graph_chunks(
             len(normalized.relations),
             _build_graph_write_preview(list(normalized.entities)),
         )
-        chunk_summary = await indexer.index_chunk_graph(
-            chunk=chunk,
-            entities=list(normalized.entities),
-            relations=list(normalized.relations),
-        )
-        for key in summary:
-            summary[key] += int(chunk_summary.get(key, 0))
+        chunk_records.append(chunk)
+        for entity in normalized.entities:
+            existing = entity_records.get(entity.normalized_name)
+            if existing is None:
+                entity_records[entity.normalized_name] = entity
+            else:
+                entity_records[entity.normalized_name] = _merge_entity_records(existing, entity)
+            mention_rows.append(
+                {
+                    "normalized_name": entity.normalized_name,
+                    "team_id": chunk.team_id,
+                    "knowledge_base_id": chunk.knowledge_base_id,
+                    "document_id": chunk.document_id,
+                    "document_chunk_id": chunk.document_chunk_id,
+                    "evidence": entity.evidence,
+                    "attributes": entity.attributes,
+                }
+            )
+        for relation in normalized.relations:
+            relation_key = (
+                relation.source_normalized_name,
+                relation.relation_type,
+                relation.target_normalized_name,
+            )
+            existing = relation_records.get(relation_key)
+            if existing is None:
+                relation_records[relation_key] = relation
+            else:
+                relation_records[relation_key] = _merge_relation_records(existing, relation)
 
         child_row = rows_by_id[chunk.document_chunk_id]
         metadata = dict(child_row.metadata_ or {})
         metadata["graph_extraction"] = _graph_extraction_metadata(normalized)
         await repository.update_metadata(int(child_row.id), metadata)
+
+    summary = await indexer.index_batch_graph(
+        chunks=chunk_records,
+        entities=list(entity_records.values()),
+        mentions=mention_rows,
+        relations=list(relation_records.values()),
+        batch_size=DEFAULT_GRAPH_BATCH_SIZE,
+    )
 
     if commit:
         await db.commit()

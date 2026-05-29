@@ -1,4 +1,4 @@
-"""LLM-based evidence evaluation for kb_chat_v2."""
+"""LLM-based evidence evaluation for knowledge-base chat."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from loguru import logger
 
 from app.agents.common.llm_json import parse_llm_json_object
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
-from app.agents.states import KbChatV2State
+from app.agents.states import KbChatState
 from app.core.llm import get_llm_for_analysis
 
 ALLOWED_STATUSES = {"sufficient", "empty", "clarification_needed"}
@@ -82,8 +82,11 @@ Question type:
 Retrieval complexity:
 {state.get("retrieval_complexity") or ""}
 
-Text queries:
-{_safe_json(state.get("text_queries") or [])}
+Semantic queries:
+{_safe_json(state.get("semantic_queries") or [])}
+
+Lexical terms:
+{_safe_json(state.get("lexical_terms") or [])}
 
 Candidate entities:
 {_safe_json(state.get("candidate_entities") or [])}
@@ -143,12 +146,12 @@ async def evaluate_retrieval_evidence(
         parsed = parse_llm_json_object(_coerce_text(getattr(response, "content", response)))
         return _normalize_evaluation(parsed)
     except Exception as exc:
-        logger.warning("kb_chat_v2 evaluate failed: {}", exc)
+        logger.warning("kb_chat evaluate failed: {}", exc)
         return _fallback_evaluation("Evidence evaluation failed; answer generation continues.")
 
 
-async def kb_chat_v2_evaluate_node(
-    state: KbChatV2State,
+async def kb_chat_evaluate_node(
+    state: KbChatState,
     *,
     llm_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:

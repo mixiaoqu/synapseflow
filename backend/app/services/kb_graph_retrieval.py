@@ -29,29 +29,6 @@ def _normalize_entities(candidate_entities: list[str] | None) -> list[str]:
     return out
 
 
-def _normalize_grounded_entities(grounded_entities: list[dict[str, Any]] | None) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in list(grounded_entities or []):
-        if not isinstance(item, dict):
-            continue
-        value = " ".join(str(item.get("normalized_name") or item.get("display_name") or "").split()).strip()
-        if len(value) < 2:
-            continue
-        key = value.casefold()
-        if key in seen:
-            continue
-        out.append(value)
-        seen.add(key)
-        if len(out) >= 8:
-            break
-    return out
-
-
-def _requires_grounded_entities(graph_mode: str) -> bool:
-    return graph_mode in {"entity_summary", "neighborhood_summary"}
-
-
 def _resolve_graph_mode(question_type: str | None) -> str:
     normalized = str(question_type or "").strip().lower()
     if normalized in {"definition_lookup", "attribute_lookup"}:
@@ -277,7 +254,6 @@ class GraphRetriever:
         knowledge_base_id: int,
         team_id: int,
         candidate_entities: list[str] | None = None,
-        grounded_entities: list[dict[str, Any]] | None = None,
         relation_pairs: list[dict[str, Any]] | None = None,
         relation_queries: list[dict[str, Any]] | None = None,
         question_type: str | None = None,
@@ -291,13 +267,8 @@ class GraphRetriever:
         resolved_enabled = (
             graph_cfg.enabled if self._enabled is None else bool(self._enabled)
         )
-        grounded_entity_names = _normalize_grounded_entities(grounded_entities)
-        candidate_entity_names = _normalize_entities(candidate_entities)
+        entities = _normalize_entities(candidate_entities)
         resolved_graph_mode = str(graph_mode or "").strip() or _resolve_graph_mode(question_type)
-        if _requires_grounded_entities(resolved_graph_mode):
-            entities = grounded_entity_names
-        else:
-            entities = grounded_entity_names or candidate_entity_names
         resolved_relation_pairs = [dict(item) for item in list(relation_pairs or []) if isinstance(item, dict)]
         resolved_relation_queries = [dict(item) for item in list(relation_queries or []) if isinstance(item, dict)]
         logger.info(
@@ -335,17 +306,6 @@ class GraphRetriever:
             return {
                 "retrieved_docs": [],
                 "trace": {**base_trace, "empty_reason": "disabled", "latency_ms": 0},
-            }
-        if _requires_grounded_entities(resolved_graph_mode) and not grounded_entity_names:
-            logger.info(
-                "[KB Graph Retrieval] skip | reason=no_grounded_entities graph_mode={} candidate_entities={} grounded_entities={}",
-                resolved_graph_mode,
-                candidate_entity_names,
-                grounded_entity_names,
-            )
-            return {
-                "retrieved_docs": [],
-                "trace": {**base_trace, "empty_reason": "no_grounded_entities", "latency_ms": 0},
             }
         if not entities and not resolved_relation_pairs and not resolved_relation_queries:
             logger.info(
@@ -573,7 +533,6 @@ async def run_kb_graph_retrieval(
     knowledge_base_id: int,
     team_id: int,
     candidate_entities: list[str] | None = None,
-    grounded_entities: list[dict[str, Any]] | None = None,
     relation_pairs: list[dict[str, Any]] | None = None,
     relation_queries: list[dict[str, Any]] | None = None,
     store: GraphStore | None = None,
@@ -586,7 +545,6 @@ async def run_kb_graph_retrieval(
 
     return await GraphRetriever(store=store, enabled=enabled).retrieve(
         candidate_entities=candidate_entities,
-        grounded_entities=grounded_entities,
         relation_pairs=relation_pairs,
         relation_queries=relation_queries,
         knowledge_base_id=knowledge_base_id,

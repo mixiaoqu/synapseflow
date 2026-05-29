@@ -1,4 +1,4 @@
-"""Answer node for kb_chat_v2."""
+"""Answer node for knowledge-base chat."""
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ from typing import Any, AsyncGenerator, Callable
 
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
 from app.agents.prompts.kb_chat import build_kb_chat_answer_prompt, build_page_context_block
-from app.agents.states import KbChatV2State
+from app.agents.states import KbChatState
 from app.core.llm import get_llm
 from app.services.chat_memory import format_chat_history
 
-KB_V2_CHITCHAT_REPLY = (
+KB_CHITCHAT_REPLY = (
     "你好，我可以基于当前知识库内容为你解答问题。"
 )
-KB_V2_OUT_OF_SCOPE_REPLY = (
+KB_OUT_OF_SCOPE_REPLY = (
     "这个问题超出了当前知识库问答范围。请尽量询问已经收录到知识库中的内容。"
 )
 
@@ -77,9 +77,9 @@ def _estimate_output_tokens(text: str) -> int:
 def _template_answer(state: dict[str, Any]) -> tuple[str | None, str | None]:
     question_type = str(state.get("question_type") or "").strip().lower()
     if question_type == "chitchat":
-        return KB_V2_CHITCHAT_REPLY, "chitchat"
+        return KB_CHITCHAT_REPLY, "chitchat"
     if question_type == "out_of_scope":
-        return KB_V2_OUT_OF_SCOPE_REPLY, "out_of_scope"
+        return KB_OUT_OF_SCOPE_REPLY, "out_of_scope"
     return None, None
 
 
@@ -107,7 +107,7 @@ def _get_default_llm(state: dict[str, Any]) -> Any:
     return get_llm(model_key)
 
 
-async def build_kb_chat_v2_answer_text(
+async def build_kb_chat_answer_text(
     state: dict[str, Any],
     *,
     llm_factory: Callable[[], Any] | None = None,
@@ -136,7 +136,7 @@ async def build_kb_chat_v2_answer_text(
     }
 
 
-async def stream_kb_chat_v2_answer_text(
+async def stream_kb_chat_answer_text(
     state: dict[str, Any],
     *,
     llm_factory: Callable[[], Any] | None = None,
@@ -176,11 +176,11 @@ def _resolve_status(state: dict[str, Any]) -> str:
     return "answered"
 
 
-def build_kb_chat_v2_answer_node(
+def build_kb_chat_answer_node(
     *,
     llm_factory: Callable[[], Any] | None = None,
-) -> Callable[[KbChatV2State], Any]:
-    async def _node(state: KbChatV2State) -> dict[str, Any]:
+) -> Callable[[KbChatState], Any]:
+    async def _node(state: KbChatState) -> dict[str, Any]:
         stream_writer = get_optional_stream_writer()
         started_at = perf_counter()
         fixed, _fixed_status = _template_answer(state)
@@ -192,7 +192,7 @@ def build_kb_chat_v2_answer_node(
             answer = fixed
             output_tokens = _estimate_output_tokens(answer)
         else:
-            async for item in stream_kb_chat_v2_answer_text(
+            async for item in stream_kb_chat_answer_text(
                 state,
                 llm_factory=llm_factory,
                 stream_writer=stream_writer,

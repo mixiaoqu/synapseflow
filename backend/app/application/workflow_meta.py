@@ -6,12 +6,6 @@ from typing import Any
 
 WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
     "kb_chat": {
-        "plan_query": {"label": "正在理解你的问题"},
-        "rewrite_query": {"label": "正在整理检索线索"},
-        "retrieve": {"label": "正在查找知识库内容"},
-        "answer": {"label": "正在组织最终回答"},
-    },
-    "kb_chat_v2": {
         "analyze": {"label": "正在分析问题并生成检索方案"},
         "rewrite_query": {"label": "正在整理检索线索"},
         "retrieve": {"label": "正在查找知识库内容"},
