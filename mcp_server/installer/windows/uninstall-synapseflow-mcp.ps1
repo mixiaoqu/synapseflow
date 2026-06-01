@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 
 function Write-Step {
     param([string]$Message)
-    Write-Host "[SynapseFlow MCP] $Message"
+    Write-Host "[LangChain RAG 知识库 MCP] $Message"
 }
 
 function Read-InstallDir {

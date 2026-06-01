@@ -588,7 +588,7 @@ export function EmbedAssistantChat() {
             {/* Footer branding */}
             <div className="mt-2 flex items-center justify-center gap-1 text-[10px] text-slate-400">
               <Sparkles className="h-2.5 w-2.5 text-blue-400" />
-              Powered by SynapseFlow
+              Powered by LangChain RAG 知识库
             </div>
           </div>
         </div>

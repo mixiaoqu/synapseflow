@@ -272,7 +272,7 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
             </div>
             <div class="embed-assistant-page__brand">
               <el-icon><ChatDotRound /></el-icon>
-              <span>Powered by SynapseFlow</span>
+              <span>Powered by LangChain RAG 知识库</span>
             </div>
           </footer>
         </template>

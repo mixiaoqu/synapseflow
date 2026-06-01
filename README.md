@@ -1,4 +1,4 @@
-﻿# SynapseFlow
+# LangChain RAG 知识库
 
 当前仓库已经收口为两个实际产品入口：
 
@@ -23,7 +23,7 @@
 ## 仓库结构
 
 ```text
-synapseflow/
+langchain-rag-kb/
 ├─ backend/    FastAPI + LangGraph 服务
 ├─ frontend/   Next.js 前端
 ├─ docker/     Docker 构建配置

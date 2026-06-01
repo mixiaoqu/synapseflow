@@ -856,7 +856,7 @@ Content-Type: application/json
                 1. 企业后端获取 embed_url
               </h4>
               <p className="text-xs text-slate-500">
-                服务端请求必须携带 SynapseFlow 服务端 token，不要暴露给浏览器或小程序。
+                服务端请求必须携带 LangChain RAG 知识库服务端 token，不要暴露给浏览器或小程序。
               </p>
               <div className="relative">
                 <pre className="overflow-x-auto rounded-lg bg-slate-950 p-4 text-xs text-slate-50">

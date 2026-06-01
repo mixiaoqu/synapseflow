@@ -19,7 +19,7 @@ USE_FP16 = os.getenv("RERANK_USE_FP16", "false").strip().lower() in {
     "on",
 }
 
-app = FastAPI(title="SynapseFlow Reranker")
+app = FastAPI(title="LangChain RAG 知识库 Reranker")
 _rerank_lock = threading.Lock()
 
 

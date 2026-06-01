@@ -1,7 +1,7 @@
 .PHONY: help install dev-backend dev-frontend dev test clean docker-up docker-down docker-build-lowmem
 
 help:
-	@echo "SynapseFlow - 可用命令："
+	@echo "LangChain RAG 知识库 - 可用命令："
 	@echo "  make install       - 安装所有依赖"
 	@echo "  make dev-backend   - 启动后端开发服务器"
 	@echo "  make dev-frontend  - 启动前端开发服务器"

@@ -10,7 +10,7 @@ async def health_check():
     """健康检查。"""
     return {
         "status": "healthy",
-        "service": "SynapseFlow Backend",
+        "service": "LangChain RAG 知识库 Backend",
     }
 
 

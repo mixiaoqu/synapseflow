@@ -42,7 +42,7 @@ async function postJson<T>(config: AppConfig, options: JsonRequestOptions): Prom
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`SynapseFlow MCP request failed (${response.status}): ${text}`);
+    throw new Error(`LangChain RAG 知识库 MCP request failed (${response.status}): ${text}`);
   }
 
   return (await response.json()) as T;

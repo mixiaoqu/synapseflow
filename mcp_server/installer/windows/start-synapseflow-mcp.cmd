@@ -2,8 +2,8 @@
 setlocal
 where node >nul 2>nul
 if errorlevel 1 (
-  echo [SynapseFlow MCP] Node.js is not installed.
-  echo [SynapseFlow MCP] Install Node.js 20+ and try again.
+  echo [LangChain RAG 知识库 MCP] Node.js is not installed.
+  echo [LangChain RAG 知识库 MCP] Install Node.js 20+ and try again.
   exit /b 1
 )
 

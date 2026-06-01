@@ -12,7 +12,7 @@ export function registerResolveScopeTool(server: McpServer, config: AppConfig): 
       {
         title: "Resolve Knowledge Scope",
         description:
-          "Resolve the active SynapseFlow knowledge scope using the configured default product, project, and app scope.",
+          "Resolve the active LangChain RAG knowledge scope using the configured default product, project, and app scope.",
         inputSchema: {},
       },
       async () => {
@@ -31,7 +31,7 @@ export function registerResolveScopeTool(server: McpServer, config: AppConfig): 
     "kb_scope_resolve",
     {
       title: "Resolve Knowledge Scope",
-      description: "Resolve the active product, project, and app scope for SynapseFlow knowledge access.",
+      description: "Resolve the active product, project, and app scope for LangChain RAG knowledge access.",
       inputSchema: scopeInputSchema,
     },
     async ({ product_code, project_code, app_code }) => {

@@ -127,7 +127,7 @@ class ConfigRegistry:
         data = load_app_raw()
         app = data.get("app", {}) or {}
         return AppConfig(
-            project_name=app.get("project_name", "SynapseFlow"),
+            project_name=app.get("project_name", "LangChain RAG 知识库"),
             version=app.get("version", "0.1.0"),
             description=app.get("description", "Agent collaboration system built with LangGraph"),
             api_v1_str=app.get("api_v1_str", "/api/v1"),

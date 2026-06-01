@@ -206,7 +206,7 @@ const embedSessionRequestCode = computed(() => {
   const projectCode = selectedProject?.code || "project_code";
   const appCode = selectedApp?.code || "app_code";
 
-  return `POST https://你的SynapseFlow域名/api/v1/embed/sessions
+  return `POST https://你的LangChain RAG知识库域名/api/v1/embed/sessions
 Authorization: Bearer <ENTERPRISE_SERVICE_TOKEN>
 Content-Type: application/json
 

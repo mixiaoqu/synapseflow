@@ -1,4 +1,4 @@
-# SynapseFlow Frontend
+# LangChain RAG 知识库 Frontend
 
 当前前端收口为两个正式产品入口：
 

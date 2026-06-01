@@ -12,7 +12,7 @@ export function registerAnswerKnowledgeTool(server: McpServer, config: AppConfig
       {
         title: "Answer With Knowledge Base",
         description:
-          "Ask a question against SynapseFlow knowledge content inside the configured default product, project, and app scope.",
+          "Ask a question against LangChain RAG knowledge content inside the configured default product, project, and app scope.",
         inputSchema: { query: answerInputSchema.query },
       },
       async ({ query }) => {
@@ -31,7 +31,7 @@ export function registerAnswerKnowledgeTool(server: McpServer, config: AppConfig
     "kb_answer",
     {
       title: "Answer With Knowledge Base",
-      description: "Ask a question against SynapseFlow knowledge content inside one configured product app scope.",
+      description: "Ask a question against LangChain RAG knowledge content inside one configured product app scope.",
       inputSchema: answerInputSchema,
     },
     async ({ product_code, project_code, app_code, query }) => {

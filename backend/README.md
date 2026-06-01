@@ -1,4 +1,4 @@
-﻿# SynapseFlow Backend
+# LangChain RAG 知识库 Backend
 
 当前后端只对两类前端界面提供支撑：
 

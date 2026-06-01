@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 
 function Write-Step {
     param([string]$Message)
-    Write-Host "[SynapseFlow MCP Build] $Message"
+    Write-Host "[LangChain RAG 知识库 MCP Build] $Message"
 }
 
 function New-Directory {

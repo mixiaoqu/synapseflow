@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 
 function Write-Step {
     param([string]$Message)
-    Write-Host "[SynapseFlow MCP] $Message"
+    Write-Host "[LangChain RAG 知识库 MCP] $Message"
 }
 
 function Load-WinForms {
@@ -22,7 +22,7 @@ function Show-ErrorDialog {
     [System.Windows.Forms.MessageBox]::Show(
         $owner,
         $Message,
-        "SynapseFlow MCP 安装失败",
+        "LangChain RAG 知识库 MCP 安装失败",
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Error
     ) | Out-Null
@@ -32,7 +32,7 @@ function Show-ErrorDialog {
 function Show-InfoDialog {
     param(
         [string]$Message,
-        [string]$Title = "SynapseFlow MCP"
+        [string]$Title = "LangChain RAG 知识库 MCP"
     )
 
     $owner = New-DialogOwner
@@ -110,7 +110,7 @@ function Show-CompletionDialog {
     )
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "SynapseFlow MCP 安装完成"
+    $form.Text = "LangChain RAG 知识库 MCP 安装完成"
     $form.StartPosition = "CenterScreen"
     $form.Size = New-Object System.Drawing.Size(620, 320)
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
@@ -119,7 +119,7 @@ function Show-CompletionDialog {
     $form.TopMost = $true
 
     $titleLabel = New-Object System.Windows.Forms.Label
-    $titleLabel.Text = "SynapseFlow MCP 已安装完成"
+    $titleLabel.Text = "LangChain RAG 知识库 MCP 已安装完成"
     $titleLabel.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 12, [System.Drawing.FontStyle]::Bold)
     $titleLabel.AutoSize = $true
     $titleLabel.Location = New-Object System.Drawing.Point(18, 18)
@@ -201,7 +201,7 @@ function Confirm-OverwriteGui {
     $result = [System.Windows.Forms.MessageBox]::Show(
         $owner,
         "目标目录已存在文件，是否继续覆盖？`n`n$TargetDir",
-        "SynapseFlow MCP",
+        "LangChain RAG 知识库 MCP",
         [System.Windows.Forms.MessageBoxButtons]::OKCancel,
         [System.Windows.Forms.MessageBoxIcon]::Warning
     )
@@ -215,7 +215,7 @@ function Select-InstallDir {
 
     $owner = New-DialogOwner
     $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = "请选择 SynapseFlow MCP 的安装目录"
+    $dialog.Description = "请选择 LangChain RAG 知识库 MCP 的安装目录"
     $dialog.ShowNewFolderButton = $true
     $dialog.SelectedPath = $DefaultDir
 
@@ -230,7 +230,7 @@ function Select-InstallDir {
 
 function New-ProgressWindow {
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "SynapseFlow MCP 安装中"
+    $form.Text = "LangChain RAG 知识库 MCP 安装中"
     $form.StartPosition = "CenterScreen"
     $form.Size = New-Object System.Drawing.Size(560, 360)
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
@@ -239,7 +239,7 @@ function New-ProgressWindow {
     $form.TopMost = $true
 
     $titleLabel = New-Object System.Windows.Forms.Label
-    $titleLabel.Text = "正在安装 SynapseFlow MCP"
+    $titleLabel.Text = "正在安装 LangChain RAG 知识库 MCP"
     $titleLabel.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 12, [System.Drawing.FontStyle]::Bold)
     $titleLabel.AutoSize = $true
     $titleLabel.Location = New-Object System.Drawing.Point(18, 18)
@@ -392,7 +392,7 @@ function Get-ReadmeContent {
     )
 
     return @"
-SynapseFlow MCP has been installed successfully.
+LangChain RAG 知识库 MCP has been installed successfully.
 
 Install directory:
 $ResolvedTargetDir

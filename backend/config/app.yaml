@@ -1,7 +1,7 @@
 # 应用基础配置。
 app:
   # 项目名称，用于接口文档、日志和页面展示。
-  project_name: SynapseFlow
+  project_name: LangChain RAG 知识库
   # 当前后端服务版本号。
   version: 0.1.0
   # 项目描述，用于 OpenAPI 文档等场景。

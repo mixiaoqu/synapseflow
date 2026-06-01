@@ -228,7 +228,7 @@ function LoginPageContent() {
             </ul>
 
             <p className="mt-12 text-xs text-zinc-600">
-              SynapseFlow · Enterprise Knowledge Base · 2026
+              LangChain RAG 知识库 · Enterprise Knowledge Base · 2026
             </p>
           </div>
         </aside>

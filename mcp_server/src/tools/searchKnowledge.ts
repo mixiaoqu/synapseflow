@@ -12,7 +12,7 @@ export function registerSearchKnowledgeTool(server: McpServer, config: AppConfig
       {
         title: "Search Knowledge Base",
         description:
-          "Search SynapseFlow knowledge content inside the configured default product, project, and app scope.",
+          "Search LangChain RAG knowledge content inside the configured default product, project, and app scope.",
         inputSchema: {
           query: searchInputSchema.query,
           top_k: searchInputSchema.top_k,
@@ -34,7 +34,7 @@ export function registerSearchKnowledgeTool(server: McpServer, config: AppConfig
     "kb_search",
     {
       title: "Search Knowledge Base",
-      description: "Search SynapseFlow knowledge content inside one configured product app scope.",
+      description: "Search LangChain RAG knowledge content inside one configured product app scope.",
       inputSchema: searchInputSchema,
     },
     async ({ product_code, project_code, app_code, query, top_k }) => {
