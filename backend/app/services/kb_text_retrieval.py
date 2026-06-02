@@ -476,6 +476,7 @@ async def _expand_results_with_parent_context(results: list[dict[str, Any]]) -> 
         metadata.setdefault("child_chunk_id", document_chunk_id)
         metadata["parent_chunk_id"] = expansion.parent_chunk_id
         metadata["window_child_ids"] = list(expansion.window_child_ids)
+        metadata["expansion_mode"] = expansion.expansion_mode
         metadata["merged_child_chunk_ids"] = sorted(
             {document_chunk_id, *[int(item) for item in expansion.window_child_ids]}
         )

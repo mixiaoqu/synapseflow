@@ -132,6 +132,7 @@ def test_expand_results_with_parent_context_skips_missing_parent_windows(monkeyp
                     content="parent window",
                     parent_content="parent window",
                     window_child_ids=[11, 12],
+                    expansion_mode="structured_focus",
                 )
             }
 
@@ -159,6 +160,7 @@ def test_expand_results_with_parent_context_skips_missing_parent_windows(monkeyp
 
     assert len(expanded) == 1
     assert expanded[0]["metadata"]["parent_chunk_id"] == 101
+    assert expanded[0]["metadata"]["expansion_mode"] == "structured_focus"
     assert expanded[0]["metadata"]["merged_child_chunk_ids"] == [11, 12]
 
 

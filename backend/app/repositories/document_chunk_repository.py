@@ -20,6 +20,7 @@ class ParentWindowExpansion:
     content: str
     parent_content: str | None
     window_child_ids: list[int]
+    expansion_mode: str = "window"
 
 
 class DocumentChunkRepository:
@@ -188,37 +189,172 @@ class DocumentChunkRepository:
                     content=row.content,
                     parent_content=None,
                     window_child_ids=[int(row.id)],
+                    expansion_mode="child_only",
                 )
                 continue
 
             parent_row = parent_rows.get(parent_id)
             siblings = child_by_parent.get(parent_id, [])
-            hit_indexes = [idx for idx, sibling in enumerate(siblings) if int(sibling.id) in target_ids]
-            current_index = next(
-                (idx for idx, sibling in enumerate(siblings) if int(sibling.id) == int(row.id)),
-                0,
-            )
-            merged_indexes: set[int] = set()
-            for hit_index in hit_indexes or [current_index]:
-                for offset in range(-resolved_neighbor_span, resolved_neighbor_span + 1):
-                    candidate = hit_index + offset
-                    if 0 <= candidate < len(siblings):
-                        merged_indexes.add(candidate)
-
-            window_rows = [siblings[idx] for idx in sorted(merged_indexes)] or [row]
-            window_text = "\n\n".join(item.content for item in window_rows if item.content.strip()).strip()
-            parent_text = (parent_row.content if parent_row else "").strip() or None
-            content = (
-                parent_text
-                if parent_text and len(parent_text) <= resolved_max_parent_chars
-                else window_text
+            expansion = _resolve_parent_window_expansion(
+                row=row,
+                parent_row=parent_row,
+                siblings=siblings,
+                target_ids=target_ids,
+                resolved_max_parent_chars=resolved_max_parent_chars,
+                resolved_neighbor_span=resolved_neighbor_span,
             )
             expansions[int(row.id)] = ParentWindowExpansion(
                 child_chunk_id=int(row.id),
                 parent_chunk_id=parent_id,
-                content=content or row.content,
-                parent_content=parent_text,
-                window_child_ids=[int(item.id) for item in window_rows],
+                content=expansion["content"] or row.content,
+                parent_content=expansion["parent_content"],
+                window_child_ids=list(expansion["window_child_ids"]),
+                expansion_mode=str(expansion["expansion_mode"]),
             )
 
         return expansions
+
+
+def _resolve_parent_window_expansion(
+    *,
+    row,
+    parent_row,
+    siblings: Sequence,
+    target_ids: Sequence[int],
+    resolved_max_parent_chars: int,
+    resolved_neighbor_span: int,
+) -> dict[str, object]:
+    parent_text = (getattr(parent_row, "content", "") or "").strip() or None
+    parent_metadata = dict(getattr(parent_row, "metadata_", None) or {})
+    row_metadata = dict(getattr(row, "metadata_", None) or {})
+    if _is_structured_parent(parent_metadata):
+        focused_rows = _focused_structure_rows(
+            row=row,
+            siblings=siblings,
+            target_ids=target_ids,
+        )
+        focused_text = _build_structured_focus_content(
+            parent_metadata=parent_metadata,
+            parent_text=parent_text,
+            focused_rows=focused_rows,
+            fallback_content=(getattr(row, "content", "") or "").strip(),
+            max_chars=resolved_max_parent_chars,
+        )
+        if parent_text and len(parent_text) <= resolved_max_parent_chars:
+            return {
+                "content": parent_text,
+                "parent_content": parent_text,
+                "window_child_ids": [int(item.id) for item in focused_rows],
+                "expansion_mode": "parent",
+            }
+        return {
+            "content": focused_text,
+            "parent_content": parent_text,
+            "window_child_ids": [int(item.id) for item in focused_rows],
+            "expansion_mode": "structured_focus",
+        }
+
+    window_rows = _neighbor_window_rows(
+        row=row,
+        siblings=siblings,
+        target_ids=target_ids,
+        neighbor_span=resolved_neighbor_span,
+    )
+    window_text = "\n\n".join(item.content for item in window_rows if (item.content or "").strip()).strip()
+    content = parent_text if parent_text and len(parent_text) <= resolved_max_parent_chars else window_text
+    return {
+        "content": content,
+        "parent_content": parent_text,
+        "window_child_ids": [int(item.id) for item in window_rows],
+        "expansion_mode": "parent" if content == parent_text and parent_text else "window",
+    }
+
+
+def _focused_structure_rows(*, row, siblings: Sequence, target_ids: Sequence[int]) -> list:
+    focused = [sibling for sibling in siblings if int(sibling.id) in {int(item) for item in target_ids}]
+    if focused:
+        return focused
+    return [row]
+
+
+def _neighbor_window_rows(*, row, siblings: Sequence, target_ids: Sequence[int], neighbor_span: int) -> list:
+    hit_indexes = [idx for idx, sibling in enumerate(siblings) if int(sibling.id) in {int(item) for item in target_ids}]
+    current_index = next(
+        (idx for idx, sibling in enumerate(siblings) if int(sibling.id) == int(row.id)),
+        0,
+    )
+    merged_indexes: set[int] = set()
+    for hit_index in hit_indexes or [current_index]:
+        for offset in range(-neighbor_span, neighbor_span + 1):
+            candidate = hit_index + offset
+            if 0 <= candidate < len(siblings):
+                merged_indexes.add(candidate)
+    return [siblings[idx] for idx in sorted(merged_indexes)] or [row]
+
+
+def _is_structured_parent(metadata: dict) -> bool:
+    return str(metadata.get("node_type") or "").strip() in {"clause", "list", "table"}
+
+
+def _build_structured_focus_content(
+    *,
+    parent_metadata: dict,
+    parent_text: str | None,
+    focused_rows: Sequence,
+    fallback_content: str,
+    max_chars: int,
+) -> str:
+    unique_parts: list[str] = []
+    seen: set[str] = set()
+    parent_label = _structured_parent_label(parent_metadata, parent_text)
+    if parent_label:
+        unique_parts.append(parent_label)
+        seen.add(parent_label)
+
+    for row in focused_rows:
+        content = (getattr(row, "content", "") or "").strip()
+        if not content or content in seen:
+            continue
+        unique_parts.append(content)
+        seen.add(content)
+
+    content = "\n\n".join(unique_parts).strip() or fallback_content.strip()
+    if len(content) <= max_chars:
+        return content
+
+    if len(unique_parts) == 1:
+        return unique_parts[0][:max_chars].strip() or fallback_content[:max_chars].strip()
+
+    label = unique_parts[0].strip() if unique_parts else ""
+    focused_parts = list(unique_parts[1:]) or [fallback_content.strip()]
+    focused_text = "\n\n".join(part for part in focused_parts if part).strip()
+    if not label:
+        if len(focused_text) <= max_chars:
+            return focused_text
+        return focused_text[:max_chars].strip() or fallback_content[:max_chars].strip()
+
+    with_label = "\n\n".join(part for part in [label, focused_text] if part).strip()
+    if len(with_label) <= max_chars:
+        return with_label
+
+    remaining = max_chars - len(label) - 2
+    if remaining > 8:
+        return "\n\n".join([label, focused_text[:remaining].strip()]).strip()
+
+    kept: list[str] = []
+    used = 0
+    for part in focused_parts:
+        gap = 2 if kept else 0
+        if kept and used + gap + len(part) > max_chars:
+            break
+        kept.append(part)
+        used += gap + len(part)
+    return "\n\n".join(kept).strip() or fallback_content[:max_chars].strip()
+
+
+def _structured_parent_label(metadata: dict, parent_text: str | None) -> str:
+    tree_path = metadata.get("tree_path") or []
+    if isinstance(tree_path, list) and tree_path:
+        return str(tree_path[-1]).strip()
+    first_line = str(parent_text or "").splitlines()[0].strip() if parent_text else ""
+    return first_line

@@ -46,7 +46,11 @@ async def add_document_chunks(
             search_text=chunk.search_text,
             chunk_index=int(chunk.metadata.get("chunk_index", i)),
             embedding=vec,
-            metadata_={"chunk_index": int(chunk.metadata.get("chunk_index", i)), **chunk.metadata},
+            metadata_={
+                "chunk_index": int(chunk.metadata.get("chunk_index", i)),
+                "document_chunk_id": int(document_chunk_ids[i]),
+                **chunk.metadata,
+            },
         )
         for i, (chunk, vec) in enumerate(zip(chunks, vectors))
     ]
