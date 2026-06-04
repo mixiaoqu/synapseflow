@@ -1,13 +1,14 @@
 # LangChain RAG 知识库
 
-当前仓库已经收口为两个实际产品入口：
+当前仓库收口为两个主要应用：
 
-- `/ask`：用户问答界面
-- `/admin`：后台管理界面
+- `backend/`：FastAPI + LangGraph 后端服务。
+- `frontend/`：Vue 3 + Vite 管理后台前端。
 
 ## 技术栈
 
 ### Backend
+
 - Python 3.11
 - FastAPI
 - LangGraph
@@ -15,17 +16,21 @@
 - uv
 
 ### Frontend
-- Next.js 15 App Router
-- React 19
-- TypeScript
-- Tailwind CSS + shadcn/ui
+
+- Vue 3
+- Vue Router 4
+- Pinia
+- Element Plus
+- Tailwind CSS
+- Vite
+- pnpm
 
 ## 仓库结构
 
 ```text
 langchain-rag-kb/
 ├─ backend/    FastAPI + LangGraph 服务
-├─ frontend/   Next.js 前端
+├─ frontend/   Vue 3 管理后台
 ├─ docker/     Docker 构建配置
 └─ README.md
 ```
@@ -33,12 +38,15 @@ langchain-rag-kb/
 ## 当前模块边界
 
 ### 前端保留模块
-- 问答工作台：`frontend/app/page.tsx`、`frontend/app/(user)/ask/*`
-- 后台管理：`frontend/app/(admin)/admin/*`
-- 文档与知识库管理：`frontend/features/documents/*`
-- API 封装：`frontend/lib/api/*`
+
+- 登录与鉴权守卫：`frontend/src/modules/auth`、`frontend/src/app/guards`
+- 后台壳层与导航：`frontend/src/app/layouts`、`frontend/src/app/navigation`
+- 知识库、项目、助手、团队、用户管理：`frontend/src/modules/*`
+- 内容风控中心：`frontend/src/modules/content-risk`
+- API 封装：`frontend/src/shared/api`
 
 ### 后端保留能力
+
 - 鉴权与用户体系：`/api/v1/auth`
 - 问答接口：`/api/v1/ask`
 - 后台问答质检：`/api/v1/admin/qa`
@@ -46,7 +54,8 @@ langchain-rag-kb/
 - 文档分类：`/api/v1/document-categories`
 - 知识库管理：`/api/v1/knowledge-bases`
 - 助手配置：`/api/v1/assistants`
-- 团队、用户、敏感词：`/api/v1/teams`、`/api/v1/users`、`/api/v1/sensitive-words`
+- 团队、用户管理：`/api/v1/teams`、`/api/v1/users`
+- 内容风控规则库：`/api/v1/content-risk`
 
 ## 快速开始
 
@@ -82,7 +91,7 @@ pnpm install
 pnpm dev
 ```
 
-前端默认地址：`http://localhost:3000`
+前端默认地址：`http://localhost:5173`
 
 ## 当前公开 API 组
 
@@ -95,6 +104,7 @@ pnpm dev
 - `GET /api/v1/admin/qa/logs`
 - `GET /api/v1/admin/qa/logs/{log_id}`
 - `POST /api/v1/admin/qa/logs/{log_id}/review`
+- `GET|POST|PATCH|DELETE /api/v1/content-risk/*`
 - `POST /api/v1/documents/*`
 - `GET|POST|PATCH|DELETE /api/v1/knowledge-bases/*`
 
@@ -102,5 +112,6 @@ pnpm dev
 
 ## 开发建议
 
-- 页面入口只围绕 `/ask` 与 `/admin` 组织。
-- 业务实现优先放在特性目录或服务层。
+- 前端统一在 `frontend/` 下开发。
+- 前端依赖和脚本统一使用 `pnpm`。
+- 业务实现优先放在现有模块目录或服务层，避免新增重复入口。

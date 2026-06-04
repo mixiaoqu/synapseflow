@@ -22,7 +22,7 @@ This file provides guidance to Codex when working with this repository. It is ge
 - 后端使用 `uv` 管理依赖和运行命令。
 - 前端使用 `pnpm`，不要改用 `npm` 或生成 `package-lock.json`。
 - 只在用户明确要求时运行数据库迁移、Docker 部署、构建、批量重建索引、批量删除或发布相关命令。
-- 修改后端 API、SSE 事件、LangGraph 工作流时，同时检查前端调用方和 `frontend/lib/stream/sse.ts` 的兼容性。
+- 修改后端 API、SSE 事件、LangGraph 工作流时，同时检查前端调用方和 `frontend/src/shared/lib/stream/sse.ts` 的兼容性。
 
 ## Common commands
 
@@ -45,7 +45,7 @@ This file provides guidance to Codex when working with this repository. It is ge
 - Lint the frontend: `cd frontend && pnpm lint`
 - Build command exists as `cd frontend && pnpm build`, but do not run it unless the user explicitly asks.
 
-The root `Makefile` mirrors some commands, but it currently uses `npm` for frontend commands. Prefer `pnpm` inside `frontend/` because the repo has `pnpm-lock.yaml` and Docker frontend builds use pnpm.
+The root `Makefile` mirrors some commands and uses `pnpm` for frontend commands.
 
 ### Docker / infrastructure
 
@@ -59,7 +59,7 @@ The root `Makefile` mirrors some commands, but it currently uses `npm` for front
 This is a two-app monorepo:
 
 - `backend/`: FastAPI backend with LangGraph, SQLAlchemy, PostgreSQL/pgvector, Redis/Dramatiq background indexing, document parsing, retrieval, and assistant chat services.
-- `frontend/`: Next.js 15 App Router frontend with admin, end-user ask, and embedded assistant surfaces.
+- `frontend/`: Vue 3 + Vite admin frontend with embedded assistant surface.
 - `docker/`: Dockerfiles for backend, frontend, and reranker.
 - `deploy/`: deployment/nginx support files.
 - `scripts/`: setup scripts.
@@ -87,13 +87,13 @@ Current API router prefixes:
 - `/api/v1/teams`: team and team member CRUD.
 - `/api/v1/projects`: project/app CRUD and embed preview.
 - `/api/v1/users`: admin user management.
-- `/api/v1/sensitive-words`: sensitive word settings, CRUD, import, and check.
+- `/api/v1/content-risk`: content-risk rule library CRUD, rule CRUD, and test check.
 - `/api/v1/knowledge-bases`: knowledge-base CRUD.
 - health routes are registered without a versioned prefix tag in the router and also exist on the root app.
 
 Application/service layer anchors:
 
-- `backend/app/application/kb_chat_service.py`: orchestrates user/admin/embed assistant chat, sensitive-word checks, memory persistence, logs, and SSE streaming.
+- `backend/app/application/kb_chat_service.py`: orchestrates user/admin/embed assistant chat, content-risk checks, memory persistence, logs, and SSE streaming.
 - `backend/app/application/assistant_service.py`: assistant profile operations and assistant preview support.
 - `backend/app/application/document_service.py`: document lifecycle, content/version operations, review/publish transitions, and indexing triggers.
 - `backend/app/application/indexing_service.py`: indexing job orchestration.
@@ -110,8 +110,8 @@ Domain services and repositories:
 - `backend/app/services/vector_store.py`: pgvector/vector search access.
 - `backend/app/services/reranker.py`: reranker integration.
 - `backend/app/services/chat_memory.py`: chat session/message persistence.
-- `backend/app/services/sensitive_word_service.py`: sensitive word checks.
-- `backend/app/repositories/*`: database access layer for users, teams, documents, knowledge bases, projects, assistants, chat logs, index jobs, categories, and sensitive words.
+- `backend/app/services/content_risk_detection_service.py`: content-risk rule matching for query and answer interception.
+- `backend/app/repositories/*`: database access layer for users, teams, documents, knowledge bases, projects, assistants, chat logs, index jobs, categories, and content-risk rules.
 
 Core data models currently include:
 
@@ -122,7 +122,7 @@ Core data models currently include:
 - `AssistantProfile`
 - `Project`, `ProjectApp`
 - `ChatSession`, `ChatMessage`, `KbChatLog`
-- `SensitiveWordSetting`, `SensitiveWord`
+- `ContentRiskLibrary`, `ContentRiskRule`
 
 ## Agent workflow system
 
@@ -144,7 +144,7 @@ Important workflow files:
 - `backend/app/agents/prompts/kb_chat.py`: KB chat prompts.
 - `backend/app/agents/common/*`: shared retrieval, JSON LLM, document analysis, and streaming helpers.
 
-When changing streamed chat behavior, keep backend events compatible with the frontend SSE parser in `frontend/lib/stream/sse.ts`.
+When changing streamed chat behavior, keep backend events compatible with the frontend SSE parser in `frontend/src/shared/lib/stream/sse.ts`.
 
 ## Retrieval and document pipeline
 
@@ -158,55 +158,48 @@ Relevant pieces:
 - Index jobs are persisted through `IndexJob` / `IndexJobDocument`.
 - Background indexing uses `backend/app/workers/indexing_tasks.py` and `backend/app/workers/broker.py`.
 - Retrieval respects visible ask document statuses and live/current document version behavior from `backend/app/services/document_lifecycle.py`.
-- Sensitive-word checks are applied to chat queries and document content paths.
+- Content-risk checks are applied to chat queries and generated answers.
 
 ## Frontend architecture
 
 Frontend entry points:
 
-- `frontend/app/layout.tsx`: root layout.
-- `frontend/app/page.tsx`: root page.
-- `frontend/app/(auth)/login/page.tsx`: login page.
-- `frontend/app/(user)/layout.tsx`: authenticated user shell.
-- `frontend/app/(user)/ask/page.tsx`: end-user assistant/knowledge-base ask page.
-- `frontend/app/(admin)/admin/layout.tsx`: authenticated admin shell.
-- `frontend/app/embed/assistant/page.tsx`: embedded assistant page.
+- `frontend/src/main.ts`: Vue app bootstrap.
+- `frontend/src/router/index.ts`: route definitions and auth guard registration.
+- `frontend/src/app/layouts/AdminLayout.vue`: authenticated admin shell.
+- `frontend/src/app/layouts/AuthLayout.vue`: login shell.
+- `frontend/src/modules/embed/pages/EmbedAssistantPage.vue`: embedded assistant page.
 
 Admin pages currently present:
 
-- `/admin`: admin workbench.
-- `/admin/projects`: project management.
-- `/admin/projects/[id]`: project details and app/embed configuration.
-- `/admin/documents`: knowledge-base/document management.
-- `/admin/documents/[knowledgeBaseId]`: knowledge-base detail/document list.
-- `/admin/assistants`: assistant management.
-- `/admin/assistants/new`: create assistant.
-- `/admin/assistants/[assistantId]/edit`: edit assistant.
-- `/admin/teams`: team management.
-- `/admin/users`: user management.
-- `/admin/review`: document review/publishing queue.
-- `/admin/qa-quality`: QA quality/log review.
-- `/admin/sensitive-words`: sensitive word management.
+- `/dashboard`: admin dashboard placeholder.
+- `/projects`: project management.
+- `/projects/:projectId/apps`: project app list.
+- `/projects/:projectId/apps/new`: create project app.
+- `/projects/:projectId/apps/:appId`: project app detail.
+- `/knowledge-bases`: knowledge-base management.
+- `/knowledge-bases/:knowledgeBaseId`: knowledge-base detail/document list.
+- `/knowledge-bases/:knowledgeBaseId/documents/:documentId`: document detail.
+- `/assistants`: assistant management.
+- `/assistants/new`: create assistant.
+- `/assistants/:assistantId`: assistant detail.
+- `/organizations`: team management.
+- `/users`: user management.
+- `/content-risk/overview`: content-risk overview.
+- `/content-risk/libraries`: global content-risk rule library.
 
 Frontend integration anchors:
 
-- `frontend/lib/api/client.ts`: fetch wrapper, bearer auth, JSON, multipart form upload, and `postStream`.
-- `frontend/lib/api/endpoints/ask.ts`: end-user ask/session APIs.
-- `frontend/lib/api/endpoints/embed.ts`: embedded assistant APIs.
-- `frontend/lib/api/assistants.ts`: assistant profile and assistant chat APIs.
-- `frontend/lib/api/documents.ts`: document APIs.
-- `frontend/lib/api/knowledgeBases.ts`: knowledge-base APIs.
-- `frontend/lib/api/teams.ts`, `users.ts`, `sensitiveWords.ts`: admin APIs.
-- `frontend/hooks/useAssistantChat.ts`: streamed assistant chat state for the user ask page.
-- `frontend/features/embed/hooks/useEmbeddedAssistant.ts`: embedded assistant chat state.
-- `frontend/lib/stream/sse.ts`: manual SSE parsing over fetch streams; the app does not use `EventSource`.
+- `frontend/src/shared/api/http.ts`: Axios wrapper, bearer auth, and normalized API errors.
+- `frontend/src/shared/api/*`: admin API integrations.
+- `frontend/src/modules/embed/composables/useEmbeddedAssistant.ts`: embedded assistant chat state.
+- `frontend/src/shared/lib/stream/sse.ts`: manual SSE parsing over fetch streams; the app does not use `EventSource`.
 
 Auth and role helpers:
 
-- `frontend/hooks/useAuthSession.ts`: restores/checks current auth session.
-- `frontend/lib/auth/session.ts`: token/session storage helpers.
-- `frontend/lib/auth/roles.ts`: admin access and role utilities.
-- `frontend/components/team-scope/*` and `frontend/components/teams/TeamScopeSwitcher.tsx`: team scope context and switching.
+- `frontend/src/stores/auth.ts`: restores/checks current auth session.
+- `frontend/src/shared/auth/session.ts`: token/session storage helpers.
+- `frontend/src/shared/auth/roles.ts`: admin access and role utilities.
 
 ## Current product surfaces
 
@@ -220,7 +213,7 @@ Only describe these as existing product surfaces unless code changes add more:
 - Admin assistant profile management and assistant preview/testing.
 - Admin team, member, user, and role management.
 - Admin QA log review and feedback flow.
-- Sensitive-word configuration, import, checking, and enforcement.
+- Content-risk rule library management, rule testing, and query/answer interception.
 
 Do not describe `kb_curation`, `suggest_revision`, or `doc_to_prototype` as implemented features unless corresponding code is added back to the repository. They are not registered in the current graph registry or API router.
 
@@ -253,7 +246,7 @@ When updating this file:
 
 - Verify route claims against `backend/app/api/v1/router.py` and endpoint files.
 - Verify workflow claims against `backend/app/agents/runtime/factory.py` and `backend/langgraph.json`.
-- Verify frontend route claims against `frontend/app`.
+- Verify frontend route claims against `frontend/src/router/index.ts`.
 - Keep commands consistent with `backend/pyproject.toml`, `frontend/package.json`, `docker-compose.yml`, and the lockfiles.
 
 ## 代码风格统一规则
@@ -271,7 +264,7 @@ When updating this file:
 ### 分层
 
 - 后端遵循 `api -> application -> services -> repositories` 分层：`api` 只处理请求响应，`application` 负责编排用例流程，`services` 提供可复用领域能力，`repositories` 只负责数据访问。
-- 前端遵循 `app / components / hooks / lib/api / features` 分层：页面负责装配，组件负责展示，hook 负责状态与交互编排，接口请求统一收敛到 `lib/api`。
+- 前端遵循 `src/app / src/modules / src/shared / src/stores` 分层：页面负责装配，组件负责展示，组合式函数负责状态与交互编排，接口请求统一收敛到 `src/shared/api`。
 - 新代码优先放入现有层级，不要为单次需求随意新增目录类别。
 - 如果一个文件同时承担接口编排、领域能力和数据访问三种职责，应优先拆分，而不是继续叠加。
 
@@ -283,9 +276,9 @@ When updating this file:
 
 ### 前端写法
 
-- 页面文件和业务组件不要直接散落裸 `fetch`；接口调用统一通过 `frontend/lib/api` 封装。
-- 展示组件优先保持“输入 props，输出 UI”，复杂交互和流程状态优先下沉到 hook。
-- 不要新增“万能组件”或没有拆分计划的巨型 hook；当组件同时承担请求、复杂状态、数据转换和渲染职责时，应主动拆分。
+- 页面文件和业务组件不要直接散落裸 `fetch`；接口调用统一通过 `frontend/src/shared/api` 封装。
+- 展示组件优先保持“输入 props，输出 UI”，复杂交互和流程状态优先下沉到 composable 或 store。
+- 不要新增“万能组件”或没有拆分计划的巨型 composable；当组件同时承担请求、复杂状态、数据转换和渲染职责时，应主动拆分。
 
 ### 后端写法
 
@@ -296,4 +289,5 @@ When updating this file:
 ### 自检
 
 - 新增或修改代码前，先判断这段代码属于哪一层、是否沿用了该层现有模式、命名是否体现业务含义。
+- 如果发现当前的方案不合理，或者有更好更合理的方案，可以提出来由用户确认。
 - 如需细则、正反例和拆分建议，查看 [docs/development/code-style.md](docs/development/code-style.md)。

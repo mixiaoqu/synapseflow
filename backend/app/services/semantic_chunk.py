@@ -10,7 +10,6 @@ from app.core.config.registry import config_registry
 from app.utils.document_parse import ParsedBlock, ParsedDocument, ParsedNode, render_parsed_document
 
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[。！？!?；;\.])")
-_BOLD_INTRO_RE = re.compile(r"^\*\*[^*\n]+\*\*$")
 
 
 @dataclass(frozen=True)
@@ -190,27 +189,47 @@ class _TreeParentUnit:
     children: list[_TreeChildUnit]
 
 
-def _resolve_chunk_offsets(full_text: str, content: str, search_from: int) -> tuple[int, int]:
+def _resolve_chunk_offsets(
+    full_text: str,
+    content: str,
+    search_from: int,
+) -> tuple[int, int]:
+    """Resolve character offsets of *content* within *full_text*.
+
+    Returns ``(start_offset, end_offset)`` where ``end_offset`` equals
+    ``start_offset + len(content)``.  *search_from* is the leftmost position
+    to consider, allowing the caller to enforce forward-only search that
+    matches document order.
+    """
     if not content:
-        return search_from, search_from
+        return (search_from, search_from)
 
-    start_offset = full_text.find(content, search_from)
-    if start_offset >= 0:
-        return start_offset, start_offset + len(content)
+    pos = full_text.find(content, search_from)
+    if pos != -1:
+        return (pos, pos + len(content))
 
-    first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
+    # Fallback 1: search for the first non-empty line (handles slight
+    # rendering differences, e.g. clause numbering dot variation).
+    first_line = ""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped:
+            first_line = stripped
+            break
     if first_line:
-        start_offset = full_text.find(first_line, search_from)
-        if start_offset >= 0:
-            return start_offset, start_offset + len(content)
+        pos = full_text.find(first_line, search_from)
+        if pos != -1:
+            return (pos, pos + len(content))
 
+    # Fallback 2: search for the first 80 characters.
     prefix = content[:80].strip()
     if prefix:
-        start_offset = full_text.find(prefix, search_from)
-        if start_offset >= 0:
-            return start_offset, start_offset + len(content)
+        pos = full_text.find(prefix, search_from)
+        if pos != -1:
+            return (pos, pos + len(content))
 
-    return search_from, search_from + len(content)
+    # Fallback 3: keep the cursor as the best-effort estimate.
+    return (search_from, search_from + len(content))
 
 
 def _build_tree_chunk_plan(
@@ -223,12 +242,15 @@ def _build_tree_chunk_plan(
     parent_units = _collect_tree_parent_units(parsed.roots, chunk_settings=chunk_settings)
     parent_chunks: list[PlannedChunk] = []
     child_chunks: list[PlannedChunk] = []
+
     text_cursor = 0
 
     for parent_index, unit in enumerate(parent_units):
         parent_local_id = f"parent-{parent_index}"
         parent_content = _fit_tree_content(unit.content, chunk_settings.parent_target_max)
-        parent_start, text_cursor = _resolve_chunk_offsets(full_text, parent_content, text_cursor)
+        parent_start, text_cursor = _resolve_chunk_offsets(
+            full_text, parent_content, text_cursor
+        )
         parent_chunks.append(
             PlannedChunk(
                 local_id=parent_local_id,
@@ -264,7 +286,9 @@ def _build_tree_chunk_plan(
         child_cursor = parent_start
         for child_index, child in enumerate(child_units):
             child_content = _fit_tree_content(child.content, chunk_settings.child_target_max)
-            child_start, child_cursor = _resolve_chunk_offsets(full_text, child_content, child_cursor)
+            child_start, child_cursor = _resolve_chunk_offsets(
+                full_text, child_content, child_cursor
+            )
             child_chunks.append(
                 PlannedChunk(
                     local_id=f"child-{len(child_chunks)}",
@@ -318,25 +342,14 @@ def _collect_tree_units_for_node(
     if node.node_type == "heading":
         next_heading = heading_path + (node.text.strip(),)
         units: list[_TreeParentUnit] = []
-        section_children = [child for child in node.children if child.node_type != "heading"]
-        if section_children:
-            units.append(
-                _build_heading_parent_unit(
-                    node,
-                    section_children,
+        for child in node.children:
+            units.extend(
+                _collect_tree_units_for_node(
+                    child,
                     heading_path=next_heading,
                     chunk_settings=chunk_settings,
                 )
             )
-        for child in node.children:
-            if child.node_type == "heading":
-                units.extend(
-                    _collect_tree_units_for_node(
-                        child,
-                        heading_path=next_heading,
-                        chunk_settings=chunk_settings,
-                    )
-                )
         return units
 
     if node.node_type == "clause":
@@ -358,206 +371,6 @@ def _collect_tree_units_for_node(
             )
         )
     return units
-
-
-def _build_heading_parent_unit(
-    node: ParsedNode,
-    children: list[ParsedNode],
-    *,
-    heading_path: tuple[str, ...],
-    chunk_settings: _ChunkSettings,
-) -> _TreeParentUnit:
-    heading_line = _render_heading_line(node)
-    rendered_children = [_render_tree_node(child).strip() for child in children]
-    child_content = "\n\n".join(child for child in rendered_children if child)
-    content = "\n\n".join(part for part in (heading_line, child_content) if part.strip()).strip()
-    return _TreeParentUnit(
-        node_type="heading",
-        numbering=None,
-        section_path=" > ".join(heading_path) or None,
-        block_types=_unique_node_types(children),
-        tree_path=list(heading_path),
-        content=content,
-        children=_build_section_child_units(children, heading_path, chunk_settings=chunk_settings),
-    )
-
-
-def _build_section_child_units(
-    nodes: list[ParsedNode],
-    heading_path: tuple[str, ...],
-    *,
-    chunk_settings: _ChunkSettings,
-) -> list[_TreeChildUnit]:
-    units: list[_TreeChildUnit] = []
-    paragraph_buffer: list[str] = []
-
-    def flush_paragraphs() -> None:
-        if not paragraph_buffer:
-            return
-        content = "\n\n".join(paragraph_buffer).strip()
-        paragraph_buffer.clear()
-        if not content:
-            return
-        units.append(
-            _TreeChildUnit(
-                node_type="paragraph",
-                numbering=None,
-                block_types=["paragraph"],
-                tree_path=list(heading_path),
-                content=content,
-            )
-        )
-
-    index = 0
-    while index < len(nodes):
-        node = nodes[index]
-        rendered = _render_tree_node(node).strip()
-        if not rendered:
-            index += 1
-            continue
-
-        if node.node_type == "paragraph":
-            next_node = nodes[index + 1] if index + 1 < len(nodes) else None
-            next_rendered = _render_tree_node(next_node).strip() if next_node is not None else ""
-            if _is_question_text(rendered) and _is_answer_text(next_rendered):
-                flush_paragraphs()
-                units.append(
-                    _TreeChildUnit(
-                        node_type="qa_pair",
-                        numbering=None,
-                        block_types=["paragraph"],
-                        tree_path=list(heading_path),
-                        content=f"{rendered}\n\n{next_rendered}".strip(),
-                    )
-                )
-                index += 2
-                continue
-            semantic_group = None
-            if not paragraph_buffer:
-                semantic_group = _build_semantic_group_after_paragraph(
-                    nodes,
-                    index,
-                    heading_path=heading_path,
-                    target_max=chunk_settings.child_target_max,
-                )
-            if semantic_group is not None:
-                unit, next_index = semantic_group
-                flush_paragraphs()
-                units.append(unit)
-                index = next_index
-                continue
-            paragraph_buffer.append(rendered)
-            index += 1
-            continue
-
-        flush_paragraphs()
-        if node.node_type == "clause":
-            clause_unit = _build_clause_parent_unit(node, heading_path, chunk_settings=chunk_settings)
-            units.extend(clause_unit.children)
-        elif node.node_type == "list":
-            units.extend(_list_child_units(node, list(heading_path), chunk_settings.child_target_max))
-        elif node.node_type == "table":
-            if len(rendered) <= chunk_settings.child_target_max:
-                units.append(
-                    _TreeChildUnit(
-                        node_type="table",
-                        numbering=None,
-                        block_types=["table"],
-                        tree_path=list(heading_path),
-                        content=rendered,
-                    )
-                )
-            else:
-                units.extend(_table_child_units(node, list(heading_path), chunk_settings.child_target_max))
-        else:
-            units.append(
-                _TreeChildUnit(
-                    node_type=node.node_type,
-                    numbering=node.numbering,
-                    block_types=[node.node_type],
-                    tree_path=list(heading_path),
-                    content=rendered,
-                )
-            )
-        index += 1
-
-    flush_paragraphs()
-    return units
-
-
-def _build_semantic_group_after_paragraph(
-    nodes: list[ParsedNode],
-    start_index: int,
-    *,
-    heading_path: tuple[str, ...],
-    target_max: int,
-) -> tuple[_TreeChildUnit, int] | None:
-    intro = _render_tree_node(nodes[start_index]).strip()
-    if not _is_short_semantic_intro(intro):
-        return None
-
-    parts = [intro]
-    block_types = ["paragraph"]
-    index = start_index + 1
-    merged_structured = False
-
-    while index < len(nodes):
-        node = nodes[index]
-        if node.node_type not in {"list", "clause"}:
-            break
-        rendered = _render_tree_node(node).strip()
-        if not rendered or not _is_compact_semantic_body(node, rendered):
-            break
-        candidate = "\n\n".join([*parts, rendered]).strip()
-        if len(candidate) > target_max:
-            break
-        parts.append(rendered)
-        block_types.append(node.node_type)
-        merged_structured = True
-        index += 1
-
-    if not merged_structured:
-        return None
-
-    return (
-        _TreeChildUnit(
-            node_type="semantic_group",
-            numbering=None,
-            block_types=_dedupe_preserve_order(block_types),
-            tree_path=list(heading_path),
-            content="\n\n".join(parts).strip(),
-        ),
-        index,
-    )
-
-
-def _is_short_semantic_intro(text: str) -> bool:
-    intro = text.strip()
-    if not intro or len(intro) > 120:
-        return False
-    if _BOLD_INTRO_RE.match(intro):
-        return True
-    if "\n" in intro:
-        return False
-    return intro.endswith(("：", ":"))
-
-
-def _is_compact_semantic_body(node: ParsedNode, rendered: str) -> bool:
-    if len(rendered) > 720:
-        return False
-    if node.node_type == "list":
-        return True
-    if node.node_type == "clause":
-        return True
-    return False
-
-
-def _dedupe_preserve_order(values: list[str]) -> list[str]:
-    seen: list[str] = []
-    for value in values:
-        if value not in seen:
-            seen.append(value)
-    return seen
 
 
 def _build_clause_parent_unit(
@@ -637,7 +450,24 @@ def _build_clause_parent_unit(
 def _build_list_parent_unit(node: ParsedNode, heading_path: tuple[str, ...]) -> _TreeParentUnit:
     tree_path = list(heading_path)
     content = _render_tree_node(node)
-    children = _list_child_units(node, tree_path, _get_chunk_settings().child_target_max)
+    children = [
+        _TreeChildUnit(
+            node_type="list_item",
+            numbering=None,
+            block_types=["list_item"],
+            tree_path=[*tree_path, item.text],
+            content=_render_list_item_subtree(item, tree_path, include_self_label=False),
+        )
+        for item in node.children
+    ] or [
+        _TreeChildUnit(
+            node_type="list_item",
+            numbering=None,
+            block_types=["list_item"],
+            tree_path=tree_path,
+            content=content,
+        )
+    ]
     return _TreeParentUnit(
         node_type="list",
         numbering=None,
@@ -647,65 +477,6 @@ def _build_list_parent_unit(node: ParsedNode, heading_path: tuple[str, ...]) -> 
         content=content,
         children=children,
     )
-
-
-def _list_child_units(
-    node: ParsedNode,
-    tree_path: list[str],
-    target_max: int,
-) -> list[_TreeChildUnit]:
-    content = _render_tree_node(node)
-    if len(content) <= target_max:
-        return [
-            _TreeChildUnit(
-                node_type="list",
-                numbering=None,
-                block_types=["list"],
-                tree_path=tree_path,
-                content=content,
-            )
-        ]
-
-    units: list[_TreeChildUnit] = []
-    current: list[str] = []
-    current_length = 0
-    for item in node.children:
-        item_content = _render_list_item_subtree(item, tree_path, include_self_label=False)
-        joiner = 1 if current else 0
-        if current and current_length + joiner + len(item_content) > target_max:
-            units.append(
-                _TreeChildUnit(
-                    node_type="list",
-                    numbering=None,
-                    block_types=["list"],
-                    tree_path=tree_path,
-                    content="\n".join(current).strip(),
-                )
-            )
-            current = []
-            current_length = 0
-        current.append(item_content)
-        current_length += len(item_content) if not current_length else joiner + len(item_content)
-
-    if current:
-        units.append(
-            _TreeChildUnit(
-                node_type="list",
-                numbering=None,
-                block_types=["list"],
-                tree_path=tree_path,
-                content="\n".join(current).strip(),
-            )
-        )
-    return units or [
-        _TreeChildUnit(
-            node_type="list",
-            numbering=None,
-            block_types=["list"],
-            tree_path=tree_path,
-            content=content,
-        )
-    ]
 
 
 def _build_table_parent_unit(
@@ -800,7 +571,8 @@ def _table_child_units(
 
 def _render_tree_node(node: ParsedNode, *, indent: int = 0) -> str:
     if node.node_type == "heading":
-        parts = [_render_heading_line(node)]
+        prefix = "#" * max(1, min(node.level or 1, 6))
+        parts = [f"{prefix} {node.text.strip()}"]
         parts.extend(_render_tree_node(child, indent=indent) for child in node.children)
         return "\n\n".join(part for part in parts if part.strip()).strip()
     if node.node_type == "clause":
@@ -823,11 +595,6 @@ def _render_tree_node(node: ParsedNode, *, indent: int = 0) -> str:
     return node.text.strip()
 
 
-def _render_heading_line(node: ParsedNode) -> str:
-    prefix = "#" * max(1, min(node.level or 1, 6))
-    return f"{prefix} {node.text.strip()}"
-
-
 def _render_clause_subtree(node: ParsedNode, ancestor_path: list[str]) -> str:
     return _render_tree_node(node).strip()
 
@@ -846,32 +613,12 @@ def _render_list_item_subtree(
 
 
 def _node_label(node: ParsedNode) -> str:
+    # Keep clause numbering rendering consistent with
+    # document_parse._render_node so that chunk content matches
+    # render_parsed_document output and offsets can be resolved exactly.
     if node.node_type == "clause" and node.numbering:
-        numbering = node.numbering
-        if re.fullmatch(r"\d+", numbering):
-            numbering = f"{numbering}."
-        return f"{numbering} {node.text}".strip()
+        return f"{node.numbering} {node.text}".strip()
     return node.text.strip()
-
-
-def _normalize_marker_text(value: str) -> str:
-    return value.strip().strip("*").strip()
-
-
-def _is_question_text(value: str) -> bool:
-    return bool(re.match(r"^Q\d*[：:]", _normalize_marker_text(value), flags=re.IGNORECASE))
-
-
-def _is_answer_text(value: str) -> bool:
-    return bool(re.match(r"^A[：:]", _normalize_marker_text(value), flags=re.IGNORECASE))
-
-
-def _unique_node_types(nodes: list[ParsedNode]) -> list[str]:
-    seen: list[str] = []
-    for node in nodes:
-        if node.node_type not in seen:
-            seen.append(node.node_type)
-    return seen
 
 
 def _fit_tree_content(content: str, target_max: int) -> str:

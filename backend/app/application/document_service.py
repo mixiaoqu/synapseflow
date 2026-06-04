@@ -46,7 +46,6 @@ from app.services.document_lifecycle import (
 )
 from app.services.document_indexer import persist_document_chunk_plan, prepare_document_chunk_plan
 from app.services.graph_store import get_graph_store
-from app.services.sensitive_word_service import get_sensitive_word_service
 from app.services.vector_store import delete_by_document_id
 from app.utils.document_parse import (
     MAX_FILE_SIZE,
@@ -1071,24 +1070,6 @@ class DocumentService:
         if not existing:
             raise HTTPException(status_code=404, detail="Document not found")
         self._assert_can_publish(existing)
-        team_id = await self._resolve_document_team_id(db=db, user_id=user_id, doc=existing)
-        sensitive_check = await get_sensitive_word_service().check_text(
-            scene="document_publish",
-            text=str(getattr(existing, "content", "") or ""),
-            team_id=team_id,
-            db=db,
-        )
-        if sensitive_check.blocked:
-            matched = "、".join(sensitive_check.matched_words[:5])
-            suffix = "等敏感词" if len(sensitive_check.matched_words) > 5 else "敏感词"
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Document contains {matched}{suffix} and cannot be published"
-                    if matched
-                    else "Document contains sensitive content and cannot be published"
-                ),
-            )
         root_id = getattr(existing, "root_id", None) or existing.id
         previous_live = await repo.get_live_by_root_id(root_id)
         await repo.clear_live_flags_for_root_id(root_id, exclude_doc_id=existing.id)

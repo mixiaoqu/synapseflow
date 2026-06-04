@@ -46,7 +46,7 @@ uv run pytest
 - `knowledge-bases`
 - `teams`
 - `users`
-- `sensitive-words`
+- `content-risk`
 
 ## 关键代码位置
 
@@ -57,6 +57,8 @@ uv run pytest
 - 文档管理接口：[app/api/v1/endpoints/documents.py](app/api/v1/endpoints/documents.py)
 - 文档索引服务：[app/services/document_indexer.py](app/services/document_indexer.py)
 - 知识库文本检索服务：[app/services/kb_text_retrieval.py](app/services/kb_text_retrieval.py)
+- 内容风控规则库接口：[app/api/v1/endpoints/content_risk_libraries.py](app/api/v1/endpoints/content_risk_libraries.py)
+- 内容风控检测服务：[app/services/content_risk_detection_service.py](app/services/content_risk_detection_service.py)
 
 ## 请求流转
 
@@ -73,4 +75,4 @@ uv run pytest
 
 - 新增后端能力前，先确认是否真的需要新的公开路由组。
 - 如果只是后台内部能力，优先复用现有 `ask`、`admin/qa`、`documents`、`knowledge-bases` 体系。
-- 任何流式接口变更都要保持与 `frontend/lib/stream/sse.ts` 兼容。
+- 任何流式接口变更都要保持与 `frontend/src/shared/lib/stream/sse.ts` 兼容。

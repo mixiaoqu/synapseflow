@@ -12,6 +12,7 @@ from app.utils import extract_json_from_llm_response
 
 _FALLBACK_RETRIEVAL_QUERY_LIMIT = 4
 _MAX_QUERY_LENGTH = 160
+_MAX_HYDE_DOCUMENT_LENGTH = 400
 
 _CODE_TOKEN_PATTERN = re.compile(
     r"`([^`]+)`|\"([^\"]+)\"|'([^']+)'|《([^》]+)》|([A-Za-z0-9_./:-]{3,})"
@@ -38,6 +39,11 @@ def _coerce_text(content: Any) -> str:
 def _normalize_query(text: str) -> str:
     value = re.sub(r"\s+", " ", (text or "").strip())
     return value[:_MAX_QUERY_LENGTH].strip()
+
+
+def _normalize_hyde_document(text: str) -> str:
+    value = re.sub(r"\s+", " ", (text or "").strip())
+    return value[:_MAX_HYDE_DOCUMENT_LENGTH].strip()
 
 
 def _dedupe_keep_order(items: list[str], *, limit: int) -> list[str]:
@@ -232,6 +238,101 @@ def _build_rewrite_prompt(
 """.strip()
 
 
+def _build_hyde_prompt(
+    query: str,
+    *,
+    question_type: str,
+    chat_history: list[dict[str, str]] | None = None,
+    memory_summary: str | None = None,
+    runtime_context: dict[str, Any] | None = None,
+    protected_tokens: list[str] | None = None,
+) -> str:
+    history_lines = []
+    for item in list(chat_history or [])[-4:]:
+        role = str(item.get("role") or "").strip().lower() or "assistant"
+        content = _normalize_query(str(item.get("content") or ""))
+        if not content:
+            continue
+        history_lines.append(f"{role.title()}: {content}")
+
+    protected = ", ".join(protected_tokens or []) or "(none)"
+    summary_text = _normalize_query(memory_summary or "") or "(none)"
+    context_text = "\n".join(history_lines) or "(none)"
+    runtime_context_text = _format_runtime_context(runtime_context)
+    return f"""
+你是知识库检索增强器，需要为用户问题生成一段用于向量检索的“假设答案文档”（HyDE）。
+
+目标：
+- 写一段看起来像知识库文档片段的短文本，帮助向量检索更容易命中相关内容。
+- 这不是给用户的最终答案，只是检索用的语义扩展文本。
+
+输出要求：
+- 只输出纯文本，不要输出 JSON、标题、列表标记或解释。
+- 长度控制在 1 段内，尽量 60 到 180 个中文字符。
+- 保留用户问题里的关键实体、属性、约束、场景和受保护 token。
+- 可以合理补全可能出现在知识库中的相关表达，但不要编造具体事实、数字、结论或引用来源。
+- 如果问题是比较/关系类，优先覆盖对比维度、关系对象和判断标准。
+- 如果问题是属性/定义类，优先覆盖对象、属性、适用范围、限制条件和常见表述。
+- 相关时必须原样保留这些受保护 token：{protected}
+
+问题类型：{question_type}
+
+会话摘要：
+{summary_text}
+
+最近对话：
+{context_text}
+
+用户环境：
+{runtime_context_text}
+
+用户问题：
+{query}
+""".strip()
+
+
+async def generate_hyde_document(
+    query: str,
+    *,
+    llm: Any,
+    question_type: str,
+    chat_history: list[dict[str, str]] | None = None,
+    memory_summary: str | None = None,
+    runtime_context: dict[str, Any] | None = None,
+    protected_tokens: list[str] | None = None,
+) -> str:
+    response = await llm.ainvoke(
+        _build_hyde_prompt(
+            query,
+            question_type=question_type,
+            chat_history=chat_history,
+            memory_summary=memory_summary,
+            runtime_context=runtime_context,
+            protected_tokens=protected_tokens,
+        )
+    )
+    return _normalize_hyde_document(_coerce_text(getattr(response, "content", response)))
+
+
+def _append_hyde_query(semantic_queries: list[str], hyde_document: str) -> list[str]:
+    normalized_hyde = _normalize_hyde_document(hyde_document)
+    if not normalized_hyde:
+        return semantic_queries
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for item in [*semantic_queries, normalized_hyde]:
+        normalized = _normalize_hyde_document(item)
+        if len(normalized) < 2:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        merged.append(normalized)
+        seen.add(key)
+    return merged
+
+
 def _validate_queries(
     *,
     original: str,
@@ -315,6 +416,19 @@ async def build_kb_chat_retrieval_queries(
             queries=llm_semantic_queries,
             protected_tokens=protected_tokens,
         )
+        try:
+            hyde_document = await generate_hyde_document(
+                original,
+                llm=llm,
+                question_type=question_type,
+                chat_history=chat_history,
+                memory_summary=memory_summary,
+                runtime_context=runtime_context,
+                protected_tokens=protected_tokens,
+            )
+            semantic_queries = _append_hyde_query(semantic_queries, hyde_document)
+        except Exception as exc:
+            logger.warning("KB chat HyDE generation failed, continue without HyDE: {}", exc)
         lexical_terms = _split_lexical_terms(llm_lexical_terms)
         return {
             "semantic_queries": semantic_queries or fallback or [original],
