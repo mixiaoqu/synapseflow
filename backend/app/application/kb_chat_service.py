@@ -22,14 +22,19 @@ from app.application.stream_events import (
 from app.application.workflow_meta import get_node_label
 from app.core.config.settings import settings
 from app.db.session import AsyncSessionLocal
+from app.db.models import ContentRiskLog
+from app.repositories.content_risk_log_repository import ContentRiskLogRepository
 from app.repositories.kb_chat_log_repository import KbChatLogRepository
 from app.services.chat_memory import (
     ChatMemoryContext,
     ChatMemoryStore,
     DatabaseChatMemoryStore,
 )
+from app.services.content_risk_detection_service import (
+    ContentRiskDetectionResult,
+    get_content_risk_detection_service,
+)
 from app.services.document_lifecycle import RETRIEVAL_VERSION_LIVE, VISIBLE_ASK_DOCUMENT_STATUSES
-from app.services.sensitive_word_service import SensitiveWordCheckResult, get_sensitive_word_service
 
 if TYPE_CHECKING:
     from app.models.schemas.kb_chat import (
@@ -48,14 +53,16 @@ class KbChatService(BaseAgentService):
         llm_factory: Callable[[], Any] | None = None,
         graph: Any | None = None,
         memory_store: ChatMemoryStore | None = None,
-        sensitive_word_service: Any | None = None,
+        content_risk_detection_service: Any | None = None,
         workflow_id: str | None = None,
     ):
         self._llm_factory = llm_factory
         self._graph = graph
         self._workflow_id = self._normalize_workflow_id(workflow_id or settings.KB_CHAT_WORKFLOW)
         self._memory_store = memory_store or DatabaseChatMemoryStore()
-        self._sensitive_word_service = sensitive_word_service or get_sensitive_word_service()
+        self._content_risk_detection_service = (
+            content_risk_detection_service or get_content_risk_detection_service()
+        )
 
     @staticmethod
     def _normalize_workflow_id(value: str | None) -> str:
@@ -723,17 +730,77 @@ class KbChatService(BaseAgentService):
             logger.exception("[KB Chat] failed to persist log: {}", exc)
             return None
 
+    async def _record_content_risk_log(
+        self,
+        *,
+        state: dict[str, Any],
+        check_result: ContentRiskDetectionResult,
+        checked_text: str,
+        chat_log_id: int | None,
+    ) -> int | None:
+        if not check_result.hits:
+            return None
+
+        user_id = state.get("user_id")
+        hits = [
+            {
+                "rule_id": hit.rule_id,
+                "library_id": hit.library_id,
+                "rule_name": hit.rule_name,
+                "risk_category": hit.risk_category,
+                "risk_level": hit.risk_level,
+                "action": hit.action,
+                "match_mode": hit.match_mode,
+                "pattern": hit.pattern,
+                "matched_text": hit.matched_text,
+            }
+            for hit in check_result.hits
+        ]
+        matched_text = "、".join(
+            dict.fromkeys(hit.matched_text for hit in check_result.hits if hit.matched_text)
+        )
+
+        try:
+            async with AsyncSessionLocal() as db:
+                row = await ContentRiskLogRepository(db).create_log(
+                    ContentRiskLog(
+                        chat_log_id=chat_log_id,
+                        user_id=int(user_id) if user_id else None,
+                        session_id=state.get("session_id"),
+                        product_id=state.get("product_id"),
+                        project_id=state.get("project_id"),
+                        project_app_id=state.get("project_app_id"),
+                        external_user_id=state.get("external_user_id"),
+                        external_user_name=state.get("external_user_name"),
+                        knowledge_base_id=state.get("knowledge_base_id"),
+                        assistant_id=state.get("assistant_id"),
+                        scene=check_result.scene,
+                        action=check_result.action,
+                        blocked=check_result.blocked,
+                        risk_level=check_result.risk_level,
+                        matched_text=matched_text or None,
+                        checked_text=checked_text,
+                        hits=hits,
+                        elapsed_ms=check_result.elapsed_ms,
+                    )
+                )
+                return row.id
+        except Exception as exc:
+            logger.exception("[KB Chat] failed to persist content-risk log: {}", exc)
+            return None
+
     @staticmethod
     def _build_blocked_result(
         state: dict[str, Any],
-        check_result: SensitiveWordCheckResult,
+        check_result: ContentRiskDetectionResult,
     ) -> dict[str, Any]:
-        matched = "、".join(check_result.matched_words[:5])
-        suffix = "等敏感词" if len(check_result.matched_words) > 5 else "敏感词"
+        matched_names = [hit.rule_name for hit in check_result.hits]
+        matched = "、".join(matched_names[:5])
+        suffix = "等规则" if len(matched_names) > 5 else "规则"
         answer = (
-            f"输入包含{matched}{suffix}，当前请求已被拦截。"
+            f"内容命中{matched}{suffix}，当前请求已被内容风控拦截。"
             if matched
-            else "输入包含敏感词，当前请求已被拦截。"
+            else "内容命中风控规则，当前请求已被拦截。"
         )
         return {
             **state,
@@ -743,19 +810,32 @@ class KbChatService(BaseAgentService):
             "semantic_queries": [],
             "lexical_terms": [],
             "context": "",
-            "matched_sensitive_words": list(check_result.matched_words),
+            "content_risk_action": check_result.action,
+            "content_risk_scene": check_result.scene,
+            "content_risk_hits": [
+                {
+                    "rule_id": hit.rule_id,
+                    "library_id": hit.library_id,
+                    "rule_name": hit.rule_name,
+                    "risk_category": hit.risk_category,
+                    "risk_level": hit.risk_level,
+                    "action": hit.action,
+                    "matched_text": hit.matched_text,
+                }
+                for hit in check_result.hits
+            ],
             "answer_status": "blocked",
         }
 
-    async def _check_sensitive_query(
+    async def _check_content_risk(
         self,
         *,
-        request: "KbChatRequest",
-    ) -> SensitiveWordCheckResult:
-        return await self._sensitive_word_service.check_text(
-            scene="query",
-            text=request.query,
-            team_id=getattr(request, "team_id", None),
+        scene: str,
+        text: str,
+    ) -> ContentRiskDetectionResult:
+        return await self._content_risk_detection_service.check_text(
+            scene=scene,
+            text=text,
         )
 
     async def invoke(self, request: "KbChatRequest", *, user_id: int | None) -> "KbChatResponse":
@@ -764,14 +844,20 @@ class KbChatService(BaseAgentService):
         from app.models.schemas.kb_chat import KbChatResponse
 
         state = await self._prepare_state(request, user_id=user_id)
-        sensitive_check = await self._check_sensitive_query(request=request)
-        if sensitive_check.blocked:
-            result = self._build_blocked_result(state, sensitive_check)
+        query_risk_check = await self._check_content_risk(scene="query", text=request.query)
+        if query_risk_check.blocked:
+            result = self._build_blocked_result(state, query_risk_check)
             answer_status = self._resolve_answer_status(result)
             log_id = await self._record_log(
                 state=state,
                 result=result,
                 latency_ms=0,
+            )
+            await self._record_content_risk_log(
+                state=state,
+                check_result=query_risk_check,
+                checked_text=request.query,
+                chat_log_id=log_id,
             )
             await self._save_turn(
                 state=result,
@@ -795,6 +881,11 @@ class KbChatService(BaseAgentService):
         started_at = perf_counter()
         result = await self._get_graph().ainvoke(state)
         answer = result.get("answer", "")
+        answer_risk_check = await self._check_content_risk(scene="answer", text=answer)
+        blocked_answer_text = answer
+        if answer_risk_check.blocked:
+            result = self._build_blocked_result({**state, **result}, answer_risk_check)
+            answer = result.get("answer", "")
         answer_status = self._resolve_answer_status(result)
         total_latency_ms = int((perf_counter() - started_at) * 1000)
         self._log_retrieval_review_log(
@@ -806,6 +897,12 @@ class KbChatService(BaseAgentService):
             state=state,
             result=result,
             latency_ms=total_latency_ms,
+        )
+        await self._record_content_risk_log(
+            state=state,
+            check_result=answer_risk_check,
+            checked_text=blocked_answer_text,
+            chat_log_id=log_id,
         )
         await self._save_turn(
             state=result,
@@ -838,9 +935,9 @@ class KbChatService(BaseAgentService):
             chat_history=[],
             memory_summary=None,
         )
-        sensitive_check = await self._check_sensitive_query(request=request)
-        if sensitive_check.blocked:
-            result = self._build_blocked_result(state, sensitive_check)
+        query_risk_check = await self._check_content_risk(scene="query", text=request.query)
+        if query_risk_check.blocked:
+            result = self._build_blocked_result(state, query_risk_check)
             answer_status = self._resolve_answer_status(result)
             return KbChatResponse(
                 answer=result["answer"],
@@ -855,6 +952,12 @@ class KbChatService(BaseAgentService):
             )
 
         result = await self._get_graph().ainvoke(state)
+        answer_risk_check = await self._check_content_risk(
+            scene="answer",
+            text=str(result.get("answer") or ""),
+        )
+        if answer_risk_check.blocked:
+            result = self._build_blocked_result({**state, **result}, answer_risk_check)
         answer_status = self._resolve_answer_status(result)
         return KbChatResponse(
             answer=result.get("answer", ""),
@@ -1008,14 +1111,20 @@ class KbChatService(BaseAgentService):
 
         try:
             yield emit_start(run_id, "开始知识库问答")
-            sensitive_check = await self._check_sensitive_query(request=request)
-            if sensitive_check.blocked:
-                blocked_state = self._build_blocked_result(state, sensitive_check)
+            query_risk_check = await self._check_content_risk(scene="query", text=request.query)
+            if query_risk_check.blocked:
+                blocked_state = self._build_blocked_result(state, query_risk_check)
                 answer_status = self._resolve_answer_status(blocked_state)
                 log_id = await self._record_log(
                     state=state,
                     result=blocked_state,
                     latency_ms=0,
+                )
+                await self._record_content_risk_log(
+                    state=state,
+                    check_result=query_risk_check,
+                    checked_text=request.query,
+                    chat_log_id=log_id,
                 )
                 await self._save_turn(
                     state=blocked_state,
@@ -1123,6 +1232,11 @@ class KbChatService(BaseAgentService):
                         )
 
             answer = final_state.get("answer", "")
+            answer_risk_check = await self._check_content_risk(scene="answer", text=answer)
+            blocked_answer_text = answer
+            if answer_risk_check.blocked:
+                final_state = self._build_blocked_result(final_state, answer_risk_check)
+                answer = final_state.get("answer", "")
             answer_status = self._resolve_answer_status(final_state)
             total_latency_ms = int((perf_counter() - started_at) * 1000)
             self._log_retrieval_review_log(
@@ -1134,6 +1248,12 @@ class KbChatService(BaseAgentService):
                 state=state,
                 result=final_state,
                 latency_ms=total_latency_ms,
+            )
+            await self._record_content_risk_log(
+                state=state,
+                check_result=answer_risk_check,
+                checked_text=blocked_answer_text,
+                chat_log_id=log_id,
             )
             await self._save_turn(
                 state=final_state,

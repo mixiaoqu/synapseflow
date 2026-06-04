@@ -53,16 +53,17 @@ class TeamMember(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
-class SensitiveWordSetting(Base):
-    """Scoped sensitive-word runtime settings."""
+class ContentRiskLibrary(Base):
+    """Reusable content-risk rule library."""
 
-    __tablename__ = "sensitive_word_settings"
+    __tablename__ = "content_risk_libraries"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=True, index=True)
-    enabled = Column(Boolean, nullable=False, default=True)
-    block_query = Column(Boolean, nullable=False, default=True)
-    block_document_publish = Column(Boolean, nullable=False, default=False)
+    name = Column(String(100), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    rule_count = Column(Integer, nullable=False, default=0)
+    reference_count = Column(Integer, nullable=False, default=0)
     created_by_user_id = Column(
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -79,22 +80,32 @@ class SensitiveWordSetting(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
-class SensitiveWord(Base):
-    """One sensitive word row under the global or team scope."""
+class ContentRiskRule(Base):
+    """One concrete risk detection rule under a content-risk library."""
 
-    __tablename__ = "sensitive_words"
+    __tablename__ = "content_risk_rules"
     __table_args__ = (
-        UniqueConstraint("team_id", "normalized_word", name="uq_sensitive_words_team_normalized"),
+        UniqueConstraint("library_id", "name", name="uq_content_risk_rules_library_name"),
     )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=True, index=True)
-    word = Column(String(255), nullable=False)
-    normalized_word = Column(String(255), nullable=False, index=True)
-    category = Column(String(50), nullable=True, index=True)
-    match_mode = Column(String(20), nullable=False, default="contains")
-    enabled = Column(Boolean, nullable=False, default=True)
-    remark = Column(Text, nullable=True)
+    library_id = Column(
+        Integer,
+        ForeignKey("content_risk_libraries.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name = Column(String(100), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    rule_type = Column(String(30), nullable=False, index=True)
+    match_mode = Column(String(30), nullable=False, index=True)
+    pattern = Column(Text, nullable=False)
+    risk_category = Column(String(50), nullable=False, index=True)
+    risk_level = Column(String(20), nullable=False, index=True)
+    default_action = Column(String(20), nullable=False, index=True)
+    applies_to_query = Column(Boolean, nullable=False, default=True, index=True)
+    applies_to_answer = Column(Boolean, nullable=False, default=True, index=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
     created_by_user_id = Column(
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -548,3 +559,45 @@ class KbChatLog(Base):
     )
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class ContentRiskLog(Base):
+    """One persisted content-risk detection decision."""
+
+    __tablename__ = "content_risk_logs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    chat_log_id = Column(Integer, ForeignKey("kb_chat_logs.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    session_id = Column(String(64), nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_app_id = Column(
+        Integer,
+        ForeignKey("project_apps.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    external_user_id = Column(String(255), nullable=True, index=True)
+    external_user_name = Column(String(255), nullable=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    assistant_id = Column(
+        Integer,
+        ForeignKey("assistant_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    scene = Column(String(20), nullable=False, index=True)
+    action = Column(String(20), nullable=False, index=True)
+    blocked = Column(Boolean, nullable=False, default=False, index=True)
+    risk_level = Column(String(20), nullable=True, index=True)
+    matched_text = Column(Text, nullable=True)
+    checked_text = Column(Text, nullable=False)
+    hits = Column(JSON, nullable=False, default=list)
+    elapsed_ms = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=utc_now, index=True)

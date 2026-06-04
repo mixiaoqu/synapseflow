@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     assistants,
     ask,
     auth,
+    content_risk_libraries,
     document_categories,
     documents,
     embed,
@@ -14,7 +15,6 @@ from app.api.v1.endpoints import (
     mcp,
     products,
     projects,
-    sensitive_words,
     teams,
     users,
 )
@@ -39,9 +39,9 @@ api_router.include_router(products.router, prefix="/products", tags=["products"]
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(
-    sensitive_words.router,
-    prefix="/sensitive-words",
-    tags=["sensitive-words"],
+    content_risk_libraries.router,
+    prefix="/content-risk",
+    tags=["content-risk"],
 )
 api_router.include_router(
     knowledge_bases.router,

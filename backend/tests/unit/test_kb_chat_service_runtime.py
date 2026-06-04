@@ -21,7 +21,10 @@ from app.services.document_lifecycle import (
     RETRIEVAL_VERSION_LIVE,
     VISIBLE_ASK_DOCUMENT_STATUSES,
 )
-from app.services.sensitive_word_service import SensitiveWordCheckResult
+from app.services.content_risk_detection_service import (
+    ContentRiskDetectionResult,
+    ContentRiskRuleHit,
+)
 
 
 def _decode_sse_payloads(events: list[str]) -> list[dict]:
@@ -319,19 +322,35 @@ class FakeChatMemoryStore:
         return True
 
 
-class FakeSensitiveWordService:
-    def __init__(self, blocked: bool = False, matched_words: list[str] | None = None) -> None:
+class FakeContentRiskDetectionService:
+    def __init__(self, blocked: bool = False, matched_rules: list[str] | None = None) -> None:
         self.blocked = blocked
-        self.matched_words = matched_words or ["secret"]
+        self.matched_rules = matched_rules or ["secret"]
         self.calls = []
 
-    async def check_text(self, *, scene: str, text: str, team_id: int | None):
-        self.calls.append({"scene": scene, "text": text, "team_id": team_id})
-        return SensitiveWordCheckResult(
-            blocked=self.blocked,
-            matched_words=list(self.matched_words if self.blocked else []),
+    async def check_text(self, *, scene: str, text: str):
+        self.calls.append({"scene": scene, "text": text})
+        hits = [
+            ContentRiskRuleHit(
+                rule_id=index + 1,
+                library_id=1,
+                rule_name=rule_name,
+                risk_category="测试分类",
+                risk_level="high",
+                action="block",
+                match_mode="contains",
+                pattern=rule_name,
+                matched_text=rule_name,
+            )
+            for index, rule_name in enumerate(self.matched_rules)
+        ] if self.blocked else []
+        return ContentRiskDetectionResult(
             scene=scene,
-            reason="Matched sensitive words" if self.blocked else None,
+            action="block" if self.blocked else "pass",
+            blocked=self.blocked,
+            risk_level="high" if self.blocked else None,
+            hits=hits,
+            elapsed_ms=1,
         )
 
 
@@ -350,7 +369,7 @@ def test_kb_chat_invoke_uses_graph_result():
         llm_factory=lambda: None,
         graph=graph,
         memory_store=memory_store,
-        sensitive_word_service=FakeSensitiveWordService(blocked=False),
+        content_risk_detection_service=FakeContentRiskDetectionService(blocked=False),
     )
     request = SimpleNamespace(
         query="What is LangGraph?",
@@ -391,7 +410,7 @@ def test_kb_chat_stream_emits_standardized_envelopes():
         llm_factory=lambda: None,
         graph=graph,
         memory_store=memory_store,
-        sensitive_word_service=FakeSensitiveWordService(blocked=False),
+        content_risk_detection_service=FakeContentRiskDetectionService(blocked=False),
     )
     request = SimpleNamespace(
         query="What is LangGraph?",
@@ -438,12 +457,12 @@ def test_kb_chat_stream_emits_standardized_envelopes():
 def test_kb_chat_invoke_blocks_sensitive_query_before_graph_runs():
     graph = FakeKbChatGraph()
     memory_store = FakeChatMemoryStore()
-    sensitive_service = FakeSensitiveWordService(blocked=True, matched_words=["internal roadmap"])
+    risk_service = FakeContentRiskDetectionService(blocked=True, matched_rules=["internal roadmap"])
     service = KbChatService(
         llm_factory=lambda: None,
         graph=graph,
         memory_store=memory_store,
-        sensitive_word_service=sensitive_service,
+        content_risk_detection_service=risk_service,
     )
     request = SimpleNamespace(
         query="Show me the internal roadmap",
@@ -476,7 +495,7 @@ def test_kb_chat_stream_completes_with_blocked_payload_when_sensitive_query_matc
         llm_factory=lambda: None,
         graph=graph,
         memory_store=memory_store,
-        sensitive_word_service=FakeSensitiveWordService(blocked=True, matched_words=["secret"]),
+        content_risk_detection_service=FakeContentRiskDetectionService(blocked=True, matched_rules=["secret"]),
     )
     request = SimpleNamespace(
         query="Tell me the secret launch plan",
@@ -610,7 +629,7 @@ def test_kb_chat_preview_runs_without_persistence():
         llm_factory=lambda: None,
         graph=graph,
         memory_store=memory_store,
-        sensitive_word_service=FakeSensitiveWordService(blocked=False),
+        content_risk_detection_service=FakeContentRiskDetectionService(blocked=False),
     )
     request = SimpleNamespace(
         query="Preview this assistant",
