@@ -184,6 +184,19 @@ async def update_content_risk_library(
     )
 
 
+@router.delete("/libraries/{library_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_content_risk_library(
+    library_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    await ContentRiskLibraryService().delete_library(
+        library_id,
+        db=db,
+        actor_user_id=current_user.id,
+    )
+
+
 @router.get("/libraries/{library_id}/rules", response_model=ContentRiskRuleListResponse)
 async def list_content_risk_rules(
     library_id: int,

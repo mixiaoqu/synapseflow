@@ -144,6 +144,13 @@ export async function updateContentRiskLibrary(
   return mapLibrary(response);
 }
 
+export async function deleteContentRiskLibrary(libraryId: number) {
+  await request<void>({
+    url: `/content-risk/libraries/${libraryId}`,
+    method: "DELETE",
+  });
+}
+
 export async function listContentRiskRules(
   libraryId: number,
   params: ListContentRiskRulesParams = {},

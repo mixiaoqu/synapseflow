@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import { ElMessage } from "element-plus";
-import { Plus, Search, Setting } from "@element-plus/icons-vue";
+import { ElMessage, ElMessageBox } from "element-plus";
+import { Delete, Plus, Search, Setting } from "@element-plus/icons-vue";
 
 import {
   createContentRiskLibrary,
   createContentRiskRule,
+  deleteContentRiskLibrary,
   listContentRiskLibraries,
   listContentRiskRules,
   testContentRiskText,
@@ -44,6 +45,7 @@ const libraryDialogVisible = ref(false);
 const ruleDialogVisible = ref(false);
 const savingLibrary = ref(false);
 const savingRule = ref(false);
+const deletingLibraryId = ref<number | null>(null);
 const editingLibrary = ref<ContentRiskLibrarySummary | null>(null);
 const editingRule = ref<ContentRiskRuleSummary | null>(null);
 const sandboxVisible = ref(false);
@@ -424,6 +426,39 @@ async function submitRuleForm() {
   }
 }
 
+async function confirmDeleteLibrary(library: ContentRiskLibrarySummary) {
+  if (deletingLibraryId.value !== null) {
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `删除后将同时删除“${library.name}”下的全部 ${library.ruleCount} 条规则，且无法恢复。是否继续？`,
+      "确认删除规则库",
+      {
+        type: "warning",
+        confirmButtonText: "确认删除",
+        cancelButtonText: "取消",
+        confirmButtonClass: "el-button--danger",
+      },
+    );
+  } catch {
+    return;
+  }
+
+  deletingLibraryId.value = library.id;
+
+  try {
+    await deleteContentRiskLibrary(library.id);
+    ElMessage.success("规则库已删除。");
+    await loadLibraries();
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "删除规则库失败，请稍后重试。"));
+  } finally {
+    deletingLibraryId.value = null;
+  }
+}
+
 function openRules(library: ContentRiskLibrarySummary) {
   selectedLibrary.value = library;
   resetRuleFilters();
@@ -684,6 +719,16 @@ onMounted(() => {
                 @click="openRules(library)"
               >
                 规则明细
+              </el-button>
+              <el-button
+                type="danger"
+                plain
+                class="flex-1"
+                :loading="deletingLibraryId === library.id"
+                @click="confirmDeleteLibrary(library)"
+              >
+                <el-icon><Delete /></el-icon>
+                删除
               </el-button>
             </div>
           </article>

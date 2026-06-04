@@ -238,6 +238,33 @@ def test_update_content_risk_library_returns_updated_item(client, monkeypatch):
     assert data["enabled"] is False
 
 
+def test_delete_content_risk_library_returns_no_content(client, monkeypatch):
+    async def _fake_require_content_roles():
+        return SimpleNamespace(id=9, role="kb_admin")
+
+    async def _fake_get_db():
+        yield object()
+
+    async def _fake_delete_library(self, library_id, *, db, actor_user_id):
+        assert library_id == 2
+        assert db is not None
+        assert actor_user_id == 9
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.content_risk_libraries.ContentRiskLibraryService.delete_library",
+        _fake_delete_library,
+    )
+    app.dependency_overrides[require_content_roles] = _fake_require_content_roles
+    app.dependency_overrides[get_db] = _fake_get_db
+    try:
+        response = client.delete("/api/v1/content-risk/libraries/2")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 204
+    assert response.content == b""
+
+
 def test_list_content_risk_rules_returns_library_rules(client, monkeypatch):
     async def _fake_require_any_admin_role():
         return SimpleNamespace(id=1, role="kb_admin")

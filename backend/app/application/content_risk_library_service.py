@@ -92,6 +92,20 @@ class ContentRiskLibraryService:
         row = await repository.update_library(library)
         return ContentRiskLibraryResponse.model_validate(row)
 
+    async def delete_library(
+        self,
+        library_id: int,
+        *,
+        db: AsyncSession,
+        actor_user_id: int | None,
+    ) -> None:
+        del actor_user_id
+        repository = ContentRiskLibraryRepository(db)
+        library = await repository.get_library(library_id)
+        if library is None:
+            raise HTTPException(status_code=404, detail="Rule library not found")
+        await repository.delete_library(library)
+
     async def list_rules(
         self,
         library_id: int,

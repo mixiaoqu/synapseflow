@@ -57,6 +57,10 @@ class ContentRiskLibraryRepository:
         await self.db.refresh(library)
         return library
 
+    async def delete_library(self, library: ContentRiskLibrary) -> None:
+        await self.db.delete(library)
+        await self.db.commit()
+
     async def list_rules(
         self,
         library_id: int,
