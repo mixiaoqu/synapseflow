@@ -73,11 +73,13 @@ backend/htmlcov/
 backend/coverage/
 backend/logs/
 
-# ---------- Frontend (Next.js) ----------
+# ---------- Frontend (Vue / Vite) ----------
 frontend/node_modules/
 frontend/.next/
 frontend/out/
 frontend/build/
+frontend/dist/
+frontend/.vite/
 frontend/.turbo/
 frontend/tsconfig.tsbuildinfo
 frontend/.pnpm-store/

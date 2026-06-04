@@ -16,14 +16,14 @@ install:
 	@echo "安装后端依赖..."
 	cd backend && uv sync
 	@echo "安装前端依赖..."
-	cd frontend && npm install
+	cd frontend && pnpm install
 	@echo "✅ 依赖安装完成"
 
 dev-backend:
 	cd backend && uv run uvicorn app.main:app --reload
 
 dev-frontend:
-	cd frontend && npm run dev
+	cd frontend && pnpm dev
 
 test:
 	cd backend && uv run pytest

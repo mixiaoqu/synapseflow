@@ -224,19 +224,19 @@ services:
     logging: *default-logging
 
   frontend:
-    image: synapseflow-admin-vue:prod
+    image: synapseflow-frontend:prod
     build:
-      context: ./admin-vue
-      dockerfile: ../docker/admin-vue/Dockerfile.prod
+      context: ./frontend
+      dockerfile: ../docker/frontend/Dockerfile.prod
       args:
-        VITE_API_BASE_URL: ${SF_ADMIN_VUE_API_BASE_URL:-/api/v1}
-        VITE_API_TIMEOUT_MS: ${SF_ADMIN_VUE_API_TIMEOUT_MS:-15000}
+        VITE_API_BASE_URL: ${SF_FRONTEND_API_BASE_URL:-/api/v1}
+        VITE_API_TIMEOUT_MS: ${SF_FRONTEND_API_TIMEOUT_MS:-15000}
         NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmmirror.com}
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      VITE_API_BASE_URL: ${SF_ADMIN_VUE_API_BASE_URL:-/api/v1}
-      VITE_API_TIMEOUT_MS: ${SF_ADMIN_VUE_API_TIMEOUT_MS:-15000}
+      VITE_API_BASE_URL: ${SF_FRONTEND_API_BASE_URL:-/api/v1}
+      VITE_API_TIMEOUT_MS: ${SF_FRONTEND_API_TIMEOUT_MS:-15000}
     ports:
       - ${SF_BIND_HOST:-127.0.0.1}:${SF_FRONTEND_PORT:-5173}:5173
     depends_on:

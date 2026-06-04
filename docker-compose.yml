@@ -103,9 +103,9 @@ services:
       - HF_HOME=/app/.cache/huggingface
       - RERANK_ENABLED=${RERANK_ENABLED:-true}
       - RERANK_API_URL=${RERANK_API_URL:-http://reranker:8012/v1/rerank}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
-      - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:3000}
+      - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:5173}
       - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-60}
       - GRAPH_ENABLED=${GRAPH_ENABLED:-false}
       - GRAPH_INDEXING_ENABLED=${GRAPH_INDEXING_ENABLED:-false}
@@ -145,7 +145,7 @@ services:
       - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
       - HF_HOME=/app/.cache/huggingface
       - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
-      - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:3000}
+      - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:5173}
       - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-60}
       - GRAPH_ENABLED=${GRAPH_ENABLED:-false}
       - GRAPH_INDEXING_ENABLED=${GRAPH_INDEXING_ENABLED:-false}
@@ -172,8 +172,8 @@ services:
 
   frontend:
     build:
-      context: ./admin-vue
-      dockerfile: ../docker/admin-vue/Dockerfile
+      context: ./frontend
+      dockerfile: ../docker/frontend/Dockerfile
       args:
         NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmmirror.com}
     container_name: synapseflow-frontend
@@ -183,7 +183,7 @@ services:
     ports:
       - "${SF_FRONTEND_PORT:-5173}:5173"
     volumes:
-      - ./admin-vue:/app
+      - ./frontend:/app
       - /app/node_modules
     networks:
       - synapseflow-network
