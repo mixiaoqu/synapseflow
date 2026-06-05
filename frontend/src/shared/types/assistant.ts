@@ -17,6 +17,13 @@ export interface AssistantSummary {
   updated_at: string;
 }
 
+export interface AssistantListResponse {
+  items: AssistantSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface AssistantDetail extends AssistantSummary {
   persona_prompt: string | null;
   rule_template: string | null;

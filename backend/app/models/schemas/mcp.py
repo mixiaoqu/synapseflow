@@ -37,6 +37,8 @@ class McpBindingItem(BaseModel):
     knowledge_base_name: str | None = None
     knowledge_base_branch_id: int | None = None
     knowledge_base_branch_name: str | None = None
+    category_id: int | None = None
+    category_name: str | None = None
 
 
 class McpScopeResolveResponse(BaseModel):
@@ -52,6 +54,8 @@ class McpScopeResolveResponse(BaseModel):
     app_name: str
     assistant_id: int | None = None
     assistant_name: str | None = None
+    category_id: int | None = None
+    category_name: str | None = None
     knowledge_base_ids: list[int] = Field(default_factory=list)
     knowledge_base_branch_ids: list[int] = Field(default_factory=list)
     bindings: list[McpBindingItem] = Field(default_factory=list)

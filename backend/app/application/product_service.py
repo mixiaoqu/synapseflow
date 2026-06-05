@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Product
-from app.models.schemas.product import ProductCreate, ProductResponse, ProductUpdate
+from app.models.schemas.product import ProductCreate, ProductListResponse, ProductResponse, ProductUpdate
 from app.repositories.product_repository import ProductRecord, ProductRepository
 from app.repositories.team_repository import TeamRepository
 
@@ -55,6 +55,30 @@ class ProductService:
             await self._ensure_team_access(team_id)
         records = await self.repository.list_products(team_id=team_id)
         return [self._to_response(record) for record in records]
+
+    async def list_products_page(
+        self,
+        *,
+        team_id: int | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> ProductListResponse:
+        if team_id is not None:
+            await self._ensure_team_access(team_id)
+        normalized_page = max(1, int(page))
+        normalized_page_size = min(100, max(1, int(page_size)))
+        total = await self.repository.count_products(team_id=team_id)
+        records = await self.repository.list_products_page(
+            team_id=team_id,
+            offset=(normalized_page - 1) * normalized_page_size,
+            limit=normalized_page_size,
+        )
+        return ProductListResponse(
+            items=[self._to_response(record) for record in records],
+            total=total,
+            page=normalized_page,
+            page_size=normalized_page_size,
+        )
 
     async def get_product(self, product_id: int) -> ProductResponse:
         record = await self.repository.get_product_record(product_id)

@@ -15,6 +15,7 @@ from app.models.schemas.assistant import (
     AssistantBulkActionResponse,
     AssistantAvailabilityResponse,
     AssistantDependencyUsageResponse,
+    AssistantProfileListResponse,
     AssistantModelOption,
     AssistantModelOptionsResponse,
     AssistantProfileCreate,
@@ -67,6 +68,14 @@ class AssistantService:
         if not normalized:
             raise HTTPException(status_code=400, detail="Assistant slug cannot be empty")
         return normalized
+
+    @staticmethod
+    def _resolve_status_filter(status: str | None) -> bool | None:
+        if status == "active":
+            return True
+        if status == "inactive":
+            return False
+        return None
 
     @staticmethod
     def _normalize_model_key(value: str | None) -> str | None:
@@ -157,6 +166,40 @@ class AssistantService:
             active_only=active_only,
         )
         return [self._to_summary(record) for record in records]
+
+    async def list_profiles_page(
+        self,
+        *,
+        team_id: int | None = None,
+        active_only: bool = False,
+        keyword: str | None = None,
+        status: str = "all",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> AssistantProfileListResponse:
+        normalized_page = max(1, int(page))
+        normalized_page_size = min(100, max(1, int(page_size)))
+        is_active = self._resolve_status_filter(status)
+        total = await self.repository.count_profiles(
+            team_id=team_id,
+            active_only=active_only,
+            keyword=keyword,
+            is_active=is_active,
+        )
+        records = await self.repository.list_profiles_page(
+            team_id=team_id,
+            active_only=active_only,
+            keyword=keyword,
+            is_active=is_active,
+            offset=(normalized_page - 1) * normalized_page_size,
+            limit=normalized_page_size,
+        )
+        return AssistantProfileListResponse(
+            items=[self._to_summary(record) for record in records],
+            total=total,
+            page=normalized_page,
+            page_size=normalized_page_size,
+        )
 
     async def list_available(
         self,

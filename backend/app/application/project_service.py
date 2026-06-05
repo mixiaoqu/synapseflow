@@ -5,13 +5,15 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AssistantProfile, Product, Project, ProjectApp
+from app.db.models import AssistantProfile, DocumentCategory, Product, Project, ProjectApp
 from app.models.schemas.project import (
     ProjectAppCopy,
     ProjectAppCreate,
+    ProjectAppListResponse,
     ProjectAppResponse,
     ProjectAppUpdate,
     ProjectCreate,
+    ProjectListResponse,
     ProjectResponse,
     ProjectUpdate,
 )
@@ -46,6 +48,14 @@ class ProjectService:
         return code
 
     @staticmethod
+    def _resolve_status_filter(status: str | None) -> bool | None:
+        if status == "active":
+            return True
+        if status == "inactive":
+            return False
+        return None
+
+    @staticmethod
     def _to_project_response(record: ProjectRecord) -> ProjectResponse:
         project = record.project
         return ProjectResponse(
@@ -75,6 +85,8 @@ class ProjectService:
             description=app.description,
             knowledge_base_id=app.knowledge_base_id,
             knowledge_base_name=record.knowledge_base_name,
+            category_id=app.category_id,
+            category_name=record.category_name,
             default_assistant_id=app.default_assistant_id,
             default_assistant_name=record.assistant_name,
             is_active=app.is_active,
@@ -137,11 +149,62 @@ class ProjectService:
             )
         return resolved_knowledge_base_id
 
+    async def _validate_category_id(
+        self,
+        *,
+        knowledge_base_id: int,
+        category_id: int | None,
+    ) -> int | None:
+        if category_id is None:
+            return None
+        category = await self.db.get(DocumentCategory, int(category_id))
+        if category is None:
+            raise HTTPException(status_code=404, detail="Document category not found")
+        if category.knowledge_base_id != knowledge_base_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Document category does not belong to the selected knowledge base",
+            )
+        return int(category_id)
+
     async def list_projects(self, *, team_id: int | None = None) -> list[ProjectResponse]:
         if team_id is not None:
             await self._ensure_team_access(team_id)
         records = await self.repository.list_projects(team_id=team_id)
         return [self._to_project_response(record) for record in records]
+
+    async def list_projects_page(
+        self,
+        *,
+        team_id: int | None = None,
+        keyword: str | None = None,
+        status: str = "all",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> ProjectListResponse:
+        if team_id is not None:
+            await self._ensure_team_access(team_id)
+        normalized_page = max(1, int(page))
+        normalized_page_size = min(100, max(1, int(page_size)))
+        is_active = self._resolve_status_filter(status)
+        total = await self.repository.count_projects(
+            team_id=team_id,
+            keyword=keyword,
+            is_active=is_active,
+        )
+        records = await self.repository.list_projects_page(
+            team_id=team_id,
+            keyword=keyword,
+            is_active=is_active,
+            offset=(normalized_page - 1) * normalized_page_size,
+            limit=normalized_page_size,
+        )
+        return ProjectListResponse(
+            items=[self._to_project_response(record) for record in records],
+            total=total,
+            page=normalized_page,
+            page_size=normalized_page_size,
+        )
 
     async def get_project(self, project_id: int) -> ProjectResponse:
         record = await self.repository.get_project_record(project_id)
@@ -213,6 +276,41 @@ class ProjectService:
         records = await self.repository.list_apps(project_id=project_id)
         return [self._to_app_response(record) for record in records]
 
+    async def list_apps_page(
+        self,
+        *,
+        project_id: int,
+        keyword: str | None = None,
+        status: str = "all",
+        page: int,
+        page_size: int,
+    ) -> ProjectAppListResponse:
+        project = await self.repository.get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        await self._ensure_team_access(project.team_id)
+        normalized_page = max(1, page)
+        normalized_page_size = min(100, max(1, page_size))
+        is_active = self._resolve_status_filter(status)
+        total = await self.repository.count_apps(
+            project_id=project_id,
+            keyword=keyword,
+            is_active=is_active,
+        )
+        records = await self.repository.list_apps(
+            project_id=project_id,
+            keyword=keyword,
+            is_active=is_active,
+            offset=(normalized_page - 1) * normalized_page_size,
+            limit=normalized_page_size,
+        )
+        return ProjectAppListResponse(
+            items=[self._to_app_response(record) for record in records],
+            total=total,
+            page=normalized_page,
+            page_size=normalized_page_size,
+        )
+
     async def get_app(self, *, project_id: int, app_id: int) -> ProjectAppResponse:
         project = await self.repository.get_project(project_id)
         if project is None:
@@ -263,12 +361,17 @@ class ProjectService:
             project=project,
             knowledge_base_id=payload.knowledge_base_id,
         )
+        normalized_category_id = await self._validate_category_id(
+            knowledge_base_id=normalized_knowledge_base_id,
+            category_id=payload.category_id,
+        )
         app = ProjectApp(
             project_id=project_id,
             code=code,
             name=payload.name.strip(),
             description=self._normalize_optional_text(payload.description),
             knowledge_base_id=normalized_knowledge_base_id,
+            category_id=normalized_category_id,
             default_assistant_id=payload.default_assistant_id,
             is_active=payload.is_active,
         )
@@ -308,10 +411,15 @@ class ProjectService:
             project=project,
             knowledge_base_id=payload.knowledge_base_id,
         )
+        normalized_category_id = await self._validate_category_id(
+            knowledge_base_id=normalized_knowledge_base_id,
+            category_id=payload.category_id,
+        )
         app.code = code
         app.name = payload.name.strip()
         app.description = self._normalize_optional_text(payload.description)
         app.knowledge_base_id = normalized_knowledge_base_id
+        app.category_id = normalized_category_id
         app.default_assistant_id = payload.default_assistant_id
         app.is_active = payload.is_active
         await self.repository.update_app(app)
@@ -348,12 +456,17 @@ class ProjectService:
             project=project,
             knowledge_base_id=source_app.knowledge_base_id,
         )
+        normalized_category_id = await self._validate_category_id(
+            knowledge_base_id=normalized_knowledge_base_id,
+            category_id=source_app.category_id,
+        )
         app = ProjectApp(
             project_id=project_id,
             code=code,
             name=payload.name.strip(),
             description=source_app.description,
             knowledge_base_id=normalized_knowledge_base_id,
+            category_id=normalized_category_id,
             default_assistant_id=source_app.default_assistant_id,
             is_active=payload.is_active,
         )

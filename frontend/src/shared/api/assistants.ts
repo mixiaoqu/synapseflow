@@ -3,6 +3,7 @@ import type {
   AssistantBulkAction,
   AssistantBulkActionResponse,
   AssistantDependencyUsage,
+  AssistantListResponse,
   AssistantDetail,
   AssistantModelOption,
   AssistantPreviewPayload,
@@ -11,15 +12,23 @@ import type {
   AssistantUpsertPayload,
 } from "@/shared/types/assistant";
 
-export function listAssistants(filters?: {
+export function listAssistants(filters: {
   team_id?: number | null;
   active_only?: boolean;
+  keyword?: string;
+  status?: "all" | "active" | "inactive";
+  page: number;
+  page_size: number;
 }) {
   const params = new URLSearchParams();
-  if (filters?.team_id != null) params.set("team_id", String(filters.team_id));
-  if (filters?.active_only) params.set("active_only", "true");
+  if (filters.team_id != null) params.set("team_id", String(filters.team_id));
+  if (filters.active_only) params.set("active_only", "true");
+  if (filters.keyword?.trim()) params.set("keyword", filters.keyword.trim());
+  if (filters.status && filters.status !== "all") params.set("status", filters.status);
+  params.set("page", String(filters.page));
+  params.set("page_size", String(filters.page_size));
 
-  return request<AssistantSummary[]>({
+  return request<AssistantListResponse>({
     url: `/assistants${params.size > 0 ? `?${params.toString()}` : ""}`,
     method: "GET",
   });

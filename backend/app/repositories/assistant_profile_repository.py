@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -68,16 +68,76 @@ class AssistantProfileRepository:
         team_id: int | None = None,
         active_only: bool = False,
     ) -> list[AssistantProfileRecord]:
+        return await self.list_profiles_page(
+            team_id=team_id,
+            active_only=active_only,
+            offset=0,
+            limit=None,
+        )
+
+    async def count_profiles(
+        self,
+        *,
+        team_id: int | None = None,
+        active_only: bool = False,
+        keyword: str | None = None,
+        is_active: bool | None = None,
+    ) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(AssistantProfile)
+            .where(accessible_assistant_profile_condition(self.user_id))
+        )
+        if team_id is not None:
+            stmt = stmt.where(AssistantProfile.team_id == team_id)
+        if active_only:
+            stmt = stmt.where(AssistantProfile.is_active.is_(True))
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    AssistantProfile.name.ilike(pattern),
+                    AssistantProfile.slug.ilike(pattern),
+                    AssistantProfile.description.ilike(pattern),
+                )
+            )
+        if is_active is not None:
+            stmt = stmt.where(AssistantProfile.is_active.is_(is_active))
+        return int((await self.db.execute(stmt)).scalar() or 0)
+
+    async def list_profiles_page(
+        self,
+        *,
+        team_id: int | None = None,
+        active_only: bool = False,
+        keyword: str | None = None,
+        is_active: bool | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[AssistantProfileRecord]:
         stmt = self._base_stmt()
         if team_id is not None:
             stmt = stmt.where(AssistantProfile.team_id == team_id)
         if active_only:
             stmt = stmt.where(AssistantProfile.is_active.is_(True))
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    AssistantProfile.name.ilike(pattern),
+                    AssistantProfile.slug.ilike(pattern),
+                    AssistantProfile.description.ilike(pattern),
+                )
+            )
+        if is_active is not None:
+            stmt = stmt.where(AssistantProfile.is_active.is_(is_active))
         stmt = stmt.order_by(
             AssistantProfile.sort_order.asc(),
             AssistantProfile.created_at.desc(),
             AssistantProfile.id.desc(),
         )
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
         rows = await self.db.execute(stmt)
         return [self._to_record(row) for row in rows.all()]
 

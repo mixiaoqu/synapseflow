@@ -91,7 +91,7 @@ def _build_embed_runtime_request(
         external_user_name=context.external_user_name,
         team_id=assistant.team_id,
         knowledge_base_id=runtime.app.knowledge_base_id,
-        category_id=None,
+        category_id=runtime.app.category_id,
         assistant_id=assistant.id,
         assistant_name=assistant.name,
         assistant_welcome_message=assistant.welcome_message,

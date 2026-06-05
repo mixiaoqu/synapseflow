@@ -103,11 +103,6 @@ async def create_document_category(
                 status_code=400,
                 detail="Parent category does not belong to the selected knowledge base",
             )
-        if parent.parent_id is not None:
-            raise HTTPException(
-                status_code=400,
-                detail="Maximum nesting depth reached (2 levels)",
-            )
 
     existing = await repo.get_by_name(
         knowledge_base_id=body.knowledge_base_id,

@@ -37,7 +37,7 @@ import {
   unpublishDocumentsBatch,
 } from "@/shared/api/documents";
 import {
-  listKnowledgeBases,
+  getKnowledgeBase,
   reindexKnowledgeBaseDocuments,
 } from "@/shared/api/knowledge-bases";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
@@ -353,25 +353,7 @@ function getLifecycleStatusMeta(status: DocumentLifecycleStatus) {
 }
 
 async function loadKnowledgeBaseSummary(knowledgeBaseId: number) {
-  const teamId = teamScopeStore.selectedTeamId ?? undefined;
-  const currentScopeItems = await listKnowledgeBases(teamId);
-  const currentItem = currentScopeItems.find((item) => item.id === knowledgeBaseId);
-  if (currentItem) {
-    knowledgeBase.value = currentItem;
-    return;
-  }
-
-  if (!teamId) {
-    throw new Error("未找到对应知识库。");
-  }
-
-  const globalItems = await listKnowledgeBases();
-  const fallbackItem = globalItems.find((item) => item.id === knowledgeBaseId);
-  if (!fallbackItem) {
-    throw new Error("未找到对应知识库。");
-  }
-
-  knowledgeBase.value = fallbackItem;
+  knowledgeBase.value = await getKnowledgeBase(knowledgeBaseId);
 }
 
 async function loadCategories(knowledgeBaseId: number) {

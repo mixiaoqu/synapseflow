@@ -11,6 +11,13 @@ export interface ProductSummary {
   updated_at: string;
 }
 
+export interface ProductListResponse {
+  items: ProductSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface ProductUpsertPayload {
   team_id: number;
   code: string;

@@ -1,11 +1,11 @@
 import { request } from "@/shared/api/http";
-import type { ProductSummary, ProductUpsertPayload } from "@/shared/types/product";
+import type { ProductListResponse, ProductSummary, ProductUpsertPayload } from "@/shared/types/product";
 
-export function listProducts(teamId?: number) {
-  return request<ProductSummary[]>({
+export function listProducts(params: { team_id?: number; page: number; page_size: number }) {
+  return request<ProductListResponse>({
     url: "/products",
     method: "GET",
-    params: teamId ? { team_id: teamId } : undefined,
+    params,
   });
 }
 

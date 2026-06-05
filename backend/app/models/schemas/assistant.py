@@ -78,6 +78,15 @@ class AssistantProfileSummary(BaseModel):
     updated_at: datetime
 
 
+class AssistantProfileListResponse(BaseModel):
+    model_config = UTC_MODEL_CONFIG
+
+    items: list[AssistantProfileSummary] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+
+
 class AssistantProfileResponse(AssistantProfileSummary):
     """Assistant detail payload including prompt configuration."""
 

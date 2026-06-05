@@ -1,5 +1,5 @@
 import { request } from "@/shared/api/http";
-import type { KnowledgeBaseSummary } from "@/shared/types/knowledge-base";
+import type { KnowledgeBaseListResponse, KnowledgeBaseSummary } from "@/shared/types/knowledge-base";
 
 export interface KnowledgeBasePayload {
   name: string;
@@ -10,13 +10,22 @@ export interface CreateKnowledgeBasePayload extends KnowledgeBasePayload {
   team_id: number;
 }
 
-export function listKnowledgeBases(teamId?: number, activeOnly?: boolean) {
-  return request<KnowledgeBaseSummary[]>({
+export function listKnowledgeBases(params: {
+  team_id?: number;
+  active_only?: boolean;
+  keyword?: string;
+  page: number;
+  page_size: number;
+}) {
+  return request<KnowledgeBaseListResponse>({
     url: "/knowledge-bases",
     method: "GET",
     params: {
-      ...(teamId ? { team_id: teamId } : {}),
-      ...(activeOnly ? { active_only: true } : {}),
+      ...(params.team_id ? { team_id: params.team_id } : {}),
+      ...(params.active_only ? { active_only: true } : {}),
+      ...(params.keyword?.trim() ? { keyword: params.keyword.trim() } : {}),
+      page: params.page,
+      page_size: params.page_size,
     },
   });
 }
@@ -26,6 +35,13 @@ export function createKnowledgeBase(payload: CreateKnowledgeBasePayload) {
     url: "/knowledge-bases",
     method: "POST",
     data: payload,
+  });
+}
+
+export function getKnowledgeBase(knowledgeBaseId: number) {
+  return request<KnowledgeBaseSummary>({
+    url: `/knowledge-bases/${knowledgeBaseId}`,
+    method: "GET",
   });
 }
 

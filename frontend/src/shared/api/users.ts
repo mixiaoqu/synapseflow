@@ -3,8 +3,8 @@ import type { AdminUser, CreateUserPayload, UpdateUserPayload, UserListResponse 
 
 /** 用户列表查询参数 */
 interface ListUsersParams {
-  page?: number;
-  page_size?: number;
+  page: number;
+  page_size: number;
   keyword?: string;
 }
 
@@ -13,7 +13,7 @@ interface ListUsersParams {
  * @param params - 分页参数（page、page_size、keyword）
  * @returns 分页用户列表响应
  */
-export function listUsers(params?: ListUsersParams) {
+export function listUsers(params: ListUsersParams) {
   return request<UserListResponse>({
     url: "/users",
     method: "GET",

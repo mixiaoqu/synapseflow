@@ -37,22 +37,14 @@ const loading = ref(false);
 const loadError = ref<unknown>(null);
 const statusLoadingId = ref<number | null>(null);
 const deletingAssistantId = ref<number | null>(null);
-
-const displayedAssistants = computed(() => {
-  const keyword = toolbar.search.trim().toLowerCase();
-
-  return assistants.value.filter((item) => {
-    const matchesKeyword =
-      keyword.length === 0 ||
-      [item.name, item.slug, item.description ?? ""].some((value) =>
-        value.toLowerCase().includes(keyword),
-      );
-    const matchesStatus =
-      toolbar.status === "all" ||
-      (toolbar.status === "active" ? item.is_active : !item.is_active);
-    return matchesKeyword && matchesStatus;
-  });
+const pagination = ref({
+  page: 1,
+  pageSize: 20,
+  total: 0,
 });
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+
+const displayedAssistants = computed(() => assistants.value);
 
 const selectedTeamName = computed(() => teamScopeStore.selectedTeam?.name ?? "未选择团队");
 const hasActiveFilters = computed(
@@ -84,9 +76,17 @@ async function loadAssistantList() {
   loadError.value = null;
 
   try {
-    assistants.value = await listAssistants({
+    const result = await listAssistants({
       team_id: teamScopeStore.selectedTeamId ?? undefined,
+      keyword: toolbar.search.trim() || undefined,
+      status: toolbar.status,
+      page: pagination.value.page,
+      page_size: pagination.value.pageSize,
     });
+    assistants.value = result.items;
+    pagination.value.total = result.total;
+    pagination.value.page = result.page;
+    pagination.value.pageSize = result.page_size;
   } catch (error) {
     loadError.value = error;
   } finally {
@@ -97,6 +97,16 @@ async function loadAssistantList() {
 function resetFilters() {
   toolbar.search = "";
   toolbar.status = "all";
+}
+
+function handlePageChange(page: number) {
+  pagination.value.page = page;
+  void loadAssistantList();
+}
+
+function refreshAssistantListFromFirstPage() {
+  pagination.value.page = 1;
+  void loadAssistantList();
 }
 
 function openCreateAssistant() {
@@ -179,7 +189,25 @@ onMounted(() => {
 watch(
   () => teamScopeStore.selectedTeamId,
   () => {
+    pagination.value.page = 1;
     void loadAssistantList();
+  },
+);
+
+watch(
+  () => toolbar.search,
+  () => {
+    if (searchTimer) {
+      clearTimeout(searchTimer);
+    }
+    searchTimer = setTimeout(refreshAssistantListFromFirstPage, 300);
+  },
+);
+
+watch(
+  () => toolbar.status,
+  () => {
+    refreshAssistantListFromFirstPage();
   },
 );
 </script>
@@ -324,6 +352,16 @@ watch(
           </template>
         </el-table-column>
       </el-table>
+      <div v-if="pagination.total > pagination.pageSize" class="assistant-list-page__pagination">
+        <el-pagination
+          background
+          layout="prev, pager, next"
+          :current-page="pagination.page"
+          :page-size="pagination.pageSize"
+          :total="pagination.total"
+          @current-change="handlePageChange"
+        />
+      </div>
     </section>
   </section>
 </template>
@@ -402,6 +440,12 @@ watch(
   background: #ffffff;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
   padding: 8px 8px 2px;
+}
+
+.assistant-list-page__pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 8px 10px;
 }
 
 .assistant-list-page__table {

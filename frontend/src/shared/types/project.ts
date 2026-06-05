@@ -14,6 +14,13 @@ export interface ProjectSummary {
   updated_at: string;
 }
 
+export interface ProjectListResponse {
+  items: ProjectSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface ProjectUpsertPayload {
   team_id: number;
   product_id: number;
@@ -31,6 +38,8 @@ export interface ProjectAppSummary {
   description: string | null;
   knowledge_base_id: number | null;
   knowledge_base_name: string | null;
+  category_id: number | null;
+  category_name: string | null;
   default_assistant_id: number | null;
   default_assistant_name: string | null;
   is_active: boolean;
@@ -38,11 +47,19 @@ export interface ProjectAppSummary {
   updated_at: string;
 }
 
+export interface ProjectAppListResponse {
+  items: ProjectAppSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface ProjectAppUpsertPayload {
   code: string;
   name: string;
   description?: string | null;
   knowledge_base_id: number;
+  category_id?: number | null;
   default_assistant_id?: number | null;
   is_active: boolean;
 }

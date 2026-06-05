@@ -28,8 +28,8 @@ import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import { useTeamScopeStore } from "@/stores/team-scope";
 import { isForbiddenError } from "@/shared/utils/error";
 import type {
+  KnowledgeBaseListItem,
   KnowledgeBaseStatus,
-  KnowledgeBaseSummary,
 } from "@/shared/types/knowledge-base";
 
 interface KnowledgeBaseCardItem {
@@ -49,12 +49,17 @@ const teamScopeStore = useTeamScopeStore();
 
 const toolbar = reactive({
   search: "",
-  status: "all" as "all" | KnowledgeBaseStatus,
 });
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
-const knowledgeBases = ref<KnowledgeBaseSummary[]>([]);
+const knowledgeBases = ref<KnowledgeBaseListItem[]>([]);
 const loading = ref(false);
 const loadError = ref<unknown>(null);
+const pagination = reactive({
+  page: 1,
+  pageSize: 20,
+  total: 0,
+});
 const selectedKnowledgeBaseIds = ref<number[]>([]);
 const batchActionLoading = ref<"" | "enable" | "reindex" | "delete">("");
 const deleteOverlay = reactive({ active: false, title: "", description: "" });
@@ -82,17 +87,7 @@ const cardItems = computed<KnowledgeBaseCardItem[]>(() =>
 );
 
 const displayedKnowledgeBases = computed(() => {
-  const keyword = toolbar.search.trim().toLowerCase();
-
-  return cardItems.value.filter(
-    (item) => {
-      const matchesKeyword =
-        keyword.length === 0 ||
-        [item.name, item.description].some((value) => value.toLowerCase().includes(keyword));
-      const matchesStatus = toolbar.status === "all" || item.status === toolbar.status;
-      return matchesKeyword && matchesStatus;
-    },
-  );
+  return cardItems.value;
 });
 
 const isForbidden = computed(() => Boolean(loadError.value) && isForbiddenError(loadError.value));
@@ -155,9 +150,17 @@ async function loadKnowledgeBaseList() {
   loadError.value = null;
 
   try {
-    const items = await listKnowledgeBases(teamScopeStore.selectedTeamId ?? undefined);
-    knowledgeBases.value = items;
-    const validIds = new Set(items.map((item) => item.id));
+    const result = await listKnowledgeBases({
+      team_id: teamScopeStore.selectedTeamId ?? undefined,
+      keyword: toolbar.search.trim() || undefined,
+      page: pagination.page,
+      page_size: pagination.pageSize,
+    });
+    knowledgeBases.value = result.items;
+    pagination.total = result.total;
+    pagination.page = result.page;
+    pagination.pageSize = result.page_size;
+    const validIds = new Set(result.items.map((item) => item.id));
     selectedKnowledgeBaseIds.value = selectedKnowledgeBaseIds.value.filter((item) => validIds.has(item));
   } catch (error) {
     loadError.value = error;
@@ -176,8 +179,9 @@ async function reindexKnowledgeBases(ids: number[]) {
 
 function resetFilters() {
   toolbar.search = "";
-  toolbar.status = "all";
   selectedKnowledgeBaseIds.value = [];
+  pagination.page = 1;
+  void loadKnowledgeBaseList();
 }
 
 function resetKnowledgeBaseForm() {
@@ -311,6 +315,18 @@ function toggleCardSelection(knowledgeBaseId: number) {
   }
 
   selectedKnowledgeBaseIds.value = [...selectedKnowledgeBaseIds.value, knowledgeBaseId];
+}
+
+function handlePageChange(page: number) {
+  pagination.page = page;
+  selectedKnowledgeBaseIds.value = [];
+  void loadKnowledgeBaseList();
+}
+
+function refreshKnowledgeBaseListFromFirstPage() {
+  pagination.page = 1;
+  selectedKnowledgeBaseIds.value = [];
+  void loadKnowledgeBaseList();
 }
 
 function getStatusText(status: KnowledgeBaseStatus) {
@@ -506,8 +522,19 @@ onMounted(() => {
 watch(
   () => teamScopeStore.selectedTeamId,
   () => {
+    pagination.page = 1;
     selectedKnowledgeBaseIds.value = [];
     void loadKnowledgeBaseList();
+  },
+);
+
+watch(
+  () => toolbar.search,
+  () => {
+    if (searchTimer) {
+      clearTimeout(searchTimer);
+    }
+    searchTimer = setTimeout(refreshKnowledgeBaseListFromFirstPage, 300);
   },
 );
 </script>
@@ -543,17 +570,6 @@ watch(
             </template>
           </el-input>
 
-          <el-select
-            v-model="toolbar.status"
-            size="large"
-            class="kb-list-page__status-filter"
-          >
-            <el-option label="所有状态" value="all" />
-            <el-option label="可用" value="available" />
-            <el-option label="索引中" value="indexing" />
-            <el-option label="异常" value="error" />
-            <el-option label="空库" value="empty" />
-          </el-select>
         </div>
 
         <div class="kb-list-page__toolbar-side">
@@ -750,6 +766,17 @@ watch(
       </article>
     </div>
 
+    <div v-if="!loading && !loadError && pagination.total > pagination.pageSize" class="kb-list-page__pagination">
+      <el-pagination
+        background
+        layout="prev, pager, next"
+        :current-page="pagination.page"
+        :page-size="pagination.pageSize"
+        :total="pagination.total"
+        @current-change="handlePageChange"
+      />
+    </div>
+
     <el-dialog
       v-model="isKnowledgeBaseDialogVisible"
       :title="knowledgeBaseDialogTitle"
@@ -889,10 +916,6 @@ watch(
   max-width: 404px;
 }
 
-.kb-list-page__status-filter {
-  width: 132px;
-}
-
 .kb-list-page__toolbar-side {
   display: flex;
   align-items: center;
@@ -977,6 +1000,11 @@ watch(
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 24px;
+}
+
+.kb-list-page__pagination {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .kb-card {
@@ -1256,10 +1284,6 @@ watch(
   .kb-list-page__search {
     width: 100%;
     max-width: none;
-  }
-
-  .kb-list-page__status-filter {
-    width: 100%;
   }
 
   .kb-list-page__toolbar-side {

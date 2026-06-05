@@ -21,6 +21,7 @@ from app.models.schemas.assistant import (
     AssistantDependencyUsageResponse,
     AssistantModelOptionsResponse,
     AssistantProfileCreate,
+    AssistantProfileListResponse,
     AssistantProfileResponse,
     AssistantProfileSummary,
     AssistantReorderRequest,
@@ -57,17 +58,25 @@ def _build_runtime_request(
     )
 
 
-@router.get("", response_model=list[AssistantProfileSummary])
+@router.get("", response_model=AssistantProfileListResponse)
 async def list_assistants(
     team_id: int | None = Query(None),
     active_only: bool = Query(False),
+    keyword: str | None = Query(None),
+    status: str = Query("all", pattern="^(all|active|inactive)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
     service = AssistantService(db, user_id=current_user.id)
-    return await service.list_profiles(
+    return await service.list_profiles_page(
         team_id=team_id,
         active_only=active_only,
+        keyword=keyword,
+        status=status,
+        page=page,
+        page_size=page_size,
     )
 
 

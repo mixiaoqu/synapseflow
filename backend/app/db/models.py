@@ -248,6 +248,12 @@ class ProjectApp(Base):
         nullable=True,
         index=True,
     )
+    category_id = Column(
+        Integer,
+        ForeignKey("document_categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     default_assistant_id = Column(
         Integer,
         ForeignKey("assistant_profiles.id", ondelete="SET NULL"),

@@ -28,6 +28,21 @@ class ProductRepository:
         return (code or "").strip().lower()
 
     async def list_products(self, *, team_id: int | None = None) -> list[ProductRecord]:
+        return await self.list_products_page(team_id=team_id, offset=0, limit=None)
+
+    async def count_products(self, *, team_id: int | None = None) -> int:
+        stmt = select(func.count()).select_from(Product)
+        if team_id is not None:
+            stmt = stmt.where(Product.team_id == team_id)
+        return int((await self.db.execute(stmt)).scalar() or 0)
+
+    async def list_products_page(
+        self,
+        *,
+        team_id: int | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[ProductRecord]:
         project_count = func.count(Project.id)
         stmt = (
             select(Product, Team.name, project_count.label("project_count"))
@@ -38,6 +53,8 @@ class ProductRepository:
         )
         if team_id is not None:
             stmt = stmt.where(Product.team_id == team_id)
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
         rows = (await self.db.execute(stmt)).all()
         return [
             ProductRecord(product=product, team_name=team_name, project_count=int(count or 0))

@@ -38,6 +38,12 @@ const statusFilter = ref<StatusFilter>("all");
 const statusLoadingId = ref<number | null>(null);
 const deletingAppId = ref<number | null>(null);
 const copyingAppId = ref<number | null>(null);
+const pagination = ref({
+  page: 1,
+  pageSize: 20,
+  total: 0,
+});
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
 const integrationDialogVisible = ref(false);
 const integrationApp = ref<ProjectAppSummary | null>(null);
@@ -60,21 +66,7 @@ const projectId = computed(() => {
   return Number.isInteger(raw) && raw > 0 ? raw : null;
 });
 
-const displayedApps = computed(() => {
-  const normalizedKeyword = searchKeyword.value.trim().toLowerCase();
-
-  return apps.value.filter((item) => {
-    const matchesKeyword =
-      normalizedKeyword.length === 0 ||
-      [item.name, item.code, item.description ?? "", item.default_assistant_name ?? ""].some((value) =>
-        value.toLowerCase().includes(normalizedKeyword),
-      );
-    const matchesStatus =
-      statusFilter.value === "all" ||
-      (statusFilter.value === "active" ? item.is_active : !item.is_active);
-    return matchesKeyword && matchesStatus;
-  });
-});
+const displayedApps = computed(() => apps.value);
 
 const isForbidden = computed(() => Boolean(loadError.value) && isForbiddenError(loadError.value));
 
@@ -99,6 +91,7 @@ function buildUpdatePayload(app: ProjectAppSummary, isActive: boolean): ProjectA
     name: app.name,
     description: app.description,
     knowledge_base_id: app.knowledge_base_id ?? 0,
+    category_id: app.category_id,
     default_assistant_id: app.default_assistant_id,
     is_active: isActive,
   };
@@ -115,10 +108,18 @@ async function loadPage() {
   try {
     const [projectResponse, appResponses] = await Promise.all([
       getProject(projectId.value),
-      listProjectApps(projectId.value),
+      listProjectApps(projectId.value, {
+        keyword: searchKeyword.value.trim() || undefined,
+        status: statusFilter.value,
+        page: pagination.value.page,
+        page_size: pagination.value.pageSize,
+      }),
     ]);
     project.value = projectResponse;
-    apps.value = appResponses;
+    apps.value = appResponses.items;
+    pagination.value.total = appResponses.total;
+    pagination.value.page = appResponses.page;
+    pagination.value.pageSize = appResponses.page_size;
   } catch (error) {
     loadError.value = error;
   } finally {
@@ -128,6 +129,16 @@ async function loadPage() {
 
 function handleBack() {
   void router.push("/projects");
+}
+
+function handlePageChange(page: number) {
+  pagination.value.page = page;
+  void loadPage();
+}
+
+function refreshAppsFromFirstPage() {
+  pagination.value.page = 1;
+  void loadPage();
 }
 
 function openCreateApp() {
@@ -311,9 +322,21 @@ onMounted(() => {
 watch(
   () => route.params.projectId,
   () => {
+    pagination.value.page = 1;
     void loadPage();
   },
 );
+
+watch(searchKeyword, () => {
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+  }
+  searchTimer = setTimeout(refreshAppsFromFirstPage, 300);
+});
+
+watch(statusFilter, () => {
+  refreshAppsFromFirstPage();
+});
 </script>
 
 <template>
@@ -412,6 +435,9 @@ watch(
               <el-tag size="small" type="info" effect="light">
                 知识库：{{ row.knowledge_base_name || "未绑定" }}
               </el-tag>
+              <el-tag size="small" type="warning" effect="light">
+                分类：{{ row.category_name || "全部分类" }}
+              </el-tag>
             </div>
           </template>
         </el-table-column>
@@ -460,6 +486,16 @@ watch(
           </template>
         </el-table-column>
       </el-table>
+      <div v-if="pagination.total > pagination.pageSize" class="project-app-list-page__pagination">
+        <el-pagination
+          background
+          layout="prev, pager, next"
+          :current-page="pagination.page"
+          :page-size="pagination.pageSize"
+          :total="pagination.total"
+          @current-change="handlePageChange"
+        />
+      </div>
     </section>
 
     <el-dialog
@@ -470,7 +506,7 @@ watch(
       @closed="handleCopyDialogClosed"
     >
       <p class="project-app-list-page__copy-hint">
-        复制后会复用原发布渠道绑定的知识库和默认助手，不会复制聊天记录、日志或预览会话。
+        复制后会复用原发布渠道绑定的知识库、限定分类和默认助手，不会复制聊天记录、日志或预览会话。
       </p>
 
       <el-form ref="copyFormRef" :model="copyForm" :rules="copyRules" label-width="96px">
@@ -662,6 +698,12 @@ watch(
   color: #64748b;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.project-app-list-page__pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 8px 10px;
 }
 
 .project-app-list-page__binding-cell {

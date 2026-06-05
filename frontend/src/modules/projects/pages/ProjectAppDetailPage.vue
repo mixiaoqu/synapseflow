@@ -6,6 +6,7 @@ import type { FormInstance, FormRules } from "element-plus";
 import { ArrowLeft, Link, Setting } from "@element-plus/icons-vue";
 
 import { listAssistants } from "@/shared/api/assistants";
+import { listDocumentCategoriesTree } from "@/shared/api/document-categories";
 import { listKnowledgeBases } from "@/shared/api/knowledge-bases";
 import {
   createProjectApp,
@@ -18,7 +19,8 @@ import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import type { AssistantSummary } from "@/shared/types/assistant";
-import type { KnowledgeBaseSummary } from "@/shared/types/knowledge-base";
+import type { DocumentCategoryTreeNode } from "@/shared/types/document-category";
+import type { KnowledgeBaseListItem } from "@/shared/types/knowledge-base";
 import type { ProjectAppSummary, ProjectAppUpsertPayload, ProjectSummary } from "@/shared/types/project";
 
 interface ProjectAppFormState {
@@ -27,6 +29,7 @@ interface ProjectAppFormState {
   description: string;
   default_assistant_id: number | null;
   knowledge_base_id: number | null;
+  category_id: number | null;
   is_active: boolean;
 }
 
@@ -37,6 +40,7 @@ function createDefaultForm(): ProjectAppFormState {
     description: "",
     default_assistant_id: null,
     knowledge_base_id: null,
+    category_id: null,
     is_active: true,
   };
 }
@@ -58,15 +62,25 @@ const formRef = ref<FormInstance>();
 const project = ref<ProjectSummary | null>(null);
 const currentApp = ref<ProjectAppSummary | null>(null);
 const assistants = ref<AssistantSummary[]>([]);
-const knowledgeBases = ref<KnowledgeBaseSummary[]>([]);
+const knowledgeBases = ref<KnowledgeBaseListItem[]>([]);
+const categoryTree = ref<DocumentCategoryTreeNode[]>([]);
 const pageLoading = ref(false);
+const categoryLoading = ref(false);
 const pageError = ref<unknown>(null);
 const saveLoading = ref(false);
 const previewLoading = ref(false);
 const previewEmbedUrl = ref("");
 const codeEditedManually = ref(false);
+const categoryPath = ref<number[]>([]);
 
 const form = reactive(createDefaultForm());
+const categoryCascaderProps = {
+  value: "id",
+  label: "name",
+  children: "children",
+  checkStrictly: true,
+  emitPath: true,
+};
 
 const projectId = computed(() => {
   const raw = Number(route.params.projectId);
@@ -102,18 +116,80 @@ function applyApp(app: ProjectAppSummary) {
   form.description = app.description ?? "";
   form.default_assistant_id = app.default_assistant_id;
   form.knowledge_base_id = app.knowledge_base_id;
+  form.category_id = app.category_id;
   form.is_active = app.is_active;
 }
 
 function buildPayload(): ProjectAppUpsertPayload {
+  const selectedCategoryId =
+    categoryPath.value.length > 0 ? categoryPath.value[categoryPath.value.length - 1] : null;
+
   return {
     code: form.code.trim(),
     name: form.name.trim(),
     description: form.description.trim() || null,
     knowledge_base_id: Number(form.knowledge_base_id),
+    category_id: selectedCategoryId,
     default_assistant_id: form.default_assistant_id,
     is_active: form.is_active,
   };
+}
+
+function findCategoryPath(
+  nodes: DocumentCategoryTreeNode[],
+  targetId: number,
+  parentPath: number[] = [],
+): number[] {
+  for (const node of nodes) {
+    const path = [...parentPath, node.id];
+    if (node.id === targetId) {
+      return path;
+    }
+    const childPath = findCategoryPath(node.children || [], targetId, path);
+    if (childPath.length > 0) {
+      return childPath;
+    }
+  }
+  return [];
+}
+
+async function loadCategories(knowledgeBaseId: number | null) {
+  categoryTree.value = [];
+  categoryPath.value = [];
+  if (!knowledgeBaseId) {
+    return;
+  }
+
+  categoryLoading.value = true;
+  try {
+    categoryTree.value = await listDocumentCategoriesTree(knowledgeBaseId);
+    if (form.category_id) {
+      categoryPath.value = findCategoryPath(categoryTree.value, form.category_id);
+    }
+  } catch (error) {
+    categoryTree.value = [];
+    categoryPath.value = [];
+    const message = error instanceof Error ? error.message : "加载知识库分类失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    categoryLoading.value = false;
+  }
+}
+
+function handleKnowledgeBaseChange(value: number | string | null) {
+  const knowledgeBaseId = Number(value);
+  form.category_id = null;
+  categoryPath.value = [];
+  void loadCategories(Number.isInteger(knowledgeBaseId) && knowledgeBaseId > 0 ? knowledgeBaseId : null);
+}
+
+function handleCategoryPathChange(value: unknown) {
+  const selectedPath = Array.isArray(value)
+    ? value.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item > 0)
+    : [];
+  categoryPath.value = selectedPath;
+  form.category_id =
+    selectedPath.length > 0 ? selectedPath[selectedPath.length - 1] : null;
 }
 
 async function loadPage() {
@@ -131,14 +207,26 @@ async function loadPage() {
     project.value = projectResponse;
 
     const [assistantResponses, knowledgeBaseResponses] = await Promise.all([
-      listAssistants({ team_id: projectResponse.team_id }),
-      listKnowledgeBases(projectResponse.team_id, true),
+      listAssistants({
+        team_id: projectResponse.team_id,
+        active_only: true,
+        page: 1,
+        page_size: 100,
+      }),
+      listKnowledgeBases({
+        team_id: projectResponse.team_id,
+        active_only: true,
+        page: 1,
+        page_size: 100,
+      }),
     ]);
-    assistants.value = assistantResponses;
-    knowledgeBases.value = knowledgeBaseResponses;
+    assistants.value = assistantResponses.items;
+    knowledgeBases.value = knowledgeBaseResponses.items;
 
     if (isCreateMode.value) {
       Object.assign(form, createDefaultForm());
+      categoryTree.value = [];
+      categoryPath.value = [];
       codeEditedManually.value = false;
       return;
     }
@@ -149,6 +237,7 @@ async function loadPage() {
 
     const appResponse = await getProjectApp(projectId.value, appId.value);
     applyApp(appResponse);
+    await loadCategories(appResponse.knowledge_base_id);
     codeEditedManually.value = true;
   } catch (error) {
     pageError.value = error;
@@ -400,6 +489,7 @@ watch(
                 v-model="form.knowledge_base_id"
                 placeholder="选择一个知识库"
                 class="project-app-detail-page__full"
+                @change="handleKnowledgeBaseChange"
               >
                 <el-option
                   v-for="item in knowledgeBases"
@@ -415,6 +505,30 @@ watch(
               </el-select>
               <div class="project-app-detail-page__hint">
                 当前发布渠道绑定一个知识库。
+              </div>
+            </el-form-item>
+
+            <el-form-item label="限定分类">
+              <el-cascader
+                v-model="categoryPath"
+                :options="categoryTree"
+                :props="categoryCascaderProps"
+                :disabled="!form.knowledge_base_id || categoryLoading"
+                clearable
+                filterable
+                :placeholder="categoryLoading ? '分类加载中...' : '全部分类'"
+                class="project-app-detail-page__full"
+                @change="handleCategoryPathChange"
+              >
+                <template #default="{ data }">
+                  <div class="project-app-detail-page__option-row">
+                    <span>{{ data.name }}</span>
+                    <span>{{ data.document_count }} 个文档</span>
+                  </div>
+                </template>
+              </el-cascader>
+              <div class="project-app-detail-page__hint">
+                不选择分类时使用整个知识库；选择分类后仅在该分类及其子分类内问答。
               </div>
             </el-form-item>
 

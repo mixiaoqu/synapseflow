@@ -52,8 +52,8 @@ class KnowledgeBaseRecentDocument(BaseModel):
     updated_at: datetime
 
 
-class KnowledgeBaseWithCount(KnowledgeBaseResponse):
-    """Knowledge-base response with document counts and status."""
+class KnowledgeBaseListItem(KnowledgeBaseResponse):
+    """Knowledge-base list item with document counts and status."""
 
     document_count: int = 0
     indexed_document_count: int = 0
@@ -69,7 +69,19 @@ class KnowledgeBaseWithCount(KnowledgeBaseResponse):
     last_document_updated_at: datetime | None = None
     last_uploaded_at: datetime | None = None
     status: KnowledgeBaseStatus = "empty"
+
+
+class KnowledgeBaseWithCount(KnowledgeBaseListItem):
+    """Knowledge-base response with document counts and recent documents."""
+
     recent_documents: list[KnowledgeBaseRecentDocument] = Field(default_factory=list)
+
+
+class KnowledgeBaseListResponse(BaseModel):
+    items: list[KnowledgeBaseListItem] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
 
 
 class KnowledgeBaseToggleActive(BaseModel):

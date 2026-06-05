@@ -63,6 +63,8 @@ class McpService:
                     knowledge_base_name=runtime.knowledge_base_name,
                     knowledge_base_branch_id=None,
                     knowledge_base_branch_name=None,
+                    category_id=runtime.app.category_id,
+                    category_name=runtime.category_name,
                 )
             )
         assistant = runtime.assistant
@@ -79,6 +81,8 @@ class McpService:
             app_name=runtime.app.name,
             assistant_id=assistant.id if assistant is not None else None,
             assistant_name=assistant.name if assistant is not None else None,
+            category_id=runtime.app.category_id,
+            category_name=runtime.category_name,
             knowledge_base_ids=knowledge_base_ids,
             knowledge_base_branch_ids=[],
             bindings=bindings,
@@ -201,6 +205,7 @@ class McpService:
             retrieval_queries=[request.query],
             team_id=scope.team_id,
             knowledge_base_id=knowledge_base_id,
+            category_id=scope.category_id,
             user_id=self.user_id,
             result_limit=request.top_k,
         )
@@ -242,6 +247,7 @@ class McpService:
             knowledge_base_id=scope.knowledge_base_ids[0],
             knowledge_base_ids=list(scope.knowledge_base_ids),
             knowledge_base_branch_ids=[],
+            category_id=scope.category_id,
         )
         response = await get_kb_chat_service().preview(runtime_request, user_id=self.user_id)
         return McpAnswerResponse(

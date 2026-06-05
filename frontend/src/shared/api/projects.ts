@@ -2,17 +2,25 @@ import { request } from "@/shared/api/http";
 import type {
   ProjectAppCopyPayload,
   ProjectAppEmbedPreviewResponse,
+  ProjectAppListResponse,
   ProjectAppSummary,
   ProjectAppUpsertPayload,
+  ProjectListResponse,
   ProjectSummary,
   ProjectUpsertPayload,
 } from "@/shared/types/project";
 
-export function listProjects(teamId?: number) {
-  return request<ProjectSummary[]>({
+export function listProjects(params: {
+  team_id?: number;
+  keyword?: string;
+  status?: "all" | "active" | "inactive";
+  page: number;
+  page_size: number;
+}) {
+  return request<ProjectListResponse>({
     url: "/projects",
     method: "GET",
-    params: teamId ? { team_id: teamId } : undefined,
+    params,
   });
 }
 
@@ -31,10 +39,16 @@ export function createProject(payload: ProjectUpsertPayload) {
   });
 }
 
-export function listProjectApps(projectId: number) {
-  return request<ProjectAppSummary[]>({
+export function listProjectApps(projectId: number, params: {
+  keyword?: string;
+  status?: "all" | "active" | "inactive";
+  page: number;
+  page_size: number;
+}) {
+  return request<ProjectAppListResponse>({
     url: `/projects/${projectId}/apps`,
     method: "GET",
+    params,
   });
 }
 

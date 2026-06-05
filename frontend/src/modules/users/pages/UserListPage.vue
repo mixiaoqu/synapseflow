@@ -5,8 +5,6 @@ import {
   EditPen,
   Plus,
   Search,
-  Stamp,
-  User,
 } from "@element-plus/icons-vue";
 
 import { createUser, listUsers, updateUser } from "@/shared/api/users";
@@ -115,14 +113,6 @@ const filteredUsers = computed(() => {
       (statusFilter.value === "active" ? item.is_active : !item.is_active);
     return matchesRole && matchesStatus;
   });
-});
-
-/** 统计摘要 */
-const summary = computed(() => {
-  const total = pagination.value.total;
-  const active = users.value.filter((i) => i.is_active).length;
-  const admins = users.value.filter((i) => i.role !== "end_user").length;
-  return { total, active, admins };
 });
 
 /** 是否有筛选条件 */
@@ -318,37 +308,6 @@ onMounted(() => {
         </el-button>
       </div>
     </header>
-
-    <!-- 统计卡片 -->
-    <div class="user-list-page__stats">
-      <div class="user-list-page__stat-card">
-        <div class="user-list-page__stat-icon user-list-page__stat-icon--total">
-          <el-icon :size="20"><User /></el-icon>
-        </div>
-        <div class="user-list-page__stat-body">
-          <p class="user-list-page__stat-value">{{ summary.total }}</p>
-          <p class="user-list-page__stat-label">用户总数</p>
-        </div>
-      </div>
-      <div class="user-list-page__stat-card">
-        <div class="user-list-page__stat-icon user-list-page__stat-icon--active">
-          <span class="user-list-page__stat-dot" />
-        </div>
-        <div class="user-list-page__stat-body">
-          <p class="user-list-page__stat-value">{{ summary.active }}</p>
-          <p class="user-list-page__stat-label">启用中</p>
-        </div>
-      </div>
-      <div class="user-list-page__stat-card">
-        <div class="user-list-page__stat-icon user-list-page__stat-icon--admin">
-          <el-icon :size="20"><Stamp /></el-icon>
-        </div>
-        <div class="user-list-page__stat-body">
-          <p class="user-list-page__stat-value">{{ summary.admins }}</p>
-          <p class="user-list-page__stat-label">后台角色</p>
-        </div>
-      </div>
-    </div>
 
     <AppLoading
       v-if="loading"
@@ -636,74 +595,6 @@ onMounted(() => {
   gap: 12px;
 }
 
-/* 统计卡片 */
-.user-list-page__stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-}
-
-.user-list-page__stat-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  border: 1px solid #dbe2ea;
-  border-radius: 16px;
-  background: #ffffff;
-  padding: 20px;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
-}
-
-.user-list-page__stat-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  flex-shrink: 0;
-}
-
-.user-list-page__stat-icon--total {
-  background: #f1f5f9;
-  color: #475569;
-}
-
-.user-list-page__stat-icon--active {
-  background: #ecfdf5;
-}
-
-.user-list-page__stat-icon--admin {
-  background: #f5f3ff;
-  color: #7c3aed;
-}
-
-.user-list-page__stat-dot {
-  display: block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #10b981;
-}
-
-.user-list-page__stat-body {
-  min-width: 0;
-}
-
-.user-list-page__stat-value {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 600;
-  color: #0f172a;
-  line-height: 1.2;
-}
-
-.user-list-page__stat-label {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: #64748b;
-}
-
 /* 表格面板 */
 .user-list-page__table-panel {
   border: 1px solid #dbe2ea;
@@ -807,10 +698,6 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
-  .user-list-page__stats {
-    grid-template-columns: 1fr;
-  }
-
   .user-list-page__header {
     flex-direction: column;
     align-items: stretch;

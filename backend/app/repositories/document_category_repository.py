@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, DocumentCategory, KnowledgeBase
 from app.repositories.access_scope import accessible_knowledge_base_condition
+from app.services.category_scope import resolve_category_subtree_ids
 
 
 @dataclass(slots=True)
@@ -111,8 +112,6 @@ class DocumentCategoryRepository:
                 raise ValueError("Parent category not found")
             if parent.knowledge_base_id != knowledge_base_id:
                 raise ValueError("Parent category does not belong to the same knowledge base")
-            if parent.parent_id is not None:
-                raise ValueError("Maximum nesting depth reached (2 levels)")
         category = DocumentCategory(
             knowledge_base_id=knowledge_base_id,
             parent_id=parent_id,
@@ -161,9 +160,8 @@ class DocumentCategoryRepository:
         return list(result.scalars().all())
 
     async def get_subtree_ids(self, category_id: int) -> list[int]:
-        """Return the category ID plus all descendant IDs (max depth 2)."""
-        child_ids = await self.get_subcategory_ids(category_id)
-        return [category_id] + child_ids
+        """Return the category ID plus all descendant IDs."""
+        return await resolve_category_subtree_ids(self.db, category_id)
 
     async def delete(self, category_id: int) -> bool:
         category = await self.get_by_id(category_id)

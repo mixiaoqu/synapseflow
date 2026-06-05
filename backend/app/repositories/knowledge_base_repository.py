@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -75,8 +75,12 @@ class KnowledgeBaseRepository:
     async def list_with_count(
         self,
         *,
+        knowledge_base_id: int | None = None,
         team_id: int | None = None,
         active_only: bool = False,
+        keyword: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
     ) -> list[KnowledgeBaseSummaryRecord]:
         """List knowledge bases with dashboard summary metrics."""
         indexed_count = func.sum(case((Document.index_status == INDEX_STATUS_INDEXED, 1), else_=0))
@@ -136,12 +140,22 @@ class KnowledgeBaseRepository:
         )
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if knowledge_base_id is not None:
+            stmt = stmt.where(KnowledgeBase.id == knowledge_base_id)
         if active_only:
             stmt = stmt.where(KnowledgeBase.is_active.is_(True))
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    KnowledgeBase.name.ilike(pattern),
+                    KnowledgeBase.description.ilike(pattern),
+                )
+            )
         stmt = stmt.group_by(KnowledgeBase.id).order_by(KnowledgeBase.created_at.desc())
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
         rows = (await self.db.execute(stmt)).all()
-        knowledge_base_ids = [knowledge_base.id for knowledge_base, *_ in rows]
-        recent_docs_map = await self._list_recent_documents(knowledge_base_ids)
         return [
             KnowledgeBaseSummaryRecord(
                 knowledge_base=knowledge_base,
@@ -158,7 +172,7 @@ class KnowledgeBaseRepository:
                 archived_document_count=archived_doc_count or 0,
                 last_document_updated_at=last_document_updated_at,
                 last_uploaded_at=last_uploaded_at,
-                recent_documents=recent_docs_map.get(knowledge_base.id, []),
+                recent_documents=[],
             )
             for (
                 knowledge_base,
@@ -177,6 +191,49 @@ class KnowledgeBaseRepository:
                 last_uploaded_at,
             ) in rows
         ]
+
+    async def count_knowledge_bases(
+        self,
+        *,
+        team_id: int | None = None,
+        active_only: bool = False,
+        keyword: str | None = None,
+    ) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(KnowledgeBase)
+            .where(accessible_knowledge_base_condition(self.user_id))
+        )
+        if team_id is not None:
+            stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if active_only:
+            stmt = stmt.where(KnowledgeBase.is_active.is_(True))
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    KnowledgeBase.name.ilike(pattern),
+                    KnowledgeBase.description.ilike(pattern),
+                )
+            )
+        return int((await self.db.execute(stmt)).scalar() or 0)
+
+    async def list_page(
+        self,
+        *,
+        team_id: int | None = None,
+        active_only: bool = False,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> list[KnowledgeBase]:
+        stmt = select(KnowledgeBase).where(accessible_knowledge_base_condition(self.user_id))
+        if team_id is not None:
+            stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if active_only:
+            stmt = stmt.where(KnowledgeBase.is_active.is_(True))
+        stmt = stmt.order_by(KnowledgeBase.created_at.desc()).offset(offset).limit(limit)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
     async def _list_recent_documents(
         self,

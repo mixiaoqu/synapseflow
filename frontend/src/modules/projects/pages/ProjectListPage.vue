@@ -22,6 +22,11 @@ const projects = ref<ProjectSummary[]>([]);
 const products = ref<ProductSummary[]>([]);
 const loading = ref(false);
 const loadError = ref<unknown>(null);
+const pagination = ref({
+  page: 1,
+  pageSize: 20,
+  total: 0,
+});
 const createProductDialogVisible = ref(false);
 const createDialogVisible = ref(false);
 const creatingProduct = ref(false);
@@ -39,19 +44,9 @@ const createForm = ref({
   description: "",
   is_active: true,
 });
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
-const displayedProjects = computed(() => {
-  const normalizedKeyword = keyword.value.trim().toLowerCase();
-  return projects.value.filter((item) => {
-    if (!normalizedKeyword) {
-      return true;
-    }
-
-    return [item.name, item.code, item.description ?? "", item.product_name ?? ""].some((value) =>
-      value.toLowerCase().includes(normalizedKeyword),
-    );
-  });
-});
+const displayedProjects = computed(() => projects.value);
 
 const isForbidden = computed(() => Boolean(loadError.value) && isForbiddenError(loadError.value));
 const selectedTeamName = computed(() => teamScopeStore.selectedTeam?.name ?? "");
@@ -99,14 +94,37 @@ async function loadProjectList() {
 
   try {
     const teamId = teamScopeStore.selectedTeamId ?? undefined;
-    const [projectList, productList] = await Promise.all([listProjects(teamId), listProducts(teamId)]);
-    projects.value = projectList;
-    products.value = productList;
+    const [projectResult, productResult] = await Promise.all([
+      listProjects({
+        team_id: teamId,
+        keyword: keyword.value.trim() || undefined,
+        page: pagination.value.page,
+        page_size: pagination.value.pageSize,
+      }),
+      listProducts({
+        team_id: teamId,
+        page: 1,
+        page_size: 100,
+      }),
+    ]);
+    projects.value = projectResult.items;
+    pagination.value.total = projectResult.total;
+    products.value = productResult.items;
   } catch (error) {
     loadError.value = error;
   } finally {
     loading.value = false;
   }
+}
+
+function handlePageChange(page: number) {
+  pagination.value.page = page;
+  void loadProjectList();
+}
+
+function refreshProjectListFromFirstPage() {
+  pagination.value.page = 1;
+  void loadProjectList();
 }
 
 function openProjectApps(projectId: number) {
@@ -227,9 +245,17 @@ onMounted(() => {
 watch(
   () => teamScopeStore.selectedTeamId,
   () => {
+    pagination.value.page = 1;
     void loadProjectList();
   },
 );
+
+watch(keyword, () => {
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+  }
+  searchTimer = setTimeout(refreshProjectListFromFirstPage, 300);
+});
 </script>
 
 <template>
@@ -346,6 +372,16 @@ watch(
           </template>
         </el-table-column>
       </el-table>
+      <div v-if="pagination.total > pagination.pageSize" class="project-list-page__pagination">
+        <el-pagination
+          background
+          layout="prev, pager, next"
+          :current-page="pagination.page"
+          :page-size="pagination.pageSize"
+          :total="pagination.total"
+          @current-change="handlePageChange"
+        />
+      </div>
     </section>
 
     <el-dialog
@@ -538,6 +574,12 @@ watch(
   background: #ffffff;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
   padding: 8px 8px 2px;
+}
+
+.project-list-page__pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 8px 10px;
 }
 
 .project-list-page__name-cell {

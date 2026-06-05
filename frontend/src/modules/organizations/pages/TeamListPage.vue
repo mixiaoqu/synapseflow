@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   Delete,
@@ -74,6 +74,7 @@ const teams = ref<TeamSummary[]>([]);
 const users = ref<AdminUser[]>([]);
 const loading = ref(false);
 const loadError = ref<unknown>(null);
+const userOptionsLoading = ref(false);
 
 const teamDialogVisible = ref(false);
 const editingTeam = ref<TeamSummary | null>(null);
@@ -96,6 +97,7 @@ const pendingAddIds = ref<number[]>([]);
 
 const pagination = ref({ page: 1, pageSize: 10, total: 0 });
 const searchKeyword = ref("");
+let memberSearchTimer: ReturnType<typeof setTimeout> | undefined;
 
 const userMap = computed(() => new Map(users.value.map((u) => [u.id, u])));
 
@@ -115,23 +117,44 @@ const availableMembers = computed(() => {
   });
 });
 
+function mergeUsers(items: AdminUser[]) {
+  const merged = new Map(users.value.map((item) => [item.id, item]));
+  for (const item of items) {
+    merged.set(item.id, item);
+  }
+  users.value = [...merged.values()];
+}
+
+async function loadUserOptions(keyword?: string) {
+  userOptionsLoading.value = true;
+  try {
+    const result = await listUsers({
+      page: 1,
+      page_size: 100,
+      keyword: keyword?.trim() || undefined,
+    });
+    mergeUsers(result.items);
+  } finally {
+    userOptionsLoading.value = false;
+  }
+}
+
 /** 加载团队和用户列表 */
 async function loadData() {
   if (loading.value) return;
   loading.value = true;
   loadError.value = null;
   try {
-    const [teamResult, userList] = await Promise.all([
+    const [teamResult] = await Promise.all([
       listTeams({
         page: pagination.value.page,
         page_size: pagination.value.pageSize,
         keyword: searchKeyword.value.trim() || undefined,
       }),
-      listUsers(),
+      loadUserOptions(),
     ]);
     teams.value = teamResult.items;
     pagination.value.total = teamResult.total;
-    users.value = userList.items;
   } catch (error) {
     loadError.value = error;
   } finally {
@@ -144,6 +167,7 @@ function openCreateDialog() {
   editingTeam.value = null;
   teamForm.value = { name: "", code: "", description: "" };
   createMemberIds.value = [];
+  void loadUserOptions();
   teamDialogVisible.value = true;
 }
 
@@ -227,7 +251,11 @@ async function openMemberPanel(team: TeamSummary) {
   memberSearchKeyword.value = "";
   pendingAddIds.value = [];
   try {
-    members.value = await listTeamMembers(team.id);
+    const [memberItems] = await Promise.all([
+      listTeamMembers(team.id),
+      loadUserOptions(),
+    ]);
+    members.value = memberItems;
   } catch {
     members.value = [];
   } finally {
@@ -328,6 +356,15 @@ function handleSizeChange() {
 onMounted(() => {
   void loadData();
 });
+
+watch(memberSearchKeyword, (value) => {
+  if (memberSearchTimer) {
+    clearTimeout(memberSearchTimer);
+  }
+  memberSearchTimer = setTimeout(() => {
+    void loadUserOptions(value);
+  }, 300);
+});
 </script>
 
 <template>
@@ -341,7 +378,7 @@ onMounted(() => {
       </div>
       <div class="team-list-page__header-actions">
         <span class="team-list-page__stats">
-          {{ pagination.total }} 个团队 · {{ users.length }} 个账号
+          {{ pagination.total }} 个团队 · {{ users.length }} 个候选账号
         </span>
         <el-button type="primary" @click="openCreateDialog">
           <el-icon class="mr-2"><Plus /></el-icon>
@@ -479,6 +516,10 @@ onMounted(() => {
             v-model="createMemberIds"
             multiple
             filterable
+            remote
+            reserve-keyword
+            :remote-method="loadUserOptions"
+            :loading="userOptionsLoading"
             placeholder="搜索并选择成员…"
             style="width: 100%"
           >

@@ -37,3 +37,12 @@ export interface KnowledgeBaseSummary {
   status: KnowledgeBaseStatus;
   recent_documents: KnowledgeBaseRecentDocument[];
 }
+
+export type KnowledgeBaseListItem = Omit<KnowledgeBaseSummary, "recent_documents">;
+
+export interface KnowledgeBaseListResponse {
+  items: KnowledgeBaseListItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}

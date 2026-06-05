@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     AssistantProfile,
+    DocumentCategory,
     KnowledgeBase,
     Product,
     Project,
@@ -31,6 +32,7 @@ class ProjectAppRecord:
     app: ProjectApp
     assistant_name: str | None
     knowledge_base_name: str | None = None
+    category_name: str | None = None
 
 
 @dataclass(slots=True)
@@ -40,6 +42,7 @@ class ProjectAppRuntimeRecord:
     app: ProjectApp
     assistant: AssistantProfile
     knowledge_base_name: str | None = None
+    category_name: str | None = None
 
 
 class ProjectRepository:
@@ -53,6 +56,42 @@ class ProjectRepository:
         return (code or "").strip().lower()
 
     async def list_projects(self, *, team_id: int | None = None) -> list[ProjectRecord]:
+        return await self.list_projects_page(team_id=team_id, offset=0, limit=None)
+
+    async def count_projects(
+        self,
+        *,
+        team_id: int | None = None,
+        keyword: str | None = None,
+        is_active: bool | None = None,
+    ) -> int:
+        stmt = select(func.count()).select_from(Project).join(Product, Product.id == Project.product_id)
+        if team_id is not None:
+            stmt = stmt.where(Project.team_id == team_id)
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    Project.name.ilike(pattern),
+                    Project.code.ilike(pattern),
+                    Project.description.ilike(pattern),
+                    Product.name.ilike(pattern),
+                    Product.code.ilike(pattern),
+                )
+            )
+        if is_active is not None:
+            stmt = stmt.where(Project.is_active.is_(is_active))
+        return int((await self.db.execute(stmt)).scalar() or 0)
+
+    async def list_projects_page(
+        self,
+        *,
+        team_id: int | None = None,
+        keyword: str | None = None,
+        is_active: bool | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[ProjectRecord]:
         app_count = func.count(ProjectApp.id)
         stmt = (
             select(Project, Team.name, Product.code, Product.name, app_count.label("app_count"))
@@ -64,6 +103,21 @@ class ProjectRepository:
         )
         if team_id is not None:
             stmt = stmt.where(Project.team_id == team_id)
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    Project.name.ilike(pattern),
+                    Project.code.ilike(pattern),
+                    Project.description.ilike(pattern),
+                    Product.name.ilike(pattern),
+                    Product.code.ilike(pattern),
+                )
+            )
+        if is_active is not None:
+            stmt = stmt.where(Project.is_active.is_(is_active))
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
         rows = (await self.db.execute(stmt)).all()
         return [
             ProjectRecord(
@@ -139,39 +193,98 @@ class ProjectRepository:
         await self.db.delete(project)
         await self.db.commit()
 
-    async def list_apps(self, *, project_id: int) -> list[ProjectAppRecord]:
+    async def count_apps(
+        self,
+        *,
+        project_id: int,
+        keyword: str | None = None,
+        is_active: bool | None = None,
+    ) -> int:
         stmt = (
-            select(ProjectApp, AssistantProfile.name, KnowledgeBase.name)
+            select(func.count())
+            .select_from(ProjectApp)
             .outerjoin(AssistantProfile, AssistantProfile.id == ProjectApp.default_assistant_id)
             .outerjoin(KnowledgeBase, KnowledgeBase.id == ProjectApp.knowledge_base_id)
+            .outerjoin(DocumentCategory, DocumentCategory.id == ProjectApp.category_id)
+            .where(ProjectApp.project_id == project_id)
+        )
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    ProjectApp.name.ilike(pattern),
+                    ProjectApp.code.ilike(pattern),
+                    ProjectApp.description.ilike(pattern),
+                    AssistantProfile.name.ilike(pattern),
+                    KnowledgeBase.name.ilike(pattern),
+                    DocumentCategory.name.ilike(pattern),
+                )
+            )
+        if is_active is not None:
+            stmt = stmt.where(ProjectApp.is_active.is_(is_active))
+        return int((await self.db.execute(stmt)).scalar() or 0)
+
+    async def list_apps(
+        self,
+        *,
+        project_id: int,
+        keyword: str | None = None,
+        is_active: bool | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[ProjectAppRecord]:
+        stmt = (
+            select(ProjectApp, AssistantProfile.name, KnowledgeBase.name, DocumentCategory.name)
+            .outerjoin(AssistantProfile, AssistantProfile.id == ProjectApp.default_assistant_id)
+            .outerjoin(KnowledgeBase, KnowledgeBase.id == ProjectApp.knowledge_base_id)
+            .outerjoin(DocumentCategory, DocumentCategory.id == ProjectApp.category_id)
             .where(ProjectApp.project_id == project_id)
             .order_by(ProjectApp.created_at.desc(), ProjectApp.id.desc())
         )
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    ProjectApp.name.ilike(pattern),
+                    ProjectApp.code.ilike(pattern),
+                    ProjectApp.description.ilike(pattern),
+                    AssistantProfile.name.ilike(pattern),
+                    KnowledgeBase.name.ilike(pattern),
+                    DocumentCategory.name.ilike(pattern),
+                )
+            )
+        if is_active is not None:
+            stmt = stmt.where(ProjectApp.is_active.is_(is_active))
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
         rows = (await self.db.execute(stmt)).all()
         return [
             ProjectAppRecord(
                 app=app,
                 assistant_name=assistant_name,
                 knowledge_base_name=knowledge_base_name,
+                category_name=category_name,
             )
-            for app, assistant_name, knowledge_base_name in rows
+            for app, assistant_name, knowledge_base_name, category_name in rows
         ]
 
     async def get_app_record(self, app_id: int) -> ProjectAppRecord | None:
         stmt = (
-            select(ProjectApp, AssistantProfile.name, KnowledgeBase.name)
+            select(ProjectApp, AssistantProfile.name, KnowledgeBase.name, DocumentCategory.name)
             .outerjoin(AssistantProfile, AssistantProfile.id == ProjectApp.default_assistant_id)
             .outerjoin(KnowledgeBase, KnowledgeBase.id == ProjectApp.knowledge_base_id)
+            .outerjoin(DocumentCategory, DocumentCategory.id == ProjectApp.category_id)
             .where(ProjectApp.id == app_id)
         )
         row = (await self.db.execute(stmt)).one_or_none()
         if row is None:
             return None
-        app, assistant_name, knowledge_base_name = row
+        app, assistant_name, knowledge_base_name, category_name = row
         return ProjectAppRecord(
             app=app,
             assistant_name=assistant_name,
             knowledge_base_name=knowledge_base_name,
+            category_name=category_name,
         )
 
     async def get_app(self, app_id: int) -> ProjectApp | None:
@@ -226,11 +339,19 @@ class ProjectRepository:
         active_only: bool = True,
     ) -> ProjectAppRuntimeRecord | None:
         stmt = (
-            select(Product, Project, ProjectApp, AssistantProfile, KnowledgeBase.name)
+            select(
+                Product,
+                Project,
+                ProjectApp,
+                AssistantProfile,
+                KnowledgeBase.name,
+                DocumentCategory.name,
+            )
             .join(Project, Project.product_id == Product.id)
             .join(ProjectApp, ProjectApp.project_id == Project.id)
             .join(AssistantProfile, AssistantProfile.id == ProjectApp.default_assistant_id)
             .outerjoin(KnowledgeBase, KnowledgeBase.id == ProjectApp.knowledge_base_id)
+            .outerjoin(DocumentCategory, DocumentCategory.id == ProjectApp.category_id)
             .where(
                 Product.code == self.normalize_code(product_code),
                 Project.code == self.normalize_code(project_code),
@@ -247,13 +368,14 @@ class ProjectRepository:
         row = (await self.db.execute(stmt)).one_or_none()
         if row is None:
             return None
-        product, project, app, assistant, knowledge_base_name = row
+        product, project, app, assistant, knowledge_base_name, category_name = row
         return ProjectAppRuntimeRecord(
             product=product,
             project=project,
             app=app,
             assistant=assistant,
             knowledge_base_name=knowledge_base_name,
+            category_name=category_name,
         )
 
     async def get_runtime_by_app_id(
@@ -263,11 +385,19 @@ class ProjectRepository:
         active_only: bool = True,
     ) -> ProjectAppRuntimeRecord | None:
         stmt = (
-            select(Product, Project, ProjectApp, AssistantProfile, KnowledgeBase.name)
+            select(
+                Product,
+                Project,
+                ProjectApp,
+                AssistantProfile,
+                KnowledgeBase.name,
+                DocumentCategory.name,
+            )
             .join(Project, Project.product_id == Product.id)
             .join(ProjectApp, ProjectApp.project_id == Project.id)
             .join(AssistantProfile, AssistantProfile.id == ProjectApp.default_assistant_id)
             .outerjoin(KnowledgeBase, KnowledgeBase.id == ProjectApp.knowledge_base_id)
+            .outerjoin(DocumentCategory, DocumentCategory.id == ProjectApp.category_id)
             .where(ProjectApp.id == project_app_id)
         )
         if active_only:
@@ -280,11 +410,12 @@ class ProjectRepository:
         row = (await self.db.execute(stmt)).one_or_none()
         if row is None:
             return None
-        product, project, app, assistant, knowledge_base_name = row
+        product, project, app, assistant, knowledge_base_name, category_name = row
         return ProjectAppRuntimeRecord(
             product=product,
             project=project,
             app=app,
             assistant=assistant,
             knowledge_base_name=knowledge_base_name,
+            category_name=category_name,
         )

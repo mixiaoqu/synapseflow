@@ -34,3 +34,10 @@ class ProductResponse(BaseModel):
     project_count: int = 0
     created_at: datetime
     updated_at: datetime
+
+
+class ProductListResponse(BaseModel):
+    items: list[ProductResponse] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 20

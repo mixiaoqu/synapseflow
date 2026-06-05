@@ -13,6 +13,7 @@ from app.repositories.access_scope import (
     accessible_document_condition,
     accessible_knowledge_base_condition,
 )
+from app.services.category_scope import resolve_category_subtree_ids
 from app.services.document_lifecycle import DOC_STATUS_DRAFT, DOC_STATUS_PENDING_REVIEW
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
@@ -214,17 +215,16 @@ class DocumentRepository:
             if category_id == 0:
                 base_filter = base_filter & Document.category_id.is_(None)
             else:
-                subtree = (
+                category_tree = (
                     select(DocumentCategory.id)
-                    .where(
-                        or_(
-                            DocumentCategory.id == category_id,
-                            DocumentCategory.parent_id == category_id,
-                        )
-                    )
-                    .correlate(None)
+                    .where(DocumentCategory.id == category_id)
+                    .cte(name="category_tree", recursive=True)
                 )
-                base_filter = base_filter & Document.category_id.in_(subtree)
+                category_alias = DocumentCategory.__table__.alias("category_child")
+                category_tree = category_tree.union_all(
+                    select(category_alias.c.id).where(category_alias.c.parent_id == category_tree.c.id)
+                )
+                base_filter = base_filter & Document.category_id.in_(select(category_tree.c.id))
         if status:
             base_filter = base_filter & (Document.status == status)
         if team_id is not None:
@@ -288,11 +288,8 @@ class DocumentRepository:
         return list(result.scalars().all())
 
     async def _get_category_subtree_ids(self, category_id: int) -> list[int]:
-        """Return the category ID plus all direct child IDs."""
-        result = await self.db.execute(
-            select(DocumentCategory.id).where(DocumentCategory.parent_id == category_id)
-        )
-        return [category_id] + list(result.scalars().all())
+        """Return the category ID plus all descendant IDs."""
+        return await resolve_category_subtree_ids(self.db, category_id)
 
     async def get_category_name(self, category_id: int | None) -> str | None:
         """Fetch a category name scoped to the current user."""

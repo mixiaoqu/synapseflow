@@ -41,11 +41,19 @@ class ProjectResponse(BaseModel):
     updated_at: datetime
 
 
+class ProjectListResponse(BaseModel):
+    items: list[ProjectResponse] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+
+
 class ProjectAppCreate(BaseModel):
     code: str = Field(..., min_length=1, max_length=120)
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
     knowledge_base_id: int = Field(..., gt=0)
+    category_id: int | None = Field(default=None, gt=0)
     default_assistant_id: int | None = Field(default=None, gt=0)
     is_active: bool = True
 
@@ -55,6 +63,7 @@ class ProjectAppUpdate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
     knowledge_base_id: int = Field(..., gt=0)
+    category_id: int | None = Field(default=None, gt=0)
     default_assistant_id: int | None = Field(default=None, gt=0)
     is_active: bool = True
 
@@ -75,11 +84,20 @@ class ProjectAppResponse(BaseModel):
     description: str | None = None
     knowledge_base_id: int | None = None
     knowledge_base_name: str | None = None
+    category_id: int | None = None
+    category_name: str | None = None
     default_assistant_id: int | None = None
     default_assistant_name: str | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class ProjectAppListResponse(BaseModel):
+    items: list[ProjectAppResponse] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
 
 
 class EmbedSessionCreate(BaseModel):

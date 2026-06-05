@@ -16,9 +16,11 @@ from app.models.schemas.project import (
     EmbedSessionResponse,
     ProjectAppCopy,
     ProjectAppCreate,
+    ProjectAppListResponse,
     ProjectAppResponse,
     ProjectAppUpdate,
     ProjectCreate,
+    ProjectListResponse,
     ProjectResponse,
     ProjectUpdate,
 )
@@ -33,13 +35,23 @@ def _resolve_embed_frontend_base_url(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
-@router.get("", response_model=list[ProjectResponse])
+@router.get("", response_model=ProjectListResponse)
 async def list_projects(
     team_id: int | None = Query(None),
+    keyword: str | None = Query(None),
+    status: str = Query("all", pattern="^(all|active|inactive)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProjectService(db, user_id=current_user.id).list_projects(team_id=team_id)
+    return await ProjectService(db, user_id=current_user.id).list_projects_page(
+        team_id=team_id,
+        keyword=keyword,
+        status=status,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("", response_model=ProjectResponse)
@@ -80,13 +92,23 @@ async def delete_project(
     return {"message": "Deleted successfully"}
 
 
-@router.get("/{project_id}/apps", response_model=list[ProjectAppResponse])
+@router.get("/{project_id}/apps", response_model=ProjectAppListResponse)
 async def list_project_apps(
     project_id: int,
+    keyword: str | None = Query(None),
+    status: str = Query("all", pattern="^(all|active|inactive)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProjectService(db, user_id=current_user.id).list_apps(project_id=project_id)
+    return await ProjectService(db, user_id=current_user.id).list_apps_page(
+        project_id=project_id,
+        keyword=keyword,
+        status=status,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("/{project_id}/apps", response_model=ProjectAppResponse)
