@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { Delete, EditPen, Link, Plus, Search } from "@element-plus/icons-vue";
+import { CopyDocument, Delete, EditPen, Link, Plus, Search } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import type { FormInstance, FormRules } from "element-plus";
 
-import { deleteProjectApp, getProject, listProjectApps, updateProjectApp } from "@/shared/api/projects";
+import {
+  copyProjectApp,
+  deleteProjectApp,
+  getProject,
+  listProjectApps,
+  updateProjectApp,
+} from "@/shared/api/projects";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
@@ -12,6 +19,12 @@ import { isForbiddenError } from "@/shared/utils/error";
 import type { ProjectAppSummary, ProjectAppUpsertPayload, ProjectSummary } from "@/shared/types/project";
 
 type StatusFilter = "all" | "active" | "inactive";
+
+interface CopyAppFormState {
+  code: string;
+  name: string;
+  is_active: boolean;
+}
 
 const route = useRoute();
 const router = useRouter();
@@ -24,9 +37,23 @@ const searchKeyword = ref("");
 const statusFilter = ref<StatusFilter>("all");
 const statusLoadingId = ref<number | null>(null);
 const deletingAppId = ref<number | null>(null);
+const copyingAppId = ref<number | null>(null);
 
 const integrationDialogVisible = ref(false);
 const integrationApp = ref<ProjectAppSummary | null>(null);
+const copyDialogVisible = ref(false);
+const copyingApp = ref<ProjectAppSummary | null>(null);
+const copyFormRef = ref<FormInstance>();
+const copyForm = reactive<CopyAppFormState>({
+  code: "",
+  name: "",
+  is_active: false,
+});
+
+const copyRules: FormRules<CopyAppFormState> = {
+  name: [{ required: true, message: "请输入复制后的应用名称", trigger: "blur" }],
+  code: [{ required: true, message: "请输入复制后的应用编码", trigger: "blur" }],
+};
 
 const projectId = computed(() => {
   const raw = Number(route.params.projectId);
@@ -119,6 +146,52 @@ function openAppDetail(appId: number) {
   void router.push(`/projects/${projectId.value}/apps/${appId}`);
 }
 
+function openCopyApp(app: ProjectAppSummary) {
+  copyingApp.value = app;
+  copyForm.name = `${app.name} 副本`;
+  copyForm.code = `${app.code}-copy`;
+  copyForm.is_active = false;
+  copyDialogVisible.value = true;
+}
+
+function handleCopyDialogClosed() {
+  copyingApp.value = null;
+  copyForm.name = "";
+  copyForm.code = "";
+  copyForm.is_active = false;
+  copyFormRef.value?.clearValidate();
+}
+
+async function handleCopyApp() {
+  const selectedProjectId = projectId.value;
+  const sourceApp = copyingApp.value;
+  if (!selectedProjectId || !sourceApp || copyingAppId.value) {
+    return;
+  }
+
+  const valid = await copyFormRef.value?.validate().catch(() => false);
+  if (!valid) {
+    return;
+  }
+
+  copyingAppId.value = sourceApp.id;
+  try {
+    const created = await copyProjectApp(selectedProjectId, sourceApp.id, {
+      code: copyForm.code.trim(),
+      name: copyForm.name.trim(),
+      is_active: copyForm.is_active,
+    });
+    apps.value = [created, ...apps.value];
+    copyDialogVisible.value = false;
+    ElMessage.success(`已复制发布渠道“${created.name}”。`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "复制发布渠道失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    copyingAppId.value = null;
+  }
+}
+
 async function handleToggleStatus(app: ProjectAppSummary, nextValue: boolean | string | number) {
   if (!projectId.value || statusLoadingId.value) {
     return;
@@ -142,6 +215,10 @@ async function handleToggleStatus(app: ProjectAppSummary, nextValue: boolean | s
   } finally {
     statusLoadingId.value = null;
   }
+}
+
+function handleStatusChange(app: ProjectAppSummary, nextValue: boolean | string | number) {
+  void handleToggleStatus(app, nextValue);
 }
 
 async function handleDeleteApp(app: ProjectAppSummary) {
@@ -348,15 +425,24 @@ watch(
             <el-switch
               :model-value="row.is_active"
               :loading="statusLoadingId === row.id"
-              @change="(value) => handleToggleStatus(row, value)"
+              @change="handleStatusChange(row, $event)"
             />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right" align="right">
+        <el-table-column label="操作" width="330" fixed="right" align="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openAppDetail(row.id)">
               <el-icon><EditPen /></el-icon>
               <span>编排配置</span>
+            </el-button>
+            <el-button
+              link
+              type="primary"
+              :loading="copyingAppId === row.id"
+              @click="openCopyApp(row)"
+            >
+              <el-icon><CopyDocument /></el-icon>
+              <span>复制</span>
             </el-button>
             <el-button link type="success" @click="openIntegration(row)">
               <el-icon><Link /></el-icon>
@@ -375,6 +461,46 @@ watch(
         </el-table-column>
       </el-table>
     </section>
+
+    <el-dialog
+      v-model="copyDialogVisible"
+      width="520px"
+      :title="copyingApp ? `复制发布渠道：${copyingApp.name}` : '复制发布渠道'"
+      destroy-on-close
+      @closed="handleCopyDialogClosed"
+    >
+      <p class="project-app-list-page__copy-hint">
+        复制后会复用原发布渠道绑定的知识库和默认助手，不会复制聊天记录、日志或预览会话。
+      </p>
+
+      <el-form ref="copyFormRef" :model="copyForm" :rules="copyRules" label-width="96px">
+        <el-form-item label="应用名称" prop="name">
+          <el-input v-model="copyForm.name" maxlength="100" show-word-limit />
+        </el-form-item>
+        <el-form-item label="应用编码" prop="code">
+          <el-input v-model="copyForm.code" maxlength="120" show-word-limit />
+        </el-form-item>
+        <el-form-item label="启用状态">
+          <el-switch
+            v-model="copyForm.is_active"
+            active-text="启用"
+            inactive-text="停用"
+            inline-prompt
+          />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="copyDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="copyingAppId === copyingApp?.id"
+          @click="handleCopyApp"
+        >
+          确认复制
+        </el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="integrationDialogVisible"
@@ -542,6 +668,13 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.project-app-list-page__copy-hint {
+  margin: 0 0 18px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .project-app-list-page__integration-hint {

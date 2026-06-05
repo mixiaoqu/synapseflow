@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AssistantProfile, Product, Project, ProjectApp
 from app.models.schemas.project import (
+    ProjectAppCopy,
     ProjectAppCreate,
     ProjectAppResponse,
     ProjectAppUpdate,
@@ -317,6 +318,49 @@ class ProjectService:
         record = await self.repository.get_app_record(app.id)
         if record is None:
             raise HTTPException(status_code=500, detail="Project app update failed")
+        return self._to_app_response(record)
+
+    async def copy_app(
+        self,
+        *,
+        project_id: int,
+        app_id: int,
+        payload: ProjectAppCopy,
+    ) -> ProjectAppResponse:
+        project = await self.repository.get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        await self._ensure_team_access(project.team_id)
+        source_app = await self.repository.get_app(app_id)
+        if source_app is None or source_app.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Project app not found")
+
+        code = self._normalize_code(payload.code)
+        if await self.repository.app_code_exists(project_id=project_id, code=code):
+            raise HTTPException(status_code=400, detail="Project app code already exists")
+        await self._get_assistant_for_project(
+            project=project,
+            assistant_id=source_app.default_assistant_id,
+        )
+        if source_app.knowledge_base_id is None:
+            raise HTTPException(status_code=400, detail="Project app knowledge base is missing")
+        normalized_knowledge_base_id = await self._validate_knowledge_base_id(
+            project=project,
+            knowledge_base_id=source_app.knowledge_base_id,
+        )
+        app = ProjectApp(
+            project_id=project_id,
+            code=code,
+            name=payload.name.strip(),
+            description=source_app.description,
+            knowledge_base_id=normalized_knowledge_base_id,
+            default_assistant_id=source_app.default_assistant_id,
+            is_active=payload.is_active,
+        )
+        await self.repository.create_app(app)
+        record = await self.repository.get_app_record(app.id)
+        if record is None:
+            raise HTTPException(status_code=500, detail="Project app copy failed")
         return self._to_app_response(record)
 
     async def delete_app(self, *, project_id: int, app_id: int) -> None:

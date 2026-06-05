@@ -14,6 +14,7 @@ from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.project import (
     EmbedSessionResponse,
+    ProjectAppCopy,
     ProjectAppCreate,
     ProjectAppResponse,
     ProjectAppUpdate,
@@ -123,6 +124,21 @@ async def update_project_app(
     current_user: User = Depends(require_content_roles),
 ):
     return await ProjectService(db, user_id=current_user.id).update_app(
+        project_id=project_id,
+        app_id=app_id,
+        payload=body,
+    )
+
+
+@router.post("/{project_id}/apps/{app_id}/copy", response_model=ProjectAppResponse)
+async def copy_project_app(
+    project_id: int,
+    app_id: int,
+    body: ProjectAppCopy,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await ProjectService(db, user_id=current_user.id).copy_app(
         project_id=project_id,
         app_id=app_id,
         payload=body,

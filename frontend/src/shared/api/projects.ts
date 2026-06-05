@@ -1,5 +1,6 @@
 import { request } from "@/shared/api/http";
 import type {
+  ProjectAppCopyPayload,
   ProjectAppEmbedPreviewResponse,
   ProjectAppSummary,
   ProjectAppUpsertPayload,
@@ -60,6 +61,14 @@ export function updateProjectApp(
   return request<ProjectAppSummary>({
     url: `/projects/${projectId}/apps/${appId}`,
     method: "PUT",
+    data: payload,
+  });
+}
+
+export function copyProjectApp(projectId: number, appId: number, payload: ProjectAppCopyPayload) {
+  return request<ProjectAppSummary>({
+    url: `/projects/${projectId}/apps/${appId}/copy`,
+    method: "POST",
     data: payload,
   });
 }

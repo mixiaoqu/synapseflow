@@ -51,12 +51,30 @@ const markdownRenderer = new MarkdownIt({
   linkify: true,
 });
 
+const AI_SUGGESTION_PREFIX = "🤖 AI智能客服建议（由AI生成）：";
+
+const displayContent = computed(() => {
+  if (
+    props.message.role !== "assistant" ||
+    props.message.kind === "welcome" ||
+    !props.message.content.trim()
+  ) {
+    return props.message.content;
+  }
+
+  if (props.message.content.trimStart().startsWith(AI_SUGGESTION_PREFIX)) {
+    return props.message.content;
+  }
+
+  return `${AI_SUGGESTION_PREFIX}\n\n${props.message.content}`;
+});
+
 const renderedHtml = computed(() => {
-  if (!props.message.content) {
+  if (!displayContent.value) {
     return "";
   }
 
-  const rawHtml = markdownRenderer.render(props.message.content);
+  const rawHtml = markdownRenderer.render(displayContent.value);
   return DOMPurify.sanitize(rawHtml);
 });
 
@@ -68,7 +86,7 @@ async function handleCopy() {
   }
 
   try {
-    await navigator.clipboard.writeText(props.message.content);
+    await navigator.clipboard.writeText(displayContent.value);
     copied.value = true;
     window.setTimeout(() => {
       copied.value = false;

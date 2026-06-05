@@ -59,6 +59,12 @@ class ProjectAppUpdate(BaseModel):
     is_active: bool = True
 
 
+class ProjectAppCopy(BaseModel):
+    code: str = Field(..., min_length=1, max_length=120)
+    name: str = Field(..., min_length=1, max_length=100)
+    is_active: bool = False
+
+
 class ProjectAppResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

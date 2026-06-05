@@ -47,6 +47,12 @@ export interface ProjectAppUpsertPayload {
   is_active: boolean;
 }
 
+export interface ProjectAppCopyPayload {
+  code: string;
+  name: string;
+  is_active: boolean;
+}
+
 export interface ProjectAppEmbedPreviewResponse {
   embed_url: string;
   expires_in_seconds: number;
