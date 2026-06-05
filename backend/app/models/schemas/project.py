@@ -23,6 +23,12 @@ class ProjectUpdate(BaseModel):
     is_active: bool = True
 
 
+class ProjectCopy(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    code: str = Field(..., min_length=1, max_length=120)
+    is_active: bool = False
+
+
 class ProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -66,12 +72,6 @@ class ProjectAppUpdate(BaseModel):
     category_id: int | None = Field(default=None, gt=0)
     default_assistant_id: int | None = Field(default=None, gt=0)
     is_active: bool = True
-
-
-class ProjectAppCopy(BaseModel):
-    code: str = Field(..., min_length=1, max_length=120)
-    name: str = Field(..., min_length=1, max_length=100)
-    is_active: bool = False
 
 
 class ProjectAppResponse(BaseModel):

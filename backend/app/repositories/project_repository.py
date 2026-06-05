@@ -189,6 +189,30 @@ class ProjectRepository:
         await self.db.refresh(project)
         return project
 
+    async def create_project_with_apps(
+        self,
+        project: Project,
+        source_apps: list[ProjectApp],
+    ) -> Project:
+        self.db.add(project)
+        await self.db.flush()
+        for source_app in source_apps:
+            self.db.add(
+                ProjectApp(
+                    project_id=project.id,
+                    code=source_app.code,
+                    name=source_app.name,
+                    description=source_app.description,
+                    knowledge_base_id=source_app.knowledge_base_id,
+                    category_id=source_app.category_id,
+                    default_assistant_id=source_app.default_assistant_id,
+                    is_active=source_app.is_active,
+                )
+            )
+        await self.db.commit()
+        await self.db.refresh(project)
+        return project
+
     async def delete_project(self, project: Project) -> None:
         await self.db.delete(project)
         await self.db.commit()
@@ -289,6 +313,14 @@ class ProjectRepository:
 
     async def get_app(self, app_id: int) -> ProjectApp | None:
         return await self.db.get(ProjectApp, app_id)
+
+    async def list_app_entities(self, *, project_id: int) -> list[ProjectApp]:
+        stmt = (
+            select(ProjectApp)
+            .where(ProjectApp.project_id == project_id)
+            .order_by(ProjectApp.created_at.asc(), ProjectApp.id.asc())
+        )
+        return list((await self.db.execute(stmt)).scalars().all())
 
     async def app_code_exists(
         self,

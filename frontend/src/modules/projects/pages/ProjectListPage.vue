@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
-import { Plus, Search } from "@element-plus/icons-vue";
+import { ElMessage, ElMessageBox } from "element-plus";
+import { CopyDocument, Delete, Plus, Search } from "@element-plus/icons-vue";
 
 import { createProduct, listProducts } from "@/shared/api/products";
-import { createProject, listProjects } from "@/shared/api/projects";
+import { copyProject, createProject, deleteProject, listProjects } from "@/shared/api/projects";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import { useTeamScopeStore } from "@/stores/team-scope";
 import { isForbiddenError } from "@/shared/utils/error";
 import type { ProductSummary, ProductUpsertPayload } from "@/shared/types/product";
-import type { ProjectSummary, ProjectUpsertPayload } from "@/shared/types/project";
+import type { ProjectCopyPayload, ProjectSummary, ProjectUpsertPayload } from "@/shared/types/project";
 
 const router = useRouter();
 const teamScopeStore = useTeamScopeStore();
@@ -29,8 +29,11 @@ const pagination = ref({
 });
 const createProductDialogVisible = ref(false);
 const createDialogVisible = ref(false);
+const copyDialogVisible = ref(false);
 const creatingProduct = ref(false);
 const creating = ref(false);
+const copyingProjectId = ref<number | null>(null);
+const deletingProjectId = ref<number | null>(null);
 const createProductForm = ref({
   name: "",
   code: "",
@@ -43,6 +46,12 @@ const createForm = ref({
   product_id: null as number | null,
   description: "",
   is_active: true,
+});
+const copyingProject = ref<ProjectSummary | null>(null);
+const copyForm = ref({
+  name: "",
+  code: "",
+  is_active: false,
 });
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -156,6 +165,25 @@ function openCreateProjectDialog() {
   createDialogVisible.value = true;
 }
 
+function openCopyProjectDialog(project: ProjectSummary) {
+  copyingProject.value = project;
+  copyForm.value = {
+    name: `${project.name} 副本`,
+    code: `${project.code}-copy`,
+    is_active: false,
+  };
+  copyDialogVisible.value = true;
+}
+
+function resetCopyProjectDialog() {
+  copyingProject.value = null;
+  copyForm.value = {
+    name: "",
+    code: "",
+    is_active: false,
+  };
+}
+
 async function submitCreateProduct() {
   if (creatingProduct.value) {
     return;
@@ -235,6 +263,73 @@ async function submitCreateProject() {
     ElMessage.error(message);
   } finally {
     creating.value = false;
+  }
+}
+
+async function submitCopyProject() {
+  const sourceProject = copyingProject.value;
+  if (!sourceProject || copyingProjectId.value) {
+    return;
+  }
+
+  if (!copyForm.value.name.trim() || !copyForm.value.code.trim()) {
+    ElMessage.warning("请填写复制后的项目名称和项目编码。");
+    return;
+  }
+
+  copyingProjectId.value = sourceProject.id;
+
+  try {
+    const payload: ProjectCopyPayload = {
+      code: copyForm.value.code.trim(),
+      name: copyForm.value.name.trim(),
+      is_active: copyForm.value.is_active,
+    };
+    const created = await copyProject(sourceProject.id, payload);
+    ElMessage.success(`已复制项目“${created.name}”。`);
+    copyDialogVisible.value = false;
+    await loadProjectList();
+    await router.push(`/projects/${created.id}/apps`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "复制项目失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    copyingProjectId.value = null;
+  }
+}
+
+async function handleDeleteProject(project: ProjectSummary) {
+  if (deletingProjectId.value) {
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确定删除项目“${project.name}”吗？删除后该项目下的发布渠道配置将一起删除。`,
+      "删除项目",
+      {
+        type: "warning",
+        confirmButtonText: "删除",
+        cancelButtonText: "取消",
+      },
+    );
+  } catch {
+    return;
+  }
+
+  deletingProjectId.value = project.id;
+  try {
+    await deleteProject(project.id);
+    ElMessage.success(`已删除项目“${project.name}”。`);
+    if (projects.value.length === 1 && pagination.value.page > 1) {
+      pagination.value.page -= 1;
+    }
+    await loadProjectList();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "删除项目失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    deletingProjectId.value = null;
   }
 }
 
@@ -364,10 +459,28 @@ watch(keyword, () => {
             <span>{{ formatDate(row.updated_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right" align="right">
+        <el-table-column label="操作" width="320" fixed="right" align="right">
           <template #default="{ row }">
+            <el-button
+              link
+              type="primary"
+              :loading="copyingProjectId === row.id"
+              @click="openCopyProjectDialog(row)"
+            >
+              <el-icon><CopyDocument /></el-icon>
+              <span>复制项目</span>
+            </el-button>
             <el-button type="primary" plain size="small" @click="openProjectApps(row.id)">
               管理发布渠道
+            </el-button>
+            <el-button
+              link
+              type="danger"
+              :loading="deletingProjectId === row.id"
+              @click="handleDeleteProject(row)"
+            >
+              <el-icon><Delete /></el-icon>
+              <span>删除</span>
             </el-button>
           </template>
         </el-table-column>
@@ -509,6 +622,63 @@ watch(keyword, () => {
         </div>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="copyDialogVisible"
+      :title="copyingProject ? `复制项目：${copyingProject.name}` : '复制项目'"
+      width="520px"
+      destroy-on-close
+      @closed="resetCopyProjectDialog"
+    >
+      <el-form label-position="top" @submit.prevent="submitCopyProject">
+        <el-form-item label="所属团队">
+          <el-input :model-value="copyingProject?.team_name || selectedTeamName || '未选择团队'" disabled />
+        </el-form-item>
+        <el-form-item label="所属产品">
+          <el-input :model-value="copyingProject?.product_name || '未设置'" disabled />
+        </el-form-item>
+        <el-form-item label="项目名称" required>
+          <el-input
+            v-model="copyForm.name"
+            maxlength="100"
+            show-word-limit
+            placeholder="请输入复制后的项目名称"
+          />
+        </el-form-item>
+        <el-form-item label="项目编码" required>
+          <el-input
+            v-model="copyForm.code"
+            maxlength="120"
+            show-word-limit
+            placeholder="请输入复制后的项目编码"
+          />
+        </el-form-item>
+        <el-form-item label="项目状态">
+          <el-switch
+            v-model="copyForm.is_active"
+            inline-prompt
+            active-text="启用"
+            inactive-text="停用"
+          />
+        </el-form-item>
+      </el-form>
+      <p class="project-list-page__copy-hint">
+        复制后会保留原项目下所有发布渠道的知识库、限定分类和默认助手配置。
+      </p>
+
+      <template #footer>
+        <div class="project-list-page__dialog-footer">
+          <el-button @click="copyDialogVisible = false">取消</el-button>
+          <el-button
+            type="primary"
+            :loading="copyingProjectId === copyingProject?.id"
+            @click="submitCopyProject"
+          >
+            复制并进入配置
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
@@ -580,6 +750,13 @@ watch(keyword, () => {
   display: flex;
   justify-content: flex-end;
   padding: 12px 8px 10px;
+}
+
+.project-list-page__copy-hint {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .project-list-page__name-cell {

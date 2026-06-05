@@ -30,6 +30,12 @@ export interface ProjectUpsertPayload {
   is_active: boolean;
 }
 
+export interface ProjectCopyPayload {
+  code: string;
+  name: string;
+  is_active: boolean;
+}
+
 export interface ProjectAppSummary {
   id: number;
   project_id: number;
@@ -61,12 +67,6 @@ export interface ProjectAppUpsertPayload {
   knowledge_base_id: number;
   category_id?: number | null;
   default_assistant_id?: number | null;
-  is_active: boolean;
-}
-
-export interface ProjectAppCopyPayload {
-  code: string;
-  name: string;
   is_active: boolean;
 }
 

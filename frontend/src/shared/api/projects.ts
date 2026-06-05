@@ -1,10 +1,10 @@
 import { request } from "@/shared/api/http";
 import type {
-  ProjectAppCopyPayload,
   ProjectAppEmbedPreviewResponse,
   ProjectAppListResponse,
   ProjectAppSummary,
   ProjectAppUpsertPayload,
+  ProjectCopyPayload,
   ProjectListResponse,
   ProjectSummary,
   ProjectUpsertPayload,
@@ -36,6 +36,21 @@ export function createProject(payload: ProjectUpsertPayload) {
     url: "/projects",
     method: "POST",
     data: payload,
+  });
+}
+
+export function copyProject(projectId: number, payload: ProjectCopyPayload) {
+  return request<ProjectSummary>({
+    url: `/projects/${projectId}/copy`,
+    method: "POST",
+    data: payload,
+  });
+}
+
+export function deleteProject(projectId: number) {
+  return request<{ message: string }>({
+    url: `/projects/${projectId}`,
+    method: "DELETE",
   });
 }
 
@@ -75,14 +90,6 @@ export function updateProjectApp(
   return request<ProjectAppSummary>({
     url: `/projects/${projectId}/apps/${appId}`,
     method: "PUT",
-    data: payload,
-  });
-}
-
-export function copyProjectApp(projectId: number, appId: number, payload: ProjectAppCopyPayload) {
-  return request<ProjectAppSummary>({
-    url: `/projects/${projectId}/apps/${appId}/copy`,
-    method: "POST",
     data: payload,
   });
 }
