@@ -2,10 +2,11 @@
 
 from collections.abc import Sequence
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import KnowledgeBase, KnowledgeBaseMember, Team, TeamMember
+from app.core.authz import TEAM_ROLE_OWNER, TEAM_ROLE_VIEWER, normalize_team_role
+from app.db.models import Team, TeamMember, User
 
 
 class TeamRepository:
@@ -25,6 +26,7 @@ class TeamRepository:
         page: int = 1,
         page_size: int = 10,
         keyword: str | None = None,
+        team_ids: list[int] | None = None,
     ) -> tuple[list[Team], int]:
         """分页查询团队列表，支持按名称/编码模糊搜索。
 
@@ -37,6 +39,10 @@ class TeamRepository:
             (团队列表, 总数) 二元组
         """
         base_query = select(Team)
+        if team_ids is not None:
+            if not team_ids:
+                return [], 0
+            base_query = base_query.where(Team.id.in_(team_ids))
         if keyword and keyword.strip():
             pattern = f"%{keyword.strip()}%"
             base_query = base_query.where(
@@ -60,23 +66,9 @@ class TeamRepository:
         """List teams visible to the current user for scoped operations."""
         result = await self.db.execute(
             select(Team)
-            .outerjoin(TeamMember, TeamMember.team_id == Team.id)
-            .outerjoin(KnowledgeBase, KnowledgeBase.team_id == Team.id)
+            .join(TeamMember, TeamMember.team_id == Team.id)
             .where(
-                or_(
-                    TeamMember.user_id == self.user_id,
-                    KnowledgeBase.user_id == self.user_id,
-                    exists(
-                        select(1)
-                        .select_from(KnowledgeBaseMember)
-                        .join(KnowledgeBase, KnowledgeBaseMember.knowledge_base_id == KnowledgeBase.id)
-                        .where(
-                            KnowledgeBase.team_id == Team.id,
-                            KnowledgeBaseMember.user_id == self.user_id,
-                        )
-                        .correlate(Team)
-                    ),
-                )
+                TeamMember.user_id == self.user_id,
             )
             .group_by(Team.id)
             .order_by(Team.created_at.desc(), Team.id.desc())
@@ -87,24 +79,10 @@ class TeamRepository:
         """Return whether the current user can access the given team."""
         result = await self.db.execute(
             select(Team.id)
-            .outerjoin(TeamMember, TeamMember.team_id == Team.id)
-            .outerjoin(KnowledgeBase, KnowledgeBase.team_id == Team.id)
+            .join(TeamMember, TeamMember.team_id == Team.id)
             .where(
                 Team.id == team_id,
-                or_(
-                    TeamMember.user_id == self.user_id,
-                    KnowledgeBase.user_id == self.user_id,
-                    exists(
-                        select(1)
-                        .select_from(KnowledgeBaseMember)
-                        .join(KnowledgeBase, KnowledgeBaseMember.knowledge_base_id == KnowledgeBase.id)
-                        .where(
-                            KnowledgeBase.team_id == Team.id,
-                            KnowledgeBaseMember.user_id == self.user_id,
-                        )
-                        .correlate(Team)
-                    ),
-                ),
+                TeamMember.user_id == self.user_id,
             )
             .limit(1)
         )
@@ -135,11 +113,11 @@ class TeamRepository:
         )
         self.db.add(team)
         await self.db.flush()
-        self.db.add(TeamMember(team_id=team.id, user_id=self.user_id, role="owner"))
+        self.db.add(TeamMember(team_id=team.id, user_id=self.user_id, role=TEAM_ROLE_OWNER))
         if member_ids:
             for uid in member_ids:
                 if uid != self.user_id:
-                    self.db.add(TeamMember(team_id=team.id, user_id=uid, role="member"))
+                    self.db.add(TeamMember(team_id=team.id, user_id=uid, role=TEAM_ROLE_VIEWER))
         await self.db.commit()
         await self.db.refresh(team)
         return team
@@ -190,11 +168,18 @@ class TeamRepository:
         if not team:
             return []
         result = await self.db.execute(
-            select(TeamMember)
+            select(TeamMember, User.username, User.email, User.full_name)
+            .join(User, User.id == TeamMember.user_id)
             .where(TeamMember.team_id == team_id)
             .order_by(TeamMember.created_at.asc())
         )
-        return list(result.scalars().all())
+        members: list[TeamMember] = []
+        for member, username, email, full_name in result.all():
+            member.username = username
+            member.email = email
+            member.full_name = full_name
+            members.append(member)
+        return members
 
     async def add_member(self, team_id: int, *, user_id: int, role: str) -> TeamMember | None:
         team = await self.get_team(team_id)
@@ -209,9 +194,9 @@ class TeamRepository:
         )
         member = result.scalar_one_or_none()
         if member:
-            member.role = role
+            member.role = normalize_team_role(role)
         else:
-            member = TeamMember(team_id=team_id, user_id=user_id, role=role)
+            member = TeamMember(team_id=team_id, user_id=user_id, role=normalize_team_role(role))
             self.db.add(member)
         await self.db.commit()
         await self.db.refresh(member)
@@ -231,7 +216,7 @@ class TeamRepository:
         member = result.scalar_one_or_none()
         if not member:
             return None
-        member.role = role
+        member.role = normalize_team_role(role)
         await self.db.commit()
         await self.db.refresh(member)
         return member
@@ -258,7 +243,7 @@ class TeamRepository:
         )
         members = list(result.scalars().all())
         for member in members:
-            member.role = role
+            member.role = normalize_team_role(role)
         await self.db.commit()
         return len(members)
 

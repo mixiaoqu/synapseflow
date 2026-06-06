@@ -45,7 +45,7 @@ async def list_projects(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProjectService(db, user_id=current_user.id).list_projects_page(
+    return await ProjectService(db, user_id=current_user.id, user=current_user).list_projects_page(
         team_id=team_id,
         keyword=keyword,
         status=status,
@@ -60,7 +60,7 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProjectService(db, user_id=current_user.id).create_project(body)
+    return await ProjectService(db, user_id=current_user.id, user=current_user).create_project(body)
 
 
 @router.post("/{project_id}/copy", response_model=ProjectResponse)
@@ -70,7 +70,7 @@ async def copy_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProjectService(db, user_id=current_user.id).copy_project(
+    return await ProjectService(db, user_id=current_user.id, user=current_user).copy_project(
         project_id=project_id,
         payload=body,
     )
@@ -82,7 +82,7 @@ async def get_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProjectService(db, user_id=current_user.id).get_project(project_id)
+    return await ProjectService(db, user_id=current_user.id, user=current_user).get_project(project_id)
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
@@ -92,7 +92,7 @@ async def update_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProjectService(db, user_id=current_user.id).update_project(project_id, body)
+    return await ProjectService(db, user_id=current_user.id, user=current_user).update_project(project_id, body)
 
 
 @router.delete("/{project_id}")
@@ -101,7 +101,7 @@ async def delete_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    await ProjectService(db, user_id=current_user.id).delete_project(project_id)
+    await ProjectService(db, user_id=current_user.id, user=current_user).delete_project(project_id)
     return {"message": "Deleted successfully"}
 
 
@@ -115,7 +115,7 @@ async def list_project_apps(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProjectService(db, user_id=current_user.id).list_apps_page(
+    return await ProjectService(db, user_id=current_user.id, user=current_user).list_apps_page(
         project_id=project_id,
         keyword=keyword,
         status=status,
@@ -131,7 +131,7 @@ async def create_project_app(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProjectService(db, user_id=current_user.id).create_app(
+    return await ProjectService(db, user_id=current_user.id, user=current_user).create_app(
         project_id=project_id,
         payload=body,
     )
@@ -144,7 +144,7 @@ async def get_project_app(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProjectService(db, user_id=current_user.id).get_app(
+    return await ProjectService(db, user_id=current_user.id, user=current_user).get_app(
         project_id=project_id,
         app_id=app_id,
     )
@@ -158,7 +158,7 @@ async def update_project_app(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProjectService(db, user_id=current_user.id).update_app(
+    return await ProjectService(db, user_id=current_user.id, user=current_user).update_app(
         project_id=project_id,
         app_id=app_id,
         payload=body,
@@ -172,7 +172,7 @@ async def delete_project_app(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    await ProjectService(db, user_id=current_user.id).delete_app(
+    await ProjectService(db, user_id=current_user.id, user=current_user).delete_app(
         project_id=project_id,
         app_id=app_id,
     )
@@ -187,7 +187,7 @@ async def create_project_app_embed_preview(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    runtime = await ProjectService(db, user_id=current_user.id).get_app_runtime(
+    runtime = await ProjectService(db, user_id=current_user.id, user=current_user).get_app_runtime(
         project_id=project_id,
         app_id=app_id,
         active_only=True,

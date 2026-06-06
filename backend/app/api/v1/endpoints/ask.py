@@ -11,7 +11,9 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import get_current_user, require_review_roles
+from app.application.permission_service import PermissionService
 from app.application.kb_chat_service import get_kb_chat_service
+from app.core.authz import PERMISSION_REVIEW_QA_LOG, PERMISSION_VIEW_QA_LOG
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.kb_chat import (
@@ -33,7 +35,6 @@ from app.models.schemas.kb_chat import (
 )
 from app.models.schemas.team import TeamResponse
 from app.repositories.kb_chat_log_repository import KbChatLogRepository
-from app.repositories.team_repository import TeamRepository
 from app.services.document_lifecycle import (
     PREVIEW_ASK_DOCUMENT_STATUSES,
     RETRIEVAL_VERSION_CURRENT,
@@ -140,9 +141,24 @@ async def _require_team_scope(
 ) -> None:
     if request.team_id is None:
         raise HTTPException(status_code=400, detail="team_id is required")
-    team_repo = TeamRepository(db, user_id=current_user.id)
-    if not await team_repo.can_access_team(int(request.team_id)):
+    permission_service = PermissionService(db)
+    if not await permission_service.can_access_team(current_user, int(request.team_id)):
         raise HTTPException(status_code=403, detail="Team access denied")
+
+
+async def _require_log_team_permission(
+    *,
+    db: AsyncSession,
+    current_user: User,
+    team_id: int | None,
+    permission: str,
+) -> None:
+    if team_id is None:
+        if not PermissionService.is_system_admin(current_user):
+            raise HTTPException(status_code=403, detail="Log team scope is unavailable")
+        return
+    if not await PermissionService(db).has_team_permission(current_user, team_id, permission):
+        raise HTTPException(status_code=403, detail="QA log permission denied")
 
 
 @router.get("/teams", response_model=list[TeamResponse])
@@ -293,12 +309,24 @@ async def list_ask_logs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_review_roles),
 ):
+    permission_service = PermissionService(db)
+    accessible_team_ids = await permission_service.list_accessible_team_ids(current_user)
+    if team_id is not None:
+        if not await permission_service.has_team_permission(
+            current_user, team_id, PERMISSION_VIEW_QA_LOG
+        ):
+            raise HTTPException(status_code=403, detail="QA log permission denied")
+        scoped_team_ids = None
+    else:
+        scoped_team_ids = accessible_team_ids
+
     created_from = datetime.combine(start_date, time.min) if start_date else None
     created_to = datetime.combine(end_date, time.max) if end_date else None
     records, total = await KbChatLogRepository(db).list_logs(
         page=page,
         page_size=page_size,
         team_id=team_id,
+        team_ids=scoped_team_ids,
         project_id=project_id,
         project_app_id=project_app_id,
         external_user_id=external_user_id,
@@ -366,6 +394,15 @@ async def review_ask_log(
     current_user: User = Depends(require_review_roles),
 ):
     repo = KbChatLogRepository(db)
+    detail = await repo.get_log_detail(log_id=log_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="KB chat log not found")
+    await _require_log_team_permission(
+        db=db,
+        current_user=current_user,
+        team_id=detail.team_id,
+        permission=PERMISSION_REVIEW_QA_LOG,
+    )
     row = await repo.submit_review(
         log_id=log_id,
         review_label=body.review_label,
@@ -386,5 +423,11 @@ async def get_ask_log_detail(
     record = await KbChatLogRepository(db).get_log_detail(log_id=log_id)
     if record is None:
         raise HTTPException(status_code=404, detail="KB chat log not found")
+    await _require_log_team_permission(
+        db=db,
+        current_user=current_user,
+        team_id=record.team_id,
+        permission=PERMISSION_VIEW_QA_LOG,
+    )
 
     return _build_log_detail_response(record)

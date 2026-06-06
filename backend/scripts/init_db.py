@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.core.authz import ROLE_KB_ADMIN
+from app.core.authz import SYSTEM_ROLE_ADMIN
 from app.core.security import hash_password
 from app.db.models import Team, TeamMember, User
 from app.db.session import AsyncSessionLocal
@@ -26,6 +26,8 @@ PLACEHOLDER_PASSWORDS = {
     "change-this-admin-password",
     "change-me",
 }
+DEFAULT_TEAM_CODE = "default"
+DEFAULT_TEAM_NAME = "默认团队"
 
 
 def _env_bool(name: str, *, default: bool = False) -> bool:
@@ -58,26 +60,45 @@ def _run_migrations() -> int:
     return result.returncode
 
 
-async def _ensure_team_membership(session, *, user_id: int, role: str) -> None:
-    team_ids = list((await session.execute(select(Team.id))).scalars().all())
-    if not team_ids:
+async def _ensure_default_team(session) -> Team:
+    team_name = os.getenv("BOOTSTRAP_DEFAULT_TEAM_NAME", DEFAULT_TEAM_NAME).strip() or DEFAULT_TEAM_NAME
+    team_code = os.getenv("BOOTSTRAP_DEFAULT_TEAM_CODE", DEFAULT_TEAM_CODE).strip() or DEFAULT_TEAM_CODE
+    team = (
+        await session.execute(
+            select(Team).where(
+                or_(
+                    Team.code == team_code,
+                    Team.name == team_name,
+                )
+            )
+        )
+    ).scalar_one_or_none()
+    if team is not None:
+        return team
+
+    team = Team(name=team_name, code=team_code, description="系统初始化默认团队")
+    session.add(team)
+    await session.commit()
+    await session.refresh(team)
+    print(f"Bootstrap default team created: name={team.name} code={team.code}")
+    return team
+
+
+async def _ensure_team_owner(session, *, team_id: int, user_id: int) -> None:
+    member = (
+        await session.execute(
+            select(TeamMember).where(
+                TeamMember.team_id == team_id,
+                TeamMember.user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if member is None:
+        session.add(TeamMember(team_id=team_id, user_id=user_id, role="owner"))
+        await session.commit()
         return
-
-    existing_memberships = {
-        (team_id, member_user_id)
-        for team_id, member_user_id in (
-            await session.execute(select(TeamMember.team_id, TeamMember.user_id))
-        ).all()
-    }
-
-    changed = False
-    for team_id in team_ids:
-        if (team_id, user_id) in existing_memberships:
-            continue
-        session.add(TeamMember(team_id=team_id, user_id=user_id, role=role))
-        changed = True
-
-    if changed:
+    if member.role != "owner":
+        member.role = "owner"
         await session.commit()
 
 
@@ -110,7 +131,7 @@ async def _ensure_admin_user() -> None:
                 email=admin_email,
                 full_name=admin_full_name or None,
                 hashed_password=hash_password(admin_password),
-                role=ROLE_KB_ADMIN,
+                role=SYSTEM_ROLE_ADMIN,
                 is_active=True,
             )
             session.add(user)
@@ -119,8 +140,8 @@ async def _ensure_admin_user() -> None:
             print(f"Bootstrap admin created: username={user.username} email={user.email}")
         else:
             changed = False
-            if user.role != ROLE_KB_ADMIN:
-                user.role = ROLE_KB_ADMIN
+            if user.role != SYSTEM_ROLE_ADMIN:
+                user.role = SYSTEM_ROLE_ADMIN
                 changed = True
             if not user.is_active:
                 user.is_active = True
@@ -136,7 +157,8 @@ async def _ensure_admin_user() -> None:
                 f"username={user.username} email={user.email}"
             )
 
-        await _ensure_team_membership(session, user_id=user.id, role="owner")
+        team = await _ensure_default_team(session)
+        await _ensure_team_owner(session, team_id=team.id, user_id=user.id)
 
 
 def main() -> None:

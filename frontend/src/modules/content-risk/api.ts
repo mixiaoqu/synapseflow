@@ -83,6 +83,8 @@ function mapLog(item: ContentRiskLogListResponse["items"][number]): ContentRiskL
     projectName: item.project_name,
     projectAppId: item.project_app_id,
     projectAppName: item.project_app_name,
+    teamId: item.team_id,
+    teamName: item.team_name,
     externalUserId: item.external_user_id,
     externalUserName: item.external_user_name,
     knowledgeBaseId: item.knowledge_base_id,

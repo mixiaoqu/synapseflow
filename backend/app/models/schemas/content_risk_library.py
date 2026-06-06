@@ -144,6 +144,8 @@ class ContentRiskLogResponse(BaseModel):
     project_name: str | None = None
     project_app_id: int | None = None
     project_app_name: str | None = None
+    team_id: int | None = None
+    team_name: str | None = None
     external_user_id: str | None = None
     external_user_name: str | None = None
     knowledge_base_id: int | None = None

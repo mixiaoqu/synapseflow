@@ -143,6 +143,7 @@ export interface ContentRiskTestResult {
 export interface ListContentRiskLogsParams {
   page?: number;
   page_size?: number;
+  team_id?: number;
   scene?: ContentRiskScene;
   action?: ContentRiskResolvedAction;
   blocked?: boolean;
@@ -159,11 +160,13 @@ export interface ContentRiskLogListResponse {
     session_id: string | null;
     product_id: number | null;
     product_name: string | null;
-    project_id: number | null;
-    project_name: string | null;
-    project_app_id: number | null;
-    project_app_name: string | null;
-    external_user_id: string | null;
+  project_id: number | null;
+  project_name: string | null;
+  project_app_id: number | null;
+  project_app_name: string | null;
+  team_id: number | null;
+  team_name: string | null;
+  external_user_id: string | null;
     external_user_name: string | null;
     knowledge_base_id: number | null;
     knowledge_base_name: string | null;
@@ -192,6 +195,8 @@ export interface ContentRiskLogSummary {
   projectName: string | null;
   projectAppId: number | null;
   projectAppName: string | null;
+  teamId: number | null;
+  teamName: string | null;
   externalUserId: string | null;
   externalUserName: string | null;
   knowledgeBaseId: number | null;

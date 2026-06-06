@@ -3,8 +3,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies.auth import require_any_admin_role
-from app.core.authz import ROLE_KB_ADMIN, normalize_role
+from app.api.dependencies.auth import require_system_admin
+from app.core.authz import SYSTEM_ROLE_ADMIN, normalize_system_role
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.user_admin import (
@@ -41,15 +41,19 @@ async def _ensure_user_update_allowed(
 ) -> None:
     if target_user.id == current_user.id and is_active is False:
         raise HTTPException(status_code=400, detail="不能停用当前登录账号")
-    if target_user.id == current_user.id and role is not None and normalize_role(role) != normalize_role(target_user.role):
+    if (
+        target_user.id == current_user.id
+        and role is not None
+        and normalize_system_role(role) != normalize_system_role(target_user.role)
+    ):
         raise HTTPException(status_code=400, detail="不能修改当前登录账号的角色")
 
-    is_admin = normalize_role(target_user.role) == ROLE_KB_ADMIN
+    is_admin = normalize_system_role(target_user.role) == SYSTEM_ROLE_ADMIN
     will_stop_being_active_admin = (
         is_admin
         and (
             is_active is False
-            or (role is not None and normalize_role(role) != ROLE_KB_ADMIN)
+            or (role is not None and normalize_system_role(role) != SYSTEM_ROLE_ADMIN)
         )
     )
     if will_stop_being_active_admin and await repo.count_active_admins() <= 1:
@@ -64,7 +68,7 @@ async def _ensure_user_delete_allowed(
 ) -> None:
     if target_user.id == current_user.id:
         raise HTTPException(status_code=400, detail="不能删除当前登录账号")
-    if normalize_role(target_user.role) == ROLE_KB_ADMIN and await repo.count_active_admins() <= 1:
+    if normalize_system_role(target_user.role) == SYSTEM_ROLE_ADMIN and await repo.count_active_admins() <= 1:
         raise HTTPException(status_code=400, detail="不能删除最后一个启用中的管理员")
 
 
@@ -75,10 +79,10 @@ async def list_users(
     keyword: str | None = Query(None, description="搜索关键词，匹配用户名、邮箱或姓名"),
     role: str | None = Query(None, description="角色筛选"),
     is_active: bool | None = Query(None, description="启用状态筛选"),
+    team_id: int | None = Query(None, description="团队筛选"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_admin_role),
+    current_user: User = Depends(require_system_admin),
 ):
-    del current_user
     repo = UserRepository(db)
     rows, total = await repo.list_users_paginated(
         page=page,
@@ -86,6 +90,7 @@ async def list_users(
         keyword=keyword,
         role=role,
         is_active=is_active,
+        team_id=team_id,
     )
     team_memberships = await repo.get_user_team_memberships([user.id for user in rows])
     return UserListResponse(
@@ -100,7 +105,7 @@ async def list_users(
 async def create_user(
     body: AdminUserCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_admin_role),
+    current_user: User = Depends(require_system_admin),
 ):
     repo = UserRepository(db)
     if await repo.get_by_username(body.username):
@@ -122,7 +127,7 @@ async def create_user(
 async def bulk_action_users(
     body: AdminUserBulkAction,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_admin_role),
+    current_user: User = Depends(require_system_admin),
 ):
     repo = UserRepository(db)
     user_ids = list(dict.fromkeys(body.user_ids))
@@ -152,9 +157,8 @@ async def bulk_action_users(
 async def get_user_detail(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_admin_role),
+    current_user: User = Depends(require_system_admin),
 ):
-    del current_user
     repo = UserRepository(db)
     user = await repo.get_by_id(user_id)
     if user is None:
@@ -168,7 +172,7 @@ async def update_user(
     user_id: int,
     body: AdminUserUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_admin_role),
+    current_user: User = Depends(require_system_admin),
 ):
     repo = UserRepository(db)
     existing = await repo.get_by_id(user_id)
@@ -210,7 +214,7 @@ async def update_user(
 async def delete_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_admin_role),
+    current_user: User = Depends(require_system_admin),
 ):
     repo = UserRepository(db)
     existing = await repo.get_by_id(user_id)

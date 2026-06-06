@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     Document,
     KnowledgeBase,
+    User,
 )
 from app.repositories.access_scope import accessible_knowledge_base_condition
 from app.repositories.index_job_repository import IndexJobRepository
@@ -68,9 +69,10 @@ class KnowledgeBaseSummaryRecord:
 class KnowledgeBaseRepository:
     """Persists knowledge bases."""
 
-    def __init__(self, db: AsyncSession, user_id: int):
+    def __init__(self, db: AsyncSession, user_id: int, user: User | None = None):
         self.db = db
         self.user_id = user_id
+        self.user = user
 
     async def list_with_count(
         self,
@@ -136,7 +138,7 @@ class KnowledgeBaseRepository:
                 (Document.knowledge_base_id == KnowledgeBase.id)
                 & (Document.is_current.is_(True)),
             )
-            .where(accessible_knowledge_base_condition(self.user_id))
+            .where(accessible_knowledge_base_condition(self.user_id, user=self.user))
         )
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
@@ -202,7 +204,7 @@ class KnowledgeBaseRepository:
         stmt = (
             select(func.count())
             .select_from(KnowledgeBase)
-            .where(accessible_knowledge_base_condition(self.user_id))
+            .where(accessible_knowledge_base_condition(self.user_id, user=self.user))
         )
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
@@ -226,7 +228,9 @@ class KnowledgeBaseRepository:
         offset: int = 0,
         limit: int = 20,
     ) -> list[KnowledgeBase]:
-        stmt = select(KnowledgeBase).where(accessible_knowledge_base_condition(self.user_id))
+        stmt = select(KnowledgeBase).where(
+            accessible_knowledge_base_condition(self.user_id, user=self.user)
+        )
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
         if active_only:
@@ -323,7 +327,7 @@ class KnowledgeBaseRepository:
         result = await self.db.execute(
             select(KnowledgeBase).where(
                 KnowledgeBase.id == knowledge_base_id,
-                accessible_knowledge_base_condition(self.user_id),
+                accessible_knowledge_base_condition(self.user_id, user=self.user),
             )
         )
         return result.scalar_one_or_none()

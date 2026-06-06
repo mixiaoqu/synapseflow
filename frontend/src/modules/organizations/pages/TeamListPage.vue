@@ -30,6 +30,7 @@ import { listUsers } from "@/shared/api/users";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
+import { useAuthStore } from "@/stores/auth";
 import { useTeamScopeStore } from "@/stores/team-scope";
 import { TEAM_ROLE_LABELS } from "@/shared/types/team";
 import type { TeamRole, TeamSummary, TeamMember } from "@/shared/types/team";
@@ -76,6 +77,7 @@ function formatDate(value?: string | null) {
 }
 
 const teamScopeStore = useTeamScopeStore();
+const authStore = useAuthStore();
 const TEAM_ROLE_OPTIONS = Object.entries(TEAM_ROLE_LABELS).map(([value, label]) => ({
   value: value as TeamRole,
   label,
@@ -114,7 +116,7 @@ const currentMemberRoleFilter = ref<"all" | TeamRole>("all");
 const pendingAddIds = ref<number[]>([]);
 /** 成员管理弹窗右侧选中的成员用户 ID 列表 */
 const selectedMemberUserIds = ref<number[]>([]);
-const selectedMemberRole = ref<TeamRole>("member");
+const selectedMemberRole = ref<TeamRole>("viewer");
 const memberBatchActionLoading = ref<"" | "role" | "remove">("");
 
 const pagination = ref({ page: 1, pageSize: 10, total: 0 });
@@ -124,6 +126,23 @@ let memberSearchTimer: ReturnType<typeof setTimeout> | undefined;
 const userMap = computed(() => new Map(users.value.map((u) => [u.id, u])));
 
 const memberIds = computed(() => new Set(members.value.map((m) => m.user_id)));
+
+const canManageActiveTeamMembers = computed(() => {
+  if (authStore.user?.role === "system_admin") {
+    return true;
+  }
+  const currentUserMember = members.value.find((member) => member.user_id === authStore.user?.id);
+  return currentUserMember?.role === "owner" || currentUserMember?.role === "admin";
+});
+
+function getMemberDisplayUser(member: TeamMember) {
+  return userMap.value.get(member.user_id) ?? {
+    id: member.user_id,
+    username: member.username || `用户 ${member.user_id}`,
+    email: member.email || "",
+    full_name: member.full_name || null,
+  };
+}
 
 /** 成员管理弹窗左侧：所有非当前团队成员的用户（支持搜索过滤） */
 const availableMembers = computed(() => {
@@ -145,12 +164,12 @@ const filteredMembers = computed(() => {
     if (currentMemberRoleFilter.value !== "all" && member.role !== currentMemberRoleFilter.value) {
       return false;
     }
-    const user = userMap.value.get(member.user_id);
+    const memberUser = getMemberDisplayUser(member);
     if (!keyword) return true;
     return (
-      (user?.full_name || "").toLowerCase().includes(keyword) ||
-      (user?.username || "").toLowerCase().includes(keyword) ||
-      (user?.email || "").toLowerCase().includes(keyword) ||
+      (memberUser.full_name || "").toLowerCase().includes(keyword) ||
+      memberUser.username.toLowerCase().includes(keyword) ||
+      memberUser.email.toLowerCase().includes(keyword) ||
       String(member.user_id).includes(keyword)
     );
   });
@@ -184,14 +203,11 @@ async function loadData() {
   loading.value = true;
   loadError.value = null;
   try {
-    const [teamResult] = await Promise.all([
-      listTeams({
-        page: pagination.value.page,
-        page_size: pagination.value.pageSize,
-        keyword: searchKeyword.value.trim() || undefined,
-      }),
-      loadUserOptions(),
-    ]);
+    const teamResult = await listTeams({
+      page: pagination.value.page,
+      page_size: pagination.value.pageSize,
+      keyword: searchKeyword.value.trim() || undefined,
+    });
     teams.value = teamResult.items;
     pagination.value.total = teamResult.total;
     selectedTeamIds.value = [];
@@ -327,13 +343,25 @@ async function openMemberPanel(team: TeamSummary) {
   currentMemberRoleFilter.value = "all";
   pendingAddIds.value = [];
   selectedMemberUserIds.value = [];
-  selectedMemberRole.value = "member";
+  selectedMemberRole.value = "viewer";
   try {
-    const [memberItems] = await Promise.all([
-      listTeamMembers(team.id),
-      loadUserOptions(),
-    ]);
+    const memberItems = await listTeamMembers(team.id);
     members.value = memberItems;
+    mergeUsers(
+      memberItems.map((member) => ({
+        id: member.user_id,
+        username: member.username || `用户 ${member.user_id}`,
+        email: member.email || "",
+        full_name: member.full_name || null,
+        role: "user",
+        is_active: true,
+        created_at: member.created_at,
+        updated_at: member.updated_at,
+        team_names: [],
+        team_count: 0,
+        team_memberships: [],
+      })),
+    );
   } catch {
     members.value = [];
   } finally {
@@ -352,7 +380,7 @@ function closeMemberPanel() {
   currentMemberRoleFilter.value = "all";
   pendingAddIds.value = [];
   selectedMemberUserIds.value = [];
-  selectedMemberRole.value = "member";
+  selectedMemberRole.value = "viewer";
 }
 
 /** 批量添加选中的用户到团队 */
@@ -362,7 +390,7 @@ async function handleAddMembers() {
   try {
     const results = await Promise.all(
       pendingAddIds.value.map((uid) =>
-        addTeamMember(activeTeam.value!.id, { user_id: uid, role: "member" })
+        addTeamMember(activeTeam.value!.id, { user_id: uid, role: "viewer" })
       )
     );
     members.value = [...members.value, ...results];
@@ -759,7 +787,7 @@ watch(memberSearchKeyword, (value) => {
       </div>
       <div v-else class="team-list-page__member-panel">
         <!-- 左侧：添加成员 -->
-        <div class="team-list-page__member-panel__left">
+        <div v-if="canManageActiveTeamMembers" class="team-list-page__member-panel__left">
           <div class="team-list-page__member-panel__header">
             <strong>添加成员</strong>
           </div>
@@ -840,7 +868,7 @@ watch(memberSearchKeyword, (value) => {
               />
             </el-select>
           </div>
-          <div v-if="members.length > 0" class="team-list-page__member-panel__bulk">
+          <div v-if="members.length > 0 && canManageActiveTeamMembers" class="team-list-page__member-panel__bulk">
             <el-checkbox
               :model-value="
                 filteredMembers.length > 0 &&
@@ -900,23 +928,23 @@ watch(memberSearchKeyword, (value) => {
               v-for="member in filteredMembers"
               :key="member.id"
               class="team-list-page__member-panel__user-row"
-              :class="{ 'team-list-page__member-panel__user-row--inactive': userMap.get(member.user_id)?.is_active === false }"
+              :class="{ 'team-list-page__member-panel__user-row--inactive': getMemberDisplayUser(member).is_active === false }"
             >
               <el-checkbox
                 :model-value="selectedMemberUserIds.includes(member.user_id)"
                 @change="(checked) => handleToggleMemberSelection(member.user_id, Boolean(checked))"
               />
               <span class="team-list-page__member-avatar" :style="avatarStyle(member.user_id)">
-                {{ getInitials(userMap.get(member.user_id)?.full_name, userMap.get(member.user_id)?.username) }}
+                {{ getInitials(getMemberDisplayUser(member).full_name, getMemberDisplayUser(member).username) }}
               </span>
               <div class="team-list-page__member-info">
-                <strong>{{ userMap.get(member.user_id)?.full_name || userMap.get(member.user_id)?.username || `用户 #${member.user_id}` }}</strong>
+                <strong>{{ getMemberDisplayUser(member).full_name || getMemberDisplayUser(member).username }}</strong>
                 <small>
-                  {{ userMap.get(member.user_id)?.email || `user_id=${member.user_id}` }}
-                  <template v-if="userMap.get(member.user_id)?.is_active === false"> · 已停用</template>
+                  {{ getMemberDisplayUser(member).email || `user_id=${member.user_id}` }}
+                  <template v-if="getMemberDisplayUser(member).is_active === false"> · 已停用</template>
                 </small>
               </div>
-              <div class="team-list-page__member-actions">
+              <div v-if="canManageActiveTeamMembers" class="team-list-page__member-actions">
                 <el-select
                   :model-value="member.role"
                   :loading="updatingMemberId === member.id"

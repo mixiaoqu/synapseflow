@@ -5,7 +5,10 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.permission_service import PermissionService
+from app.core.authz import PERMISSION_MANAGE_PROJECT, PERMISSION_VIEW_TEAM_RESOURCE
 from app.db.models import Product
+from app.db.models import User
 from app.models.schemas.product import (
     ProductCreate,
     ProductListResponse,
@@ -13,15 +16,15 @@ from app.models.schemas.product import (
     ProductUpdate,
 )
 from app.repositories.product_repository import ProductRecord, ProductRepository
-from app.repositories.team_repository import TeamRepository
 
 
 class ProductService:
-    def __init__(self, db: AsyncSession, *, user_id: int):
+    def __init__(self, db: AsyncSession, *, user_id: int, user: User | None = None):
         self.db = db
         self.user_id = user_id
+        self.user = user
         self.repository = ProductRepository(db)
-        self.team_repository = TeamRepository(db, user_id=user_id)
+        self.permission_service = PermissionService(db)
 
     @staticmethod
     def _normalize_optional_text(value: str | None) -> str | None:
@@ -51,13 +54,25 @@ class ProductService:
             updated_at=product.updated_at,
         )
 
-    async def _ensure_team_access(self, team_id: int) -> None:
-        if not await self.team_repository.can_access_team(team_id):
+    async def _ensure_team_permission(
+        self,
+        team_id: int,
+        permission: str = PERMISSION_VIEW_TEAM_RESOURCE,
+    ) -> None:
+        if self.user is None:
+            raise HTTPException(status_code=403, detail="Team access denied")
+        if permission == PERMISSION_VIEW_TEAM_RESOURCE:
+            allowed = await self.permission_service.can_access_team(self.user, team_id)
+        else:
+            allowed = await self.permission_service.has_team_permission(
+                self.user, team_id, permission
+            )
+        if not allowed:
             raise HTTPException(status_code=403, detail="Team access denied")
 
     async def list_products(self, *, team_id: int | None = None) -> list[ProductResponse]:
         if team_id is not None:
-            await self._ensure_team_access(team_id)
+            await self._ensure_team_permission(team_id)
         records = await self.repository.list_products(team_id=team_id)
         return [self._to_response(record) for record in records]
 
@@ -69,7 +84,7 @@ class ProductService:
         page_size: int = 10,
     ) -> ProductListResponse:
         if team_id is not None:
-            await self._ensure_team_access(team_id)
+            await self._ensure_team_permission(team_id)
         normalized_page = max(1, int(page))
         normalized_page_size = min(100, max(1, int(page_size)))
         total = await self.repository.count_products(team_id=team_id)
@@ -89,11 +104,11 @@ class ProductService:
         record = await self.repository.get_product_record(product_id)
         if record is None:
             raise HTTPException(status_code=404, detail="Product not found")
-        await self._ensure_team_access(record.product.team_id)
+        await self._ensure_team_permission(record.product.team_id)
         return self._to_response(record)
 
     async def create_product(self, payload: ProductCreate) -> ProductResponse:
-        await self._ensure_team_access(payload.team_id)
+        await self._ensure_team_permission(payload.team_id, PERMISSION_MANAGE_PROJECT)
         code = self._normalize_code(payload.code)
         if await self.repository.product_code_exists(code):
             raise HTTPException(status_code=400, detail="Product code already exists")
@@ -114,8 +129,8 @@ class ProductService:
         product = await self.repository.get_product(product_id)
         if product is None:
             raise HTTPException(status_code=404, detail="Product not found")
-        await self._ensure_team_access(product.team_id)
-        await self._ensure_team_access(payload.team_id)
+        await self._ensure_team_permission(product.team_id, PERMISSION_MANAGE_PROJECT)
+        await self._ensure_team_permission(payload.team_id, PERMISSION_MANAGE_PROJECT)
         code = self._normalize_code(payload.code)
         if await self.repository.product_code_exists(code, exclude_id=product_id):
             raise HTTPException(status_code=400, detail="Product code already exists")
@@ -134,5 +149,5 @@ class ProductService:
         product = await self.repository.get_product(product_id)
         if product is None:
             raise HTTPException(status_code=404, detail="Product not found")
-        await self._ensure_team_access(product.team_id)
+        await self._ensure_team_permission(product.team_id, PERMISSION_MANAGE_PROJECT)
         await self.repository.delete_product(product)

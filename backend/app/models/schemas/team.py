@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-TeamRole = Literal["owner", "admin", "member"]
+TeamRole = Literal["owner", "admin", "editor", "reviewer", "viewer"]
 TeamBulkAction = Literal["delete"]
 
 
@@ -64,7 +64,7 @@ class TeamMemberCreate(BaseModel):
     """Create team member request."""
 
     user_id: int = Field(..., description="用户 ID")
-    role: TeamRole = Field(default="member", description="团队角色")
+    role: TeamRole = Field(default="viewer", description="团队角色")
 
 
 class TeamMemberUpdate(BaseModel):
@@ -94,6 +94,9 @@ class TeamMemberResponse(BaseModel):
     id: int
     team_id: int
     user_id: int
+    username: str | None = None
+    email: str | None = None
+    full_name: str | None = None
     role: str
     created_at: datetime
     updated_at: datetime

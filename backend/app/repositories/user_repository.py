@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.authz import ROLE_END_USER, ROLE_KB_ADMIN, normalize_role
+from app.core.authz import SYSTEM_ROLE_ADMIN, SYSTEM_ROLE_USER, normalize_system_role
 from app.core.security import hash_password
 from app.db.models import Team, TeamMember, User
 from app.utils.time import utc_now
@@ -17,6 +17,14 @@ def _normalize_username(value: str) -> str:
 
 def _normalize_email(value: str) -> str:
     return value.strip().lower()
+
+
+def _deleted_username(user_id: int) -> str:
+    return f"deleted_user_{user_id}"
+
+
+def _deleted_email(user_id: int) -> str:
+    return f"deleted_user_{user_id}@deleted.local"
 
 
 class UserRepository:
@@ -75,8 +83,13 @@ class UserRepository:
         keyword: str | None = None,
         role: str | None = None,
         is_active: bool | None = None,
+        team_id: int | None = None,
     ) -> tuple[list[User], int]:
         base_query = select(User).where(User.deleted_at.is_(None))
+        if team_id is not None:
+            base_query = base_query.join(TeamMember, TeamMember.user_id == User.id).where(
+                TeamMember.team_id == team_id
+            )
         if keyword and keyword.strip():
             pattern = f"%{keyword.strip()}%"
             base_query = base_query.where(
@@ -87,7 +100,7 @@ class UserRepository:
                 )
             )
         if role and role.strip():
-            base_query = base_query.where(User.role == normalize_role(role))
+            base_query = base_query.where(User.role == normalize_system_role(role))
         if is_active is not None:
             base_query = base_query.where(User.is_active.is_(is_active))
         count_result = await self.db.execute(select(func.count()).select_from(base_query.subquery()))
@@ -131,7 +144,7 @@ class UserRepository:
             select(func.count()).select_from(User).where(
                 User.deleted_at.is_(None),
                 User.is_active.is_(True),
-                User.role == ROLE_KB_ADMIN,
+                User.role == SYSTEM_ROLE_ADMIN,
             )
         )
         return result.scalar_one()
@@ -143,7 +156,7 @@ class UserRepository:
         email: str,
         password: str,
         full_name: str | None = None,
-        role: str = ROLE_END_USER,
+        role: str = SYSTEM_ROLE_USER,
         is_active: bool = True,
     ) -> User:
         user = User(
@@ -151,7 +164,7 @@ class UserRepository:
             email=_normalize_email(email),
             full_name=(full_name or "").strip() or None,
             hashed_password=hash_password(password),
-            role=normalize_role(role),
+            role=normalize_system_role(role),
             is_active=is_active,
         )
         self.db.add(user)
@@ -183,7 +196,7 @@ class UserRepository:
         if full_name is not None:
             user.full_name = full_name.strip() or None
         if role is not None:
-            user.role = normalize_role(role)
+            user.role = normalize_system_role(role)
         if is_active is not None:
             user.is_active = is_active
 
@@ -197,6 +210,8 @@ class UserRepository:
             return None
         user.is_active = False
         user.deleted_at = utc_now()
+        user.username = _deleted_username(user.id)
+        user.email = _deleted_email(user.id)
         await self.db.commit()
         await self.db.refresh(user)
         return user
@@ -209,6 +224,8 @@ class UserRepository:
                 continue
             user.is_active = False
             user.deleted_at = utc_now()
+            user.username = _deleted_username(user.id)
+            user.email = _deleted_email(user.id)
             deleted.append(user)
         if deleted:
             await self.db.commit()

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Document, DocumentCategory, KnowledgeBase
+from app.db.models import Document, DocumentCategory, KnowledgeBase, User
 from app.repositories.access_scope import accessible_knowledge_base_condition
 from app.services.category_scope import resolve_category_subtree_ids
 
@@ -23,9 +23,10 @@ class DocumentCategorySummary:
 class DocumentCategoryRepository:
     """Encapsulates document-category persistence."""
 
-    def __init__(self, db: AsyncSession, user_id: int):
+    def __init__(self, db: AsyncSession, user_id: int, user: User | None = None):
         self.db = db
         self.user_id = user_id
+        self.user = user
 
     async def list_for_knowledge_base(
         self,
@@ -50,7 +51,7 @@ class DocumentCategoryRepository:
                 document_join_condition,
             )
             .where(
-                accessible_knowledge_base_condition(self.user_id),
+                accessible_knowledge_base_condition(self.user_id, user=self.user),
                 DocumentCategory.knowledge_base_id == knowledge_base_id,
             )
             .group_by(DocumentCategory.id)
@@ -68,7 +69,7 @@ class DocumentCategoryRepository:
             .join(KnowledgeBase, KnowledgeBase.id == DocumentCategory.knowledge_base_id)
             .where(
                 DocumentCategory.id == category_id,
-                accessible_knowledge_base_condition(self.user_id),
+                accessible_knowledge_base_condition(self.user_id, user=self.user),
             )
         )
         return result.scalar_one_or_none()
@@ -87,7 +88,7 @@ class DocumentCategoryRepository:
             select(DocumentCategory)
             .join(KnowledgeBase, KnowledgeBase.id == DocumentCategory.knowledge_base_id)
             .where(
-                accessible_knowledge_base_condition(self.user_id),
+                accessible_knowledge_base_condition(self.user_id, user=self.user),
                 DocumentCategory.knowledge_base_id == knowledge_base_id,
                 func.lower(DocumentCategory.name) == normalized_name.lower(),
             )

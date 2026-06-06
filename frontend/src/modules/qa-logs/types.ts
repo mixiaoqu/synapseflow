@@ -10,6 +10,10 @@ export type QaLogFeedbackValue = "helpful" | "not_helpful" | string;
 export interface ListQaLogsParams {
   page?: number;
   page_size?: number;
+  team_id?: number;
+  project_id?: number;
+  project_app_id?: number;
+  external_user_id?: string;
   answer_status?: string;
   retrieval_status?: string;
   feedback_value?: string;

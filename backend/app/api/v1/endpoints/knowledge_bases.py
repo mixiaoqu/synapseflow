@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import require_content_roles
+from app.application.permission_service import PermissionService
 from app.application.document_service import document_service
+from app.core.authz import PERMISSION_MANAGE_KB_DRAFT
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.knowledge_base import (
@@ -23,6 +25,18 @@ from app.models.schemas.knowledge_base import (
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
 router = APIRouter()
+
+
+async def _require_manage_knowledge_base(
+    *,
+    db: AsyncSession,
+    current_user: User,
+    team_id: int,
+) -> None:
+    if not await PermissionService(db).has_team_permission(
+        current_user, team_id, PERMISSION_MANAGE_KB_DRAFT
+    ):
+        raise HTTPException(status_code=403, detail="Knowledge-base permission denied")
 
 
 def _resolve_knowledge_base_status(
@@ -109,7 +123,7 @@ async def list_knowledge_bases(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
     normalized_page = max(1, int(page))
     normalized_page_size = min(100, max(1, int(page_size)))
     total = await repo.count_knowledge_bases(
@@ -138,7 +152,12 @@ async def create_knowledge_base(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    await _require_manage_knowledge_base(
+        db=db,
+        current_user=current_user,
+        team_id=body.team_id,
+    )
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
     return await repo.create(
         body.name,
         team_id=body.team_id,
@@ -152,7 +171,7 @@ async def bulk_action_knowledge_bases(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
     unique_ids = list(dict.fromkeys(body.knowledge_base_ids))
     failures: list[KnowledgeBaseBulkActionFailure] = []
     affected = 0
@@ -170,6 +189,11 @@ async def bulk_action_knowledge_bases(
                     )
                 )
                 continue
+            await _require_manage_knowledge_base(
+                db=db,
+                current_user=current_user,
+                team_id=knowledge_base.team_id,
+            )
             knowledge_base.is_active = target_active
             changed_items.append(knowledge_base)
         if changed_items:
@@ -178,6 +202,20 @@ async def bulk_action_knowledge_bases(
 
     elif body.action == "delete":
         for knowledge_base_id in unique_ids:
+            knowledge_base = await repo.get_by_id(knowledge_base_id)
+            if not knowledge_base:
+                failures.append(
+                    KnowledgeBaseBulkActionFailure(
+                        id=knowledge_base_id,
+                        message="知识库不存在或无权访问",
+                    )
+                )
+                continue
+            await _require_manage_knowledge_base(
+                db=db,
+                current_user=current_user,
+                team_id=knowledge_base.team_id,
+            )
             ok = await repo.delete(knowledge_base_id)
             if ok:
                 affected += 1
@@ -200,6 +238,11 @@ async def bulk_action_knowledge_bases(
                     )
                 )
                 continue
+            await _require_manage_knowledge_base(
+                db=db,
+                current_user=current_user,
+                team_id=knowledge_base.team_id,
+            )
             try:
                 await document_service.reindex_all_documents(
                     db=db,
@@ -229,7 +272,7 @@ async def get_knowledge_base(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
     rows = await repo.list_with_count(knowledge_base_id=knowledge_base_id, offset=0, limit=1)
     if not rows:
         raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
@@ -243,7 +286,15 @@ async def update_knowledge_base(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
+    existing = await repo.get_by_id(knowledge_base_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
+    await _require_manage_knowledge_base(
+        db=db,
+        current_user=current_user,
+        team_id=existing.team_id,
+    )
     knowledge_base = await repo.update(
         knowledge_base_id,
         name=body.name,
@@ -261,10 +312,15 @@ async def toggle_knowledge_base_active(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
     knowledge_base = await repo.get_by_id(knowledge_base_id)
     if not knowledge_base:
         raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
+    await _require_manage_knowledge_base(
+        db=db,
+        current_user=current_user,
+        team_id=knowledge_base.team_id,
+    )
     knowledge_base.is_active = body.is_active
     await db.commit()
     await db.refresh(knowledge_base)
@@ -277,7 +333,15 @@ async def delete_knowledge_base(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
+    knowledge_base = await repo.get_by_id(knowledge_base_id)
+    if not knowledge_base:
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
+    await _require_manage_knowledge_base(
+        db=db,
+        current_user=current_user,
+        team_id=knowledge_base.team_id,
+    )
     ok = await repo.delete(knowledge_base_id)
     if not ok:
         raise HTTPException(status_code=404, detail="知识库不存在或无权访问")

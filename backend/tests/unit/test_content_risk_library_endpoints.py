@@ -1,13 +1,13 @@
 from types import SimpleNamespace
 
-from app.api.dependencies.auth import require_any_admin_role, require_content_roles
+from app.api.dependencies.auth import require_system_admin
 from app.db.session import get_db
 from app.main import app
 
 
 def test_list_content_risk_libraries_returns_structured_items(client, monkeypatch):
-    async def _fake_require_any_admin_role():
-        return SimpleNamespace(id=1, role="kb_admin")
+    async def _fake_require_system_admin():
+        return SimpleNamespace(id=1, role="system_admin")
 
     async def _fake_get_db():
         yield object()
@@ -33,7 +33,7 @@ def test_list_content_risk_libraries_returns_structured_items(client, monkeypatc
         "app.api.v1.endpoints.content_risk_libraries.ContentRiskLibraryService.list_libraries",
         _fake_list_libraries,
     )
-    app.dependency_overrides[require_any_admin_role] = _fake_require_any_admin_role
+    app.dependency_overrides[require_system_admin] = _fake_require_system_admin
     app.dependency_overrides[get_db] = _fake_get_db
     try:
         response = client.get(
@@ -52,8 +52,8 @@ def test_list_content_risk_libraries_returns_structured_items(client, monkeypatc
 
 
 def test_list_content_risk_logs_returns_detection_logs(client, monkeypatch):
-    async def _fake_require_any_admin_role():
-        return SimpleNamespace(id=1, role="kb_admin")
+    async def _fake_require_system_admin():
+        return SimpleNamespace(id=1, role="system_admin")
 
     async def _fake_get_db():
         yield object()
@@ -114,7 +114,7 @@ def test_list_content_risk_logs_returns_detection_logs(client, monkeypatch):
         "app.api.v1.endpoints.content_risk_libraries.ContentRiskLogRepository.list_logs",
         _fake_list_logs,
     )
-    app.dependency_overrides[require_any_admin_role] = _fake_require_any_admin_role
+    app.dependency_overrides[require_system_admin] = _fake_require_system_admin
     app.dependency_overrides[get_db] = _fake_get_db
     try:
         response = client.get(
@@ -140,8 +140,8 @@ def test_list_content_risk_logs_returns_detection_logs(client, monkeypatch):
 
 
 def test_create_content_risk_library_returns_created_item(client, monkeypatch):
-    async def _fake_require_content_roles():
-        return SimpleNamespace(id=7, role="kb_admin")
+    async def _fake_require_system_admin():
+        return SimpleNamespace(id=7, role="system_admin")
 
     async def _fake_get_db():
         yield object()
@@ -167,7 +167,7 @@ def test_create_content_risk_library_returns_created_item(client, monkeypatch):
         "app.api.v1.endpoints.content_risk_libraries.ContentRiskLibraryService.create_library",
         _fake_create_library,
     )
-    app.dependency_overrides[require_content_roles] = _fake_require_content_roles
+    app.dependency_overrides[require_system_admin] = _fake_require_system_admin
     app.dependency_overrides[get_db] = _fake_get_db
     try:
         response = client.post(
@@ -189,8 +189,8 @@ def test_create_content_risk_library_returns_created_item(client, monkeypatch):
 
 
 def test_update_content_risk_library_returns_updated_item(client, monkeypatch):
-    async def _fake_require_content_roles():
-        return SimpleNamespace(id=8, role="kb_editor")
+    async def _fake_require_system_admin():
+        return SimpleNamespace(id=8, role="system_admin")
 
     async def _fake_get_db():
         yield object()
@@ -217,7 +217,7 @@ def test_update_content_risk_library_returns_updated_item(client, monkeypatch):
         "app.api.v1.endpoints.content_risk_libraries.ContentRiskLibraryService.update_library",
         _fake_update_library,
     )
-    app.dependency_overrides[require_content_roles] = _fake_require_content_roles
+    app.dependency_overrides[require_system_admin] = _fake_require_system_admin
     app.dependency_overrides[get_db] = _fake_get_db
     try:
         response = client.put(
@@ -239,8 +239,8 @@ def test_update_content_risk_library_returns_updated_item(client, monkeypatch):
 
 
 def test_delete_content_risk_library_returns_no_content(client, monkeypatch):
-    async def _fake_require_content_roles():
-        return SimpleNamespace(id=9, role="kb_admin")
+    async def _fake_require_system_admin():
+        return SimpleNamespace(id=9, role="system_admin")
 
     async def _fake_get_db():
         yield object()
@@ -254,7 +254,7 @@ def test_delete_content_risk_library_returns_no_content(client, monkeypatch):
         "app.api.v1.endpoints.content_risk_libraries.ContentRiskLibraryService.delete_library",
         _fake_delete_library,
     )
-    app.dependency_overrides[require_content_roles] = _fake_require_content_roles
+    app.dependency_overrides[require_system_admin] = _fake_require_system_admin
     app.dependency_overrides[get_db] = _fake_get_db
     try:
         response = client.delete("/api/v1/content-risk/libraries/2")
@@ -266,8 +266,8 @@ def test_delete_content_risk_library_returns_no_content(client, monkeypatch):
 
 
 def test_list_content_risk_rules_returns_library_rules(client, monkeypatch):
-    async def _fake_require_any_admin_role():
-        return SimpleNamespace(id=1, role="kb_admin")
+    async def _fake_require_system_admin():
+        return SimpleNamespace(id=1, role="system_admin")
 
     async def _fake_get_db():
         yield object()
@@ -301,7 +301,7 @@ def test_list_content_risk_rules_returns_library_rules(client, monkeypatch):
         "app.api.v1.endpoints.content_risk_libraries.ContentRiskLibraryService.list_rules",
         _fake_list_rules,
     )
-    app.dependency_overrides[require_any_admin_role] = _fake_require_any_admin_role
+    app.dependency_overrides[require_system_admin] = _fake_require_system_admin
     app.dependency_overrides[get_db] = _fake_get_db
     try:
         response = client.get(
@@ -322,8 +322,8 @@ def test_list_content_risk_rules_returns_library_rules(client, monkeypatch):
 
 
 def test_create_content_risk_rule_returns_created_rule(client, monkeypatch):
-    async def _fake_require_content_roles():
-        return SimpleNamespace(id=7, role="kb_admin")
+    async def _fake_require_system_admin():
+        return SimpleNamespace(id=7, role="system_admin")
 
     async def _fake_get_db():
         yield object()
@@ -360,7 +360,7 @@ def test_create_content_risk_rule_returns_created_rule(client, monkeypatch):
         "app.api.v1.endpoints.content_risk_libraries.ContentRiskLibraryService.create_rule",
         _fake_create_rule,
     )
-    app.dependency_overrides[require_content_roles] = _fake_require_content_roles
+    app.dependency_overrides[require_system_admin] = _fake_require_system_admin
     app.dependency_overrides[get_db] = _fake_get_db
     try:
         response = client.post(
@@ -392,8 +392,8 @@ def test_create_content_risk_rule_returns_created_rule(client, monkeypatch):
 
 
 def test_update_content_risk_rule_returns_updated_rule(client, monkeypatch):
-    async def _fake_require_content_roles():
-        return SimpleNamespace(id=8, role="kb_editor")
+    async def _fake_require_system_admin():
+        return SimpleNamespace(id=8, role="system_admin")
 
     async def _fake_get_db():
         yield object()
@@ -429,7 +429,7 @@ def test_update_content_risk_rule_returns_updated_rule(client, monkeypatch):
         "app.api.v1.endpoints.content_risk_libraries.ContentRiskLibraryService.update_rule",
         _fake_update_rule,
     )
-    app.dependency_overrides[require_content_roles] = _fake_require_content_roles
+    app.dependency_overrides[require_system_admin] = _fake_require_system_admin
     app.dependency_overrides[get_db] = _fake_get_db
     try:
         response = client.put(

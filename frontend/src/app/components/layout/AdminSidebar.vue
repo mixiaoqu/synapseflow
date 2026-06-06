@@ -18,6 +18,7 @@ import {
 } from "@element-plus/icons-vue";
 
 import { adminNavGroups, adminPrimaryNav } from "@/app/navigation/admin-nav";
+import { useAuthStore } from "@/stores/auth";
 import { useTeamScopeStore } from "@/stores/team-scope";
 
 defineProps<{
@@ -31,6 +32,7 @@ const emit = defineEmits<{
 }>();
 
 const route = useRoute();
+const authStore = useAuthStore();
 const teamScopeStore = useTeamScopeStore();
 
 const selectedTeamId = computed({
@@ -63,6 +65,20 @@ const expandedGroupKeys = ref<Record<(typeof adminNavGroups)[number]["key"], boo
   "operations-and-review": true,
   "organization-and-access": true,
 });
+
+const visibleNavGroups = computed(() =>
+  adminNavGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => {
+        if (item.key === "users" || item.key === "content-risk-libraries") {
+          return authStore.user?.role === "system_admin";
+        }
+        return true;
+      }),
+    }))
+    .filter((group) => group.items.length > 0),
+);
 
 function toggleNavGroup(groupKey: (typeof adminNavGroups)[number]["key"]) {
   expandedGroupKeys.value[groupKey] = !expandedGroupKeys.value[groupKey];
@@ -151,7 +167,7 @@ onMounted(() => {
         </router-link>
       </div>
 
-      <section v-for="group in adminNavGroups" :key="group.key" class="space-y-2">
+      <section v-for="group in visibleNavGroups" :key="group.key" class="space-y-2">
         <button
           type="button"
           class="flex w-full items-center rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.18em] transition-colors"

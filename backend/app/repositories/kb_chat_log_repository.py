@@ -147,6 +147,7 @@ class KbChatLogRepository:
         page: int = 1,
         page_size: int = 10,
         team_id: int | None = None,
+        team_ids: list[int] | None = None,
         project_id: int | None = None,
         project_app_id: int | None = None,
         external_user_id: str | None = None,
@@ -187,6 +188,7 @@ class KbChatLogRepository:
         stmt = self._apply_list_log_filters(
             stmt,
             team_id=team_id,
+            team_ids=team_ids,
             project_id=project_id,
             project_app_id=project_app_id,
             external_user_id=external_user_id,
@@ -222,6 +224,7 @@ class KbChatLogRepository:
         total_stmt = self._apply_list_log_filters(
             total_stmt,
             team_id=team_id,
+            team_ids=team_ids,
             project_id=project_id,
             project_app_id=project_app_id,
             external_user_id=external_user_id,
@@ -295,6 +298,7 @@ class KbChatLogRepository:
         stmt,
         *,
         team_id: int | None,
+        team_ids: list[int] | None,
         project_id: int | None,
         project_app_id: int | None,
         external_user_id: str | None,
@@ -312,6 +316,11 @@ class KbChatLogRepository:
     ):
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if team_ids is not None:
+            if not team_ids:
+                stmt = stmt.where(False)
+            else:
+                stmt = stmt.where(KnowledgeBase.team_id.in_(team_ids))
         if project_id is not None:
             stmt = stmt.where(KbChatLog.project_id == project_id)
         if project_app_id is not None:

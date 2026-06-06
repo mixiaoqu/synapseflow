@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { Refresh, Search } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 
@@ -13,6 +13,7 @@ import type {
 } from "@/modules/content-risk/types";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
+import { useTeamScopeStore } from "@/stores/team-scope";
 import { getErrorMessage } from "@/shared/utils/error";
 
 type SceneFilter = "all" | ContentRiskScene;
@@ -21,6 +22,7 @@ type BlockedFilter = "all" | "blocked" | "recorded";
 type RiskLevelFilter = "all" | NonNullable<ContentRiskLogSummary["riskLevel"]>;
 
 const logs = ref<ContentRiskLogSummary[]>([]);
+const teamScopeStore = useTeamScopeStore();
 const loading = ref(false);
 const loadError = ref<unknown>(null);
 const hasLoadedData = ref(false);
@@ -102,6 +104,7 @@ function sourceName(log: ContentRiskLogSummary) {
   return (
     log.projectAppName ??
     log.projectName ??
+    log.teamName ??
     log.productName ??
     log.knowledgeBaseName ??
     log.assistantName ??
@@ -118,6 +121,7 @@ function buildLogParams() {
   return {
     page: pagination.page,
     page_size: pagination.pageSize,
+    team_id: teamScopeStore.selectedTeamId ?? undefined,
     scene: filters.scene === "all" ? undefined : filters.scene,
     action: filters.action === "all" ? undefined : filters.action,
     blocked:
@@ -182,8 +186,17 @@ function openDetail(log: ContentRiskLogSummary) {
 }
 
 onMounted(() => {
+  void teamScopeStore.bootstrap();
   void loadLogs();
 });
+
+watch(
+  () => teamScopeStore.selectedTeamId,
+  () => {
+    pagination.page = 1;
+    void loadLogs();
+  },
+);
 </script>
 
 <template>

@@ -37,9 +37,10 @@ class AssistantDependencyRecord:
 class AssistantProfileRepository:
     """Persist assistant profiles with team-scoped visibility."""
 
-    def __init__(self, db: AsyncSession, user_id: int):
+    def __init__(self, db: AsyncSession, user_id: int, user: User | None = None):
         self.db = db
         self.user_id = user_id
+        self.user = user
 
     def _base_stmt(self):
         return (
@@ -50,7 +51,7 @@ class AssistantProfileRepository:
             )
             .join(Team, Team.id == AssistantProfile.team_id)
             .outerjoin(User, User.id == AssistantProfile.created_by_user_id)
-            .where(accessible_assistant_profile_condition(self.user_id))
+            .where(accessible_assistant_profile_condition(self.user_id, user=self.user))
         )
 
     @staticmethod
@@ -86,7 +87,7 @@ class AssistantProfileRepository:
         stmt = (
             select(func.count())
             .select_from(AssistantProfile)
-            .where(accessible_assistant_profile_condition(self.user_id))
+            .where(accessible_assistant_profile_condition(self.user_id, user=self.user))
         )
         if team_id is not None:
             stmt = stmt.where(AssistantProfile.team_id == team_id)

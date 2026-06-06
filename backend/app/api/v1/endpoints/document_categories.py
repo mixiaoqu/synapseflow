@@ -60,7 +60,7 @@ async def list_document_categories(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = DocumentCategoryRepository(db, user_id=current_user.id)
+    repo = DocumentCategoryRepository(db, user_id=current_user.id, user=current_user)
     rows = await repo.list_for_knowledge_base(knowledge_base_id)
 
     if format == "tree":
@@ -86,12 +86,12 @@ async def create_document_category(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    kb_repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    kb_repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
     knowledge_base = await kb_repo.get_by_id(body.knowledge_base_id)
     if not knowledge_base:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
 
-    repo = DocumentCategoryRepository(db, user_id=current_user.id)
+    repo = DocumentCategoryRepository(db, user_id=current_user.id, user=current_user)
 
     # Validate parent_id if provided
     if body.parent_id is not None:
@@ -132,7 +132,7 @@ async def update_document_category(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = DocumentCategoryRepository(db, user_id=current_user.id)
+    repo = DocumentCategoryRepository(db, user_id=current_user.id, user=current_user)
     category = await repo.get_by_id(category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -165,7 +165,7 @@ async def delete_document_category(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = DocumentCategoryRepository(db, user_id=current_user.id)
+    repo = DocumentCategoryRepository(db, user_id=current_user.id, user=current_user)
     ok = await repo.delete(category_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Category not found")

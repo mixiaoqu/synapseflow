@@ -1,9 +1,11 @@
 """Content-risk rule library endpoints."""
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies.auth import require_any_admin_role, require_content_roles
+from app.api.dependencies.auth import get_current_user, require_system_admin
+from app.application.permission_service import PermissionService
+from app.core.authz import PERMISSION_VIEW_QA_LOG
 from app.application.content_risk_library_service import ContentRiskLibraryService
 from app.db.models import User
 from app.db.session import get_db
@@ -46,7 +48,7 @@ def _build_hit_response(hit: dict) -> ContentRiskRuleHitResponse:
 async def test_content_risk_rules(
     body: ContentRiskTestRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_admin_role),
+    current_user: User = Depends(require_system_admin),
 ):
     del current_user
     result = await get_content_risk_detection_service().check_text(
@@ -79,6 +81,7 @@ async def test_content_risk_rules(
 
 @router.get("/logs", response_model=ContentRiskLogListResponse)
 async def list_content_risk_logs(
+    team_id: int | None = Query(None, description="Optional team filter"),
     scene: str | None = Query(None, description="Optional scene filter"),
     action: str | None = Query(None, description="Optional action filter"),
     blocked: bool | None = Query(None, description="Optional blocked filter"),
@@ -87,12 +90,24 @@ async def list_content_risk_logs(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Rows per page"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_admin_role),
+    current_user: User = Depends(get_current_user),
 ):
-    del current_user
+    permission_service = PermissionService(db)
+    accessible_team_ids = await permission_service.list_accessible_team_ids(current_user)
+    if team_id is not None:
+        if not await permission_service.has_team_permission(
+            current_user, team_id, PERMISSION_VIEW_QA_LOG
+        ):
+            raise HTTPException(status_code=403, detail="Content risk log permission denied")
+        scoped_team_ids = None
+    else:
+        scoped_team_ids = accessible_team_ids
+
     rows, total = await ContentRiskLogRepository(db).list_logs(
         page=page,
         page_size=page_size,
+        team_id=team_id,
+        team_ids=scoped_team_ids,
         scene=scene,
         action=action,
         blocked=blocked,
@@ -113,6 +128,8 @@ async def list_content_risk_logs(
                 project_name=project_name,
                 project_app_id=log.project_app_id,
                 project_app_name=project_app_name,
+                team_id=log.team_id,
+                team_name=team_name,
                 external_user_id=log.external_user_id,
                 external_user_name=log.external_user_name,
                 knowledge_base_id=log.knowledge_base_id,
@@ -133,7 +150,15 @@ async def list_content_risk_logs(
                 elapsed_ms=log.elapsed_ms,
                 created_at=log.created_at,
             )
-            for log, product_name, project_name, project_app_name, knowledge_base_name, assistant_name in rows
+            for (
+                log,
+                product_name,
+                project_name,
+                project_app_name,
+                team_name,
+                knowledge_base_name,
+                assistant_name,
+            ) in rows
         ],
     )
 
@@ -143,7 +168,7 @@ async def list_content_risk_libraries(
     keyword: str | None = Query(None, description="Optional keyword"),
     enabled: bool | None = Query(None, description="Optional enabled filter"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_admin_role),
+    current_user: User = Depends(require_system_admin),
 ):
     del current_user
     items = await ContentRiskLibraryService().list_libraries(
@@ -162,7 +187,7 @@ async def list_content_risk_libraries(
 async def create_content_risk_library(
     body: ContentRiskLibraryCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_content_roles),
+    current_user: User = Depends(require_system_admin),
 ):
     return await ContentRiskLibraryService().create_library(
         db=db,
@@ -176,7 +201,7 @@ async def update_content_risk_library(
     library_id: int,
     body: ContentRiskLibraryUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_content_roles),
+    current_user: User = Depends(require_system_admin),
 ):
     return await ContentRiskLibraryService().update_library(
         library_id,
@@ -190,7 +215,7 @@ async def update_content_risk_library(
 async def delete_content_risk_library(
     library_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_content_roles),
+    current_user: User = Depends(require_system_admin),
 ):
     await ContentRiskLibraryService().delete_library(
         library_id,
@@ -205,7 +230,7 @@ async def list_content_risk_rules(
     keyword: str | None = Query(None, description="Optional keyword"),
     enabled: bool | None = Query(None, description="Optional enabled filter"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_admin_role),
+    current_user: User = Depends(require_system_admin),
 ):
     del current_user
     items = await ContentRiskLibraryService().list_rules(
@@ -226,7 +251,7 @@ async def create_content_risk_rule(
     library_id: int,
     body: ContentRiskRuleCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_content_roles),
+    current_user: User = Depends(require_system_admin),
 ):
     return await ContentRiskLibraryService().create_rule(
         library_id,
@@ -242,7 +267,7 @@ async def update_content_risk_rule(
     rule_id: int,
     body: ContentRiskRuleUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_content_roles),
+    current_user: User = Depends(require_system_admin),
 ):
     return await ContentRiskLibraryService().update_rule(
         library_id,

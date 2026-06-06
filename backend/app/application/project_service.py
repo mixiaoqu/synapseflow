@@ -5,7 +5,10 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.permission_service import PermissionService
+from app.core.authz import PERMISSION_MANAGE_PROJECT, PERMISSION_VIEW_TEAM_RESOURCE
 from app.db.models import AssistantProfile, DocumentCategory, Product, Project, ProjectApp
+from app.db.models import User
 from app.models.schemas.project import (
     ProjectAppCreate,
     ProjectAppListResponse,
@@ -24,16 +27,16 @@ from app.repositories.project_repository import (
     ProjectRecord,
     ProjectRepository,
 )
-from app.repositories.team_repository import TeamRepository
 
 
 class ProjectService:
-    def __init__(self, db: AsyncSession, *, user_id: int):
+    def __init__(self, db: AsyncSession, *, user_id: int, user: User | None = None):
         self.db = db
         self.user_id = user_id
+        self.user = user
         self.repository = ProjectRepository(db)
         self.product_repository = ProductRepository(db)
-        self.team_repository = TeamRepository(db, user_id=user_id)
+        self.permission_service = PermissionService(db)
 
     @staticmethod
     def _normalize_optional_text(value: str | None) -> str | None:
@@ -94,8 +97,20 @@ class ProjectService:
             updated_at=app.updated_at,
         )
 
-    async def _ensure_team_access(self, team_id: int) -> None:
-        if not await self.team_repository.can_access_team(team_id):
+    async def _ensure_team_permission(
+        self,
+        team_id: int,
+        permission: str = PERMISSION_VIEW_TEAM_RESOURCE,
+    ) -> None:
+        if self.user is None:
+            raise HTTPException(status_code=403, detail="Team access denied")
+        if permission == PERMISSION_VIEW_TEAM_RESOURCE:
+            allowed = await self.permission_service.can_access_team(self.user, team_id)
+        else:
+            allowed = await self.permission_service.has_team_permission(
+                self.user, team_id, permission
+            )
+        if not allowed:
             raise HTTPException(status_code=403, detail="Team access denied")
 
     async def _get_product_for_project(self, *, product_id: int, team_id: int) -> Product:
@@ -132,7 +147,7 @@ class ProjectService:
     ) -> int:
         from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
-        kb_repository = KnowledgeBaseRepository(self.db, user_id=self.user_id)
+        kb_repository = KnowledgeBaseRepository(self.db, user_id=self.user_id, user=self.user)
         resolved_knowledge_base_id = int(knowledge_base_id)
         knowledge_base = await kb_repository.get_by_id(resolved_knowledge_base_id)
         if knowledge_base is None:
@@ -169,7 +184,7 @@ class ProjectService:
 
     async def list_projects(self, *, team_id: int | None = None) -> list[ProjectResponse]:
         if team_id is not None:
-            await self._ensure_team_access(team_id)
+            await self._ensure_team_permission(team_id)
         records = await self.repository.list_projects(team_id=team_id)
         return [self._to_project_response(record) for record in records]
 
@@ -183,7 +198,7 @@ class ProjectService:
         page_size: int = 10,
     ) -> ProjectListResponse:
         if team_id is not None:
-            await self._ensure_team_access(team_id)
+            await self._ensure_team_permission(team_id)
         normalized_page = max(1, int(page))
         normalized_page_size = min(100, max(1, int(page_size)))
         is_active = self._resolve_status_filter(status)
@@ -210,11 +225,11 @@ class ProjectService:
         record = await self.repository.get_project_record(project_id)
         if record is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        await self._ensure_team_access(record.project.team_id)
+        await self._ensure_team_permission(record.project.team_id)
         return self._to_project_response(record)
 
     async def create_project(self, payload: ProjectCreate) -> ProjectResponse:
-        await self._ensure_team_access(payload.team_id)
+        await self._ensure_team_permission(payload.team_id, PERMISSION_MANAGE_PROJECT)
         await self._get_product_for_project(product_id=payload.product_id, team_id=payload.team_id)
         code = self._normalize_code(payload.code)
         if await self.repository.project_code_exists(payload.product_id, code):
@@ -237,8 +252,8 @@ class ProjectService:
         project = await self.repository.get_project(project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        await self._ensure_team_access(project.team_id)
-        await self._ensure_team_access(payload.team_id)
+        await self._ensure_team_permission(project.team_id, PERMISSION_MANAGE_PROJECT)
+        await self._ensure_team_permission(payload.team_id, PERMISSION_MANAGE_PROJECT)
         await self._get_product_for_project(product_id=payload.product_id, team_id=payload.team_id)
 
         code = self._normalize_code(payload.code)
@@ -265,14 +280,14 @@ class ProjectService:
         project = await self.repository.get_project(project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        await self._ensure_team_access(project.team_id)
+        await self._ensure_team_permission(project.team_id, PERMISSION_MANAGE_PROJECT)
         await self.repository.delete_project(project)
 
     async def copy_project(self, *, project_id: int, payload: ProjectCopy) -> ProjectResponse:
         project = await self.repository.get_project(project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        await self._ensure_team_access(project.team_id)
+        await self._ensure_team_permission(project.team_id, PERMISSION_MANAGE_PROJECT)
 
         code = self._normalize_code(payload.code)
         if await self.repository.project_code_exists(project.product_id, code):
@@ -297,7 +312,7 @@ class ProjectService:
         project = await self.repository.get_project(project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        await self._ensure_team_access(project.team_id)
+        await self._ensure_team_permission(project.team_id)
         records = await self.repository.list_apps(project_id=project_id)
         return [self._to_app_response(record) for record in records]
 
@@ -313,7 +328,7 @@ class ProjectService:
         project = await self.repository.get_project(project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        await self._ensure_team_access(project.team_id)
+        await self._ensure_team_permission(project.team_id)
         normalized_page = max(1, page)
         normalized_page_size = min(100, max(1, page_size))
         is_active = self._resolve_status_filter(status)
@@ -340,7 +355,7 @@ class ProjectService:
         project = await self.repository.get_project(project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        await self._ensure_team_access(project.team_id)
+        await self._ensure_team_permission(project.team_id)
         record = await self.repository.get_app_record(app_id)
         if record is None or record.app.project_id != project_id:
             raise HTTPException(status_code=404, detail="Project app not found")
@@ -356,7 +371,7 @@ class ProjectService:
         project = await self.repository.get_project(project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        await self._ensure_team_access(project.team_id)
+        await self._ensure_team_permission(project.team_id)
         runtime = await self.repository.get_runtime_by_app_id(
             project_app_id=app_id,
             active_only=active_only,
@@ -374,7 +389,7 @@ class ProjectService:
         project = await self.repository.get_project(project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        await self._ensure_team_access(project.team_id)
+        await self._ensure_team_permission(project.team_id, PERMISSION_MANAGE_PROJECT)
         code = self._normalize_code(payload.code)
         if await self.repository.app_code_exists(project_id=project_id, code=code):
             raise HTTPException(status_code=400, detail="Project app code already exists")
@@ -416,7 +431,7 @@ class ProjectService:
         project = await self.repository.get_project(project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        await self._ensure_team_access(project.team_id)
+        await self._ensure_team_permission(project.team_id, PERMISSION_MANAGE_PROJECT)
         app = await self.repository.get_app(app_id)
         if app is None or app.project_id != project_id:
             raise HTTPException(status_code=404, detail="Project app not found")
@@ -457,7 +472,7 @@ class ProjectService:
         project = await self.repository.get_project(project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        await self._ensure_team_access(project.team_id)
+        await self._ensure_team_permission(project.team_id, PERMISSION_MANAGE_PROJECT)
         app = await self.repository.get_app(app_id)
         if app is None or app.project_id != project_id:
             raise HTTPException(status_code=404, detail="Project app not found")

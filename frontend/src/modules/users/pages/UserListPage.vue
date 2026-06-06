@@ -97,7 +97,7 @@ const createForm = ref({
   email: "",
   full_name: "",
   password: "",
-  role: "end_user",
+  role: "user",
   is_active: true,
 });
 
@@ -108,7 +108,7 @@ const editForm = ref({
   username: "",
   full_name: "",
   email: "",
-  role: "end_user",
+  role: "user",
   is_active: true,
 });
 
@@ -161,7 +161,7 @@ function openCreateDialog() {
     email: "",
     full_name: "",
     password: "",
-    role: "end_user",
+    role: "user",
     is_active: true,
   };
   createDialogVisible.value = true;

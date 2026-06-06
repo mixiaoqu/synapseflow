@@ -7,9 +7,11 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.permission_service import PermissionService
 from app.application.kb_chat_service import get_kb_chat_service
 from app.core.config import config_registry
-from app.db.models import AssistantProfile
+from app.core.authz import PERMISSION_MANAGE_ASSISTANT, PERMISSION_VIEW_TEAM_RESOURCE
+from app.db.models import AssistantProfile, User
 from app.models.schemas.assistant import (
     AssistantAvailabilityResponse,
     AssistantBulkActionRequest,
@@ -30,7 +32,6 @@ from app.repositories.assistant_profile_repository import (
     AssistantProfileRecord,
     AssistantProfileRepository,
 )
-from app.repositories.team_repository import TeamRepository
 from app.services.document_lifecycle import (
     PREVIEW_ASK_DOCUMENT_STATUSES,
     RETRIEVAL_VERSION_CURRENT,
@@ -42,11 +43,12 @@ from app.services.document_lifecycle import (
 class AssistantService:
     """Encapsulates assistant profile validation and response mapping."""
 
-    def __init__(self, db: AsyncSession, *, user_id: int):
+    def __init__(self, db: AsyncSession, *, user_id: int, user: User | None = None):
         self.db = db
         self.user_id = user_id
-        self.repository = AssistantProfileRepository(db, user_id=user_id)
-        self.team_repository = TeamRepository(db, user_id=user_id)
+        self.user = user
+        self.repository = AssistantProfileRepository(db, user_id=user_id, user=user)
+        self.permission_service = PermissionService(db)
 
     @staticmethod
     def _normalize_optional_text(value: str | None) -> str | None:
@@ -151,8 +153,17 @@ class AssistantService:
         self,
         *,
         current_team_id: int,
+        permission: str = PERMISSION_VIEW_TEAM_RESOURCE,
     ) -> None:
-        if not await self.team_repository.can_access_team(current_team_id):
+        if self.user is None:
+            raise HTTPException(status_code=403, detail="Team access denied")
+        if permission == PERMISSION_VIEW_TEAM_RESOURCE:
+            allowed = await self.permission_service.can_access_team(self.user, current_team_id)
+        else:
+            allowed = await self.permission_service.has_team_permission(
+                self.user, current_team_id, permission
+            )
+        if not allowed:
             raise HTTPException(status_code=403, detail="Team access denied")
 
     async def list_profiles(
@@ -236,7 +247,10 @@ class AssistantService:
         return self._to_response(record)
 
     async def create_profile(self, payload: AssistantProfileCreate) -> AssistantProfileResponse:
-        await self._validate_team_scope(current_team_id=payload.current_team_id)
+        await self._validate_team_scope(
+            current_team_id=payload.current_team_id,
+            permission=PERMISSION_MANAGE_ASSISTANT,
+        )
 
         slug = self._normalize_slug(payload.slug)
         if await self.repository.slug_exists(slug):
@@ -274,7 +288,14 @@ class AssistantService:
         if record is None:
             raise HTTPException(status_code=404, detail="Assistant not found")
 
-        await self._validate_team_scope(current_team_id=payload.current_team_id)
+        await self._validate_team_scope(
+            current_team_id=record.assistant.team_id,
+            permission=PERMISSION_MANAGE_ASSISTANT,
+        )
+        await self._validate_team_scope(
+            current_team_id=payload.current_team_id,
+            permission=PERMISSION_MANAGE_ASSISTANT,
+        )
 
         slug = self._normalize_slug(payload.slug)
         if await self.repository.slug_exists(slug, exclude_id=assistant_id):
@@ -310,7 +331,10 @@ class AssistantService:
         return self._to_dependency_usage(assistant_id, usage)
 
     async def preview_profile(self, payload: AssistantPreviewRequest):
-        await self._validate_team_scope(current_team_id=payload.current_team_id)
+        await self._validate_team_scope(
+            current_team_id=payload.current_team_id,
+            permission=PERMISSION_MANAGE_ASSISTANT,
+        )
         allowed_statuses = (
             list(PREVIEW_ASK_DOCUMENT_STATUSES)
             if payload.include_unpublished
@@ -344,6 +368,10 @@ class AssistantService:
         record = await self.repository.get_by_id(assistant_id)
         if record is None:
             raise HTTPException(status_code=404, detail="Assistant not found")
+        await self._validate_team_scope(
+            current_team_id=record.assistant.team_id,
+            permission=PERMISSION_MANAGE_ASSISTANT,
+        )
         usage = await self.repository.get_dependency_usage(assistant_id)
         if usage.active_session_count > 0 and not force:
             raise HTTPException(
@@ -363,6 +391,10 @@ class AssistantService:
         team_ids = {record.assistant.team_id for record in records}
         if len(team_ids) > 1:
             raise HTTPException(status_code=400, detail="Assistants must belong to the same team")
+        await self._validate_team_scope(
+            current_team_id=next(iter(team_ids)),
+            permission=PERMISSION_MANAGE_ASSISTANT,
+        )
 
         for index, record in enumerate(records):
             record.assistant.sort_order = index
@@ -378,6 +410,12 @@ class AssistantService:
         records = await self._get_records_by_ids(payload.assistant_ids)
         assistants = [record.assistant for record in records]
         assistant_ids = [assistant.id for assistant in assistants]
+        team_ids = {assistant.team_id for assistant in assistants}
+        for team_id in team_ids:
+            await self._validate_team_scope(
+                current_team_id=team_id,
+                permission=PERMISSION_MANAGE_ASSISTANT,
+            )
 
         if payload.action == "enable":
             for assistant in assistants:

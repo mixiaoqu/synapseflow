@@ -69,7 +69,7 @@ async def list_assistants(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     return await service.list_profiles_page(
         team_id=team_id,
         active_only=active_only,
@@ -86,7 +86,7 @@ async def create_assistant(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     return await service.create_profile(body)
 
 
@@ -96,7 +96,7 @@ async def reorder_assistants(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     return await service.reorder_profiles(body)
 
 
@@ -106,7 +106,7 @@ async def bulk_action_assistants(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     return await service.bulk_action(body)
 
 
@@ -116,7 +116,7 @@ async def list_available_assistants(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     return await service.list_available(
         team_id=team_id,
     )
@@ -128,7 +128,7 @@ async def preview_assistant(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     return await service.preview_profile(body)
 
 
@@ -137,7 +137,7 @@ async def list_assistant_model_options(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     return await service.list_model_options()
 
 
@@ -147,7 +147,7 @@ async def get_assistant_usage(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     return await service.get_dependency_usage(assistant_id)
 
 
@@ -157,7 +157,7 @@ async def get_assistant(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     return await service.get_profile(assistant_id)
 
 
@@ -168,7 +168,7 @@ async def update_assistant(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     return await service.update_profile(assistant_id, body)
 
 
@@ -179,7 +179,7 @@ async def delete_assistant(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     await service.delete_profile(assistant_id, force=force)
     return {"message": "Deleted successfully"}
 
@@ -197,7 +197,7 @@ async def invoke_assistant(
 
     session_id = body.get("session_id")
     session_id = str(session_id).strip() if isinstance(session_id, str) else None
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     assistant = await service.get_profile(assistant_id, active_only=True)
     request = _build_runtime_request(
         assistant=assistant,
@@ -224,7 +224,7 @@ async def stream_assistant(
 
     session_id = body.get("session_id")
     session_id = str(session_id).strip() if isinstance(session_id, str) else None
-    service = AssistantService(db, user_id=current_user.id)
+    service = AssistantService(db, user_id=current_user.id, user=current_user)
     assistant = await service.get_profile(assistant_id, active_only=True)
     request = _build_runtime_request(
         assistant=assistant,

@@ -767,6 +767,7 @@ class KbChatService(BaseAgentService):
                         chat_log_id=chat_log_id,
                         user_id=int(user_id) if user_id else None,
                         session_id=state.get("session_id"),
+                        team_id=state.get("team_id"),
                         product_id=state.get("product_id"),
                         project_id=state.get("project_id"),
                         project_app_id=state.get("project_app_id"),

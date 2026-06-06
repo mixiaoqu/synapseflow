@@ -25,7 +25,7 @@ async def list_products(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProductService(db, user_id=current_user.id).list_products_page(
+    return await ProductService(db, user_id=current_user.id, user=current_user).list_products_page(
         team_id=team_id,
         page=page,
         page_size=page_size,
@@ -38,7 +38,7 @@ async def create_product(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProductService(db, user_id=current_user.id).create_product(body)
+    return await ProductService(db, user_id=current_user.id, user=current_user).create_product(body)
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
@@ -47,7 +47,7 @@ async def get_product(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProductService(db, user_id=current_user.id).get_product(product_id)
+    return await ProductService(db, user_id=current_user.id, user=current_user).get_product(product_id)
 
 
 @router.put("/{product_id}", response_model=ProductResponse)
@@ -57,7 +57,7 @@ async def update_product(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await ProductService(db, user_id=current_user.id).update_product(product_id, body)
+    return await ProductService(db, user_id=current_user.id, user=current_user).update_product(product_id, body)
 
 
 @router.delete("/{product_id}")
@@ -66,5 +66,5 @@ async def delete_product(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    await ProductService(db, user_id=current_user.id).delete_product(product_id)
+    await ProductService(db, user_id=current_user.id, user=current_user).delete_product(product_id)
     return {"message": "Deleted successfully"}

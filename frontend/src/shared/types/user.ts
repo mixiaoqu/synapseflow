@@ -39,10 +39,9 @@ export interface UpdateUserPayload {
 
 /** 角色选项 */
 export const ROLE_OPTIONS = [
-  { value: "end_user", label: "普通用户" },
-  { value: "kb_editor", label: "知识编辑" },
-  { value: "kb_reviewer", label: "审核人员" },
-  { value: "kb_admin", label: "系统管理员" },
+  { value: "user", label: "普通用户" },
+  { value: "system_operator", label: "平台运营" },
+  { value: "system_admin", label: "平台超级管理员" },
 ] as const;
 
 /** 角色标签映射 */
@@ -52,10 +51,9 @@ export const ROLE_LABELS: Record<string, string> = Object.fromEntries(
 
 /** 角色对应 Element Plus Tag type */
 export const ROLE_TAG_TYPES: Record<string, string> = {
-  kb_admin: "danger",
-  kb_reviewer: "warning",
-  kb_editor: "",
-  end_user: "info",
+  system_admin: "danger",
+  system_operator: "warning",
+  user: "info",
 };
 
 /** 分页用户列表响应 */

@@ -12,6 +12,9 @@ export interface TeamMember {
   id: number;
   team_id: number;
   user_id: number;
+  username?: string | null;
+  email?: string | null;
+  full_name?: string | null;
   role: string;
   created_at: string;
   updated_at: string;
@@ -43,7 +46,9 @@ export interface TeamBulkActionResponse {
 export const TEAM_ROLE_LABELS: Record<string, string> = {
   owner: "所有者",
   admin: "管理员",
-  member: "成员",
+  editor: "内容编辑",
+  reviewer: "审核人员",
+  viewer: "只读成员",
 };
 
 export type TeamRole = keyof typeof TEAM_ROLE_LABELS;
