@@ -226,6 +226,13 @@ class DocumentService:
         return getattr(doc, "size", 0) or len((doc.content or "").encode("utf-8"))
 
     @staticmethod
+    def _display_title(title: str | None) -> str:
+        normalized = (title or "").replace("\\", "/").strip()
+        if not normalized:
+            return "Untitled document"
+        return normalized.rsplit("/", 1)[-1].strip() or normalized
+
+    @staticmethod
     def _normalize_source_path(source_path: str | None) -> str | None:
         raw = (source_path or "").replace("\\", "/").strip().strip("/")
         if not raw:
@@ -306,7 +313,7 @@ class DocumentService:
     ) -> DocumentResponse:
         return DocumentResponse(
             id=doc.id,
-            title=doc.title,
+            title=self._display_title(doc.title),
             content=doc.content or "",
             document_type=doc.document_type,
             size=self._document_size(doc),
@@ -630,7 +637,7 @@ class DocumentService:
         items = [
             DocumentListItem(
                 id=doc.id,
-                title=doc.title,
+                title=self._display_title(doc.title),
                 document_type=doc.document_type,
                 size=self._document_size(doc),
                 version=getattr(doc, "version", 1),
@@ -680,7 +687,7 @@ class DocumentService:
             active_jobs.append(
                 ActiveIndexingJob(
                     job_id=row.job_id,
-                    title=row.title,
+                    title=self._display_title(row.title),
                     job_type=row.job_type,
                     job_status=row.job_status,  # type: ignore[arg-type]
                     knowledge_base_id=row.knowledge_base_id,
@@ -706,7 +713,7 @@ class DocumentService:
             FailedIndexingItem(
                 job_id=item.job_id,
                 document_id=item.document_id,
-                title=item.title,
+                title=self._display_title(item.title),
                 job_title=item.job_title,
                 knowledge_base_id=item.knowledge_base_id,
                 knowledge_base_name=item.knowledge_base_name,
@@ -744,7 +751,7 @@ class DocumentService:
         items = [
             DocumentVersionItem(
                 id=version_doc.id,
-                title=version_doc.title,
+                title=self._display_title(version_doc.title),
                 version=getattr(version_doc, "version", 1),
                 is_latest=getattr(version_doc, "is_latest", True),
                 is_current=getattr(version_doc, "is_current", True),
