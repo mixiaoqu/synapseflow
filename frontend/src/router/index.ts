@@ -3,16 +3,18 @@ import { createRouter, createWebHistory } from "vue-router";
 import AdminLayout from "@/app/layouts/AdminLayout.vue";
 import AuthLayout from "@/app/layouts/AuthLayout.vue";
 import { createAuthGuard } from "@/app/guards/auth";
+import { useAdminBreadcrumbStore } from "@/stores/admin-breadcrumb";
 import LoginPage from "@/modules/auth/pages/LoginPage.vue";
 import AssistantDetailPage from "@/modules/assistants/pages/AssistantDetailPage.vue";
 import AssistantListPage from "@/modules/assistants/pages/AssistantListPage.vue";
 import ContentRiskLibrariesPage from "@/modules/content-risk/pages/ContentRiskLibrariesPage.vue";
+import ContentRiskLogsPage from "@/modules/content-risk/pages/ContentRiskLogsPage.vue";
 import ContentRiskOverviewPage from "@/modules/content-risk/pages/ContentRiskOverviewPage.vue";
 import EmbedAssistantPage from "@/modules/embed/pages/EmbedAssistantPage.vue";
 import DocumentDetailPage from "@/modules/knowledge-bases/pages/DocumentDetailPage.vue";
 import KnowledgeBaseDetailPage from "@/modules/knowledge-bases/pages/KnowledgeBaseDetailPage.vue";
 import KnowledgeBaseListPage from "@/modules/knowledge-bases/pages/KnowledgeBaseListPage.vue";
-import ModulePlaceholderPage from "@/modules/platform/pages/ModulePlaceholderPage.vue";
+import DashboardPage from "@/modules/platform/pages/DashboardPage.vue";
 import TeamListPage from "@/modules/organizations/pages/TeamListPage.vue";
 import UserListPage from "@/modules/users/pages/UserListPage.vue";
 import ProjectAppDetailPage from "@/modules/projects/pages/ProjectAppDetailPage.vue";
@@ -64,7 +66,7 @@ const router = createRouter({
         {
           path: "dashboard",
           name: "dashboard",
-          component: ModulePlaceholderPage,
+          component: DashboardPage,
           meta: {
             title: "控制台",
             description: "平台总览与待办入口，后续在此接入全局工作台内容。",
@@ -84,6 +86,7 @@ const router = createRouter({
           name: "project-apps",
           component: ProjectAppListPage,
           meta: {
+            parent: "projects",
             title: "发布渠道",
             description: "当前项目下的应用与发布配置列表。",
           },
@@ -93,6 +96,7 @@ const router = createRouter({
           name: "project-app-create",
           component: ProjectAppDetailPage,
           meta: {
+            parent: "project-apps",
             title: "新建发布渠道",
             description: "新建项目下的应用与发布配置。",
           },
@@ -102,6 +106,7 @@ const router = createRouter({
           name: "project-app-detail",
           component: ProjectAppDetailPage,
           meta: {
+            parent: "project-apps",
             title: "发布渠道详情",
             description: "编辑项目下的应用与发布配置。",
           },
@@ -120,6 +125,7 @@ const router = createRouter({
           name: "knowledge-base-detail",
           component: KnowledgeBaseDetailPage,
           meta: {
+            parent: "knowledge-bases",
             title: "知识库详情",
             description: "知识库分类侧栏与文档管理工作台。",
           },
@@ -129,6 +135,7 @@ const router = createRouter({
           name: "knowledge-base-document-detail",
           component: DocumentDetailPage,
           meta: {
+            parent: "knowledge-base-detail",
             title: "文档详情",
             description: "文档正文与真实分块查看页面。",
           },
@@ -147,6 +154,7 @@ const router = createRouter({
           name: "assistant-create",
           component: AssistantDetailPage,
           meta: {
+            parent: "assistants",
             title: "新建助手",
             description: "创建新的助手配置并进行预览调试。",
           },
@@ -156,6 +164,7 @@ const router = createRouter({
           name: "assistant-detail",
           component: AssistantDetailPage,
           meta: {
+            parent: "assistants",
             title: "助手详情",
             description: "编辑助手配置并进行预览调试。",
           },
@@ -204,11 +213,24 @@ const router = createRouter({
             description: "统一维护全局生效的规则库、规则明细和适用场景。",
           },
         },
+        {
+          path: "content-risk/logs",
+          name: "content-risk-logs",
+          component: ContentRiskLogsPage,
+          meta: {
+            parent: "content-risk-overview",
+            title: "内容风控中心 - 判定日志",
+            description: "查询内容风控触发记录、命中规则、风险等级和最终动作。",
+          },
+        },
       ],
     },
   ],
 });
 
 router.beforeEach(createAuthGuard());
+router.afterEach(() => {
+  useAdminBreadcrumbStore().clearDynamicTitles();
+});
 
 export default router;

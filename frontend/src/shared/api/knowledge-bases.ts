@@ -1,5 +1,10 @@
 import { request } from "@/shared/api/http";
-import type { KnowledgeBaseListResponse, KnowledgeBaseSummary } from "@/shared/types/knowledge-base";
+import type {
+  KnowledgeBaseBulkAction,
+  KnowledgeBaseBulkActionResponse,
+  KnowledgeBaseListResponse,
+  KnowledgeBaseSummary,
+} from "@/shared/types/knowledge-base";
 
 export interface KnowledgeBasePayload {
   name: string;
@@ -77,6 +82,20 @@ export function reindexKnowledgeBaseDocuments(knowledgeBaseId: number) {
     method: "POST",
     params: {
       knowledge_base_id: knowledgeBaseId,
+    },
+  });
+}
+
+export function bulkActionKnowledgeBases(
+  knowledgeBaseIds: number[],
+  action: KnowledgeBaseBulkAction,
+) {
+  return request<KnowledgeBaseBulkActionResponse>({
+    url: "/knowledge-bases/bulk-actions",
+    method: "POST",
+    data: {
+      knowledge_base_ids: knowledgeBaseIds,
+      action,
     },
   });
 }

@@ -5,12 +5,19 @@ import {
   Delete,
   EditPen,
   Plus,
+  Refresh,
   Search,
   User,
 } from "@element-plus/icons-vue";
 
+import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
+import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   addTeamMember,
+  bulkActionTeams,
+  bulkDeleteTeamMembers,
+  bulkUpdateTeamMembersRole,
   createTeam,
   deleteTeam,
   deleteTeamMember,
@@ -25,7 +32,7 @@ import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import { useTeamScopeStore } from "@/stores/team-scope";
 import { TEAM_ROLE_LABELS } from "@/shared/types/team";
-import type { TeamSummary, TeamMember } from "@/shared/types/team";
+import type { TeamRole, TeamSummary, TeamMember } from "@/shared/types/team";
 import type { AdminUser } from "@/shared/types/user";
 
 const AVATAR_PALETTES = [
@@ -69,12 +76,19 @@ function formatDate(value?: string | null) {
 }
 
 const teamScopeStore = useTeamScopeStore();
+const TEAM_ROLE_OPTIONS = Object.entries(TEAM_ROLE_LABELS).map(([value, label]) => ({
+  value: value as TeamRole,
+  label,
+}));
 
 const teams = ref<TeamSummary[]>([]);
 const users = ref<AdminUser[]>([]);
 const loading = ref(false);
 const loadError = ref<unknown>(null);
+const hasLoadedData = ref(false);
 const userOptionsLoading = ref(false);
+const selectedTeamIds = ref<number[]>([]);
+const teamBatchActionLoading = ref<"" | "delete">("");
 
 const teamDialogVisible = ref(false);
 const editingTeam = ref<TeamSummary | null>(null);
@@ -92,8 +106,16 @@ const updatingMemberId = ref<number | null>(null);
 const createMemberIds = ref<number[]>([]);
 /** 成员管理弹窗左侧搜索关键词 */
 const memberSearchKeyword = ref("");
+/** 成员管理弹窗右侧搜索关键词 */
+const currentMemberSearchKeyword = ref("");
+/** 成员管理弹窗右侧角色过滤 */
+const currentMemberRoleFilter = ref<"all" | TeamRole>("all");
 /** 成员管理弹窗左侧待添加的用户 ID 列表 */
 const pendingAddIds = ref<number[]>([]);
+/** 成员管理弹窗右侧选中的成员用户 ID 列表 */
+const selectedMemberUserIds = ref<number[]>([]);
+const selectedMemberRole = ref<TeamRole>("member");
+const memberBatchActionLoading = ref<"" | "role" | "remove">("");
 
 const pagination = ref({ page: 1, pageSize: 10, total: 0 });
 const searchKeyword = ref("");
@@ -113,6 +135,23 @@ const availableMembers = computed(() => {
       (u.full_name || "").toLowerCase().includes(keyword) ||
       u.username.toLowerCase().includes(keyword) ||
       u.email.toLowerCase().includes(keyword)
+    );
+  });
+});
+
+const filteredMembers = computed(() => {
+  const keyword = currentMemberSearchKeyword.value.trim().toLowerCase();
+  return members.value.filter((member) => {
+    if (currentMemberRoleFilter.value !== "all" && member.role !== currentMemberRoleFilter.value) {
+      return false;
+    }
+    const user = userMap.value.get(member.user_id);
+    if (!keyword) return true;
+    return (
+      (user?.full_name || "").toLowerCase().includes(keyword) ||
+      (user?.username || "").toLowerCase().includes(keyword) ||
+      (user?.email || "").toLowerCase().includes(keyword) ||
+      String(member.user_id).includes(keyword)
     );
   });
 });
@@ -155,8 +194,14 @@ async function loadData() {
     ]);
     teams.value = teamResult.items;
     pagination.value.total = teamResult.total;
+    selectedTeamIds.value = [];
+    hasLoadedData.value = true;
   } catch (error) {
-    loadError.value = error;
+    if (hasLoadedData.value) {
+      ElMessage.error(error instanceof Error ? error.message : "团队列表刷新失败，请稍后重试");
+    } else {
+      loadError.value = error;
+    }
   } finally {
     loading.value = false;
   }
@@ -243,13 +288,46 @@ async function handleDeleteTeam(team: TeamSummary) {
   }
 }
 
+function handleTeamSelectionChange(selection: TeamSummary[]) {
+  selectedTeamIds.value = selection.map((item) => item.id);
+}
+
+async function handleBatchDeleteTeams() {
+  if (selectedTeamIds.value.length === 0 || teamBatchActionLoading.value) return;
+  try {
+    await ElMessageBox.confirm(
+      `确定删除已选中的 ${selectedTeamIds.value.length} 个团队吗？团队内成员关系也会一并清除。`,
+      "批量删除团队",
+      { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" },
+    );
+  } catch {
+    return;
+  }
+
+  teamBatchActionLoading.value = "delete";
+  try {
+    const result = await bulkActionTeams(selectedTeamIds.value, "delete");
+    ElMessage.success(`批量删除完成，影响 ${result.affected} 个团队`);
+    await loadData();
+    await teamScopeStore.bootstrap();
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "批量删除团队失败");
+  } finally {
+    teamBatchActionLoading.value = "";
+  }
+}
+
 /** 打开成员管理弹窗 */
 async function openMemberPanel(team: TeamSummary) {
   activeTeam.value = team;
   memberLoaded.value = false;
   memberDialogVisible.value = true;
   memberSearchKeyword.value = "";
+  currentMemberSearchKeyword.value = "";
+  currentMemberRoleFilter.value = "all";
   pendingAddIds.value = [];
+  selectedMemberUserIds.value = [];
+  selectedMemberRole.value = "member";
   try {
     const [memberItems] = await Promise.all([
       listTeamMembers(team.id),
@@ -270,7 +348,11 @@ function closeMemberPanel() {
   members.value = [];
   memberLoaded.value = false;
   memberSearchKeyword.value = "";
+  currentMemberSearchKeyword.value = "";
+  currentMemberRoleFilter.value = "all";
   pendingAddIds.value = [];
+  selectedMemberUserIds.value = [];
+  selectedMemberRole.value = "member";
 }
 
 /** 批量添加选中的用户到团队 */
@@ -294,12 +376,95 @@ async function handleAddMembers() {
   }
 }
 
+function handleToggleMemberSelection(userId: number, checked: boolean) {
+  const selected = new Set(selectedMemberUserIds.value);
+  if (checked) {
+    selected.add(userId);
+  } else {
+    selected.delete(userId);
+  }
+  selectedMemberUserIds.value = [...selected];
+}
+
+function handleToggleAllFilteredMembers(checked: boolean) {
+  const visibleIds = filteredMembers.value.map((member) => member.user_id);
+  if (checked) {
+    selectedMemberUserIds.value = [...new Set([...selectedMemberUserIds.value, ...visibleIds])];
+    return;
+  }
+  const visibleSet = new Set(visibleIds);
+  selectedMemberUserIds.value = selectedMemberUserIds.value.filter((id) => !visibleSet.has(id));
+}
+
+async function handleBatchUpdateMemberRole() {
+  if (!activeTeam.value || selectedMemberUserIds.value.length === 0 || memberBatchActionLoading.value) {
+    return;
+  }
+  const roleLabel = TEAM_ROLE_LABELS[selectedMemberRole.value];
+  try {
+    await ElMessageBox.confirm(
+      `确定把已选中的 ${selectedMemberUserIds.value.length} 位成员角色改为「${roleLabel}」吗？`,
+      "批量修改角色",
+      { type: "info", confirmButtonText: "确定", cancelButtonText: "取消" },
+    );
+  } catch {
+    return;
+  }
+
+  memberBatchActionLoading.value = "role";
+  try {
+    const result = await bulkUpdateTeamMembersRole(
+      activeTeam.value.id,
+      selectedMemberUserIds.value,
+      selectedMemberRole.value,
+    );
+    members.value = members.value.map((member) =>
+      selectedMemberUserIds.value.includes(member.user_id)
+        ? { ...member, role: selectedMemberRole.value }
+        : member,
+    );
+    ElMessage.success(`已更新 ${result.affected} 位成员的角色`);
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "批量修改角色失败");
+  } finally {
+    memberBatchActionLoading.value = "";
+  }
+}
+
+async function handleBatchRemoveMembers() {
+  if (!activeTeam.value || selectedMemberUserIds.value.length === 0 || memberBatchActionLoading.value) {
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定从团队中移除已选中的 ${selectedMemberUserIds.value.length} 位成员吗？`,
+      "批量移除成员",
+      { type: "warning", confirmButtonText: "移除", cancelButtonText: "取消" },
+    );
+  } catch {
+    return;
+  }
+
+  memberBatchActionLoading.value = "remove";
+  try {
+    const removingIds = new Set(selectedMemberUserIds.value);
+    const result = await bulkDeleteTeamMembers(activeTeam.value.id, selectedMemberUserIds.value);
+    members.value = members.value.filter((member) => !removingIds.has(member.user_id));
+    selectedMemberUserIds.value = [];
+    ElMessage.success(`已移除 ${result.affected} 位成员`);
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "批量移除成员失败");
+  } finally {
+    memberBatchActionLoading.value = "";
+  }
+}
+
 /** 更新成员角色 */
 async function handleUpdateRole(member: TeamMember, role: string) {
   if (!activeTeam.value) return;
   updatingMemberId.value = member.id;
   try {
-    const updated = await updateTeamMember(activeTeam.value.id, member.user_id, { role });
+    const updated = await updateTeamMember(activeTeam.value.id, member.user_id, { role: role as TeamRole });
     members.value = members.value.map((m) =>
       m.user_id === updated.user_id && m.team_id === updated.team_id ? updated : m,
     );
@@ -328,6 +493,7 @@ async function handleRemoveMember(member: TeamMember) {
   try {
     await deleteTeamMember(activeTeam.value.id, member.user_id);
     members.value = members.value.filter((m) => m.user_id !== member.user_id);
+    selectedMemberUserIds.value = selectedMemberUserIds.value.filter((id) => id !== member.user_id);
     ElMessage.success("成员已移出团队");
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "移除失败");
@@ -369,62 +535,89 @@ watch(memberSearchKeyword, (value) => {
 
 <template>
   <section class="team-list-page">
-    <header class="team-list-page__header">
-      <div class="team-list-page__header-copy">
-        <h1 class="team-list-page__title">团队管理</h1>
-        <p class="team-list-page__description">
-          维护组织团队，把账号分配到具体团队中。
-        </p>
-      </div>
-      <div class="team-list-page__header-actions">
-        <span class="team-list-page__stats">
-          {{ pagination.total }} 个团队 · {{ users.length }} 个候选账号
-        </span>
-        <el-button type="primary" @click="openCreateDialog">
-          <el-icon class="mr-2"><Plus /></el-icon>
-          新建团队
-        </el-button>
-      </div>
-    </header>
-
     <AppLoading
-      v-if="loading"
+      v-if="loading && !hasLoadedData"
       title="团队列表加载中"
       description="正在从后台获取团队数据，请稍候。"
     />
 
     <AppError
-      v-else-if="loadError"
+      v-else-if="loadError && !hasLoadedData"
       title="团队列表加载失败"
       description="暂时无法获取团队列表，请稍后重试。"
       :error="loadError"
       @retry="loadData"
     />
 
-    <AppEmpty
-      v-else-if="teams.length === 0"
-      title="还没有团队"
-      description="点击上方「新建团队」创建第一个团队。"
-    />
+    <AdminListPanel v-else>
+      <AdminTableToolbar>
+        <template #left>
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索团队名称或编码…"
+            clearable
+            :disabled="loading"
+            style="width: 280px"
+            @clear="handleSearch"
+            @keyup.enter="handleSearch"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <el-button type="primary" :loading="loading" @click="handleSearch">搜索</el-button>
+          <el-button :disabled="loading" @click="handleResetSearch">重置</el-button>
+        </template>
 
-    <section v-else class="team-list-page__table-panel">
-      <div class="team-list-page__toolbar">
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索团队名称或编码…"
-          clearable
-          style="width: 280px"
-          @clear="handleSearch"
-          @keyup.enter="handleSearch"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-        <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button @click="handleResetSearch">重置</el-button>
-      </div>
-      <el-table :data="teams" row-key="id" class="team-list-page__table">
+        <template #right>
+          <AdminBulkActions :selected-count="selectedTeamIds.length">
+            <el-button
+              link
+              type="danger"
+              :loading="teamBatchActionLoading === 'delete'"
+              :disabled="Boolean(teamBatchActionLoading)"
+              @click="handleBatchDeleteTeams"
+            >
+              删除
+            </el-button>
+          </AdminBulkActions>
+          <span class="team-list-page__stats">
+            {{ pagination.total }} 个团队 · {{ users.length }} 个候选账号
+          </span>
+          <el-button :loading="loading" @click="loadData">
+            <el-icon class="mr-2"><Refresh /></el-icon>
+            刷新
+          </el-button>
+          <el-button type="primary" :disabled="loading" @click="openCreateDialog">
+            <el-icon class="mr-2"><Plus /></el-icon>
+            新建团队
+          </el-button>
+        </template>
+      </AdminTableToolbar>
+
+      <AppEmpty
+        v-if="!loading && teams.length === 0"
+        class="team-list-page__empty"
+        title="还没有团队"
+        description="创建第一个团队后，可以把账号分配到具体团队中。"
+      >
+        <el-button type="primary" :disabled="loading" @click="openCreateDialog">
+          <el-icon class="mr-2"><Plus /></el-icon>
+          新建团队
+        </el-button>
+      </AppEmpty>
+
+      <el-table
+        v-else
+        v-loading="loading"
+        :data="teams"
+        row-key="id"
+        class="team-list-page__table"
+        height="calc(100vh - 260px)"
+        element-loading-text="正在更新团队列表"
+        @selection-change="handleTeamSelectionChange"
+      >
+        <el-table-column type="selection" width="44" fixed="left" />
         <el-table-column label="团队名称" min-width="220">
           <template #default="{ row }">
             <div class="team-list-page__name-cell">
@@ -468,7 +661,7 @@ watch(memberSearchKeyword, (value) => {
           </template>
         </el-table-column>
       </el-table>
-      <div class="team-list-page__pagination">
+      <div v-if="teams.length > 0" class="team-list-page__pagination">
         <el-pagination
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.pageSize"
@@ -479,13 +672,14 @@ watch(memberSearchKeyword, (value) => {
           @size-change="handleSizeChange"
         />
       </div>
-    </section>
+    </AdminListPanel>
 
     <!-- 新建/编辑团队弹窗 -->
     <el-dialog
       v-model="teamDialogVisible"
       :title="editingTeam ? '编辑团队' : '新建团队'"
       width="560px"
+      class="team-list-page__dialog"
       :close-on-click-modal="false"
     >
       <el-form label-position="top" @submit.prevent="handleTeamSubmit">
@@ -554,7 +748,8 @@ watch(memberSearchKeyword, (value) => {
     <el-dialog
       v-model="memberDialogVisible"
       :title="activeTeam ? `${activeTeam.name} · 成员管理` : '成员管理'"
-      width="780px"
+      width="880px"
+      class="team-list-page__dialog"
       :close-on-click-modal="false"
       @close="closeMemberPanel"
     >
@@ -620,17 +815,97 @@ watch(memberSearchKeyword, (value) => {
         <div class="team-list-page__member-panel__right">
           <div class="team-list-page__member-panel__header">
             <strong>当前成员 ({{ members.length }})</strong>
+            <span v-if="filteredMembers.length !== members.length">
+              筛选 {{ filteredMembers.length }}
+            </span>
+          </div>
+          <div class="team-list-page__member-panel__filters">
+            <el-input
+              v-model="currentMemberSearchKeyword"
+              placeholder="搜索当前成员…"
+              clearable
+              size="small"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+            <el-select v-model="currentMemberRoleFilter" size="small" style="width: 104px">
+              <el-option value="all" label="全部角色" />
+              <el-option
+                v-for="opt in TEAM_ROLE_OPTIONS"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+          </div>
+          <div v-if="members.length > 0" class="team-list-page__member-panel__bulk">
+            <el-checkbox
+              :model-value="
+                filteredMembers.length > 0 &&
+                filteredMembers.every((member) => selectedMemberUserIds.includes(member.user_id))
+              "
+              :indeterminate="
+                filteredMembers.some((member) => selectedMemberUserIds.includes(member.user_id)) &&
+                !filteredMembers.every((member) => selectedMemberUserIds.includes(member.user_id))
+              "
+              :disabled="filteredMembers.length === 0"
+              @change="(checked) => handleToggleAllFilteredMembers(Boolean(checked))"
+            >
+              全选当前筛选
+            </el-checkbox>
+            <AdminBulkActions :selected-count="selectedMemberUserIds.length">
+              <el-select
+                v-model="selectedMemberRole"
+                size="small"
+                style="width: 92px"
+                :disabled="Boolean(memberBatchActionLoading)"
+              >
+                <el-option
+                  v-for="opt in TEAM_ROLE_OPTIONS"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+              <el-button
+                link
+                type="primary"
+                :loading="memberBatchActionLoading === 'role'"
+                :disabled="Boolean(memberBatchActionLoading)"
+                @click="handleBatchUpdateMemberRole"
+              >
+                改角色
+              </el-button>
+              <el-button
+                link
+                type="danger"
+                :loading="memberBatchActionLoading === 'remove'"
+                :disabled="Boolean(memberBatchActionLoading)"
+                @click="handleBatchRemoveMembers"
+              >
+                移除
+              </el-button>
+            </AdminBulkActions>
           </div>
           <div class="team-list-page__member-panel__list">
             <div v-if="members.length === 0" class="team-list-page__member-panel__empty">
               还没有成员
             </div>
+            <div v-else-if="filteredMembers.length === 0" class="team-list-page__member-panel__empty">
+              没有匹配的成员
+            </div>
             <div
-              v-for="member in members"
+              v-for="member in filteredMembers"
               :key="member.id"
               class="team-list-page__member-panel__user-row"
               :class="{ 'team-list-page__member-panel__user-row--inactive': userMap.get(member.user_id)?.is_active === false }"
             >
+              <el-checkbox
+                :model-value="selectedMemberUserIds.includes(member.user_id)"
+                @change="(checked) => handleToggleMemberSelection(member.user_id, Boolean(checked))"
+              />
               <span class="team-list-page__member-avatar" :style="avatarStyle(member.user_id)">
                 {{ getInitials(userMap.get(member.user_id)?.full_name, userMap.get(member.user_id)?.username) }}
               </span>
@@ -650,10 +925,10 @@ watch(memberSearchKeyword, (value) => {
                   @change="(role: string) => handleUpdateRole(member, role)"
                 >
                   <el-option
-                    v-for="(label, key) in TEAM_ROLE_LABELS"
-                    :key="key"
-                    :label="label"
-                    :value="key"
+                    v-for="opt in TEAM_ROLE_OPTIONS"
+                    :key="opt.value"
+                    :label="opt.label"
+                    :value="opt.value"
                   />
                 </el-select>
                 <el-button link type="danger" size="small" @click="handleRemoveMember(member)">
@@ -673,44 +948,14 @@ watch(memberSearchKeyword, (value) => {
 
 <style scoped>
 .team-list-page {
+  --el-color-primary: var(--admin-primary);
+  --el-color-primary-light-3: var(--admin-primary-light);
+  --el-color-primary-light-5: var(--admin-primary-light);
+  --el-color-primary-light-7: var(--admin-primary-border);
+  --el-color-primary-light-9: var(--admin-primary-soft);
+  --el-color-primary-dark-2: var(--admin-primary-hover);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.team-list-page__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 56px;
-  border: 1px solid #dbe2ea;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 16px 18px;
-}
-
-.team-list-page__header-copy {
-  min-width: 0;
-}
-
-.team-list-page__title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.team-list-page__description {
-  margin: 6px 0 0;
-  color: #64748b;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.team-list-page__header-actions {
-  display: flex;
-  align-items: center;
   gap: 12px;
 }
 
@@ -720,29 +965,21 @@ watch(memberSearchKeyword, (value) => {
   white-space: nowrap;
 }
 
-.team-list-page__table-panel {
-  border: 1px solid #dbe2ea;
-  border-radius: 18px;
-  background: #ffffff;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-  padding: 8px 8px 2px;
-}
-
-.team-list-page__toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 8px 12px 12px;
-}
-
 .team-list-page__pagination {
   display: flex;
   justify-content: flex-end;
-  padding: 12px 12px 16px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  padding: 12px;
 }
 
 .team-list-page__table {
   width: 100%;
+}
+
+.team-list-page__empty {
+  min-height: 420px;
+  border-top: 1px solid #e2e8f0;
 }
 
 .team-list-page__name-cell {
@@ -773,8 +1010,77 @@ watch(memberSearchKeyword, (value) => {
 }
 
 .team-list-page__muted {
-  color: #64748b;
+  color: #475569;
   font-size: 13px;
+}
+
+:deep(.team-list-page__dialog.el-dialog) {
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18);
+}
+
+:deep(.team-list-page__dialog .el-dialog__header) {
+  display: flex;
+  align-items: center;
+  min-height: 54px;
+  margin: 0;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  padding: 0 18px;
+}
+
+:deep(.team-list-page__dialog .el-dialog__title) {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+:deep(.team-list-page__dialog .el-dialog__headerbtn) {
+  top: 0;
+  right: 10px;
+  width: 36px;
+  height: 54px;
+}
+
+:deep(.team-list-page__dialog .el-dialog__body) {
+  padding: 18px;
+}
+
+:deep(.team-list-page__dialog .el-dialog__footer) {
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  padding: 12px 18px;
+}
+
+:deep(.team-list-page__dialog .el-form-item) {
+  margin-bottom: 16px;
+}
+
+:deep(.team-list-page__dialog .el-form-item__label) {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+:deep(.team-list-page__dialog .el-input__wrapper),
+:deep(.team-list-page__dialog .el-select__wrapper),
+:deep(.team-list-page__dialog .el-textarea__inner) {
+  border-radius: 7px;
+  box-shadow: 0 0 0 1px #cbd5e1 inset;
+}
+
+:deep(.team-list-page__dialog .el-input__wrapper:hover),
+:deep(.team-list-page__dialog .el-select__wrapper:hover),
+:deep(.team-list-page__dialog .el-textarea__inner:hover) {
+  box-shadow: 0 0 0 1px #94a3b8 inset;
+}
+
+:deep(.team-list-page__dialog .el-input__wrapper.is-focus),
+:deep(.team-list-page__dialog .el-select__wrapper.is-focused),
+:deep(.team-list-page__dialog .el-textarea__inner:focus) {
+  box-shadow: 0 0 0 1px var(--admin-primary) inset;
 }
 
 /* 成员管理弹窗 */
@@ -801,19 +1107,47 @@ watch(memberSearchKeyword, (value) => {
   display: flex;
   flex-direction: column;
   border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
 }
 
 .team-list-page__member-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid #f1f5f9;
   font-size: 14px;
 }
 
+.team-list-page__member-panel__header span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .team-list-page__member-panel__search {
   padding: 8px 12px;
   border-bottom: 1px solid #f1f5f9;
+}
+
+.team-list-page__member-panel__filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  border-bottom: 1px solid #f1f5f9;
+  padding: 8px 12px;
+}
+
+.team-list-page__member-panel__bulk {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #f8fafc;
+  padding: 8px 12px;
 }
 
 .team-list-page__member-panel__list {
@@ -833,6 +1167,11 @@ watch(memberSearchKeyword, (value) => {
   align-items: center;
   gap: 8px;
   padding: 6px 0;
+}
+
+.team-list-page__member-panel__user-row :deep(.el-checkbox) {
+  height: auto;
+  margin-right: 0;
 }
 
 .team-list-page__member-panel__user-row--inactive {
@@ -940,13 +1279,12 @@ watch(memberSearchKeyword, (value) => {
 }
 
 @media (max-width: 960px) {
-  .team-list-page__header {
+  .team-list-page__member-panel {
     flex-direction: column;
-    align-items: stretch;
   }
 
-  .team-list-page__header-actions {
-    justify-content: space-between;
+  .team-list-page__member-panel__list {
+    max-height: 280px;
   }
 }
 </style>

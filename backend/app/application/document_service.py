@@ -160,6 +160,7 @@ class DocumentService:
 
     @staticmethod
     def _get_title_and_type(filename: str) -> tuple[str, str]:
+        filename = filename.replace("\\", "/").rsplit("/", 1)[-1].strip()
         if "." in filename:
             name, ext = filename.rsplit(".", 1)
             return name.strip() or filename, ext.lower()

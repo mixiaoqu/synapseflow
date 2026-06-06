@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { Delete, Plus, Search, Setting } from "@element-plus/icons-vue";
 
+import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   createContentRiskLibrary,
   createContentRiskRule,
@@ -271,9 +273,21 @@ async function loadLibraries() {
 
   try {
     libraries.value = await listContentRiskLibraries();
-    if (selectedLibrary.value) {
-      selectedLibrary.value =
-        libraries.value.find((item) => item.id === selectedLibrary.value?.id) ?? selectedLibrary.value;
+    const currentLibraryId = selectedLibrary.value?.id ?? null;
+    const nextLibrary =
+      (currentLibraryId ? libraries.value.find((item) => item.id === currentLibraryId) : null) ??
+      libraries.value[0] ??
+      null;
+    const shouldReloadRules = nextLibrary?.id !== currentLibraryId || rules.value.length === 0;
+
+    selectedLibrary.value = nextLibrary;
+    if (!nextLibrary) {
+      rules.value = [];
+      ruleLoadError.value = null;
+      return;
+    }
+    if (shouldReloadRules) {
+      void loadRules(nextLibrary.id);
     }
   } catch (error) {
     libraryLoadError.value = error;
@@ -460,15 +474,12 @@ async function confirmDeleteLibrary(library: ContentRiskLibrarySummary) {
 }
 
 function openRules(library: ContentRiskLibrarySummary) {
+  if (selectedLibrary.value?.id === library.id) {
+    return;
+  }
   selectedLibrary.value = library;
   resetRuleFilters();
   void loadRules(library.id);
-}
-
-function backToLibraries() {
-  selectedLibrary.value = null;
-  rules.value = [];
-  ruleLoadError.value = null;
 }
 
 function openTestingSandbox() {
@@ -508,92 +519,76 @@ onMounted(() => {
 
 <template>
   <section class="content-risk-library-page">
-    <template v-if="!selectedLibrary">
-      <header class="rounded-3xl bg-white p-6 shadow-sm">
-        <div class="flex flex-wrap items-start justify-between gap-5">
-          <div class="max-w-3xl">
-            <p class="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-              Content Risk
-            </p>
-            <h1 class="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-              全局规则库
-            </h1>
-            <p class="mt-2 text-sm leading-7 text-slate-500">
-              统一维护平台全局生效的规则库。启用的规则会按自身适用场景参与用户提问和 AI 回答检测。
-            </p>
-          </div>
+    <header class="content-risk-library-page__header">
+      <div>
+        <h1>全局规则库</h1>
+        <p>统一维护平台全局生效的风控规则，左侧选择规则库，右侧维护具体匹配规则和测试结果。</p>
+      </div>
+      <div class="content-risk-library-page__header-actions">
+        <el-button
+          type="primary"
+          plain
+          :disabled="!selectedLibrary"
+          @click="openTestingSandbox"
+        >
+          打开测试沙盒
+        </el-button>
+        <el-button
+          type="primary"
+          @click="openCreateLibraryDialog"
+        >
+          <el-icon><Plus /></el-icon>
+          新建规则库
+        </el-button>
+      </div>
+    </header>
 
-          <div class="flex flex-wrap items-center gap-3">
-            <el-button disabled>
-              批量导入
-            </el-button>
-            <el-button
-              type="primary"
-              @click="openCreateLibraryDialog"
-            >
-              <el-icon><Plus /></el-icon>
-              新建规则库
-            </el-button>
-          </div>
-        </div>
-      </header>
+    <section class="content-risk-library-page__metrics">
+      <div class="content-risk-library-page__metric">
+        <span>规则库总数</span>
+        <strong>{{ libraries.length }}</strong>
+      </div>
+      <div class="content-risk-library-page__metric">
+        <span>启用中</span>
+        <strong>{{ enabledLibraryCount }}</strong>
+      </div>
+      <div class="content-risk-library-page__metric">
+        <span>规则总量</span>
+        <strong>{{ totalRuleCount }}</strong>
+      </div>
+      <div class="content-risk-library-page__metric">
+        <span>当前库规则</span>
+        <strong>{{ selectedLibrary ? rules.length : 0 }}</strong>
+      </div>
+    </section>
 
-      <section class="grid gap-4 md:grid-cols-3">
-        <div class="rounded-2xl bg-white px-5 py-4 shadow-sm">
-          <p class="text-xs text-slate-400">
-            规则库总数
-          </p>
-          <p class="mt-2 text-3xl font-semibold text-slate-900">
-            {{ libraries.length }}
-          </p>
-        </div>
-        <div class="rounded-2xl bg-white px-5 py-4 shadow-sm">
-          <p class="text-xs text-emerald-600">
-            启用中
-          </p>
-          <p class="mt-2 text-3xl font-semibold text-emerald-700">
-            {{ enabledLibraryCount }}
-          </p>
-        </div>
-        <div class="rounded-2xl bg-white px-5 py-4 shadow-sm">
-          <p class="text-xs text-slate-400">
-            规则总量
-          </p>
-          <p class="mt-2 text-3xl font-semibold text-slate-900">
-            {{ totalRuleCount }}
-          </p>
-        </div>
-      </section>
+    <AppLoading
+      v-if="loadingLibraries && libraries.length === 0"
+      title="全局规则库加载中"
+      description="正在获取当前平台的规则库配置，请稍候。"
+      :blocks="4"
+    />
 
-      <AppLoading
-        v-if="loadingLibraries"
-        title="全局规则库加载中"
-        description="正在获取当前平台的规则库配置，请稍候。"
-        :blocks="4"
-      />
+    <AppError
+      v-else-if="libraryLoadError && !libraryIsForbidden"
+      title="全局规则库加载失败"
+      description="暂时无法获取规则库列表，请稍后重试。"
+      :error="libraryLoadError"
+      @retry="loadLibraries"
+    />
 
-      <AppError
-        v-else-if="libraryLoadError && !libraryIsForbidden"
-        title="全局规则库加载失败"
-        description="暂时无法获取规则库列表，请稍后重试。"
-        :error="libraryLoadError"
-        @retry="loadLibraries"
-      />
+    <AppError
+      v-else-if="libraryIsForbidden"
+      title="无权查看全局规则库"
+      description="当前账号没有访问内容风控规则库的权限。"
+      :error="libraryLoadError"
+      :show-retry="false"
+    />
 
-      <AppError
-        v-else-if="libraryIsForbidden"
-        title="无权查看全局规则库"
-        description="当前账号没有访问内容风控规则库的权限。"
-        :error="libraryLoadError"
-        :show-retry="false"
-      />
-
-      <section
-        v-else
-        class="content-risk-library-page__list-panel"
-      >
-        <section class="content-risk-library-page__toolbar">
-          <div class="flex flex-wrap items-center gap-3">
+    <section v-else class="content-risk-library-page__workspace">
+      <AdminListPanel>
+        <AdminTableToolbar>
+          <template #left>
             <el-input
               v-model="libraryFilters.keyword"
               clearable
@@ -609,25 +604,12 @@ onMounted(() => {
               v-model="libraryFilters.status"
               class="content-risk-library-page__status"
             >
-              <el-option
-                label="全部状态"
-                value="all"
-              />
-              <el-option
-                label="仅启用中"
-                value="enabled"
-              />
-              <el-option
-                label="仅停用中"
-                value="disabled"
-              />
+              <el-option label="全部状态" value="all" />
+              <el-option label="仅启用中" value="enabled" />
+              <el-option label="仅停用中" value="disabled" />
             </el-select>
-          </div>
-
-          <span class="rounded-xl bg-slate-50 px-4 py-2 text-sm text-slate-500">
-            共 {{ displayedLibraries.length }} 个规则库
-          </span>
-        </section>
+          </template>
+        </AdminTableToolbar>
 
         <AppEmpty
           v-if="displayedLibraries.length === 0"
@@ -635,278 +617,184 @@ onMounted(() => {
           :description="
             hasLibraryFilters
               ? '请尝试更换关键词或清除筛选条件。'
-              : '可以先创建一个规则库，再进入规则明细维护具体匹配规则。'
-          "
-        >
-            <el-button
-              v-if="hasLibraryFilters"
-              link
-              type="primary"
-              @click="resetLibraryFilters"
-            >
-              清除筛选
-            </el-button>
-            <el-button
-              v-else
-              type="primary"
-              @click="openCreateLibraryDialog"
-            >
-              创建规则库
-            </el-button>
-        </AppEmpty>
-
-        <div
-          v-else
-          class="grid gap-5 md:grid-cols-2 xl:grid-cols-3"
-        >
-          <article
-            v-for="library in displayedLibraries"
-            :key="library.id"
-            class="group flex min-h-[260px] flex-col rounded-3xl bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-          >
-            <div class="flex items-start justify-between gap-4">
-              <div class="min-w-0">
-                <h2 class="truncate text-lg font-semibold text-slate-900">
-                  {{ library.name }}
-                </h2>
-                <p class="mt-1 text-xs text-slate-400">
-                  更新于 {{ formatDateTime(library.updatedAt) }}
-                </p>
-              </div>
-              <el-tag
-                :type="library.enabled ? 'success' : 'info'"
-                effect="plain"
-                round
-              >
-                {{ library.enabled ? "启用中" : "已停用" }}
-              </el-tag>
-            </div>
-
-            <p class="mt-4 line-clamp-2 flex-1 text-sm leading-7 text-slate-500">
-              {{ library.description?.trim() || "暂无说明，可在配置中补充规则库的适用边界。" }}
-            </p>
-
-            <div class="mt-5 grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-4">
-              <div>
-                <p class="text-xs text-slate-400">
-                  规则数量
-                </p>
-                <p class="mt-1 text-2xl font-semibold text-slate-900">
-                  {{ library.ruleCount }}
-                </p>
-              </div>
-              <div>
-                <p class="text-xs text-slate-400">
-                  今日拦截
-                </p>
-                <p class="mt-1 text-2xl font-semibold text-slate-400">
-                  -
-                </p>
-              </div>
-            </div>
-
-            <div class="mt-5 flex gap-2 border-t border-slate-100 pt-4">
-              <el-button
-                class="flex-1"
-                @click="openEditLibraryDialog(library)"
-              >
-                <el-icon><Setting /></el-icon>
-                配置
-              </el-button>
-              <el-button
-                type="primary"
-                class="flex-1"
-                @click="openRules(library)"
-              >
-                规则明细
-              </el-button>
-              <el-button
-                type="danger"
-                plain
-                class="flex-1"
-                :loading="deletingLibraryId === library.id"
-                @click="confirmDeleteLibrary(library)"
-              >
-                <el-icon><Delete /></el-icon>
-                删除
-              </el-button>
-            </div>
-          </article>
-        </div>
-      </section>
-    </template>
-
-    <template v-else>
-      <div class="flex items-center gap-2 text-sm text-slate-500">
-        <button
-          type="button"
-          class="transition hover:text-slate-900"
-          @click="backToLibraries"
-        >
-          ← 返回大盘
-        </button>
-        <span class="text-slate-300">/</span>
-        <span class="font-medium text-slate-900">{{ selectedLibrary.name }}</span>
-        <span class="text-slate-300">/</span>
-        <span>规则明细</span>
-      </div>
-
-      <section class="rounded-3xl bg-white p-5 shadow-sm">
-        <div class="flex flex-wrap items-center justify-between gap-5">
-          <div class="grid flex-1 gap-4 sm:grid-cols-3">
-            <div>
-              <p class="text-xs text-slate-400">
-                规则总数
-              </p>
-              <p class="mt-1 text-2xl font-semibold text-slate-900">
-                {{ rules.length }}
-              </p>
-            </div>
-            <div>
-              <p class="text-xs text-slate-400">
-                启用中
-              </p>
-              <p class="mt-1 text-2xl font-semibold text-emerald-600">
-                {{ enabledRuleCount }}
-              </p>
-            </div>
-            <div>
-              <p class="text-xs text-slate-400">
-                今日总拦截
-              </p>
-              <p class="mt-1 text-2xl font-semibold text-slate-400">
-                -
-              </p>
-            </div>
-          </div>
-
-          <el-button
-            type="primary"
-            plain
-            @click="openTestingSandbox"
-          >
-            打开测试沙盒
-          </el-button>
-        </div>
-      </section>
-
-      <AppLoading
-        v-if="loadingRules"
-        title="规则明细加载中"
-        description="正在获取当前规则库下的规则配置，请稍候。"
-        :blocks="4"
-      />
-
-      <AppError
-        v-else-if="ruleLoadError && !ruleIsForbidden"
-        title="规则明细加载失败"
-        description="暂时无法获取规则列表，请稍后重试。"
-        :error="ruleLoadError"
-        @retry="selectedLibrary ? loadRules(selectedLibrary.id) : undefined"
-      />
-
-      <AppError
-        v-else-if="ruleIsForbidden"
-        title="无权查看规则明细"
-        description="当前账号没有访问该规则库明细的权限。"
-        :error="ruleLoadError"
-        :show-retry="false"
-      />
-
-      <section
-        v-else
-        class="content-risk-library-page__table-panel"
-      >
-        <section class="content-risk-library-page__toolbar">
-          <div class="flex flex-wrap items-center gap-3">
-            <el-input
-              v-model="ruleFilters.keyword"
-              clearable
-              placeholder="搜索规则名称、分类或匹配内容..."
-              class="content-risk-library-page__rule-search"
-            >
-              <template #prefix>
-                <el-icon><Search /></el-icon>
-              </template>
-            </el-input>
-
-            <el-select
-              v-model="ruleFilters.scene"
-              class="content-risk-library-page__status"
-            >
-              <el-option
-                label="全部场景"
-                value="all"
-              />
-              <el-option
-                label="用户提问"
-                value="query"
-              />
-              <el-option
-                label="AI 回答"
-                value="answer"
-              />
-            </el-select>
-
-            <el-select
-              v-model="ruleFilters.status"
-              class="content-risk-library-page__status"
-            >
-              <el-option
-                label="全部状态"
-                value="all"
-              />
-              <el-option
-                label="已启用"
-                value="enabled"
-              />
-              <el-option
-                label="已停用"
-                value="disabled"
-              />
-            </el-select>
-          </div>
-
-          <el-button
-            type="primary"
-            @click="openCreateRuleDialog"
-          >
-            <el-icon><Plus /></el-icon>
-            新建规则
-          </el-button>
-        </section>
-
-        <AppEmpty
-          v-if="displayedRules.length === 0"
-          :title="hasRuleFilters ? '未找到相关规则' : '暂无规则明细'"
-          :description="
-            hasRuleFilters
-              ? '请尝试更换关键词、场景或状态筛选。'
-              : '这个规则库还没有具体规则，可以先新增一条关键词或正则规则。'
+              : '可以先创建一个规则库，再维护具体匹配规则。'
           "
         >
           <el-button
-            v-if="hasRuleFilters"
+            v-if="hasLibraryFilters"
             link
             type="primary"
-            @click="resetRuleFilters"
+            @click="resetLibraryFilters"
           >
             清除筛选
           </el-button>
           <el-button
             v-else
             type="primary"
-            @click="openCreateRuleDialog"
+            @click="openCreateLibraryDialog"
           >
-            新建规则
+            创建规则库
           </el-button>
         </AppEmpty>
 
-        <el-table
-          v-else
-          :data="displayedRules"
-          row-key="id"
+        <div v-else class="content-risk-library-page__library-list">
+          <button
+            v-for="library in displayedLibraries"
+            :key="library.id"
+            type="button"
+            class="content-risk-library-page__library-row"
+            :class="{ 'is-active': selectedLibrary?.id === library.id }"
+            @click="openRules(library)"
+          >
+            <span class="content-risk-library-page__library-row-main">
+              <strong>{{ library.name }}</strong>
+              <small>{{ library.description?.trim() || "暂无说明" }}</small>
+            </span>
+            <span class="content-risk-library-page__library-row-meta">
+              <el-tag
+                size="small"
+                :type="library.enabled ? 'success' : 'info'"
+                effect="plain"
+              >
+                {{ library.enabled ? "启用" : "停用" }}
+              </el-tag>
+              <span>{{ library.ruleCount }} 条规则</span>
+            </span>
+          </button>
+        </div>
+      </AdminListPanel>
+
+      <div class="content-risk-library-page__rules">
+        <section v-if="selectedLibrary" class="content-risk-library-page__rule-header">
+          <div>
+            <h2>{{ selectedLibrary.name }}</h2>
+            <p>{{ selectedLibrary.description?.trim() || "暂无说明，可在配置中补充规则库的适用边界。" }}</p>
+          </div>
+          <div class="content-risk-library-page__rule-actions">
+            <el-button @click="openEditLibraryDialog(selectedLibrary)">
+              <el-icon><Setting /></el-icon>
+              配置规则库
+            </el-button>
+            <el-button
+              type="danger"
+              plain
+              :loading="deletingLibraryId === selectedLibrary.id"
+              @click="confirmDeleteLibrary(selectedLibrary)"
+            >
+              <el-icon><Delete /></el-icon>
+              删除
+            </el-button>
+          </div>
+        </section>
+
+        <AppEmpty
+          v-if="!selectedLibrary"
+          title="暂无可维护的规则库"
+          description="创建规则库后，可以在这里维护关键词或正则规则。"
         >
+          <el-button type="primary" @click="openCreateLibraryDialog">
+            创建规则库
+          </el-button>
+        </AppEmpty>
+
+        <AppLoading
+          v-else-if="loadingRules"
+          title="规则明细加载中"
+          description="正在获取当前规则库下的规则配置，请稍候。"
+          :blocks="4"
+        />
+
+        <AppError
+          v-else-if="ruleLoadError && !ruleIsForbidden"
+          title="规则明细加载失败"
+          description="暂时无法获取规则列表，请稍后重试。"
+          :error="ruleLoadError"
+          @retry="selectedLibrary ? loadRules(selectedLibrary.id) : undefined"
+        />
+
+        <AppError
+          v-else-if="ruleIsForbidden"
+          title="无权查看规则明细"
+          description="当前账号没有访问该规则库明细的权限。"
+          :error="ruleLoadError"
+          :show-retry="false"
+        />
+
+        <AdminListPanel v-else>
+          <AdminTableToolbar>
+            <template #left>
+              <el-input
+                v-model="ruleFilters.keyword"
+                clearable
+                placeholder="搜索规则名称、分类或匹配内容..."
+                class="content-risk-library-page__rule-search"
+              >
+                <template #prefix>
+                  <el-icon><Search /></el-icon>
+                </template>
+              </el-input>
+
+              <el-select
+                v-model="ruleFilters.scene"
+                class="content-risk-library-page__status"
+              >
+                <el-option label="全部场景" value="all" />
+                <el-option label="用户提问" value="query" />
+                <el-option label="AI 回答" value="answer" />
+              </el-select>
+
+              <el-select
+                v-model="ruleFilters.status"
+                class="content-risk-library-page__status"
+              >
+                <el-option label="全部状态" value="all" />
+                <el-option label="已启用" value="enabled" />
+                <el-option label="已停用" value="disabled" />
+              </el-select>
+            </template>
+
+            <template #right>
+              <el-button
+                type="primary"
+                @click="openCreateRuleDialog"
+              >
+                <el-icon><Plus /></el-icon>
+                新建规则
+              </el-button>
+            </template>
+          </AdminTableToolbar>
+
+          <AppEmpty
+            v-if="displayedRules.length === 0"
+            :title="hasRuleFilters ? '未找到相关规则' : '暂无规则明细'"
+            :description="
+              hasRuleFilters
+                ? '请尝试更换关键词、场景或状态筛选。'
+                : '这个规则库还没有具体规则，可以先新增一条关键词或正则规则。'
+            "
+          >
+            <el-button
+              v-if="hasRuleFilters"
+              link
+              type="primary"
+              @click="resetRuleFilters"
+            >
+              清除筛选
+            </el-button>
+            <el-button
+              v-else
+              type="primary"
+              @click="openCreateRuleDialog"
+            >
+              新建规则
+            </el-button>
+          </AppEmpty>
+
+          <el-table
+            v-else
+            :data="displayedRules"
+            row-key="id"
+          >
           <el-table-column
             label="排位"
             width="72"
@@ -1024,15 +912,6 @@ onMounted(() => {
             </template>
           </el-table-column>
           <el-table-column
-            label="历史命中"
-            width="110"
-            align="center"
-          >
-            <template #default>
-              <span class="text-slate-400">-</span>
-            </template>
-          </el-table-column>
-          <el-table-column
             label="操作"
             width="110"
             fixed="right"
@@ -1048,9 +927,10 @@ onMounted(() => {
               </el-button>
             </template>
           </el-table-column>
-        </el-table>
-      </section>
-    </template>
+          </el-table>
+        </AdminListPanel>
+      </div>
+    </section>
 
     <el-drawer
       v-model="sandboxVisible"
@@ -1460,49 +1340,192 @@ onMounted(() => {
   gap: 16px;
 }
 
-.content-risk-library-page__toolbar {
+.content-risk-library-page__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.content-risk-library-page__header-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.content-risk-library-page__header h1 {
+  margin: 0;
+  color: var(--admin-text);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.content-risk-library-page__header p {
+  max-width: 760px;
+  margin: 6px 0 0;
+  color: var(--admin-text-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.content-risk-library-page__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  border-bottom: 1px solid #edf1f6;
-  padding: 16px 18px;
 }
 
-.content-risk-library-page__list-panel {
+.content-risk-library-page__metric {
+  border: 1px solid var(--admin-border-soft);
+  border-radius: var(--admin-radius-lg);
+  background: var(--admin-surface);
+  box-shadow: var(--admin-shadow-panel);
+}
+
+.content-risk-library-page__metric {
+  padding: 16px;
+}
+
+.content-risk-library-page__metric span {
+  display: block;
+  color: var(--admin-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.content-risk-library-page__metric strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--admin-text);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.content-risk-library-page__workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.content-risk-library-page__library-list {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.content-risk-library-page__library-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--admin-radius-md);
+  background: transparent;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.content-risk-library-page__library-row:hover {
+  background: var(--admin-surface-muted);
+}
+
+.content-risk-library-page__library-row.is-active {
+  border-color: var(--admin-primary-border);
+  background: var(--admin-primary-soft);
+}
+
+.content-risk-library-page__library-row-main {
+  min-width: 0;
+}
+
+.content-risk-library-page__library-row-main strong,
+.content-risk-library-page__library-row-main small {
+  display: block;
   overflow: hidden;
-  border-radius: 24px;
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.content-risk-library-page__list-panel > :not(.content-risk-library-page__toolbar) {
-  margin: 18px;
+.content-risk-library-page__library-row-main strong {
+  color: var(--admin-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.content-risk-library-page__library-row-main small {
+  margin-top: 5px;
+  color: var(--admin-text-muted);
+  font-size: 12px;
+}
+
+.content-risk-library-page__library-row-meta {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--admin-text-subtle);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.content-risk-library-page__rules {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.content-risk-library-page__rule-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--admin-border-soft);
+  border-radius: var(--admin-radius-lg);
+  background: var(--admin-surface);
+  box-shadow: var(--admin-shadow-panel);
+  padding: 16px;
+}
+
+.content-risk-library-page__rule-header h2 {
+  margin: 0;
+  color: var(--admin-text);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.content-risk-library-page__rule-header p {
+  margin: 6px 0 0;
+  color: var(--admin-text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.content-risk-library-page__rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .content-risk-library-page__search {
-  width: 360px;
+  width: 100%;
   max-width: 100%;
 }
 
 .content-risk-library-page__rule-search {
-  width: 420px;
+  width: 360px;
   max-width: 100%;
 }
 
 .content-risk-library-page__status {
   width: 132px;
-}
-
-.content-risk-library-page__table-panel {
-  overflow: hidden;
-  border-radius: 24px;
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
-}
-
-.content-risk-library-page__table-panel > :not(.content-risk-library-page__toolbar) {
-  margin: 8px;
 }
 
 .content-risk-library-page__name-cell {
@@ -1514,7 +1537,7 @@ onMounted(() => {
 
 .content-risk-library-page__name-cell strong {
   overflow: hidden;
-  color: #0f172a;
+  color: var(--admin-text);
   font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1522,7 +1545,7 @@ onMounted(() => {
 
 .content-risk-library-page__name-cell span {
   overflow: hidden;
-  color: #64748b;
+  color: var(--admin-text-muted);
   font-size: 12px;
   line-height: 1.5;
   text-overflow: ellipsis;
@@ -1540,9 +1563,15 @@ onMounted(() => {
 }
 
 @media (max-width: 960px) {
-  .content-risk-library-page__toolbar {
-    align-items: stretch;
+  .content-risk-library-page__header,
+  .content-risk-library-page__rule-header {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .content-risk-library-page__metrics,
+  .content-risk-library-page__workspace {
+    grid-template-columns: 1fr;
   }
 
   .content-risk-library-page__search,

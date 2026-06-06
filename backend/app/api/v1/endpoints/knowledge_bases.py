@@ -4,9 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import require_content_roles
+from app.application.document_service import document_service
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.knowledge_base import (
+    KnowledgeBaseBulkActionFailure,
+    KnowledgeBaseBulkActionRequest,
+    KnowledgeBaseBulkActionResponse,
     KnowledgeBaseCreate,
     KnowledgeBaseListItem,
     KnowledgeBaseListResponse,
@@ -142,6 +146,83 @@ async def create_knowledge_base(
     )
 
 
+@router.post("/bulk-actions", response_model=KnowledgeBaseBulkActionResponse)
+async def bulk_action_knowledge_bases(
+    body: KnowledgeBaseBulkActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    unique_ids = list(dict.fromkeys(body.knowledge_base_ids))
+    failures: list[KnowledgeBaseBulkActionFailure] = []
+    affected = 0
+
+    if body.action in {"enable", "disable"}:
+        target_active = body.action == "enable"
+        changed_items = []
+        for knowledge_base_id in unique_ids:
+            knowledge_base = await repo.get_by_id(knowledge_base_id)
+            if not knowledge_base:
+                failures.append(
+                    KnowledgeBaseBulkActionFailure(
+                        id=knowledge_base_id,
+                        message="知识库不存在或无权访问",
+                    )
+                )
+                continue
+            knowledge_base.is_active = target_active
+            changed_items.append(knowledge_base)
+        if changed_items:
+            await db.commit()
+            affected = len(changed_items)
+
+    elif body.action == "delete":
+        for knowledge_base_id in unique_ids:
+            ok = await repo.delete(knowledge_base_id)
+            if ok:
+                affected += 1
+            else:
+                failures.append(
+                    KnowledgeBaseBulkActionFailure(
+                        id=knowledge_base_id,
+                        message="知识库不存在或无权访问",
+                    )
+                )
+
+    elif body.action == "reindex":
+        for knowledge_base_id in unique_ids:
+            knowledge_base = await repo.get_by_id(knowledge_base_id)
+            if not knowledge_base:
+                failures.append(
+                    KnowledgeBaseBulkActionFailure(
+                        id=knowledge_base_id,
+                        message="知识库不存在或无权访问",
+                    )
+                )
+                continue
+            try:
+                await document_service.reindex_all_documents(
+                    db=db,
+                    user_id=current_user.id,
+                    knowledge_base_id=knowledge_base_id,
+                )
+                affected += 1
+            except Exception as exc:
+                failures.append(
+                    KnowledgeBaseBulkActionFailure(
+                        id=knowledge_base_id,
+                        message=str(exc) or "重建索引任务提交失败",
+                    )
+                )
+
+    return KnowledgeBaseBulkActionResponse(
+        action=body.action,
+        total=len(unique_ids),
+        affected=affected,
+        failed=failures,
+    )
+
+
 @router.get("/{knowledge_base_id}", response_model=KnowledgeBaseWithCount)
 async def get_knowledge_base(
     knowledge_base_id: int,
@@ -151,7 +232,7 @@ async def get_knowledge_base(
     repo = KnowledgeBaseRepository(db, user_id=current_user.id)
     rows = await repo.list_with_count(knowledge_base_id=knowledge_base_id, offset=0, limit=1)
     if not rows:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
     return _build_knowledge_base_with_count(rows[0])
 
 
@@ -169,7 +250,7 @@ async def update_knowledge_base(
         description=body.description,
     )
     if not knowledge_base:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
     return knowledge_base
 
 
@@ -183,7 +264,7 @@ async def toggle_knowledge_base_active(
     repo = KnowledgeBaseRepository(db, user_id=current_user.id)
     knowledge_base = await repo.get_by_id(knowledge_base_id)
     if not knowledge_base:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
     knowledge_base.is_active = body.is_active
     await db.commit()
     await db.refresh(knowledge_base)
@@ -199,5 +280,5 @@ async def delete_knowledge_base(
     repo = KnowledgeBaseRepository(db, user_id=current_user.id)
     ok = await repo.delete(knowledge_base_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
-    return {"message": "Deleted successfully"}
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
+    return {"message": "删除成功"}

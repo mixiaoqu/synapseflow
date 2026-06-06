@@ -5,9 +5,10 @@ from __future__ import annotations
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.authz import ROLE_END_USER, normalize_role
+from app.core.authz import ROLE_END_USER, ROLE_KB_ADMIN, normalize_role
 from app.core.security import hash_password
-from app.db.models import User
+from app.db.models import Team, TeamMember, User
+from app.utils.time import utc_now
 
 
 def _normalize_username(value: str) -> str:
@@ -24,24 +25,34 @@ class UserRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get_by_id(self, user_id: int) -> User | None:
-        result = await self.db.execute(select(User).where(User.id == user_id))
+    async def get_by_id(self, user_id: int, *, include_deleted: bool = False) -> User | None:
+        query = select(User).where(User.id == user_id)
+        if not include_deleted:
+            query = query.where(User.deleted_at.is_(None))
+        result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_by_username(self, username: str) -> User | None:
+    async def get_by_username(self, username: str, *, include_deleted: bool = True) -> User | None:
         normalized = _normalize_username(username)
-        result = await self.db.execute(select(User).where(User.username == normalized))
+        query = select(User).where(User.username == normalized)
+        if not include_deleted:
+            query = query.where(User.deleted_at.is_(None))
+        result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_by_email(self, email: str) -> User | None:
+    async def get_by_email(self, email: str, *, include_deleted: bool = True) -> User | None:
         normalized = _normalize_email(email)
-        result = await self.db.execute(select(User).where(User.email == normalized))
+        query = select(User).where(User.email == normalized)
+        if not include_deleted:
+            query = query.where(User.deleted_at.is_(None))
+        result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
     async def get_by_identity(self, username_or_email: str) -> User | None:
         identity = username_or_email.strip().lower()
         result = await self.db.execute(
             select(User).where(
+                User.deleted_at.is_(None),
                 or_(
                     User.username == identity,
                     User.email == identity,
@@ -51,7 +62,9 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def list_users(self) -> list[User]:
-        result = await self.db.execute(select(User).order_by(User.created_at.desc(), User.id.desc()))
+        result = await self.db.execute(
+            select(User).where(User.deleted_at.is_(None)).order_by(User.created_at.desc(), User.id.desc())
+        )
         return list(result.scalars().all())
 
     async def list_users_paginated(
@@ -60,8 +73,10 @@ class UserRepository:
         page: int = 1,
         page_size: int = 20,
         keyword: str | None = None,
+        role: str | None = None,
+        is_active: bool | None = None,
     ) -> tuple[list[User], int]:
-        base_query = select(User)
+        base_query = select(User).where(User.deleted_at.is_(None))
         if keyword and keyword.strip():
             pattern = f"%{keyword.strip()}%"
             base_query = base_query.where(
@@ -71,6 +86,10 @@ class UserRepository:
                     User.full_name.ilike(pattern),
                 )
             )
+        if role and role.strip():
+            base_query = base_query.where(User.role == normalize_role(role))
+        if is_active is not None:
+            base_query = base_query.where(User.is_active.is_(is_active))
         count_result = await self.db.execute(select(func.count()).select_from(base_query.subquery()))
         total = count_result.scalar_one()
         offset = (page - 1) * page_size
@@ -79,6 +98,43 @@ class UserRepository:
         )
         rows = list(result.scalars().all())
         return rows, total
+
+    async def get_user_team_names(self, user_ids: list[int]) -> dict[int, list[str]]:
+        memberships = await self.get_user_team_memberships(user_ids)
+        return {
+            user_id: [item["team_name"] for item in items]
+            for user_id, items in memberships.items()
+        }
+
+    async def get_user_team_memberships(self, user_ids: list[int]) -> dict[int, list[dict]]:
+        if not user_ids:
+            return {}
+        result = await self.db.execute(
+            select(TeamMember.user_id, Team.id, Team.name, TeamMember.role)
+            .join(Team, Team.id == TeamMember.team_id)
+            .where(TeamMember.user_id.in_(user_ids))
+            .order_by(Team.name.asc(), Team.id.asc())
+        )
+        mapping: dict[int, list[dict]] = {user_id: [] for user_id in user_ids}
+        for user_id, team_id, team_name, role in result.all():
+            mapping.setdefault(user_id, []).append(
+                {
+                    "team_id": team_id,
+                    "team_name": team_name,
+                    "role": role,
+                }
+            )
+        return mapping
+
+    async def count_active_admins(self) -> int:
+        result = await self.db.execute(
+            select(func.count()).select_from(User).where(
+                User.deleted_at.is_(None),
+                User.is_active.is_(True),
+                User.role == ROLE_KB_ADMIN,
+            )
+        )
+        return result.scalar_one()
 
     async def create_user(
         self,
@@ -134,3 +190,28 @@ class UserRepository:
         await self.db.commit()
         await self.db.refresh(user)
         return user
+
+    async def soft_delete_user(self, user_id: int) -> User | None:
+        user = await self.get_by_id(user_id)
+        if user is None:
+            return None
+        user.is_active = False
+        user.deleted_at = utc_now()
+        await self.db.commit()
+        await self.db.refresh(user)
+        return user
+
+    async def soft_delete_users(self, user_ids: list[int]) -> list[User]:
+        deleted: list[User] = []
+        for user_id in user_ids:
+            user = await self.get_by_id(user_id)
+            if user is None:
+                continue
+            user.is_active = False
+            user.deleted_at = utc_now()
+            deleted.append(user)
+        if deleted:
+            await self.db.commit()
+            for user in deleted:
+                await self.db.refresh(user)
+        return deleted

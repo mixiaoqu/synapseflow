@@ -32,12 +32,21 @@ export interface UpdateTeamPayload {
   description?: string | null;
 }
 
+export type TeamBulkAction = "delete";
+
+/** 团队批量操作响应 */
+export interface TeamBulkActionResponse {
+  affected: number;
+}
+
 /** 团队角色标签映射 */
 export const TEAM_ROLE_LABELS: Record<string, string> = {
   owner: "所有者",
   admin: "管理员",
   member: "成员",
 };
+
+export type TeamRole = keyof typeof TEAM_ROLE_LABELS;
 
 /** 分页团队列表响应 */
 export interface TeamListResponse {

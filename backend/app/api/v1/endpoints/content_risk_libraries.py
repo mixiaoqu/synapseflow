@@ -84,13 +84,15 @@ async def list_content_risk_logs(
     blocked: bool | None = Query(None, description="Optional blocked filter"),
     risk_level: str | None = Query(None, description="Optional risk level filter"),
     chat_log_id: int | None = Query(None, description="Optional related chat log id"),
-    limit: int = Query(50, ge=1, le=200, description="Maximum rows to return"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Rows per page"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_any_admin_role),
 ):
     del current_user
     rows, total = await ContentRiskLogRepository(db).list_logs(
-        limit=limit,
+        page=page,
+        page_size=page_size,
         scene=scene,
         action=action,
         blocked=blocked,

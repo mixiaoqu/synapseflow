@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import type { FormInstance, FormRules } from "element-plus";
-import { ArrowLeft, Link, Setting } from "@element-plus/icons-vue";
+import { Link, Setting } from "@element-plus/icons-vue";
 
 import { listAssistants } from "@/shared/api/assistants";
 import { listDocumentCategoriesTree } from "@/shared/api/document-categories";
@@ -365,29 +365,6 @@ watch(
 
 <template>
   <section class="project-app-detail-page">
-    <header class="project-app-detail-page__header">
-      <div class="project-app-detail-page__header-left">
-        <button type="button" class="project-app-detail-page__back" @click="handleBack">
-          <el-icon><ArrowLeft /></el-icon>
-          <span>返回发布渠道列表</span>
-        </button>
-        <div class="project-app-detail-page__divider" />
-        <div class="project-app-detail-page__title-group">
-          <h1 class="project-app-detail-page__title">{{ pageTitle }}</h1>
-          <span v-if="project" class="project-app-detail-page__meta">{{ project.name }}</span>
-          <span v-if="currentApp" class="project-app-detail-page__meta">编码：{{ currentApp.code }}</span>
-        </div>
-      </div>
-
-      <div class="project-app-detail-page__header-actions">
-        <el-tag :type="form.is_active ? 'success' : 'info'" effect="plain" round>
-          {{ form.is_active ? "已启用" : "已停用" }}
-        </el-tag>
-        <el-button @click="handleBack">取消</el-button>
-        <el-button type="primary" :loading="saveLoading" @click="handleSave">保存配置</el-button>
-      </div>
-    </header>
-
     <AppLoading
       v-if="pageLoading"
       title="发布渠道详情加载中"
@@ -406,8 +383,26 @@ watch(
     <section v-else class="project-app-detail-page__layout">
       <section class="project-app-panel project-app-panel--form">
         <div class="project-app-panel__header">
-          <el-icon><Setting /></el-icon>
-          <span>应用编排配置</span>
+          <div class="project-app-panel__heading">
+            <div class="project-app-panel__title-row">
+              <h1 class="project-app-panel__title">
+                <el-icon><Setting /></el-icon>
+                <span>{{ form.name.trim() || pageTitle }}</span>
+              </h1>
+              <el-tag :type="form.is_active ? 'success' : 'info'" effect="plain" round>
+                {{ form.is_active ? "已启用" : "已停用" }}
+              </el-tag>
+            </div>
+            <div class="project-app-panel__meta">
+              <span v-if="project">{{ project.name }}</span>
+              <span v-if="currentApp">编码：{{ currentApp.code }}</span>
+            </div>
+          </div>
+
+          <div class="project-app-panel__actions">
+            <el-button @click="handleBack">取消</el-button>
+            <el-button type="primary" :loading="saveLoading" @click="handleSave">保存配置</el-button>
+          </div>
         </div>
 
         <div class="project-app-panel__body">
@@ -600,70 +595,6 @@ watch(
   overflow: hidden;
 }
 
-.project-app-detail-page__header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 56px;
-  border: 1px solid #dbe2ea;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 0 16px;
-}
-
-.project-app-detail-page__header-left,
-.project-app-detail-page__header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.project-app-detail-page__back {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  background: transparent;
-  color: #475569;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 0;
-}
-
-.project-app-detail-page__back:hover {
-  color: #2563eb;
-}
-
-.project-app-detail-page__divider {
-  width: 1px;
-  height: 20px;
-  background: #e2e8f0;
-}
-
-.project-app-detail-page__title-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.project-app-detail-page__title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.project-app-detail-page__meta {
-  color: #64748b;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
 .project-app-detail-page__layout {
   display: grid;
   flex: 1;
@@ -678,22 +609,75 @@ watch(
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #dbe2ea;
-  border-radius: 20px;
-  background: #ffffff;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius-lg);
+  background: var(--admin-surface);
+  box-shadow: var(--admin-shadow-panel);
 }
 
 .project-app-panel__header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--admin-border-soft);
+  background: var(--admin-surface-muted);
+  color: var(--admin-text-secondary);
+  padding: 10px 16px;
+}
+
+.project-app-panel__heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.project-app-panel__title-row,
+.project-app-panel__meta,
+.project-app-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.project-app-panel__title-row,
+.project-app-panel__meta {
+  flex-wrap: wrap;
+}
+
+.project-app-panel__title {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
-  border-bottom: 1px solid #f1f5f9;
-  background: #fafafa;
-  color: #334155;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 14px 18px;
+  margin: 0;
+  max-width: min(520px, 100%);
+  overflow: hidden;
+  color: var(--admin-text);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.project-app-panel__title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-app-panel__title .el-icon {
+  flex-shrink: 0;
+  color: var(--admin-primary);
+}
+
+.project-app-panel__meta {
+  color: var(--admin-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.project-app-panel__actions {
+  flex-shrink: 0;
 }
 
 .project-app-panel__body {
@@ -704,8 +688,8 @@ watch(
 
 .project-app-detail-page__section-title {
   margin: 0 0 16px;
-  border-bottom: 1px solid #e5e7eb;
-  color: #111827;
+  border-bottom: 1px solid var(--admin-border-soft);
+  color: var(--admin-text);
   font-size: 14px;
   font-weight: 700;
   padding-bottom: 8px;
@@ -727,7 +711,7 @@ watch(
 
 .project-app-detail-page__hint {
   margin-top: 6px;
-  color: #64748b;
+  color: var(--admin-text-muted);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -739,7 +723,7 @@ watch(
 }
 
 .project-app-detail-page__option-row span:last-child {
-  color: #94a3b8;
+  color: var(--admin-text-subtle);
   font-size: 12px;
 }
 
@@ -755,9 +739,9 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  background: #f8fafc;
+  border: 1px solid var(--admin-border-soft);
+  border-radius: var(--admin-radius-md);
+  background: var(--admin-surface-muted);
   padding: 12px 14px;
 }
 
@@ -770,20 +754,20 @@ watch(
 
 .project-app-detail-page__kb-copy strong {
   overflow: hidden;
-  color: #0f172a;
+  color: var(--admin-text);
   font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .project-app-detail-page__kb-copy span {
-  color: #64748b;
+  color: var(--admin-text-muted);
   font-size: 12px;
   line-height: 1.5;
 }
 
 .project-app-panel--preview {
-  background: #f8fafc;
+  background: var(--admin-surface-muted);
 }
 
 .project-app-detail-page__preview-header-main {
@@ -812,9 +796,9 @@ watch(
   flex: 1;
   width: 100%;
   min-height: 0;
-  border: 1px solid #dbe2ea;
-  border-radius: 16px;
-  background: #ffffff;
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius-lg);
+  background: var(--admin-surface);
 }
 
 @media (max-width: 1280px) {
@@ -833,10 +817,9 @@ watch(
     overflow: auto;
   }
 
-  .project-app-detail-page__header,
-  .project-app-detail-page__header-left,
-  .project-app-detail-page__header-actions,
-  .project-app-detail-page__title-group {
+  .project-app-panel__header,
+  .project-app-panel__heading,
+  .project-app-panel__actions {
     flex-direction: column;
     align-items: stretch;
   }

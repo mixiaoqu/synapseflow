@@ -7,8 +7,12 @@ from app.api.dependencies.auth import require_any_admin_role
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.team import (
+    TeamBulkActionRequest,
+    TeamBulkActionResponse,
     TeamCreate,
     TeamListResponse,
+    TeamMemberBulkDelete,
+    TeamMemberBulkRoleUpdate,
     TeamMemberCreate,
     TeamMemberResponse,
     TeamMemberUpdate,
@@ -48,12 +52,27 @@ async def create_team(
     current_user: User = Depends(require_any_admin_role),
 ):
     repo = TeamRepository(db, user_id=current_user.id)
+    if await repo.is_code_taken(body.code):
+        raise HTTPException(status_code=409, detail="团队编码已存在")
     return await repo.create_team(
         name=body.name,
         code=body.code,
         description=body.description,
         member_ids=body.member_ids,
     )
+
+
+@router.post("/bulk-actions", response_model=TeamBulkActionResponse)
+async def bulk_action_teams(
+    body: TeamBulkActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_any_admin_role),
+):
+    repo = TeamRepository(db, user_id=current_user.id)
+    if body.action == "delete":
+        affected = await repo.delete_teams(body.team_ids)
+        return TeamBulkActionResponse(affected=affected)
+    raise HTTPException(status_code=400, detail="不支持的批量操作")
 
 
 @router.put("/{team_id}", response_model=TeamResponse)
@@ -64,6 +83,8 @@ async def update_team(
     current_user: User = Depends(require_any_admin_role),
 ):
     repo = TeamRepository(db, user_id=current_user.id)
+    if await repo.is_code_taken(body.code, exclude_team_id=team_id):
+        raise HTTPException(status_code=409, detail="团队编码已存在")
     team = await repo.update_team(
         team_id,
         name=body.name,
@@ -131,6 +152,34 @@ async def update_team_member(
     if not member:
         raise HTTPException(status_code=404, detail="Team member not found")
     return member
+
+
+@router.post("/{team_id}/members/bulk-role", response_model=TeamBulkActionResponse)
+async def bulk_update_team_member_role(
+    team_id: int,
+    body: TeamMemberBulkRoleUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_any_admin_role),
+):
+    repo = TeamRepository(db, user_id=current_user.id)
+    affected = await repo.update_members_role(team_id, user_ids=body.user_ids, role=body.role)
+    if affected == 0 and not await repo.get_team(team_id):
+        raise HTTPException(status_code=404, detail="Team not found")
+    return TeamBulkActionResponse(affected=affected)
+
+
+@router.post("/{team_id}/members/bulk-delete", response_model=TeamBulkActionResponse)
+async def bulk_delete_team_members(
+    team_id: int,
+    body: TeamMemberBulkDelete,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_any_admin_role),
+):
+    repo = TeamRepository(db, user_id=current_user.id)
+    affected = await repo.delete_members(team_id, user_ids=body.user_ids)
+    if affected == 0 and not await repo.get_team(team_id):
+        raise HTTPException(status_code=404, detail="Team not found")
+    return TeamBulkActionResponse(affected=affected)
 
 
 @router.delete("/{team_id}/members/{user_id}")

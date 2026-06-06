@@ -1,5 +1,6 @@
 export type KnowledgeBaseStatus = "available" | "indexing" | "error" | "empty";
 export type DocumentIndexStatus = "queued" | "processing" | "indexed" | "failed";
+export type KnowledgeBaseBulkAction = "enable" | "disable" | "delete" | "reindex";
 
 export interface KnowledgeBaseRecentDocument {
   id: number;
@@ -45,4 +46,16 @@ export interface KnowledgeBaseListResponse {
   total: number;
   page: number;
   page_size: number;
+}
+
+export interface KnowledgeBaseBulkActionFailure {
+  id: number;
+  message: string;
+}
+
+export interface KnowledgeBaseBulkActionResponse {
+  action: KnowledgeBaseBulkAction;
+  total: number;
+  affected: number;
+  failed: KnowledgeBaseBulkActionFailure[];
 }

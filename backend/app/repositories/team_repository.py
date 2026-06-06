@@ -1,5 +1,7 @@
 """Team and team-member repository."""
 
+from collections.abc import Sequence
+
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -108,6 +110,16 @@ class TeamRepository:
         )
         return result.scalar_one_or_none() is not None
 
+    async def is_code_taken(self, code: str | None, *, exclude_team_id: int | None = None) -> bool:
+        normalized = (code or "").strip()
+        if not normalized:
+            return False
+        query = select(Team.id).where(Team.code == normalized)
+        if exclude_team_id is not None:
+            query = query.where(Team.id != exclude_team_id)
+        result = await self.db.execute(query.limit(1))
+        return result.scalar_one_or_none() is not None
+
     async def create_team(
         self,
         *,
@@ -162,6 +174,17 @@ class TeamRepository:
         await self.db.commit()
         return True
 
+    async def delete_teams(self, team_ids: Sequence[int]) -> int:
+        unique_ids = list(dict.fromkeys(team_ids))
+        if not unique_ids:
+            return 0
+        result = await self.db.execute(select(Team).where(Team.id.in_(unique_ids)))
+        teams = list(result.scalars().all())
+        for team in teams:
+            await self.db.delete(team)
+        await self.db.commit()
+        return len(teams)
+
     async def list_members(self, team_id: int) -> list[TeamMember]:
         team = await self.get_team(team_id)
         if not team:
@@ -213,6 +236,32 @@ class TeamRepository:
         await self.db.refresh(member)
         return member
 
+    async def update_members_role(
+        self,
+        team_id: int,
+        *,
+        user_ids: Sequence[int],
+        role: str,
+    ) -> int:
+        team = await self.get_team(team_id)
+        if not team:
+            return 0
+
+        unique_ids = list(dict.fromkeys(user_ids))
+        if not unique_ids:
+            return 0
+        result = await self.db.execute(
+            select(TeamMember).where(
+                TeamMember.team_id == team_id,
+                TeamMember.user_id.in_(unique_ids),
+            )
+        )
+        members = list(result.scalars().all())
+        for member in members:
+            member.role = role
+        await self.db.commit()
+        return len(members)
+
     async def delete_member(self, team_id: int, *, user_id: int) -> bool:
         team = await self.get_team(team_id)
         if not team:
@@ -230,3 +279,23 @@ class TeamRepository:
         await self.db.delete(member)
         await self.db.commit()
         return True
+
+    async def delete_members(self, team_id: int, *, user_ids: Sequence[int]) -> int:
+        team = await self.get_team(team_id)
+        if not team:
+            return 0
+
+        unique_ids = list(dict.fromkeys(user_ids))
+        if not unique_ids:
+            return 0
+        result = await self.db.execute(
+            select(TeamMember).where(
+                TeamMember.team_id == team_id,
+                TeamMember.user_id.in_(unique_ids),
+            )
+        )
+        members = list(result.scalars().all())
+        for member in members:
+            await self.db.delete(member)
+        await self.db.commit()
+        return len(members)

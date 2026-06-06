@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
-import { ArrowLeft, Document, Folder, RefreshRight, Search } from "@element-plus/icons-vue";
+import { useRoute } from "vue-router";
+import { Document, Folder, RefreshRight, Search } from "@element-plus/icons-vue";
 
 import { getDocument, getDocumentChunks } from "@/shared/api/documents";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import StatusTag from "@/shared/components/page/StatusTag.vue";
+import { useAdminBreadcrumbStore } from "@/stores/admin-breadcrumb";
 import type {
   DocumentChunkSummary,
   DocumentDetail,
@@ -15,7 +16,7 @@ import type {
 } from "@/shared/types/document";
 
 const route = useRoute();
-const router = useRouter();
+const adminBreadcrumbStore = useAdminBreadcrumbStore();
 
 const documentDetail = ref<DocumentDetail | null>(null);
 const documentChunks = ref<DocumentChunkSummary[]>([]);
@@ -77,8 +78,7 @@ const documentContentHtml = computed(() => {
     return escapeHtmlWithBreaks(content);
   }
 
-  const start = clampOffset(chunk.start_offset, content.length);
-  const end = clampOffset(chunk.end_offset, content.length);
+  const { start, end } = resolveChunkHighlightRange(content, chunk);
   if (end <= start) {
     return escapeHtmlWithBreaks(content);
   }
@@ -141,6 +141,36 @@ function clampOffset(value: number, length: number) {
   return Math.max(0, Math.min(Math.trunc(value), length));
 }
 
+function resolveChunkHighlightRange(content: string, chunk: DocumentChunkSummary) {
+  const offsetStart = clampOffset(chunk.start_offset, content.length);
+  const offsetEnd = clampOffset(chunk.end_offset, content.length);
+  const chunkContent = chunk.content.trim();
+
+  if (!chunkContent) {
+    return { start: offsetStart, end: offsetEnd };
+  }
+
+  const offsetText = content.slice(offsetStart, offsetEnd).trim();
+  if (offsetText === chunkContent) {
+    return { start: offsetStart, end: offsetEnd };
+  }
+
+  const nearbyStart = Math.max(0, offsetStart - 500);
+  const nearbyEnd = Math.min(content.length, offsetEnd + 500);
+  const nearbyIndex = content.slice(nearbyStart, nearbyEnd).indexOf(chunkContent);
+  if (nearbyIndex >= 0) {
+    const start = nearbyStart + nearbyIndex;
+    return { start, end: start + chunkContent.length };
+  }
+
+  const globalIndex = content.indexOf(chunkContent);
+  if (globalIndex >= 0) {
+    return { start: globalIndex, end: globalIndex + chunkContent.length };
+  }
+
+  return { start: offsetStart, end: offsetEnd };
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
@@ -163,6 +193,15 @@ watch(activeChunkId, async (value) => {
   const highlight = previewBodyRef.value?.querySelector<HTMLElement>("#active-highlight");
   highlight?.scrollIntoView({ behavior: "smooth", block: "center" });
 });
+
+watch(
+  () => documentDetail.value,
+  (detail) => {
+    adminBreadcrumbStore.setDynamicTitle("knowledge-base-detail", detail?.knowledge_base_name);
+    adminBreadcrumbStore.setDynamicTitle("knowledge-base-document-detail", detail?.title);
+  },
+  { immediate: true },
+);
 
 async function loadPage() {
   if (!knowledgeBaseId.value || !documentId.value) {
@@ -192,15 +231,6 @@ async function loadPage() {
   }
 }
 
-function handleBack() {
-  if (!knowledgeBaseId.value) {
-    void router.push("/knowledge-bases");
-    return;
-  }
-
-  void router.push(`/knowledge-bases/${knowledgeBaseId.value}`);
-}
-
 function handleSelectChunk(chunkId: number) {
   activeChunkId.value = chunkId;
 }
@@ -221,54 +251,6 @@ watch(
 
 <template>
   <section class="document-detail-page">
-    <header class="document-detail-page__header">
-      <div class="document-detail-page__header-left">
-        <button
-          type="button"
-          class="document-detail-page__back"
-          @click="handleBack"
-        >
-          <el-icon><ArrowLeft /></el-icon>
-          <span>返回</span>
-        </button>
-        <div class="document-detail-page__divider" />
-        <div v-if="documentDetail" class="document-detail-page__title-group">
-          <h1 class="document-detail-page__toolbar-title">{{ documentDetail.title }}</h1>
-          <StatusTag
-            :label="indexStatusMeta[documentDetail.index_status].label"
-            :type="indexStatusMeta[documentDetail.index_status].type"
-          />
-          <StatusTag
-            :label="lifecycleStatusMeta[documentDetail.status].label"
-            :type="lifecycleStatusMeta[documentDetail.status].type"
-          />
-        </div>
-      </div>
-
-      <div class="document-detail-page__header-right" v-if="documentDetail">
-        <span class="document-detail-page__toolbar-meta">
-          分类：{{ documentDetail.category_name || "未分配分类" }}
-        </span>
-        <span class="document-detail-page__toolbar-meta">
-          {{ formatFileSize(documentDetail.size) }}
-        </span>
-        <span class="document-detail-page__toolbar-meta">
-          {{ documentChunks.length }} 个分块
-        </span>
-        <span class="document-detail-page__toolbar-meta">
-          更新于 {{ formatDateTime(documentDetail.updated_at) }}
-        </span>
-        <el-button
-          :icon="RefreshRight"
-          :loading="loading"
-          size="small"
-          @click="loadPage"
-        >
-          刷新
-        </el-button>
-      </div>
-    </header>
-
     <AppLoading
       v-if="loading && !documentDetail"
       title="文档详情加载中"
@@ -290,19 +272,44 @@ watch(
           <article class="doc-preview">
             <div class="doc-preview__header">
               <div>
-                <p class="doc-preview__title">
-                  <el-icon><Document /></el-icon>
-                  文档正文
-                </p>
-                <p class="doc-preview__hint">
-                  选中右侧分块后，这里会高亮对应片段。知识库：{{ documentDetail.knowledge_base_id ?? "-" }}
-                </p>
+                <div class="doc-preview__document-info">
+                  <div class="doc-preview__document-title-row">
+                    <h1 class="doc-preview__document-title">
+                      <el-icon><Document /></el-icon>
+                      <span>{{ documentDetail.title }}</span>
+                    </h1>
+                    <StatusTag
+                      :label="indexStatusMeta[documentDetail.index_status].label"
+                      :type="indexStatusMeta[documentDetail.index_status].type"
+                    />
+                    <StatusTag
+                      :label="lifecycleStatusMeta[documentDetail.status].label"
+                      :type="lifecycleStatusMeta[documentDetail.status].type"
+                    />
+                  </div>
+                  <div class="doc-preview__document-meta">
+                    <span>分类：{{ documentDetail.category_name || "未分配分类" }}</span>
+                    <span>{{ formatFileSize(documentDetail.size) }}</span>
+                    <span>{{ documentChunks.length }} 个分块</span>
+                    <span>更新于 {{ formatDateTime(documentDetail.updated_at) }}</span>
+                  </div>
+                </div>
               </div>
-              <StatusTag
-                v-if="activeChunk"
-                :label="`当前分块 #${activeChunk.chunk_index + 1}`"
-                type="info"
-              />
+              <div class="doc-preview__header-actions">
+                <StatusTag
+                  v-if="activeChunk"
+                  :label="`当前分块 #${activeChunk.chunk_index + 1}`"
+                  type="info"
+                />
+                <el-button
+                  :icon="RefreshRight"
+                  :loading="loading"
+                  size="small"
+                  @click="loadPage"
+                >
+                  刷新
+                </el-button>
+              </div>
             </div>
 
             <div ref="previewBodyRef" class="doc-preview__body">
@@ -396,73 +403,6 @@ watch(
   overflow: hidden;
 }
 
-.document-detail-page__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 56px;
-  padding: 0 16px;
-  border: 1px solid #dbe2ea;
-  background: #fff;
-  border-radius: 12px;
-}
-
-.document-detail-page__header-left,
-.document-detail-page__header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.document-detail-page__divider {
-  width: 1px;
-  height: 20px;
-  background: #e2e8f0;
-}
-
-.document-detail-page__title-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.document-detail-page__back {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  background: transparent;
-  color: #475569;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 0;
-}
-
-.document-detail-page__back:hover {
-  color: #2563eb;
-}
-
-.document-detail-page__toolbar-title {
-  margin: 0;
-  max-width: 320px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: #0f172a;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.document-detail-page__toolbar-meta {
-  font-size: 13px;
-  color: #64748b;
-  white-space: nowrap;
-}
-
 .document-detail-page__content {
   min-height: 0;
   flex: 1;
@@ -509,7 +449,6 @@ watch(
   padding: 18px 20px;
 }
 
-.doc-preview__title,
 .chunk-panel__title {
   display: flex;
   align-items: center;
@@ -520,11 +459,63 @@ watch(
   font-weight: 700;
 }
 
-.doc-preview__hint,
 .chunk-panel__hint {
   margin: 6px 0 0;
   color: #64748b;
   font-size: 12px;
+}
+
+.doc-preview__document-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.doc-preview__document-title-row,
+.doc-preview__header-actions,
+.doc-preview__document-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.doc-preview__document-title-row,
+.doc-preview__document-meta {
+  flex-wrap: wrap;
+}
+
+.doc-preview__document-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  max-width: min(620px, 100%);
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.doc-preview__document-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-preview__document-title .el-icon {
+  flex-shrink: 0;
+  color: #2563eb;
+}
+
+.doc-preview__document-meta {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.doc-preview__header-actions {
+  flex-shrink: 0;
 }
 
 .doc-preview__body {
@@ -648,9 +639,6 @@ watch(
 }
 
 @media (max-width: 768px) {
-  .document-detail-page__header,
-  .document-detail-page__header-left,
-  .document-detail-page__header-right,
   .doc-preview__header,
   .chunk-panel__header {
     flex-direction: column;
@@ -661,8 +649,12 @@ watch(
     max-width: 100%;
   }
 
-  .document-detail-page__toolbar-title {
+  .doc-preview__document-title {
     max-width: none;
+  }
+
+  .doc-preview__header-actions {
+    justify-content: space-between;
   }
 }
 </style>

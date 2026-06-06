@@ -4,6 +4,8 @@ import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { CopyDocument, Delete, Plus, Search } from "@element-plus/icons-vue";
 
+import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import { createProduct, listProducts } from "@/shared/api/products";
 import { copyProject, createProject, deleteProject, listProjects } from "@/shared/api/projects";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
@@ -22,6 +24,7 @@ const projects = ref<ProjectSummary[]>([]);
 const products = ref<ProductSummary[]>([]);
 const loading = ref(false);
 const loadError = ref<unknown>(null);
+const hasLoadedData = ref(false);
 const pagination = ref({
   page: 1,
   pageSize: 20,
@@ -60,6 +63,7 @@ const displayedProjects = computed(() => projects.value);
 const isForbidden = computed(() => Boolean(loadError.value) && isForbiddenError(loadError.value));
 const selectedTeamName = computed(() => teamScopeStore.selectedTeam?.name ?? "");
 const hasAvailableProducts = computed(() => products.value.length > 0);
+const hasActiveFilters = computed(() => keyword.value.trim().length > 0);
 
 function resetCreateForm() {
   createForm.value = {
@@ -119,8 +123,13 @@ async function loadProjectList() {
     projects.value = projectResult.items;
     pagination.value.total = projectResult.total;
     products.value = productResult.items;
+    hasLoadedData.value = true;
   } catch (error) {
-    loadError.value = error;
+    if (hasLoadedData.value) {
+      ElMessage.error(error instanceof Error ? error.message : "项目列表刷新失败，请稍后重试。");
+    } else {
+      loadError.value = error;
+    }
   } finally {
     loading.value = false;
   }
@@ -129,6 +138,11 @@ async function loadProjectList() {
 function handlePageChange(page: number) {
   pagination.value.page = page;
   void loadProjectList();
+}
+
+function resetFilters() {
+  keyword.value = "";
+  refreshProjectListFromFirstPage();
 }
 
 function refreshProjectListFromFirstPage() {
@@ -355,45 +369,15 @@ watch(keyword, () => {
 
 <template>
   <section class="project-list-page">
-    <header class="project-list-page__header">
-      <div>
-        <h1 class="project-list-page__title">应用与发布</h1>
-        <p class="project-list-page__description">先选择业务项目，再进入该项目下的发布渠道与接入配置。</p>
-      </div>
-
-      <div class="project-list-page__header-actions">
-        <el-input
-          v-model="keyword"
-          size="large"
-          clearable
-          placeholder="搜索项目名称、编码或产品..."
-          class="project-list-page__search"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-
-        <el-button size="large" @click="openCreateProductDialog">
-          <el-icon><Plus /></el-icon>
-          新建产品
-        </el-button>
-        <el-button type="primary" size="large" @click="openCreateProjectDialog">
-          <el-icon><Plus /></el-icon>
-          新建项目
-        </el-button>
-      </div>
-    </header>
-
     <AppLoading
-      v-if="loading"
+      v-if="loading && !hasLoadedData"
       title="项目列表加载中"
       description="正在获取当前团队可访问的项目，请稍候。"
       :blocks="4"
     />
 
     <AppError
-      v-else-if="loadError && !isForbidden"
+      v-else-if="loadError && !isForbidden && !hasLoadedData"
       title="项目列表加载失败"
       description="暂时无法获取项目列表，请稍后重试。"
       :error="loadError"
@@ -401,24 +385,68 @@ watch(keyword, () => {
     />
 
     <AppError
-      v-else-if="isForbidden"
+      v-else-if="isForbidden && !hasLoadedData"
       title="无权查看项目列表"
       description="当前账号没有访问项目列表的权限。"
       :error="loadError"
       :show-retry="false"
     />
 
-    <AppEmpty
-      v-else-if="displayedProjects.length === 0"
-      title="暂无项目"
-      description="当前筛选条件下没有可管理的业务项目。"
-    >
-      <el-button @click="openCreateProductDialog">新建产品</el-button>
-      <el-button type="primary" @click="openCreateProjectDialog">新建项目</el-button>
-    </AppEmpty>
+    <AdminListPanel v-else>
+      <AdminTableToolbar>
+        <template #left>
+          <el-input
+            v-model="keyword"
+            clearable
+            placeholder="搜索项目名称、编码或产品..."
+            class="project-list-page__search"
+            @keyup.enter="refreshProjectListFromFirstPage"
+            @clear="refreshProjectListFromFirstPage"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <el-button :loading="loading" type="primary" @click="refreshProjectListFromFirstPage">
+            搜索
+          </el-button>
+          <el-button :disabled="loading" @click="resetFilters">重置</el-button>
+        </template>
 
-    <section v-else class="project-list-page__table-panel">
-      <el-table :data="displayedProjects" row-key="id" class="project-list-page__table">
+        <template #right>
+          <el-button @click="openCreateProductDialog">
+            <el-icon><Plus /></el-icon>
+            新建产品
+          </el-button>
+          <el-button type="primary" @click="openCreateProjectDialog">
+            <el-icon><Plus /></el-icon>
+            新建项目
+          </el-button>
+        </template>
+      </AdminTableToolbar>
+
+      <AppEmpty
+        v-if="displayedProjects.length === 0"
+        v-loading="loading"
+        class="project-list-page__empty"
+        :title="hasActiveFilters ? '未找到相关项目' : '暂无项目'"
+        description="当前筛选条件下没有可管理的业务项目。"
+      >
+        <el-button v-if="hasActiveFilters" link type="primary" @click="resetFilters">清除筛选</el-button>
+        <template v-else>
+          <el-button @click="openCreateProductDialog">新建产品</el-button>
+          <el-button type="primary" @click="openCreateProjectDialog">新建项目</el-button>
+        </template>
+      </AppEmpty>
+
+      <el-table
+        v-else
+        v-loading="loading"
+        :data="displayedProjects"
+        row-key="id"
+        class="project-list-page__table"
+        element-loading-text="正在更新项目列表"
+      >
         <el-table-column label="项目名称" min-width="280">
           <template #default="{ row }">
             <div class="project-list-page__name-cell">
@@ -495,7 +523,7 @@ watch(keyword, () => {
           @current-change="handlePageChange"
         />
       </div>
-    </section>
+    </AdminListPanel>
 
     <el-dialog
       v-model="createProductDialogVisible"
@@ -686,46 +714,11 @@ watch(keyword, () => {
 .project-list-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.project-list-page__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 56px;
-  border: 1px solid #dbe2ea;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 16px 18px;
-}
-
-.project-list-page__header-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
   gap: 12px;
-  flex-wrap: wrap;
-}
-
-.project-list-page__title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.project-list-page__description {
-  margin: 6px 0 0;
-  color: #64748b;
-  font-size: 13px;
-  line-height: 1.6;
 }
 
 .project-list-page__search {
-  width: 360px;
-  max-width: 100%;
+  width: 280px;
 }
 
 .project-list-page__dialog-field {
@@ -738,18 +731,12 @@ watch(keyword, () => {
   gap: 12px;
 }
 
-.project-list-page__table-panel {
-  border: 1px solid #dbe2ea;
-  border-radius: 18px;
-  background: #ffffff;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-  padding: 8px 8px 2px;
-}
-
 .project-list-page__pagination {
   display: flex;
   justify-content: flex-end;
-  padding: 12px 8px 10px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  padding: 12px;
 }
 
 .project-list-page__copy-hint {
@@ -757,6 +744,15 @@ watch(keyword, () => {
   color: #64748b;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.project-list-page__table {
+  width: 100%;
+}
+
+.project-list-page__empty {
+  min-height: 420px;
+  border-top: 1px solid #e2e8f0;
 }
 
 .project-list-page__name-cell {
@@ -781,15 +777,6 @@ watch(keyword, () => {
 }
 
 @media (max-width: 960px) {
-  .project-list-page__header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .project-list-page__header-actions {
-    justify-content: stretch;
-  }
-
   .project-list-page__search {
     width: 100%;
   }

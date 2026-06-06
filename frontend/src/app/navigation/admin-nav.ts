@@ -7,7 +7,8 @@ export interface AdminNavItem {
     | "organizations"
     | "users"
     | "content-risk-overview"
-    | "content-risk-libraries";
+    | "content-risk-libraries"
+    | "content-risk-logs";
   label: string;
   to: string;
 }
@@ -77,6 +78,11 @@ export const adminNavGroups: AdminNavGroup[] = [
         key: "content-risk-libraries",
         label: "全局规则库",
         to: "/content-risk/libraries",
+      },
+      {
+        key: "content-risk-logs",
+        label: "判定日志",
+        to: "/content-risk/logs",
       },
     ],
   },

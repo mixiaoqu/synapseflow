@@ -16,7 +16,6 @@ const passwordVisible = ref(false);
 const form = reactive({
   usernameOrEmail: "",
   password: "",
-  rememberMe: true,
 });
 
 const passwordInputType = computed(() => (passwordVisible.value ? "text" : "password"));
@@ -58,7 +57,7 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <section class="relative flex min-h-screen items-center justify-center px-4 py-10 sm:px-6">
+  <section class="login-page relative flex min-h-screen items-center justify-center px-4 py-10 sm:px-6">
     <div
       class="pointer-events-none absolute inset-x-0 top-0 h-[320px] bg-gradient-to-b from-blue-50/70 via-slate-50 to-transparent"
     />
@@ -66,21 +65,21 @@ async function handleSubmit() {
     <div class="relative z-10 w-full max-w-md">
       <div class="mb-8 text-center">
         <div
-          class="mx-auto mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-500 text-white shadow-lg shadow-brand-500/20"
+          class="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--admin-primary)] text-white shadow-[0_8px_20px_rgba(37,99,235,0.18)]"
         >
           <el-icon :size="24">
             <Monitor />
           </el-icon>
         </div>
         <h1 class="text-2xl font-bold tracking-tight text-slate-950">
-          企业内部知识库系统
+          三圆AI知识库软件
         </h1>
         <p class="mt-2 text-sm leading-6 text-slate-500">
-          面向内部知识资产、项目文档与助手能力的统一管理后台
+          面向内部知识资产、项目文档与助手能力的管理后台
         </p>
       </div>
 
-      <div class="rounded-[28px] border border-slate-200/80 bg-white p-6 shadow-panel sm:p-8">
+      <div class="rounded-xl border border-[var(--admin-border)] bg-white p-6 shadow-[var(--admin-shadow-panel)] sm:p-8">
         <div class="mb-6 border-b border-slate-100 pb-3">
           <span class="text-sm font-semibold text-slate-900">账号密码登录</span>
         </div>
@@ -91,7 +90,7 @@ async function handleSubmit() {
               管理员登录
             </h2>
             <p class="mt-2 text-sm leading-6 text-slate-500">
-              复用现有后端鉴权接口，登录成功后进入受保护后台壳层。
+              使用企业账号登录，进入知识库、助手与应用接入管理后台。
             </p>
           </div>
 
@@ -99,11 +98,11 @@ async function handleSubmit() {
             label-position="top"
             @submit.prevent="handleSubmit"
           >
-            <el-form-item label="工号 / 企业邮箱">
+            <el-form-item label="登录账号">
               <el-input
                 v-model="form.usernameOrEmail"
                 size="large"
-                placeholder="staff.name@company.com"
+                placeholder="用户名或企业邮箱"
                 autocomplete="username"
               >
                 <template #prefix>
@@ -142,17 +141,10 @@ async function handleSubmit() {
               </el-input>
             </el-form-item>
 
-            <div class="mb-5 flex items-center justify-between">
-              <el-checkbox
-                v-model="form.rememberMe"
-                label="下次自动登录"
-              />
-            </div>
-
             <el-button
               type="primary"
               size="large"
-              class="!mt-2 !w-full"
+              class="!mt-1 !w-full"
               :loading="submitting"
               @click="handleSubmit"
             >
@@ -181,3 +173,13 @@ async function handleSubmit() {
     </div>
   </section>
 </template>
+
+<style scoped>
+.login-page {
+  --el-color-primary: var(--admin-primary);
+  --el-color-primary-light-3: var(--admin-primary-light);
+  --el-color-primary-light-7: var(--admin-primary-border);
+  --el-color-primary-light-9: var(--admin-primary-soft);
+  --el-color-primary-dark-2: var(--admin-primary-hover);
+}
+</style>

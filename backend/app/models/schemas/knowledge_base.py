@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 KnowledgeBaseStatus = Literal["available", "indexing", "error", "empty"]
 DocumentIndexStatus = Literal["queued", "processing", "indexed", "failed"]
+KnowledgeBaseBulkAction = Literal["enable", "disable", "delete", "reindex"]
 
 
 class KnowledgeBaseCreate(BaseModel):
@@ -88,3 +89,30 @@ class KnowledgeBaseToggleActive(BaseModel):
     """Toggle knowledge-base active state."""
 
     is_active: bool
+
+
+class KnowledgeBaseBulkActionRequest(BaseModel):
+    """Batch knowledge-base action request."""
+
+    knowledge_base_ids: list[int] = Field(
+        ...,
+        min_length=1,
+        description="Knowledge base ids",
+    )
+    action: KnowledgeBaseBulkAction = Field(..., description="Batch action")
+
+
+class KnowledgeBaseBulkActionFailure(BaseModel):
+    """Single failed item in a batch knowledge-base action."""
+
+    id: int
+    message: str
+
+
+class KnowledgeBaseBulkActionResponse(BaseModel):
+    """Batch knowledge-base action result."""
+
+    action: KnowledgeBaseBulkAction
+    total: int = 0
+    affected: int = 0
+    failed: list[KnowledgeBaseBulkActionFailure] = Field(default_factory=list)

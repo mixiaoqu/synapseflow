@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
-  ArrowLeft,
   ArrowRight,
   CirclePlus,
   Delete,
@@ -13,10 +12,14 @@ import {
   MoreFilled,
   RefreshRight,
   Search,
+  InfoFilled,
   UploadFilled,
   View,
 } from "@element-plus/icons-vue";
 
+import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
+import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   createDocumentCategory,
   deleteDocumentCategory,
@@ -44,6 +47,7 @@ import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import StatusTag from "@/shared/components/page/StatusTag.vue";
+import { useAdminBreadcrumbStore } from "@/stores/admin-breadcrumb";
 import { useTeamScopeStore } from "@/stores/team-scope";
 import { isForbiddenError } from "@/shared/utils/error";
 import type {
@@ -99,6 +103,7 @@ interface FileSystemEntryLike {
 
 const route = useRoute();
 const router = useRouter();
+const adminBreadcrumbStore = useAdminBreadcrumbStore();
 const teamScopeStore = useTeamScopeStore();
 
 const knowledgeBase = ref<KnowledgeBaseSummary | null>(null);
@@ -117,6 +122,7 @@ const selectedDocuments = ref<DocumentSummary[]>([]);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const folderInputRef = ref<HTMLInputElement | null>(null);
 const uploadDialogVisible = ref(false);
+const detailDrawerVisible = ref(false);
 const uploadTargetCategory = ref<UploadTargetCategoryValue>("uncategorized");
 const uploadQueue = ref<UploadQueueItem[]>([]);
 const uploadDragging = ref(false);
@@ -428,10 +434,6 @@ async function loadPage() {
   } finally {
     pageLoading.value = false;
   }
-}
-
-function handleBack() {
-  void router.push("/knowledge-bases");
 }
 
 function handleSelectCategory(key: CategoryFilterKey) {
@@ -1248,6 +1250,14 @@ onMounted(() => {
 });
 
 watch(
+  () => knowledgeBase.value?.name,
+  (name) => {
+    adminBreadcrumbStore.setDynamicTitle("knowledge-base-detail", name);
+  },
+  { immediate: true },
+);
+
+watch(
   () => teamScopeStore.selectedTeamId,
   () => {
     selectedDocuments.value = [];
@@ -1278,46 +1288,6 @@ watch(
 
 <template>
   <section class="kb-detail-page">
-    <header class="kb-detail-page__header">
-      <div class="kb-detail-page__header-left">
-        <button type="button" class="kb-detail-page__back" @click="handleBack">
-          <el-icon><ArrowLeft /></el-icon>
-          <span>返回</span>
-        </button>
-        <div class="kb-detail-page__divider" />
-        <div v-if="knowledgeBase" class="kb-detail-page__title-group">
-          <h1 class="kb-detail-page__toolbar-title">{{ pageTitle }}</h1>
-          <span class="kb-detail-page__toolbar-meta">
-            {{ teamScopeStore.selectedTeam?.name ?? "全部团队可见" }}
-          </span>
-          <span class="kb-detail-page__toolbar-meta">
-            更新于 {{ formatDateTime(knowledgeBase.last_document_updated_at ?? knowledgeBase.updated_at) }}
-          </span>
-        </div>
-      </div>
-
-      <div v-if="knowledgeBase" class="kb-detail-page__header-right">
-        <span
-          v-for="item in summaryStats"
-          :key="item.label"
-          class="kb-detail-page__stat-chip"
-        >
-          {{ item.label }} {{ item.value }}
-        </span>
-        <el-button
-          type="primary"
-          plain
-          size="small"
-          :loading="documentActionLoading"
-          :disabled="!knowledgeBase"
-          @click="handleReindexKnowledgeBase"
-        >
-          <el-icon class="mr-2"><RefreshRight /></el-icon>
-          重建索引
-        </el-button>
-      </div>
-    </header>
-
     <AppLoading
       v-if="pageLoading"
       title="知识库详情加载中"
@@ -1500,118 +1470,129 @@ watch(
         </aside>
 
         <div class="kb-documents">
-          <section class="kb-documents__toolbar">
-            <div class="kb-documents__toolbar-copy">
-              <h2 class="kb-documents__title">{{ currentCategoryLabel }}</h2>
-            </div>
+          <AdminListPanel>
+            <AdminTableToolbar>
+              <template #left>
+                <span class="kb-documents__current-category">{{ currentCategoryLabel }}</span>
+                <el-input
+                  v-model="documentQuery.keyword"
+                  clearable
+                  placeholder="搜索文档标题..."
+                  class="kb-documents__search"
+                  @clear="handleSearch"
+                  @keyup.enter="handleSearch"
+                >
+                  <template #prefix>
+                    <el-icon><Search /></el-icon>
+                  </template>
+                </el-input>
 
-            <div class="kb-documents__toolbar-actions">
-              <el-input
-                v-model="documentQuery.keyword"
-                size="large"
-                clearable
-                placeholder="搜索文档标题..."
-                class="kb-documents__search"
-                @clear="handleSearch"
-                @keyup.enter="handleSearch"
-              >
-                <template #prefix>
-                  <el-icon><Search /></el-icon>
-                </template>
-              </el-input>
+                <el-button @click="resetSearch">重置</el-button>
+              </template>
 
-              <el-button @click="resetSearch">重置</el-button>
-              <el-button
-                type="primary"
-                :loading="uploadLoading"
-                @click="handleUploadClick"
-              >
-                <el-icon class="mr-2"><UploadFilled /></el-icon>
-                上传文档
-              </el-button>
-            </div>
-          </section>
+              <template #right>
+                <el-select
+                  v-model="documentQuery.status"
+                  class="kb-documents__status-filter"
+                  placeholder="业务状态"
+                  @change="(value) => handleSelectDocumentStatus(value as '' | DocumentLifecycleStatus)"
+                >
+                  <template #prefix>
+                    <span class="kb-documents__filter-prefix">业务状态</span>
+                  </template>
+                  <el-option
+                    v-for="tab in documentStatusTabs"
+                    :key="tab.value || 'all'"
+                    :label="`${tab.label} ${tab.count ?? 0}`"
+                    :value="tab.value"
+                  />
+                </el-select>
+                <AdminBulkActions :selected-count="selectedDocuments.length">
+                  <el-button
+                    v-if="canBatchSubmitForReview"
+                    link
+                    type="warning"
+                    :disabled="documentActionLoading"
+                    @click="handleBatchSubmitForReview"
+                  >
+                    提交审核
+                  </el-button>
+                  <el-button
+                    v-if="canBatchReject"
+                    link
+                    type="danger"
+                    :disabled="documentActionLoading"
+                    @click="handleBatchReject"
+                  >
+                    驳回
+                  </el-button>
+                  <el-button
+                    v-if="canBatchPublish"
+                    link
+                    type="primary"
+                    :disabled="documentActionLoading"
+                    @click="handleBatchPublish"
+                  >
+                    {{ getPublishBatchActionText(selectedDocumentStatus) }}
+                  </el-button>
+                  <el-button
+                    v-if="canBatchUnpublish"
+                    link
+                    type="warning"
+                    :disabled="documentActionLoading"
+                    @click="handleBatchUnpublish"
+                  >
+                    下线
+                  </el-button>
+                  <el-button
+                    link
+                    type="danger"
+                    :disabled="documentActionLoading"
+                    @click="handleBatchDeleteDocuments"
+                  >
+                    删除
+                  </el-button>
+                </AdminBulkActions>
+                <el-button
+                  v-if="canRunOneClickSubmit"
+                  type="warning"
+                  :disabled="documentActionLoading"
+                  @click="handleOneClickSubmitForReview"
+                >
+                  一键提交审核
+                </el-button>
+                <el-button
+                  v-if="canRunOneClickPublish"
+                  type="primary"
+                  :disabled="documentActionLoading"
+                  @click="handleOneClickPublish"
+                >
+                  {{ `一键${getPublishActionText(documentQuery.status)}` }}
+                </el-button>
+                <el-button @click="detailDrawerVisible = true">
+                  <el-icon class="mr-2"><InfoFilled /></el-icon>
+                  详情
+                </el-button>
+                <el-button
+                  :loading="documentActionLoading"
+                  :disabled="!knowledgeBase"
+                  @click="handleReindexKnowledgeBase"
+                >
+                  <el-icon class="mr-2"><RefreshRight /></el-icon>
+                  重建索引
+                </el-button>
+                <el-button
+                  type="primary"
+                  :loading="uploadLoading"
+                  @click="handleUploadClick"
+                >
+                  <el-icon class="mr-2"><UploadFilled /></el-icon>
+                  上传文档
+                </el-button>
+              </template>
+            </AdminTableToolbar>
 
-          <section class="kb-documents__status-bar">
-            <div class="kb-documents__status-tabs">
-              <button
-                v-for="tab in documentStatusTabs"
-                :key="tab.value || 'all'"
-                type="button"
-                class="kb-documents__status-tab"
-                :class="{ 'is-active': documentQuery.status === tab.value }"
-                @click="handleSelectDocumentStatus(tab.value)"
-              >
-                <span>{{ tab.label }}</span>
-                <span class="kb-documents__status-tab-count">{{ tab.count ?? 0 }}</span>
-              </button>
-            </div>
-
-            <div class="kb-documents__batch-actions">
-              <el-button
-                v-if="canRunOneClickSubmit"
-                type="warning"
-                :disabled="documentActionLoading"
-                @click="handleOneClickSubmitForReview"
-              >
-                一键提交审核
-              </el-button>
-              <el-button
-                v-if="canRunOneClickPublish"
-                type="primary"
-                :disabled="documentActionLoading"
-                @click="handleOneClickPublish"
-              >
-                {{ `一键${getPublishActionText(documentQuery.status)}` }}
-              </el-button>
-              <el-button
-                v-if="canBatchSubmitForReview"
-                type="warning"
-                plain
-                :disabled="documentActionLoading"
-                @click="handleBatchSubmitForReview"
-              >
-                批量提交审核
-              </el-button>
-              <el-button
-                v-if="canBatchReject"
-                type="danger"
-                plain
-                :disabled="documentActionLoading"
-                @click="handleBatchReject"
-              >
-                批量驳回
-              </el-button>
-              <el-button
-                v-if="canBatchPublish"
-                type="primary"
-                plain
-                :disabled="documentActionLoading"
-                @click="handleBatchPublish"
-              >
-                {{ getPublishBatchActionText(selectedDocumentStatus) }}
-              </el-button>
-              <el-button
-                v-if="canBatchUnpublish"
-                type="warning"
-                plain
-                :disabled="documentActionLoading"
-                @click="handleBatchUnpublish"
-              >
-                批量下线
-              </el-button>
-              <el-button
-                type="danger"
-                plain
-                :disabled="!hasDocumentSelection || documentActionLoading"
-                @click="handleBatchDeleteDocuments"
-              >
-                批量删除
-              </el-button>
-            </div>
-          </section>
-
-          <section class="kb-documents__content">
+            <section class="kb-documents__content">
             <AppEmpty
               v-if="!documentsLoading && documents.length === 0"
               title="当前没有可展示的文档"
@@ -1700,9 +1681,9 @@ watch(
                 </template>
               </el-table-column>
             </el-table>
-          </section>
+            </section>
 
-          <footer class="kb-documents__footer">
+            <footer class="kb-documents__footer">
             <el-pagination
               background
               layout="total, prev, pager, next"
@@ -1711,7 +1692,8 @@ watch(
               :current-page="documentQuery.page"
               @current-change="handlePageChange"
             />
-          </footer>
+            </footer>
+          </AdminListPanel>
         </div>
       </section>
 
@@ -1851,6 +1833,46 @@ watch(
           </div>
         </template>
       </el-dialog>
+
+      <el-drawer
+        v-model="detailDrawerVisible"
+        title="知识库详情"
+        size="420px"
+        append-to-body
+      >
+        <div class="kb-detail-drawer">
+          <div class="kb-detail-drawer__title-block">
+            <h3>{{ pageTitle }}</h3>
+            <p>{{ pageDescription }}</p>
+          </div>
+
+          <div class="kb-detail-drawer__meta">
+            <div>
+              <span>所属团队</span>
+              <strong>{{ teamScopeStore.selectedTeam?.name ?? "全部团队可见" }}</strong>
+            </div>
+            <div>
+              <span>最近更新</span>
+              <strong>{{ formatDateTime(knowledgeBase.last_document_updated_at ?? knowledgeBase.updated_at) }}</strong>
+            </div>
+            <div>
+              <span>创建时间</span>
+              <strong>{{ formatDateTime(knowledgeBase.created_at) }}</strong>
+            </div>
+          </div>
+
+          <div class="kb-detail-drawer__stats">
+            <div
+              v-for="item in summaryStats"
+              :key="item.label"
+              class="kb-detail-drawer__stat"
+            >
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+            </div>
+          </div>
+        </div>
+      </el-drawer>
     </template>
 
   </section>
@@ -1863,90 +1885,13 @@ watch(
   gap: 16px;
 }
 
-.kb-detail-page__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 56px;
-  padding: 0 16px;
-  border: 1px solid #dbe2ea;
-  border-radius: 12px;
-  background: #fff;
-}
-
-.kb-detail-page__header-left,
-.kb-detail-page__header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.kb-detail-page__back {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  background: transparent;
-  color: #475569;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 0;
-}
-
-.kb-detail-page__back:hover {
-  color: #2563eb;
-}
-
-.kb-detail-page__divider {
-  width: 1px;
-  height: 20px;
-  background: #e2e8f0;
-}
-
-.kb-detail-page__title-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.kb-detail-page__toolbar-title {
-  margin: 0;
-  max-width: 320px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: #0f172a;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.kb-detail-page__toolbar-meta {
-  color: #64748b;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.kb-detail-page__stat-chip {
-  border-radius: 999px;
-  background: #f8fafc;
-  color: #475569;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 6px 10px;
-}
-
 .kb-detail-page__layout {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
   gap: 20px;
 }
 
-.kb-sidebar,
-.kb-documents {
+.kb-sidebar {
   border: 1px solid #dbe2ea;
   border-radius: 22px;
   background: #ffffff;
@@ -1959,8 +1904,7 @@ watch(
   min-height: 680px;
 }
 
-.kb-sidebar__header,
-.kb-documents__toolbar {
+.kb-sidebar__header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -2089,78 +2033,25 @@ watch(
   min-width: 0;
 }
 
-.kb-documents__toolbar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
+.kb-documents__current-category {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .kb-documents__search {
   width: 280px;
 }
 
-.kb-documents__status-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 0 20px 16px;
+.kb-documents__status-filter {
+  width: 190px;
 }
 
-.kb-documents__status-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.kb-documents__status-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid #dbe2ea;
-  border-radius: 999px;
-  background: #ffffff;
-  color: #475569;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  padding: 8px 14px;
-  transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease,
-    color 0.2s ease;
-}
-
-.kb-documents__status-tab:hover {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.kb-documents__status-tab.is-active {
-  border-color: #93c5fd;
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
-.kb-documents__status-tab-count {
-  min-width: 22px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.15);
-  color: inherit;
+.kb-documents__filter-prefix {
+  color: #64748b;
   font-size: 12px;
-  font-weight: 700;
-  padding: 2px 8px;
-  text-align: center;
-}
-
-.kb-documents__batch-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 10px;
+  white-space: nowrap;
 }
 
 .kb-documents__status {
@@ -2169,7 +2060,7 @@ watch(
 
 .kb-documents__content {
   flex: 1;
-  padding: 0 20px;
+  padding: 0;
 }
 
 .kb-documents__table {
@@ -2205,8 +2096,9 @@ watch(
 .kb-documents__footer {
   display: flex;
   justify-content: flex-end;
-  border-top: 1px solid #f1f5f9;
-  padding: 16px 20px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  padding: 12px;
 }
 
 .kb-documents__hidden-input {
@@ -2426,6 +2318,64 @@ watch(
   color: #b45309;
 }
 
+.kb-detail-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.kb-detail-drawer__title-block {
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 16px;
+}
+
+.kb-detail-drawer__title-block h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.kb-detail-drawer__title-block p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.kb-detail-drawer__meta,
+.kb-detail-drawer__stats {
+  display: grid;
+  gap: 10px;
+}
+
+.kb-detail-drawer__meta div,
+.kb-detail-drawer__stat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.kb-detail-drawer__meta span,
+.kb-detail-drawer__stat span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.kb-detail-drawer__meta strong,
+.kb-detail-drawer__stat strong {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+}
+
 .is-right {
   text-align: right;
 }
@@ -2484,21 +2434,9 @@ watch(
 }
 
 @media (max-width: 900px) {
-  .kb-detail-page__header,
-  .kb-detail-page__header-left,
-  .kb-detail-page__header-right,
-  .kb-sidebar__header,
-  .kb-documents__toolbar {
+  .kb-sidebar__header {
     flex-direction: column;
     align-items: stretch;
-  }
-
-  .kb-detail-page__toolbar-title {
-    max-width: none;
-  }
-
-  .kb-documents__toolbar-actions {
-    justify-content: stretch;
   }
 
   .kb-documents__search,
@@ -2506,13 +2444,8 @@ watch(
     width: 100%;
   }
 
-  .kb-documents__status-bar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .kb-documents__batch-actions {
-    justify-content: flex-start;
+  .kb-documents__status-filter {
+    width: 100%;
   }
 
   .kb-preview__meta {

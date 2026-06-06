@@ -6,6 +6,13 @@ export interface AdminUser {
   full_name: string | null;
   role: string;
   is_active: boolean;
+  team_names?: string[];
+  team_count?: number;
+  team_memberships?: Array<{
+    team_id: number;
+    team_name: string;
+    role: string;
+  }>;
   created_at: string;
   updated_at: string;
 }
@@ -58,3 +65,5 @@ export interface UserListResponse {
   page: number;
   page_size: number;
 }
+
+export type UserBulkAction = "enable" | "disable" | "delete";

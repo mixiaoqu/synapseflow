@@ -9,6 +9,8 @@ import {
   Search,
 } from "@element-plus/icons-vue";
 
+import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   bulkActionAssistants,
   deleteAssistant,
@@ -35,6 +37,7 @@ const toolbar = reactive({
 const assistants = ref<AssistantSummary[]>([]);
 const loading = ref(false);
 const loadError = ref<unknown>(null);
+const hasLoadedData = ref(false);
 const statusLoadingId = ref<number | null>(null);
 const deletingAssistantId = ref<number | null>(null);
 const pagination = ref({
@@ -87,8 +90,13 @@ async function loadAssistantList() {
     pagination.value.total = result.total;
     pagination.value.page = result.page;
     pagination.value.pageSize = result.page_size;
+    hasLoadedData.value = true;
   } catch (error) {
-    loadError.value = error;
+    if (hasLoadedData.value) {
+      ElMessage.error(error instanceof Error ? error.message : "助手列表刷新失败，请稍后重试。");
+    } else {
+      loadError.value = error;
+    }
   } finally {
     loading.value = false;
   }
@@ -214,59 +222,15 @@ watch(
 
 <template>
   <section class="assistant-list-page">
-    <header class="assistant-list-page__header">
-      <div class="assistant-list-page__header-copy">
-        <h1 class="assistant-list-page__title">助手管理</h1>
-        <p class="assistant-list-page__description">
-          在当前团队作用域下维护助手资料、提示词和预览调试入口。
-        </p>
-      </div>
-
-      <div class="assistant-list-page__header-actions">
-        <span class="assistant-list-page__scope">当前团队：{{ selectedTeamName }}</span>
-        <el-button type="primary" @click="openCreateAssistant">
-          <el-icon class="mr-2"><Plus /></el-icon>
-          新建助手
-        </el-button>
-      </div>
-    </header>
-
-    <section
-      v-if="!loading && !loadError"
-      class="assistant-list-page__toolbar"
-    >
-      <el-input
-        v-model="toolbar.search"
-        size="large"
-        clearable
-        placeholder="搜索助手名称、标识或描述..."
-        class="assistant-list-page__search"
-      >
-        <template #prefix>
-          <el-icon><Search /></el-icon>
-        </template>
-      </el-input>
-
-      <el-select
-        v-model="toolbar.status"
-        size="large"
-        class="assistant-list-page__status"
-      >
-        <el-option label="全部状态" value="all" />
-        <el-option label="已启用" value="active" />
-        <el-option label="已停用" value="inactive" />
-      </el-select>
-    </section>
-
     <AppLoading
-      v-if="loading"
+      v-if="loading && !hasLoadedData"
       title="助手列表加载中"
       description="正在从后台获取助手配置，请稍候。"
       :blocks="4"
     />
 
     <AppError
-      v-else-if="loadError && !isForbidden"
+      v-else-if="loadError && !isForbidden && !hasLoadedData"
       title="助手列表加载失败"
       description="暂时无法获取助手列表，请稍后重试。"
       :error="loadError"
@@ -274,32 +238,75 @@ watch(
     />
 
     <AppError
-      v-else-if="isForbidden"
+      v-else-if="isForbidden && !hasLoadedData"
       title="无权查看助手列表"
       description="当前账号没有访问助手列表的权限。"
       :error="loadError"
       :show-retry="false"
     />
 
-    <AppEmpty
-      v-else-if="displayedAssistants.length === 0"
-      :title="hasActiveFilters ? '未找到相关助手' : '暂无助手'"
-      :description="
-        hasActiveFilters
-          ? '请尝试更换搜索关键词，或清除筛选后查看全部助手。'
-          : '当前团队下还没有可配置的助手。'
-      "
-    >
-      <el-button link type="primary" @click="hasActiveFilters ? resetFilters() : openCreateAssistant()">
-        {{ hasActiveFilters ? "清除筛选" : "创建助手" }}
-      </el-button>
-    </AppEmpty>
+    <AdminListPanel v-else>
+      <AdminTableToolbar>
+        <template #left>
+          <el-input
+            v-model="toolbar.search"
+            clearable
+            placeholder="搜索助手名称、标识或描述..."
+            class="assistant-list-page__search"
+            @keyup.enter="refreshAssistantListFromFirstPage"
+            @clear="refreshAssistantListFromFirstPage"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
 
-    <section v-else class="assistant-list-page__table-panel">
+          <el-select
+            v-model="toolbar.status"
+            class="assistant-list-page__status"
+          >
+            <el-option label="全部状态" value="all" />
+            <el-option label="已启用" value="active" />
+            <el-option label="已停用" value="inactive" />
+          </el-select>
+          <el-button :loading="loading" type="primary" @click="refreshAssistantListFromFirstPage">
+            搜索
+          </el-button>
+          <el-button :disabled="loading" @click="resetFilters">重置</el-button>
+        </template>
+
+        <template #right>
+          <span class="assistant-list-page__scope">当前团队：{{ selectedTeamName }}</span>
+          <el-button type="primary" @click="openCreateAssistant">
+            <el-icon><Plus /></el-icon>
+            新建助手
+          </el-button>
+        </template>
+      </AdminTableToolbar>
+
+      <AppEmpty
+        v-if="displayedAssistants.length === 0"
+        v-loading="loading"
+        class="assistant-list-page__empty"
+        :title="hasActiveFilters ? '未找到相关助手' : '暂无助手'"
+        :description="
+          hasActiveFilters
+            ? '请尝试更换搜索关键词，或清除筛选后查看全部助手。'
+            : '当前团队下还没有可配置的助手。'
+        "
+      >
+        <el-button link type="primary" @click="hasActiveFilters ? resetFilters() : openCreateAssistant()">
+          {{ hasActiveFilters ? "清除筛选" : "创建助手" }}
+        </el-button>
+      </AppEmpty>
+
       <el-table
+        v-else
+        v-loading="loading"
         :data="displayedAssistants"
         row-key="id"
         class="assistant-list-page__table"
+        element-loading-text="正在更新助手列表"
       >
         <el-table-column label="助手名称" min-width="280">
           <template #default="{ row }">
@@ -362,7 +369,7 @@ watch(
           @current-change="handlePageChange"
         />
       </div>
-    </section>
+    </AdminListPanel>
   </section>
 </template>
 
@@ -370,42 +377,6 @@ watch(
 .assistant-list-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.assistant-list-page__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 56px;
-  border: 1px solid #dbe2ea;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 16px 18px;
-}
-
-.assistant-list-page__header-copy {
-  min-width: 0;
-}
-
-.assistant-list-page__title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.assistant-list-page__description {
-  margin: 6px 0 0;
-  color: #64748b;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.assistant-list-page__header-actions {
-  display: flex;
-  align-items: center;
   gap: 12px;
 }
 
@@ -415,41 +386,29 @@ watch(
   white-space: nowrap;
 }
 
-.assistant-list-page__toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border: 1px solid #dbe2ea;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 14px 16px;
-}
-
 .assistant-list-page__search {
-  width: 360px;
-  max-width: 100%;
+  width: 280px;
 }
 
 .assistant-list-page__status {
   width: 132px;
 }
 
-.assistant-list-page__table-panel {
-  border: 1px solid #dbe2ea;
-  border-radius: 18px;
-  background: #ffffff;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-  padding: 8px 8px 2px;
-}
-
 .assistant-list-page__pagination {
   display: flex;
   justify-content: flex-end;
-  padding: 12px 8px 10px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  padding: 12px;
 }
 
 .assistant-list-page__table {
   width: 100%;
+}
+
+.assistant-list-page__empty {
+  min-height: 420px;
+  border-top: 1px solid #e2e8f0;
 }
 
 .assistant-list-page__name-cell {
@@ -474,16 +433,6 @@ watch(
 }
 
 @media (max-width: 960px) {
-  .assistant-list-page__header,
-  .assistant-list-page__toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .assistant-list-page__header-actions {
-    justify-content: space-between;
-  }
-
   .assistant-list-page__search,
   .assistant-list-page__status {
     width: 100%;

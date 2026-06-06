@@ -4,6 +4,28 @@
 
 :root {
   color-scheme: light;
+  --admin-bg: #f6f8fb;
+  --admin-surface: #ffffff;
+  --admin-surface-muted: #f8fafc;
+  --admin-border: #d8dee8;
+  --admin-border-soft: #e5e9f0;
+  --admin-text: #111827;
+  --admin-text-muted: #64748b;
+  --admin-text-secondary: #475569;
+  --admin-text-subtle: #94a3b8;
+  --admin-primary: #2563eb;
+  --admin-primary-light: #3b82f6;
+  --admin-primary-soft: #eff6ff;
+  --admin-primary-border: #bfdbfe;
+  --admin-primary-hover: #1d4ed8;
+  --admin-primary-strong: #1e40af;
+  --admin-danger: #dc2626;
+  --admin-danger-hover: #b91c1c;
+  --admin-warning: #b45309;
+  --admin-radius-sm: 6px;
+  --admin-radius-md: 8px;
+  --admin-radius-lg: 10px;
+  --admin-shadow-panel: 0 6px 18px rgba(15, 23, 42, 0.035);
   --panel-bg: rgba(255, 255, 255, 0.92);
   --panel-border: rgba(148, 163, 184, 0.24);
   --panel-shadow: 0 22px 48px rgba(15, 23, 42, 0.08);
@@ -20,10 +42,8 @@ body,
 
 body {
   min-width: 320px;
-  background:
-    radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 28%),
-    linear-gradient(180deg, #f8fbff 0%, #f3f6fb 100%);
-  color: var(--text-primary);
+  background: var(--admin-bg);
+  color: var(--admin-text);
   font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 

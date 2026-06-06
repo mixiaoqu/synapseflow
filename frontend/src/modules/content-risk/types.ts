@@ -141,12 +141,13 @@ export interface ContentRiskTestResult {
 }
 
 export interface ListContentRiskLogsParams {
+  page?: number;
+  page_size?: number;
   scene?: ContentRiskScene;
   action?: ContentRiskResolvedAction;
   blocked?: boolean;
   risk_level?: ContentRiskLevel;
   chat_log_id?: number;
-  limit?: number;
 }
 
 export interface ContentRiskLogListResponse {

@@ -30,14 +30,17 @@ class ContentRiskLogRepository:
     async def list_logs(
         self,
         *,
-        limit: int = 50,
+        page: int = 1,
+        page_size: int = 20,
         scene: str | None = None,
         action: str | None = None,
         blocked: bool | None = None,
         risk_level: str | None = None,
         chat_log_id: int | None = None,
     ) -> tuple[list[tuple[ContentRiskLog, str | None, str | None, str | None, str | None, str | None]], int]:
-        normalized_limit = max(1, min(limit, 200))
+        normalized_page = max(1, page)
+        normalized_page_size = max(1, min(page_size, 100))
+        offset = (normalized_page - 1) * normalized_page_size
         stmt = (
             select(
                 ContentRiskLog,
@@ -70,7 +73,11 @@ class ContentRiskLogRepository:
             risk_level=risk_level,
             chat_log_id=chat_log_id,
         )
-        stmt = stmt.order_by(ContentRiskLog.created_at.desc(), ContentRiskLog.id.desc()).limit(normalized_limit)
+        stmt = (
+            stmt.order_by(ContentRiskLog.created_at.desc(), ContentRiskLog.id.desc())
+            .offset(offset)
+            .limit(normalized_page_size)
+        )
         rows = (await self.db.execute(stmt)).all()
         total = (await self.db.execute(total_stmt)).scalar() or 0
         return list(rows), int(total)

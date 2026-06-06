@@ -1,11 +1,19 @@
 import { request } from "@/shared/api/http";
-import type { AdminUser, CreateUserPayload, UpdateUserPayload, UserListResponse } from "@/shared/types/user";
+import type {
+  AdminUser,
+  CreateUserPayload,
+  UpdateUserPayload,
+  UserBulkAction,
+  UserListResponse,
+} from "@/shared/types/user";
 
 /** 用户列表查询参数 */
 interface ListUsersParams {
   page: number;
   page_size: number;
   keyword?: string;
+  role?: string;
+  is_active?: boolean;
 }
 
 /**
@@ -34,6 +42,14 @@ export function createUser(payload: CreateUserPayload) {
   });
 }
 
+/** 获取用户详情 */
+export function getUser(userId: number) {
+  return request<AdminUser>({
+    url: `/users/${userId}`,
+    method: "GET",
+  });
+}
+
 /**
  * 更新用户信息
  * @param userId - 用户 ID
@@ -45,5 +61,25 @@ export function updateUser(userId: number, payload: UpdateUserPayload) {
     url: `/users/${userId}`,
     method: "PUT",
     data: payload,
+  });
+}
+
+/** 批量操作用户 */
+export function bulkActionUsers(userIds: number[], action: UserBulkAction) {
+  return request<{ message: string; affected: number }>({
+    url: "/users/bulk-action",
+    method: "POST",
+    data: {
+      user_ids: userIds,
+      action,
+    },
+  });
+}
+
+/** 软删除用户 */
+export function deleteUser(userId: number) {
+  return request<{ message: string }>({
+    url: `/users/${userId}`,
+    method: "DELETE",
   });
 }

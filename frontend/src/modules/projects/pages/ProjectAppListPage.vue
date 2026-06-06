@@ -4,6 +4,8 @@ import { useRoute, useRouter } from "vue-router";
 import { Delete, EditPen, Link, Plus, Search } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
+import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   deleteProjectApp,
   getProject,
@@ -25,6 +27,7 @@ const project = ref<ProjectSummary | null>(null);
 const apps = ref<ProjectAppSummary[]>([]);
 const loading = ref(false);
 const loadError = ref<unknown>(null);
+const hasLoadedData = ref(false);
 const searchKeyword = ref("");
 const statusFilter = ref<StatusFilter>("all");
 const statusLoadingId = ref<number | null>(null);
@@ -98,15 +101,16 @@ async function loadPage() {
     pagination.value.total = appResponses.total;
     pagination.value.page = appResponses.page;
     pagination.value.pageSize = appResponses.page_size;
+    hasLoadedData.value = true;
   } catch (error) {
-    loadError.value = error;
+    if (hasLoadedData.value) {
+      ElMessage.error(error instanceof Error ? error.message : "发布渠道刷新失败，请稍后重试。");
+    } else {
+      loadError.value = error;
+    }
   } finally {
     loading.value = false;
   }
-}
-
-function handleBack() {
-  void router.push("/projects");
 }
 
 function handlePageChange(page: number) {
@@ -273,54 +277,15 @@ watch(statusFilter, () => {
 
 <template>
   <section class="project-app-list-page">
-    <header class="project-app-list-page__header">
-      <div class="project-app-list-page__header-left">
-        <button type="button" class="project-app-list-page__back" @click="handleBack">
-          返回项目列表
-        </button>
-        <div class="project-app-list-page__divider" />
-        <div v-if="project" class="project-app-list-page__title-group">
-          <h1 class="project-app-list-page__title">{{ project.name }}</h1>
-          <span class="project-app-list-page__meta">应用与发布</span>
-          <span class="project-app-list-page__meta">产品：{{ project.product_name || "未设置" }}</span>
-        </div>
-      </div>
-
-      <el-button type="primary" @click="openCreateApp">
-        <el-icon class="mr-2"><Plus /></el-icon>
-        新建发布渠道
-      </el-button>
-    </header>
-
-    <section v-if="!loading && !loadError" class="project-app-list-page__toolbar">
-      <el-input
-        v-model="searchKeyword"
-        size="large"
-        clearable
-        placeholder="搜索应用名称、编码、说明或绑定助手..."
-        class="project-app-list-page__search"
-      >
-        <template #prefix>
-          <el-icon><Search /></el-icon>
-        </template>
-      </el-input>
-
-      <el-select v-model="statusFilter" size="large" class="project-app-list-page__status">
-        <el-option label="全部状态" value="all" />
-        <el-option label="已启用" value="active" />
-        <el-option label="已停用" value="inactive" />
-      </el-select>
-    </section>
-
     <AppLoading
-      v-if="loading"
+      v-if="loading && !hasLoadedData"
       title="发布渠道加载中"
       description="正在获取当前项目下的应用与发布配置，请稍候。"
       :blocks="4"
     />
 
     <AppError
-      v-else-if="loadError && !isForbidden"
+      v-else-if="loadError && !isForbidden && !hasLoadedData"
       title="发布渠道加载失败"
       description="暂时无法获取当前项目的发布渠道，请稍后重试。"
       :error="loadError"
@@ -328,23 +293,67 @@ watch(statusFilter, () => {
     />
 
     <AppError
-      v-else-if="isForbidden"
+      v-else-if="isForbidden && !hasLoadedData"
       title="无权查看发布渠道"
       description="当前账号没有访问该项目应用与发布配置的权限。"
       :error="loadError"
       :show-retry="false"
     />
 
-    <AppEmpty
-      v-else-if="displayedApps.length === 0"
-      title="当前项目暂无发布渠道"
-      description="可以先创建一个发布渠道，再绑定助手和知识库。"
-    >
-      <el-button type="primary" @click="openCreateApp">新建发布渠道</el-button>
-    </AppEmpty>
+    <AdminListPanel v-else>
+      <AdminTableToolbar>
+        <template #left>
+          <div class="project-app-list-page__context">
+            <div v-if="project" class="project-app-list-page__title-group">
+              <span class="project-app-list-page__title">{{ project.name }}</span>
+              <span class="project-app-list-page__meta">产品：{{ project.product_name || "未设置" }}</span>
+            </div>
+          </div>
 
-    <section v-else class="project-app-list-page__table-panel">
-      <el-table :data="displayedApps" row-key="id" class="project-app-list-page__table">
+          <el-input
+            v-model="searchKeyword"
+            size="large"
+            clearable
+            placeholder="搜索应用名称、编码、说明或绑定助手..."
+            class="project-app-list-page__search"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+
+          <el-select v-model="statusFilter" size="large" class="project-app-list-page__status">
+            <el-option label="全部状态" value="all" />
+            <el-option label="已启用" value="active" />
+            <el-option label="已停用" value="inactive" />
+          </el-select>
+        </template>
+
+        <template #right>
+          <el-button type="primary" @click="openCreateApp">
+            <el-icon class="mr-2"><Plus /></el-icon>
+            新建发布渠道
+          </el-button>
+        </template>
+      </AdminTableToolbar>
+
+      <AppEmpty
+        v-if="displayedApps.length === 0"
+        v-loading="loading"
+        title="当前项目暂无发布渠道"
+        description="可以先创建一个发布渠道，再绑定助手和知识库。"
+      >
+        <el-button type="primary" @click="openCreateApp">新建发布渠道</el-button>
+      </AppEmpty>
+
+      <template v-else>
+        <el-table
+          v-loading="loading"
+          :data="displayedApps"
+          row-key="id"
+          class="project-app-list-page__table"
+          element-loading-text="正在更新发布渠道"
+        >
         <el-table-column label="应用名称" min-width="260">
           <template #default="{ row }">
             <div class="project-app-list-page__name-cell">
@@ -408,18 +417,19 @@ watch(statusFilter, () => {
             </el-button>
           </template>
         </el-table-column>
-      </el-table>
-      <div v-if="pagination.total > pagination.pageSize" class="project-app-list-page__pagination">
-        <el-pagination
-          background
-          layout="prev, pager, next"
-          :current-page="pagination.page"
-          :page-size="pagination.pageSize"
-          :total="pagination.total"
-          @current-change="handlePageChange"
-        />
-      </div>
-    </section>
+        </el-table>
+        <div v-if="pagination.total > pagination.pageSize" class="project-app-list-page__pagination">
+          <el-pagination
+            background
+            layout="prev, pager, next"
+            :current-page="pagination.page"
+            :page-size="pagination.pageSize"
+            :total="pagination.total"
+            @current-change="handlePageChange"
+          />
+        </div>
+      </template>
+    </AdminListPanel>
 
     <el-dialog
       v-model="integrationDialogVisible"
@@ -476,43 +486,11 @@ watch(statusFilter, () => {
   gap: 16px;
 }
 
-.project-app-list-page__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 56px;
-  border: 1px solid #dbe2ea;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 0 16px;
-}
-
-.project-app-list-page__header-left {
+.project-app-list-page__context {
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
-}
-
-.project-app-list-page__back {
-  border: 0;
-  background: transparent;
-  color: #475569;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 0;
-}
-
-.project-app-list-page__back:hover {
-  color: #2563eb;
-}
-
-.project-app-list-page__divider {
-  width: 1px;
-  height: 20px;
-  background: #e2e8f0;
 }
 
 .project-app-list-page__title-group {
@@ -523,26 +501,16 @@ watch(statusFilter, () => {
 }
 
 .project-app-list-page__title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.project-app-list-page__meta {
-  color: #64748b;
+  color: var(--admin-text);
   font-size: 13px;
+  font-weight: 600;
   white-space: nowrap;
 }
 
-.project-app-list-page__toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border: 1px solid #dbe2ea;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 14px 16px;
+.project-app-list-page__meta {
+  color: var(--admin-text-muted);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .project-app-list-page__search {
@@ -554,14 +522,6 @@ watch(statusFilter, () => {
   width: 132px;
 }
 
-.project-app-list-page__table-panel {
-  border: 1px solid #dbe2ea;
-  border-radius: 18px;
-  background: #ffffff;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-  padding: 8px 8px 2px;
-}
-
 .project-app-list-page__name-cell {
   display: flex;
   min-width: 0;
@@ -571,14 +531,14 @@ watch(statusFilter, () => {
 
 .project-app-list-page__name-cell strong {
   overflow: hidden;
-  color: #0f172a;
+  color: var(--admin-text);
   font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .project-app-list-page__name-cell span {
-  color: #64748b;
+  color: var(--admin-text-muted);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -651,8 +611,8 @@ watch(statusFilter, () => {
 }
 
 @media (max-width: 960px) {
-  .project-app-list-page__header,
-  .project-app-list-page__toolbar {
+  .project-app-list-page__context,
+  :deep(.admin-table-toolbar) {
     flex-direction: column;
     align-items: stretch;
   }

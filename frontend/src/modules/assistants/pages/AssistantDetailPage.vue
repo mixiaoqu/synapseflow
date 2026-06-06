@@ -4,7 +4,6 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import type { FormInstance, FormRules } from "element-plus";
 import {
-  ArrowLeft,
   ChatDotRound,
   InfoFilled,
   MagicStick,
@@ -383,41 +382,6 @@ watch(
 
 <template>
   <section class="assistant-detail-page">
-    <header class="assistant-detail-page__header">
-      <div class="assistant-detail-page__header-left">
-        <button type="button" class="assistant-detail-page__back" @click="handleBack">
-          <el-icon><ArrowLeft /></el-icon>
-          <span>返回</span>
-        </button>
-        <div class="assistant-detail-page__divider" />
-        <div class="assistant-detail-page__title-group">
-          <h1 class="assistant-detail-page__title">{{ pageTitle }}</h1>
-          <span class="assistant-detail-page__meta">{{ scopeText }}</span>
-          <span
-            v-if="currentAssistant"
-            class="assistant-detail-page__meta"
-          >
-            更新于 {{ formatDateTime(currentAssistant.updated_at) }}
-          </span>
-        </div>
-      </div>
-
-      <div class="assistant-detail-page__header-actions">
-        <el-tag
-          v-if="!isCreateMode"
-          :type="form.is_active ? 'success' : 'info'"
-          effect="plain"
-          round
-        >
-          {{ form.is_active ? "已启用" : "已停用" }}
-        </el-tag>
-        <el-button @click="handleBack">取消</el-button>
-        <el-button type="primary" :loading="saveLoading" @click="handleSave">
-          保存配置
-        </el-button>
-      </div>
-    </header>
-
     <AppLoading
       v-if="pageLoading"
       title="助手详情加载中"
@@ -436,8 +400,33 @@ watch(
     <section v-else class="assistant-detail-page__layout">
       <section class="assistant-panel assistant-panel--form">
         <div class="assistant-panel__header">
-          <el-icon><Setting /></el-icon>
-          <span>助手配置</span>
+          <div class="assistant-panel__heading">
+            <div class="assistant-panel__title-row">
+              <h1 class="assistant-panel__title">
+                <el-icon><Setting /></el-icon>
+                <span>{{ form.name.trim() || pageTitle }}</span>
+              </h1>
+              <el-tag
+                v-if="!isCreateMode"
+                :type="form.is_active ? 'success' : 'info'"
+                effect="plain"
+                round
+              >
+                {{ form.is_active ? "已启用" : "已停用" }}
+              </el-tag>
+            </div>
+            <div class="assistant-panel__meta">
+              <span>{{ scopeText }}</span>
+              <span v-if="currentAssistant">更新于 {{ formatDateTime(currentAssistant.updated_at) }}</span>
+            </div>
+          </div>
+
+          <div class="assistant-panel__actions">
+            <el-button @click="handleBack">取消</el-button>
+            <el-button type="primary" :loading="saveLoading" @click="handleSave">
+              保存配置
+            </el-button>
+          </div>
         </div>
 
         <div class="assistant-panel__body">
@@ -699,71 +688,6 @@ watch(
   overflow: hidden;
 }
 
-.assistant-detail-page__header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 56px;
-  border: 1px solid #dbe2ea;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 0 16px;
-}
-
-.assistant-detail-page__header-left,
-.assistant-detail-page__header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.assistant-detail-page__back {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  background: transparent;
-  color: #475569;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 0;
-}
-
-.assistant-detail-page__back:hover {
-  color: #2563eb;
-}
-
-.assistant-detail-page__divider {
-  width: 1px;
-  height: 20px;
-  background: #e2e8f0;
-}
-
-.assistant-detail-page__title-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.assistant-detail-page__title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 16px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.assistant-detail-page__meta {
-  color: #64748b;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
 .assistant-detail-page__layout {
   display: grid;
   flex: 1;
@@ -778,22 +702,75 @@ watch(
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #dbe2ea;
-  border-radius: 20px;
-  background: #ffffff;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius-lg);
+  background: var(--admin-surface);
+  box-shadow: var(--admin-shadow-panel);
 }
 
 .assistant-panel__header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--admin-border-soft);
+  background: var(--admin-surface-muted);
+  color: var(--admin-text-secondary);
+  padding: 10px 16px;
+}
+
+.assistant-panel__heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.assistant-panel__title-row,
+.assistant-panel__meta,
+.assistant-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.assistant-panel__title-row,
+.assistant-panel__meta {
+  flex-wrap: wrap;
+}
+
+.assistant-panel__title {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
-  border-bottom: 1px solid #f1f5f9;
-  background: #fafafa;
-  color: #334155;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 14px 18px;
+  margin: 0;
+  max-width: min(520px, 100%);
+  overflow: hidden;
+  color: var(--admin-text);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.assistant-panel__title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assistant-panel__title .el-icon {
+  flex-shrink: 0;
+  color: var(--admin-primary);
+}
+
+.assistant-panel__meta {
+  color: var(--admin-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.assistant-panel__actions {
+  flex-shrink: 0;
 }
 
 .assistant-panel__body {
@@ -824,8 +801,8 @@ watch(
 
 .assistant-form__section-title {
   margin: 0 0 16px;
-  border-bottom: 1px solid #e5e7eb;
-  color: #111827;
+  border-bottom: 1px solid var(--admin-border-soft);
+  color: var(--admin-text);
   font-size: 14px;
   font-weight: 700;
   padding-bottom: 8px;
@@ -842,13 +819,13 @@ watch(
 
 .assistant-form__hint {
   margin-top: 6px;
-  color: #64748b;
+  color: var(--admin-text-muted);
   font-size: 12px;
   line-height: 1.6;
 }
 
 .assistant-panel--preview {
-  background: #f8fafc;
+  background: var(--admin-surface-muted);
 }
 
 .assistant-preview__hint {
@@ -897,23 +874,23 @@ watch(
 
 .assistant-preview__bubble--assistant {
   align-self: flex-start;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--admin-border-soft);
   border-top-left-radius: 4px;
-  background: #ffffff;
+  background: var(--admin-surface);
   color: #1f2937;
 }
 
 .assistant-preview__bubble--user {
   align-self: flex-end;
   border-top-right-radius: 4px;
-  background: #2563eb;
+  background: var(--admin-primary);
   color: #ffffff;
 }
 
 .assistant-preview__input {
   flex-shrink: 0;
-  border-top: 1px solid #e2e8f0;
-  background: #ffffff;
+  border-top: 1px solid var(--admin-border-soft);
+  background: var(--admin-surface);
   padding: 16px;
 }
 
@@ -941,10 +918,9 @@ watch(
     overflow: auto;
   }
 
-  .assistant-detail-page__header,
-  .assistant-detail-page__header-left,
-  .assistant-detail-page__header-actions,
-  .assistant-detail-page__title-group {
+  .assistant-panel__header,
+  .assistant-panel__heading,
+  .assistant-panel__actions {
     flex-direction: column;
     align-items: stretch;
   }

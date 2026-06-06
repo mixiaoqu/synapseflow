@@ -23,6 +23,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(String(30), nullable=False, default="end_user", index=True)
     is_active = Column(Boolean, nullable=False, default=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -31,6 +32,9 @@ class Team(Base):
     """Enterprise team."""
 
     __tablename__ = "teams"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_teams_code"),
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String(100), nullable=False)

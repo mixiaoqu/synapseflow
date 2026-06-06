@@ -1,5 +1,12 @@
 import { request } from "@/shared/api/http";
-import type { TeamSummary, TeamMember, TeamListResponse } from "@/shared/types/team";
+import type {
+  TeamBulkAction,
+  TeamBulkActionResponse,
+  TeamMember,
+  TeamListResponse,
+  TeamRole,
+  TeamSummary,
+} from "@/shared/types/team";
 import type { CreateTeamPayload, UpdateTeamPayload } from "@/shared/types/team";
 
 /** 团队列表查询参数 */
@@ -60,6 +67,18 @@ export function deleteTeam(teamId: number) {
   });
 }
 
+/** 批量操作团队 */
+export function bulkActionTeams(teamIds: number[], action: TeamBulkAction) {
+  return request<TeamBulkActionResponse>({
+    url: "/teams/bulk-actions",
+    method: "POST",
+    data: {
+      team_ids: teamIds,
+      action,
+    },
+  });
+}
+
 /**
  * 获取团队成员列表
  * @param teamId - 团队 ID
@@ -117,5 +136,28 @@ export function deleteTeamMember(teamId: number, userId: number) {
   return request<{ message: string }>({
     url: `/teams/${teamId}/members/${userId}`,
     method: "DELETE",
+  });
+}
+
+/** 批量更新团队成员角色 */
+export function bulkUpdateTeamMembersRole(teamId: number, userIds: number[], role: TeamRole) {
+  return request<TeamBulkActionResponse>({
+    url: `/teams/${teamId}/members/bulk-role`,
+    method: "POST",
+    data: {
+      user_ids: userIds,
+      role,
+    },
+  });
+}
+
+/** 批量移除团队成员 */
+export function bulkDeleteTeamMembers(teamId: number, userIds: number[]) {
+  return request<TeamBulkActionResponse>({
+    url: `/teams/${teamId}/members/bulk-delete`,
+    method: "POST",
+    data: {
+      user_ids: userIds,
+    },
   });
 }

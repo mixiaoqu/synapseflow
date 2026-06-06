@@ -7,6 +7,8 @@ import {
   Clock,
   Close,
   Delete,
+  Grid,
+  List,
   Plus,
   RefreshRight,
   Search,
@@ -14,7 +16,11 @@ import {
   Warning,
 } from "@element-plus/icons-vue";
 
+import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
+import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
+  bulkActionKnowledgeBases,
   createKnowledgeBase,
   deleteKnowledgeBase,
   listKnowledgeBases,
@@ -50,11 +56,13 @@ const teamScopeStore = useTeamScopeStore();
 const toolbar = reactive({
   search: "",
 });
-let searchTimer: ReturnType<typeof setTimeout> | undefined;
+const viewMode = ref<"table" | "card">("table");
+let loadRequestSeq = 0;
 
 const knowledgeBases = ref<KnowledgeBaseListItem[]>([]);
 const loading = ref(false);
 const loadError = ref<unknown>(null);
+const hasLoadedData = ref(false);
 const pagination = reactive({
   page: 1,
   pageSize: 20,
@@ -93,7 +101,7 @@ const displayedKnowledgeBases = computed(() => {
 const isForbidden = computed(() => Boolean(loadError.value) && isForbiddenError(loadError.value));
 const isSearchActive = computed(() => toolbar.search.trim().length > 0);
 const selectedCount = computed(() => selectedKnowledgeBaseIds.value.length);
-const selectedTeamName = computed(() => teamScopeStore.selectedTeam?.name ?? "未选择团队");
+const hasMoreKnowledgeBases = computed(() => knowledgeBases.value.length < pagination.total);
 const knowledgeBaseDialogTitle = computed(() =>
   dialogMode.value === "create" ? "创建知识库" : "编辑知识库",
 );
@@ -141,11 +149,8 @@ function formatDateTime(value: string | null) {
   }).format(date);
 }
 
-async function loadKnowledgeBaseList() {
-  if (loading.value) {
-    return;
-  }
-
+async function loadKnowledgeBaseList(options: { append?: boolean } = {}) {
+  const requestSeq = ++loadRequestSeq;
   loading.value = true;
   loadError.value = null;
 
@@ -156,25 +161,46 @@ async function loadKnowledgeBaseList() {
       page: pagination.page,
       page_size: pagination.pageSize,
     });
-    knowledgeBases.value = result.items;
+    if (requestSeq !== loadRequestSeq) {
+      return;
+    }
+    knowledgeBases.value = options.append ? [...knowledgeBases.value, ...result.items] : result.items;
     pagination.total = result.total;
     pagination.page = result.page;
     pagination.pageSize = result.page_size;
-    const validIds = new Set(result.items.map((item) => item.id));
+    const validIds = new Set(knowledgeBases.value.map((item) => item.id));
     selectedKnowledgeBaseIds.value = selectedKnowledgeBaseIds.value.filter((item) => validIds.has(item));
+    hasLoadedData.value = true;
   } catch (error) {
-    loadError.value = error;
+    if (requestSeq !== loadRequestSeq) {
+      return;
+    }
+    if (hasLoadedData.value) {
+      ElMessage.error(error instanceof Error ? error.message : "知识库列表刷新失败，请稍后重试。");
+    } else {
+      loadError.value = error;
+    }
   } finally {
-    loading.value = false;
+    if (requestSeq === loadRequestSeq) {
+      loading.value = false;
+    }
   }
 }
 
 async function deleteKnowledgeBases(ids: number[]) {
-  await Promise.all(ids.map((item) => deleteKnowledgeBase(item)));
+  if (ids.length === 1) {
+    await deleteKnowledgeBase(ids[0]);
+    return { affected: 1, failed: [] };
+  }
+  return await bulkActionKnowledgeBases(ids, "delete");
 }
 
 async function reindexKnowledgeBases(ids: number[]) {
-  await Promise.all(ids.map((item) => reindexKnowledgeBaseDocuments(item)));
+  if (ids.length === 1) {
+    await reindexKnowledgeBaseDocuments(ids[0]);
+    return { affected: 1, failed: [] };
+  }
+  return await bulkActionKnowledgeBases(ids, "reindex");
 }
 
 function resetFilters() {
@@ -317,16 +343,38 @@ function toggleCardSelection(knowledgeBaseId: number) {
   selectedKnowledgeBaseIds.value = [...selectedKnowledgeBaseIds.value, knowledgeBaseId];
 }
 
+function handleTableSelectionChange(selection: KnowledgeBaseCardItem[]) {
+  selectedKnowledgeBaseIds.value = selection.map((item) => item.id);
+}
+
 function handlePageChange(page: number) {
   pagination.page = page;
   selectedKnowledgeBaseIds.value = [];
   void loadKnowledgeBaseList();
 }
 
+function handleSizeChange(size: number) {
+  pagination.pageSize = size;
+  refreshKnowledgeBaseListFromFirstPage();
+}
+
 function refreshKnowledgeBaseListFromFirstPage() {
   pagination.page = 1;
   selectedKnowledgeBaseIds.value = [];
   void loadKnowledgeBaseList();
+}
+
+function handleViewModeChange() {
+  refreshKnowledgeBaseListFromFirstPage();
+}
+
+async function loadMoreKnowledgeBases() {
+  if (loading.value || !hasMoreKnowledgeBases.value) {
+    return;
+  }
+
+  pagination.page += 1;
+  await loadKnowledgeBaseList({ append: true });
 }
 
 function getStatusText(status: KnowledgeBaseStatus) {
@@ -397,10 +445,12 @@ async function handleBatchEnable() {
 
   batchActionLoading.value = "enable";
   try {
-    await Promise.all(
-      selectedKnowledgeBaseIds.value.map((id) => toggleKnowledgeBaseActive(id, true)),
-    );
-    ElMessage.success(`已批量启用 ${selectedKnowledgeBaseIds.value.length} 个知识库。`);
+    const result = await bulkActionKnowledgeBases(selectedKnowledgeBaseIds.value, "enable");
+    if (result.failed.length > 0) {
+      ElMessage.warning(`已启用 ${result.affected} 个知识库，${result.failed.length} 个处理失败。`);
+    } else {
+      ElMessage.success(`已启用 ${result.affected} 个知识库。`);
+    }
     selectedKnowledgeBaseIds.value = [];
     await loadKnowledgeBaseList();
   } catch (error) {
@@ -465,8 +515,13 @@ async function handleBatchReindex() {
 
   batchActionLoading.value = "reindex";
   try {
-    await reindexKnowledgeBases(selectedKnowledgeBaseIds.value);
-    ElMessage.success(`已提交 ${selectedKnowledgeBaseIds.value.length} 个知识库的重建索引任务。`);
+    const result = await reindexKnowledgeBases(selectedKnowledgeBaseIds.value);
+    if (result.failed.length > 0) {
+      ElMessage.warning(`已提交 ${result.affected} 个知识库的重建索引任务，${result.failed.length} 个处理失败。`);
+    } else {
+      ElMessage.success(`已提交 ${result.affected} 个知识库的重建索引任务。`);
+    }
+    selectedKnowledgeBaseIds.value = [];
     await loadKnowledgeBaseList();
   } catch (error) {
     const message = error instanceof Error ? error.message : "批量重建索引失败，请稍后重试。";
@@ -502,9 +557,13 @@ async function handleBatchDelete() {
   batchActionLoading.value = "delete";
 
   try {
-    await deleteKnowledgeBases(selectedKnowledgeBaseIds.value);
+    const result = await deleteKnowledgeBases(selectedKnowledgeBaseIds.value);
     selectedKnowledgeBaseIds.value = [];
-    ElMessage.success(`已删除 ${deleteCount} 个知识库。`);
+    if (result.failed.length > 0) {
+      ElMessage.warning(`已删除 ${result.affected} 个知识库，${result.failed.length} 个处理失败。`);
+    } else {
+      ElMessage.success(`已删除 ${result.affected} 个知识库。`);
+    }
     await loadKnowledgeBaseList();
   } catch (error) {
     const message = error instanceof Error ? error.message : "批量删除知识库失败，请稍后重试。";
@@ -528,99 +587,19 @@ watch(
   },
 );
 
-watch(
-  () => toolbar.search,
-  () => {
-    if (searchTimer) {
-      clearTimeout(searchTimer);
-    }
-    searchTimer = setTimeout(refreshKnowledgeBaseListFromFirstPage, 300);
-  },
-);
 </script>
 
 <template>
   <section class="kb-list-page">
-    <header class="kb-list-page__hero">
-      <div class="kb-list-page__hero-copy">
-        <h1 class="kb-list-page__hero-title">知识库管理</h1>
-        <p class="kb-list-page__hero-description">管理企业内部或业务应用依赖的纯粹数据源集合。</p>
-      </div>
-      <el-button type="primary" size="large" @click="openCreateKnowledgeBase">
-        <el-icon class="mr-2"><Plus /></el-icon>
-        创建知识库
-      </el-button>
-    </header>
-
-    <section
-      v-if="!loading && !loadError"
-      class="kb-list-page__toolbar-panel"
-    >
-      <div class="kb-list-page__toolbar-row">
-        <div class="kb-list-page__toolbar-main">
-          <el-input
-            v-model="toolbar.search"
-            size="large"
-            clearable
-            placeholder="搜索知识库名称或描述..."
-            class="kb-list-page__search"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-
-        </div>
-
-        <div class="kb-list-page__toolbar-side">
-          <label class="kb-list-page__select-all">
-            <el-checkbox v-model="isAllDisplayedSelected" />
-            <span>全选当前页</span>
-          </label>
-
-          <transition name="kb-bulk-actions">
-            <div v-if="selectedCount > 0" class="kb-list-page__bulk-actions">
-              <span class="kb-list-page__bulk-count">已选 {{ selectedCount }}</span>
-              <span class="kb-list-page__bulk-divider" />
-              <button
-                type="button"
-                class="kb-list-page__bulk-button"
-                :disabled="Boolean(batchActionLoading)"
-                @click="handleBatchEnable"
-              >
-                <el-icon><Check /></el-icon>
-              </button>
-              <button
-                type="button"
-                class="kb-list-page__bulk-button"
-                :disabled="Boolean(batchActionLoading)"
-                @click="handleBatchReindex"
-              >
-                <el-icon><RefreshRight /></el-icon>
-              </button>
-              <button
-                type="button"
-                class="kb-list-page__bulk-button kb-list-page__bulk-button--danger"
-                :disabled="Boolean(batchActionLoading)"
-                @click="handleBatchDelete"
-              >
-                <el-icon><Delete /></el-icon>
-              </button>
-            </div>
-          </transition>
-        </div>
-      </div>
-    </section>
-
     <AppLoading
-      v-if="loading"
+      v-if="loading && !hasLoadedData"
       title="知识库列表加载中"
       description="正在从后台获取知识库列表，请稍候。"
       :blocks="4"
     />
 
     <AppError
-      v-else-if="loadError && !isForbidden"
+      v-else-if="loadError && !isForbidden && !hasLoadedData"
       title="知识库列表加载失败"
       description="暂时无法获取知识库列表，请稍后重试。"
       :error="loadError"
@@ -628,15 +607,99 @@ watch(
     />
 
     <AppError
-      v-else-if="isForbidden"
+      v-else-if="isForbidden && !hasLoadedData"
       title="无权查看知识库列表"
       description="当前账号没有访问知识库列表的权限。"
       :error="loadError"
       :show-retry="false"
     />
 
+    <AdminListPanel v-else>
+      <AdminTableToolbar>
+        <template #left>
+          <el-input
+            v-model="toolbar.search"
+            clearable
+            placeholder="搜索知识库名称或描述..."
+            class="kb-list-page__search"
+            @keyup.enter="refreshKnowledgeBaseListFromFirstPage"
+            @clear="refreshKnowledgeBaseListFromFirstPage"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <el-button :loading="loading" type="primary" @click="refreshKnowledgeBaseListFromFirstPage">
+            搜索
+          </el-button>
+          <el-button :disabled="loading" @click="resetFilters">重置</el-button>
+        </template>
+
+        <template #right>
+          <el-segmented
+            v-model="viewMode"
+            class="kb-list-page__view-switch"
+            :options="[
+              { label: '列表', value: 'table' },
+              { label: '卡片', value: 'card' },
+            ]"
+            @change="handleViewModeChange"
+          >
+            <template #default="{ item }">
+              <span class="kb-list-page__view-option">
+                <el-icon>
+                  <List v-if="item.value === 'table'" />
+                  <Grid v-else />
+                </el-icon>
+                <span>{{ item.label }}</span>
+              </span>
+            </template>
+          </el-segmented>
+
+          <AdminBulkActions :selected-count="selectedCount">
+            <el-button
+              link
+              type="primary"
+              :loading="batchActionLoading === 'enable'"
+              :disabled="Boolean(batchActionLoading)"
+              @click="handleBatchEnable"
+            >
+              启用
+            </el-button>
+            <el-button
+              link
+              type="primary"
+              :loading="batchActionLoading === 'reindex'"
+              :disabled="Boolean(batchActionLoading)"
+              @click="handleBatchReindex"
+            >
+              重建索引
+            </el-button>
+            <el-button
+              link
+              type="danger"
+              :loading="batchActionLoading === 'delete'"
+              :disabled="Boolean(batchActionLoading)"
+              @click="handleBatchDelete"
+            >
+              删除
+            </el-button>
+          </AdminBulkActions>
+
+          <el-button :loading="loading" @click="loadKnowledgeBaseList">
+            <el-icon class="mr-2"><RefreshRight /></el-icon>
+            刷新
+          </el-button>
+          <el-button type="primary" :disabled="loading" @click="openCreateKnowledgeBase">
+            <el-icon class="mr-2"><Plus /></el-icon>
+            创建知识库
+          </el-button>
+        </template>
+      </AdminTableToolbar>
+
     <AppEmpty
-      v-else-if="displayedKnowledgeBases.length === 0"
+      v-if="!loading && displayedKnowledgeBases.length === 0"
+      class="kb-list-page__empty"
       :title="isSearchActive ? '未找到相关知识库' : '暂无知识库'"
       :description="
         isSearchActive
@@ -647,7 +710,88 @@ watch(
       <el-button link type="primary" @click="resetFilters">清除筛选</el-button>
     </AppEmpty>
 
-    <div v-else class="kb-list-page__grid">
+      <el-table
+        v-else-if="viewMode === 'table'"
+        v-loading="loading"
+        :data="displayedKnowledgeBases"
+        row-key="id"
+        class="kb-list-page__table"
+        height="calc(100vh - 260px)"
+        element-loading-text="正在更新知识库列表"
+        @selection-change="handleTableSelectionChange"
+      >
+        <el-table-column type="selection" width="44" fixed="left" />
+        <el-table-column label="知识库" min-width="260">
+          <template #default="{ row }">
+            <button type="button" class="kb-list-page__name-button" @click="openKnowledgeBase(row.id)">
+              <strong>{{ row.name }}</strong>
+              <span>{{ row.description || "暂无说明" }}</span>
+            </button>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" min-width="120">
+          <template #default="{ row }">
+            <span class="kb-list-page__status">
+              <span :class="['kb-card__status-dot', getStatusClass(row.status)]" />
+              {{ getStatusText(row.status) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="文档" min-width="190">
+          <template #default="{ row }">
+            <div class="kb-list-page__doc-stats">
+              <span>总数 {{ row.documentCount }}</span>
+              <span>已索引 {{ row.indexedDocumentCount }}</span>
+              <span v-if="row.pendingDocumentCount > 0" class="kb-list-page__pending">
+                待处理 {{ row.pendingDocumentCount }}
+              </span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="启用状态" min-width="110">
+          <template #default="{ row }">
+            <el-switch
+              :model-value="row.isActive"
+              :loading="batchActionLoading === 'enable'"
+              inline-prompt
+              active-text="启用"
+              inactive-text="禁用"
+              @change="(value) => handleToggleActive(row.id, row.name, Boolean(value))"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="最近更新" min-width="170">
+          <template #default="{ row }">
+            <span class="kb-list-page__muted">{{ row.updateTime }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="208" fixed="right" align="center">
+          <template #default="{ row }">
+            <div class="kb-list-page__row-actions">
+              <el-button link type="primary" @click="openKnowledgeBase(row.id)">进入</el-button>
+              <el-button link type="primary" @click="openEditKnowledgeBase(row)">设置</el-button>
+              <el-button
+                link
+                type="primary"
+                :disabled="Boolean(batchActionLoading)"
+                @click="handleSingleReindex(row.id, row.name)"
+              >
+                重建
+              </el-button>
+              <el-button link type="danger" @click="openDelete(row.id, row.name)">删除</el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div v-else class="kb-list-page__card-wrap">
+        <div class="kb-list-page__card-toolbar">
+          <label class="kb-list-page__select-all">
+            <el-checkbox v-model="isAllDisplayedSelected" />
+            <span>全选当前页</span>
+          </label>
+        </div>
+        <div class="kb-list-page__grid">
       <article
         v-for="item in displayedKnowledgeBases"
         :key="item.id"
@@ -764,18 +908,37 @@ watch(
           </button>
         </footer>
       </article>
+        </div>
+        <div class="kb-list-page__load-more">
+          <el-button
+            v-if="hasMoreKnowledgeBases"
+            :loading="loading"
+            :disabled="loading"
+            @click="loadMoreKnowledgeBases"
+          >
+            加载更多
+          </el-button>
+          <span v-else class="kb-list-page__load-more-text">
+            已显示全部 {{ pagination.total }} 个知识库
+          </span>
+        </div>
     </div>
 
-    <div v-if="!loading && !loadError && pagination.total > pagination.pageSize" class="kb-list-page__pagination">
+      <div
+        v-if="viewMode === 'table' && displayedKnowledgeBases.length > 0"
+        class="kb-list-page__pagination"
+      >
       <el-pagination
-        background
-        layout="prev, pager, next"
-        :current-page="pagination.page"
-        :page-size="pagination.pageSize"
+        v-model:current-page="pagination.page"
+        v-model:page-size="pagination.pageSize"
+        :page-sizes="[10, 20, 50]"
+        layout="total, sizes, prev, pager, next"
         :total="pagination.total"
         @current-change="handlePageChange"
+        @size-change="handleSizeChange"
       />
     </div>
+    </AdminListPanel>
 
     <el-dialog
       v-model="isKnowledgeBaseDialogVisible"
@@ -835,20 +998,9 @@ watch(
       <Transition name="delete-overlay">
         <div v-if="deleteOverlay.active" class="delete-overlay">
           <div class="delete-overlay__card">
-            <div class="delete-overlay__icon-ring">
-              <div class="delete-overlay__icon-inner">
-                <el-icon :size="28" color="#dc2626"><Delete /></el-icon>
-              </div>
-            </div>
-
+            <el-icon class="is-loading delete-overlay__spinner" :size="24"><RefreshRight /></el-icon>
             <h3 class="delete-overlay__title">{{ deleteOverlay.title }}</h3>
             <p class="delete-overlay__desc">{{ deleteOverlay.description }}</p>
-
-            <div class="delete-overlay__dots">
-              <span class="delete-overlay__dot" />
-              <span class="delete-overlay__dot" />
-              <span class="delete-overlay__dot" />
-            </div>
           </div>
         </div>
       </Transition>
@@ -858,197 +1010,183 @@ watch(
 
 <style scoped>
 .kb-list-page {
+  --el-color-primary: var(--admin-primary);
+  --el-color-primary-light-3: var(--admin-primary-light);
+  --el-color-primary-light-5: var(--admin-primary-light);
+  --el-color-primary-light-7: var(--admin-primary-border);
+  --el-color-primary-light-9: var(--admin-primary-soft);
+  --el-color-primary-dark-2: var(--admin-primary-hover);
   display: flex;
   flex-direction: column;
-  gap: 24px;
-}
-
-.kb-list-page__hero {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.kb-list-page__hero-copy {
-  min-width: 0;
-}
-
-.kb-list-page__hero-title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.4;
-}
-
-.kb-list-page__hero-description {
-  margin: 6px 0 0;
-  color: #475569;
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-.kb-list-page__toolbar-panel {
-  border: 1px solid #dbe2ea;
-  border-radius: 16px;
-  background: #ffffff;
-  padding: 18px 16px;
-}
-
-.kb-list-page__toolbar-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.kb-list-page__toolbar-main {
-  display: flex;
-  flex: 1;
-  align-items: center;
   gap: 12px;
 }
 
 .kb-list-page__search {
-  flex: 1;
-  max-width: 404px;
+  width: 280px;
 }
 
-.kb-list-page__toolbar-side {
-  display: flex;
+.kb-list-page__view-option,
+.kb-list-page__status {
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.kb-list-page__view-option {
+  font-size: 13px;
+}
+
+.kb-list-page__view-switch :deep(.el-segmented__item) {
+  min-width: 66px;
+}
+
+.kb-list-page__empty {
+  min-height: 420px;
+  border-top: 1px solid var(--admin-border-soft);
+}
+
+.kb-list-page__table {
+  width: 100%;
+}
+
+.kb-list-page__name-button {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.kb-list-page__name-button strong {
+  overflow: hidden;
+  color: var(--admin-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-list-page__name-button span,
+.kb-list-page__muted {
+  color: var(--admin-text-muted);
+  font-size: 13px;
+}
+
+.kb-list-page__doc-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--admin-text-secondary);
+  font-size: 13px;
+}
+
+.kb-list-page__pending {
+  color: var(--admin-warning);
+  font-weight: 600;
+}
+
+.kb-list-page__row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
 }
 
 .kb-list-page__select-all {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #334155;
+  color: var(--admin-text-secondary);
   cursor: pointer;
   font-size: 14px;
   white-space: nowrap;
 }
 
-.kb-list-page__bulk-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid #dbeafe;
-  border-radius: 10px;
-  background: #eff6ff;
-  padding: 8px 10px;
+.kb-list-page__card-wrap {
+  height: calc(100vh - 260px);
+  overflow: auto;
+  border-top: 1px solid var(--admin-border-soft);
+  background: var(--admin-surface);
+  padding: 12px;
 }
 
-.kb-list-page__bulk-count {
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.kb-list-page__bulk-divider {
-  width: 1px;
-  height: 18px;
-  background: #bfdbfe;
-}
-
-.kb-list-page__bulk-button {
-  display: inline-flex;
-  height: 28px;
-  width: 28px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #3562b8;
-  cursor: pointer;
-  transition:
-    background-color 0.2s ease,
-    color 0.2s ease,
-    opacity 0.2s ease;
-}
-
-.kb-list-page__bulk-button:hover {
-  background: #ffffff;
-}
-
-.kb-list-page__bulk-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-
-.kb-list-page__bulk-button--danger {
-  color: #dc2626;
-}
-
-.kb-bulk-actions-enter-active,
-.kb-bulk-actions-leave-active {
-  transition: all 0.2s ease;
-}
-
-.kb-bulk-actions-enter-from,
-.kb-bulk-actions-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
+.kb-list-page__card-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 .kb-list-page__grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 24px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kb-list-page__load-more {
+  display: flex;
+  justify-content: center;
+  padding: 16px 0 4px;
+}
+
+.kb-list-page__load-more-text {
+  color: var(--admin-text-muted);
+  font-size: 13px;
 }
 
 .kb-list-page__pagination {
   display: flex;
   justify-content: flex-end;
+  border-top: 1px solid var(--admin-border-soft);
+  background: var(--admin-surface);
+  padding: 12px;
 }
 
 .kb-card {
   position: relative;
   display: flex;
-  min-height: 292px;
+  min-height: 220px;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #e2e8f0;
-  border-radius: 20px;
-  background: #ffffff;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--admin-border-soft);
+  border-radius: var(--admin-radius-lg);
+  background: var(--admin-surface);
+  box-shadow: none;
   transition:
     border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    transform 0.2s ease;
+    background-color 0.2s ease;
 }
 
 .kb-card:hover {
-  transform: translateY(-2px);
-  border-color: #cbd5e1;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+  border-color: var(--admin-border);
+  background: var(--admin-surface);
 }
 
 .kb-card--selected {
-  border-color: #3b82f6;
-  box-shadow:
-    0 0 0 1px #3b82f6,
-    0 12px 28px rgba(59, 130, 246, 0.14);
+  border-color: var(--admin-primary);
+  box-shadow: 0 0 0 1px var(--admin-primary);
 }
 
 .kb-card--disabled {
-  opacity: 0.55;
+  background: var(--admin-surface-muted);
+  opacity: 0.72;
 }
 
 .kb-card--disabled:hover {
-  transform: none;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+  background: var(--admin-surface-muted);
+  box-shadow: none;
 }
 
 .kb-card__disabled-badge {
   border-radius: 999px;
-  background: #f1f5f9;
-  color: #94a3b8;
+  background: var(--admin-border-soft);
+  color: var(--admin-text-subtle);
   font-size: 11px;
   font-weight: 600;
   padding: 2px 8px;
@@ -1058,10 +1196,10 @@ watch(
 .kb-card__topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid #f1f5f9;
-  background: rgba(248, 250, 252, 0.72);
-  padding: 16px 20px;
+  gap: 10px;
+  border-bottom: 1px solid var(--admin-border-soft);
+  background: var(--admin-surface-muted);
+  padding: 12px;
 }
 
 .kb-card__checkbox {
@@ -1077,7 +1215,7 @@ watch(
   min-width: 0;
   border: 0;
   background: transparent;
-  color: #0f172a;
+  color: var(--admin-text);
   cursor: pointer;
   padding: 0;
   text-align: left;
@@ -1087,34 +1225,34 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .kb-card__status-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   flex-shrink: 0;
   border-radius: 999px;
 }
 
 .kb-card__status-dot--available {
   background: #22c55e;
-  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.16);
+  box-shadow: none;
 }
 
 .kb-card__status-dot--indexing {
   background: #f59e0b;
-  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.16);
+  box-shadow: none;
 }
 
 .kb-card__status-dot--error {
   background: #ef4444;
-  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.16);
+  box-shadow: none;
 }
 
 .kb-card__status-dot--empty {
-  background: #cbd5e1;
+  background: var(--admin-border);
 }
 
 .kb-card__content {
@@ -1124,18 +1262,18 @@ watch(
   border: 0;
   background: transparent;
   cursor: pointer;
-  padding: 20px;
+  padding: 12px;
   text-align: left;
 }
 
 .kb-card__description {
   display: -webkit-box;
-  min-height: 44px;
-  margin: 0 0 16px;
+  min-height: 40px;
+  margin: 0 0 12px;
   overflow: hidden;
-  color: #64748b;
-  font-size: 14px;
-  line-height: 1.7;
+  color: var(--admin-text-muted);
+  font-size: 13px;
+  line-height: 1.55;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -1143,30 +1281,29 @@ watch(
 .kb-card__stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .kb-card__stat-item {
   display: flex;
-  min-height: 76px;
-  flex-direction: column;
+  min-height: 42px;
   align-items: center;
-  justify-content: center;
-  border: 1px solid #f1f5f9;
-  border-radius: 14px;
-  background: #f8fafc;
+  justify-content: space-between;
+  border: 1px solid var(--admin-border-soft);
+  border-radius: var(--admin-radius-sm);
+  background: var(--admin-surface-muted);
+  padding: 8px 10px;
 }
 
 .kb-card__stat-label {
-  color: #64748b;
+  color: var(--admin-text-muted);
   font-size: 12px;
 }
 
 .kb-card__stat-value {
-  margin-top: 4px;
-  color: #0f172a;
-  font-size: 20px;
+  color: var(--admin-text);
+  font-size: 15px;
   font-weight: 700;
 }
 
@@ -1174,8 +1311,8 @@ watch(
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 14px;
-  color: #b45309;
+  margin-bottom: 10px;
+  color: var(--admin-warning);
   font-size: 12px;
   font-weight: 600;
 }
@@ -1185,7 +1322,7 @@ watch(
   align-items: center;
   gap: 6px;
   margin-top: auto;
-  color: #94a3b8;
+  color: var(--admin-text-subtle);
   font-size: 12px;
 }
 
@@ -1193,32 +1330,32 @@ watch(
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  border-top: 1px solid #f1f5f9;
-  background: #f8fafc;
-  padding: 12px 20px;
+  gap: 4px;
+  border-top: 1px solid var(--admin-border-soft);
+  background: var(--admin-surface-muted);
+  padding: 8px 12px;
 }
 
 .kb-card__action-button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--admin-radius-sm);
   background: transparent;
-  color: #64748b;
+  color: var(--admin-text-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
-  padding: 6px 10px;
+  padding: 5px 8px;
   transition:
     background-color 0.2s ease,
     color 0.2s ease;
 }
 
 .kb-card__action-button:hover {
-  background: #ffffff;
-  color: #2563eb;
+  background: var(--admin-surface);
+  color: var(--admin-primary);
 }
 
 .kb-card__action-button--danger {
@@ -1226,7 +1363,7 @@ watch(
 }
 
 .kb-card__action-button--danger:hover {
-  color: #dc2626;
+  color: var(--admin-danger);
 }
 
 .kb-dialog__scope {
@@ -1234,19 +1371,19 @@ watch(
   align-items: center;
   gap: 8px;
   margin-bottom: 16px;
-  border: 1px solid #dbe2ea;
-  border-radius: 12px;
-  background: #f8fafc;
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius-lg);
+  background: var(--admin-surface-muted);
   padding: 12px 14px;
 }
 
 .kb-dialog__scope-label {
-  color: #64748b;
+  color: var(--admin-text-muted);
   font-size: 13px;
 }
 
 .kb-dialog__scope-value {
-  color: #0f172a;
+  color: var(--admin-text);
   font-size: 14px;
   font-weight: 600;
 }
@@ -1259,6 +1396,39 @@ watch(
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+:deep(.el-dialog) {
+  overflow: hidden;
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius-lg);
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18);
+}
+
+:deep(.el-dialog .el-dialog__header) {
+  display: flex;
+  align-items: center;
+  min-height: 54px;
+  margin: 0;
+  border-bottom: 1px solid var(--admin-border-soft);
+  background: var(--admin-surface-muted);
+  padding: 0 18px;
+}
+
+:deep(.el-dialog .el-dialog__title) {
+  color: var(--admin-text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+:deep(.el-dialog .el-dialog__body) {
+  padding: 18px;
+}
+
+:deep(.el-dialog .el-dialog__footer) {
+  border-top: 1px solid var(--admin-border-soft);
+  background: var(--admin-surface);
+  padding: 12px 18px;
 }
 
 @media (max-width: 1280px) {
@@ -1274,21 +1444,8 @@ watch(
 }
 
 @media (max-width: 900px) {
-  .kb-list-page__hero,
-  .kb-list-page__toolbar-row,
-  .kb-list-page__toolbar-main {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
   .kb-list-page__search {
     width: 100%;
-    max-width: none;
-  }
-
-  .kb-list-page__toolbar-side {
-    justify-content: space-between;
-    flex-wrap: wrap;
   }
 }
 
@@ -1298,7 +1455,6 @@ watch(
   }
 }
 
-/* ── Delete overlay ── */
 .delete-overlay {
   position: fixed;
   inset: 0;
@@ -1306,87 +1462,48 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(6px);
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(2px);
 }
 
 .delete-overlay__card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  width: 340px;
-  padding: 40px 32px 36px;
-  border-radius: 24px;
-  background: #ffffff;
-  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.14);
+  gap: 10px;
+  width: 280px;
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius-lg);
+  background: var(--admin-surface);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
+  padding: 22px 24px;
 }
 
-.delete-overlay__icon-ring {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 72px;
-  height: 72px;
-  border-radius: 999px;
-  background: rgba(220, 38, 38, 0.08);
-  animation: breathe 2s ease-in-out infinite;
-}
-
-.delete-overlay__icon-inner {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 999px;
-  background: rgba(220, 38, 38, 0.12);
+.delete-overlay__spinner {
+  color: var(--admin-primary);
 }
 
 .delete-overlay__title {
-  margin: 4px 0 0;
-  color: #0f172a;
-  font-size: 18px;
+  margin: 0;
+  color: var(--admin-text);
+  font-size: 15px;
   font-weight: 700;
 }
 
 .delete-overlay__desc {
   margin: 0;
-  color: #64748b;
+  color: var(--admin-text-muted);
   font-size: 14px;
   text-align: center;
   word-break: break-all;
 }
 
-.delete-overlay__dots {
-  display: flex;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.delete-overlay__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #94a3b8;
-  animation: dotPulse 1.4s ease-in-out infinite;
-}
-
-.delete-overlay__dot:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.delete-overlay__dot:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-/* Transitions */
 .delete-overlay-enter-active {
-  transition: opacity 0.25s ease;
+  transition: opacity 0.18s ease;
 }
 
 .delete-overlay-enter-active .delete-overlay__card {
-  transition: transform 0.25s ease, opacity 0.25s ease;
+  transition: transform 0.18s ease, opacity 0.18s ease;
 }
 
 .delete-overlay-enter-from {
@@ -1394,7 +1511,7 @@ watch(
 }
 
 .delete-overlay-enter-from .delete-overlay__card {
-  transform: scale(0.92) translateY(8px);
+  transform: translateY(4px);
   opacity: 0;
 }
 
@@ -1404,28 +1521,5 @@ watch(
 
 .delete-overlay-leave-to {
   opacity: 0;
-}
-
-/* Animations */
-@keyframes breathe {
-  0%, 100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.12);
-  }
-  50% {
-    transform: scale(1.06);
-    box-shadow: 0 0 0 12px rgba(220, 38, 38, 0);
-  }
-}
-
-@keyframes dotPulse {
-  0%, 80%, 100% {
-    transform: scale(0.6);
-    opacity: 0.4;
-  }
-  40% {
-    transform: scale(1);
-    opacity: 1;
-  }
 }
 </style>
