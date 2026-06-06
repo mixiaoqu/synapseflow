@@ -41,7 +41,7 @@ async def list_projects(
     keyword: str | None = Query(None),
     status: str = Query("all", pattern="^(all|active|inactive)$"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(10, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
@@ -111,7 +111,7 @@ async def list_project_apps(
     keyword: str | None = Query(None),
     status: str = Query("all", pattern="^(all|active|inactive)$"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(10, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):

@@ -31,7 +31,7 @@ class ContentRiskLogRepository:
         self,
         *,
         page: int = 1,
-        page_size: int = 20,
+        page_size: int = 10,
         scene: str | None = None,
         action: str | None = None,
         blocked: bool | None = None,

@@ -124,7 +124,6 @@ const enabledLibraryCount = computed(() => libraries.value.filter((item) => item
 const totalRuleCount = computed(() =>
   libraries.value.reduce((total, item) => total + item.ruleCount, 0),
 );
-const enabledRuleCount = computed(() => rules.value.filter((item) => item.enabled).length);
 const sandboxSceneLabel = computed(() => (sandboxScene.value === "query" ? "用户提问" : "AI 回答"));
 const libraryIsForbidden = computed(
   () => Boolean(libraryLoadError.value) && isForbiddenError(libraryLoadError.value),
@@ -141,25 +140,6 @@ const hasRuleFilters = computed(
     ruleFilters.status !== "all" ||
     ruleFilters.scene !== "all",
 );
-
-function formatDateTime(value: string | null) {
-  if (!value) {
-    return "暂无记录";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
 
 function ruleTypeLabel(value: ContentRiskRuleType) {
   return value === "regex" ? "正则" : "关键词";
@@ -519,29 +499,23 @@ onMounted(() => {
 
 <template>
   <section class="content-risk-library-page">
-    <header class="content-risk-library-page__header">
-      <div>
-        <h1>全局规则库</h1>
-        <p>统一维护平台全局生效的风控规则，左侧选择规则库，右侧维护具体匹配规则和测试结果。</p>
-      </div>
-      <div class="content-risk-library-page__header-actions">
-        <el-button
-          type="primary"
-          plain
-          :disabled="!selectedLibrary"
-          @click="openTestingSandbox"
-        >
-          打开测试沙盒
-        </el-button>
-        <el-button
-          type="primary"
-          @click="openCreateLibraryDialog"
-        >
-          <el-icon><Plus /></el-icon>
-          新建规则库
-        </el-button>
-      </div>
-    </header>
+    <div class="content-risk-library-page__actions">
+      <el-button
+        type="primary"
+        plain
+        :disabled="!selectedLibrary"
+        @click="openTestingSandbox"
+      >
+        打开测试沙盒
+      </el-button>
+      <el-button
+        type="primary"
+        @click="openCreateLibraryDialog"
+      >
+        <el-icon><Plus /></el-icon>
+        新建规则库
+      </el-button>
+    </div>
 
     <section class="content-risk-library-page__metrics">
       <div class="content-risk-library-page__metric">
@@ -585,7 +559,10 @@ onMounted(() => {
       :show-retry="false"
     />
 
-    <section v-else class="content-risk-library-page__workspace">
+    <section
+      v-else
+      class="content-risk-library-page__workspace"
+    >
       <AdminListPanel>
         <AdminTableToolbar>
           <template #left>
@@ -604,9 +581,18 @@ onMounted(() => {
               v-model="libraryFilters.status"
               class="content-risk-library-page__status"
             >
-              <el-option label="全部状态" value="all" />
-              <el-option label="仅启用中" value="enabled" />
-              <el-option label="仅停用中" value="disabled" />
+              <el-option
+                label="全部状态"
+                value="all"
+              />
+              <el-option
+                label="仅启用中"
+                value="enabled"
+              />
+              <el-option
+                label="仅停用中"
+                value="disabled"
+              />
             </el-select>
           </template>
         </AdminTableToolbar>
@@ -637,7 +623,10 @@ onMounted(() => {
           </el-button>
         </AppEmpty>
 
-        <div v-else class="content-risk-library-page__library-list">
+        <div
+          v-else
+          class="content-risk-library-page__library-list"
+        >
           <button
             v-for="library in displayedLibraries"
             :key="library.id"
@@ -665,7 +654,10 @@ onMounted(() => {
       </AdminListPanel>
 
       <div class="content-risk-library-page__rules">
-        <section v-if="selectedLibrary" class="content-risk-library-page__rule-header">
+        <section
+          v-if="selectedLibrary"
+          class="content-risk-library-page__rule-header"
+        >
           <div>
             <h2>{{ selectedLibrary.name }}</h2>
             <p>{{ selectedLibrary.description?.trim() || "暂无说明，可在配置中补充规则库的适用边界。" }}</p>
@@ -692,7 +684,10 @@ onMounted(() => {
           title="暂无可维护的规则库"
           description="创建规则库后，可以在这里维护关键词或正则规则。"
         >
-          <el-button type="primary" @click="openCreateLibraryDialog">
+          <el-button
+            type="primary"
+            @click="openCreateLibraryDialog"
+          >
             创建规则库
           </el-button>
         </AppEmpty>
@@ -738,18 +733,36 @@ onMounted(() => {
                 v-model="ruleFilters.scene"
                 class="content-risk-library-page__status"
               >
-                <el-option label="全部场景" value="all" />
-                <el-option label="用户提问" value="query" />
-                <el-option label="AI 回答" value="answer" />
+                <el-option
+                  label="全部场景"
+                  value="all"
+                />
+                <el-option
+                  label="用户提问"
+                  value="query"
+                />
+                <el-option
+                  label="AI 回答"
+                  value="answer"
+                />
               </el-select>
 
               <el-select
                 v-model="ruleFilters.status"
                 class="content-risk-library-page__status"
               >
-                <el-option label="全部状态" value="all" />
-                <el-option label="已启用" value="enabled" />
-                <el-option label="已停用" value="disabled" />
+                <el-option
+                  label="全部状态"
+                  value="all"
+                />
+                <el-option
+                  label="已启用"
+                  value="enabled"
+                />
+                <el-option
+                  label="已停用"
+                  value="disabled"
+                />
               </el-select>
             </template>
 
@@ -795,138 +808,138 @@ onMounted(() => {
             :data="displayedRules"
             row-key="id"
           >
-          <el-table-column
-            label="排位"
-            width="72"
-            align="center"
-          >
-            <template #default="{ $index }">
-              <span class="font-mono text-xs text-slate-400">#{{ $index + 1 }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column
-            label="规则名称"
-            min-width="260"
-          >
-            <template #default="{ row }">
-              <div class="content-risk-library-page__name-cell">
-                <strong>{{ row.name }}</strong>
-                <span>{{ row.description?.trim() || row.pattern }}</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column
-            label="匹配方式"
-            min-width="140"
-          >
-            <template #default="{ row }">
-              <div class="flex flex-wrap gap-1.5">
+            <el-table-column
+              label="排位"
+              width="72"
+              align="center"
+            >
+              <template #default="{ $index }">
+                <span class="font-mono text-xs text-slate-400">#{{ $index + 1 }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="规则名称"
+              min-width="260"
+            >
+              <template #default="{ row }">
+                <div class="content-risk-library-page__name-cell">
+                  <strong>{{ row.name }}</strong>
+                  <span>{{ row.description?.trim() || row.pattern }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="匹配方式"
+              min-width="140"
+            >
+              <template #default="{ row }">
+                <div class="flex flex-wrap gap-1.5">
+                  <el-tag
+                    size="small"
+                    type="info"
+                    effect="plain"
+                  >
+                    {{ ruleTypeLabel(row.ruleType) }}
+                  </el-tag>
+                  <el-tag
+                    size="small"
+                    effect="plain"
+                  >
+                    {{ matchModeLabel(row.matchMode) }}
+                  </el-tag>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="风险"
+              min-width="150"
+            >
+              <template #default="{ row }">
+                <div class="flex flex-wrap gap-1.5">
+                  <el-tag
+                    size="small"
+                    :type="levelTagType(row.riskLevel)"
+                    effect="plain"
+                  >
+                    {{ levelLabel(row.riskLevel) }}
+                  </el-tag>
+                  <el-tag
+                    size="small"
+                    type="info"
+                    effect="plain"
+                  >
+                    {{ row.riskCategory }}
+                  </el-tag>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="动作"
+              width="100"
+            >
+              <template #default="{ row }">
                 <el-tag
-                  size="small"
-                  type="info"
+                  :type="actionTagType(row.defaultAction)"
                   effect="plain"
                 >
-                  {{ ruleTypeLabel(row.ruleType) }}
+                  {{ actionLabel(row.defaultAction) }}
                 </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="适用场景"
+              min-width="150"
+            >
+              <template #default="{ row }">
+                <div class="flex flex-wrap gap-1.5">
+                  <el-tag
+                    v-if="row.appliesToQuery"
+                    size="small"
+                    effect="plain"
+                  >
+                    用户提问
+                  </el-tag>
+                  <el-tag
+                    v-if="row.appliesToAnswer"
+                    size="small"
+                    effect="plain"
+                  >
+                    AI 回答
+                  </el-tag>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="状态"
+              width="100"
+              align="center"
+            >
+              <template #default="{ row }">
                 <el-tag
-                  size="small"
+                  :type="row.enabled ? 'success' : 'info'"
                   effect="plain"
+                  round
                 >
-                  {{ matchModeLabel(row.matchMode) }}
+                  {{ row.enabled ? "启用" : "停用" }}
                 </el-tag>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column
-            label="风险"
-            min-width="150"
-          >
-            <template #default="{ row }">
-              <div class="flex flex-wrap gap-1.5">
-                <el-tag
-                  size="small"
-                  :type="levelTagType(row.riskLevel)"
-                  effect="plain"
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="操作"
+              width="110"
+              fixed="right"
+              align="right"
+            >
+              <template #default="{ row }">
+                <el-button
+                  link
+                  type="primary"
+                  @click="openEditRuleDialog(row)"
                 >
-                  {{ levelLabel(row.riskLevel) }}
-                </el-tag>
-                <el-tag
-                  size="small"
-                  type="info"
-                  effect="plain"
-                >
-                  {{ row.riskCategory }}
-                </el-tag>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column
-            label="动作"
-            width="100"
-          >
-            <template #default="{ row }">
-              <el-tag
-                :type="actionTagType(row.defaultAction)"
-                effect="plain"
-              >
-                {{ actionLabel(row.defaultAction) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column
-            label="适用场景"
-            min-width="150"
-          >
-            <template #default="{ row }">
-              <div class="flex flex-wrap gap-1.5">
-                <el-tag
-                  v-if="row.appliesToQuery"
-                  size="small"
-                  effect="plain"
-                >
-                  用户提问
-                </el-tag>
-                <el-tag
-                  v-if="row.appliesToAnswer"
-                  size="small"
-                  effect="plain"
-                >
-                  AI 回答
-                </el-tag>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column
-            label="状态"
-            width="100"
-            align="center"
-          >
-            <template #default="{ row }">
-              <el-tag
-                :type="row.enabled ? 'success' : 'info'"
-                effect="plain"
-                round
-              >
-                {{ row.enabled ? "启用" : "停用" }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column
-            label="操作"
-            width="110"
-            fixed="right"
-            align="right"
-          >
-            <template #default="{ row }">
-              <el-button
-                link
-                type="primary"
-                @click="openEditRuleDialog(row)"
-              >
-                编辑
-              </el-button>
-            </template>
-          </el-table-column>
+                  编辑
+                </el-button>
+              </template>
+            </el-table-column>
           </el-table>
         </AdminListPanel>
       </div>
@@ -1340,33 +1353,12 @@ onMounted(() => {
   gap: 16px;
 }
 
-.content-risk-library-page__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.content-risk-library-page__header-actions {
+.content-risk-library-page__actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.content-risk-library-page__header h1 {
-  margin: 0;
-  color: var(--admin-text);
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.content-risk-library-page__header p {
-  max-width: 760px;
-  margin: 6px 0 0;
-  color: var(--admin-text-muted);
-  font-size: 13px;
-  line-height: 1.7;
 }
 
 .content-risk-library-page__metrics {
@@ -1563,7 +1555,7 @@ onMounted(() => {
 }
 
 @media (max-width: 960px) {
-  .content-risk-library-page__header,
+  .content-risk-library-page__actions,
   .content-risk-library-page__rule-header {
     flex-direction: column;
     align-items: stretch;

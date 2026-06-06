@@ -71,7 +71,7 @@ class UserRepository:
         self,
         *,
         page: int = 1,
-        page_size: int = 20,
+        page_size: int = 10,
         keyword: str | None = None,
         role: str | None = None,
         is_active: bool | None = None,

@@ -105,7 +105,7 @@ async def list_knowledge_bases(
     active_only: bool = Query(False, description="Only return active knowledge bases"),
     keyword: str | None = Query(None, description="Search by knowledge-base name or description"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(10, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):

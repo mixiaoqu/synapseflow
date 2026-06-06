@@ -3,8 +3,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.authz import ROLE_KB_ADMIN, normalize_role
 from app.api.dependencies.auth import require_any_admin_role
+from app.core.authz import ROLE_KB_ADMIN, normalize_role
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.user_admin import (
@@ -71,7 +71,7 @@ async def _ensure_user_delete_allowed(
 @router.get("", response_model=UserListResponse)
 async def list_users(
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页条数"),
+    page_size: int = Query(10, ge=1, le=100, description="每页条数"),
     keyword: str | None = Query(None, description="搜索关键词，匹配用户名、邮箱或姓名"),
     role: str | None = Query(None, description="角色筛选"),
     is_active: bool | None = Query(None, description="启用状态筛选"),
@@ -124,7 +124,6 @@ async def bulk_action_users(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_any_admin_role),
 ):
-    del current_user
     repo = UserRepository(db)
     user_ids = list(dict.fromkeys(body.user_ids))
     targets = [user for user_id in user_ids if (user := await repo.get_by_id(user_id)) is not None]

@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import {
   ArrowDown,
+  ChatDotRound,
   Collection,
   DocumentChecked,
   Expand,
@@ -51,6 +52,7 @@ const navIcons: Record<
   assistants: MagicStick,
   organizations: User,
   users: UserFilled,
+  "qa-logs": ChatDotRound,
   "content-risk-overview": SetUp,
   "content-risk-libraries": SetUp,
   "content-risk-logs": DocumentChecked,
@@ -58,8 +60,8 @@ const navIcons: Record<
 
 const expandedGroupKeys = ref<Record<(typeof adminNavGroups)[number]["key"], boolean>>({
   "knowledge-and-apps": true,
+  "operations-and-review": true,
   "organization-and-access": true,
-  "content-risk": true,
 });
 
 function toggleNavGroup(groupKey: (typeof adminNavGroups)[number]["key"]) {

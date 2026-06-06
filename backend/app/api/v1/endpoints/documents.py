@@ -11,13 +11,13 @@ from app.models.schemas.document import (
     BatchDocumentActionRequest,
     BatchDocumentActionResponse,
     BatchDocumentFilterRequest,
+    DocumentChunksResponse,
     DocumentContentUpdate,
     DocumentCreate,
-    IndexingPanelSummaryResponse,
-    DocumentChunksResponse,
     DocumentListResponse,
     DocumentResponse,
     DocumentVersionsResponse,
+    IndexingPanelSummaryResponse,
 )
 
 router = APIRouter()
@@ -91,7 +91,7 @@ async def get_indexing_panel_summary(
 @router.get("", response_model=DocumentListResponse)
 async def list_documents(
     page: int = 1,
-    page_size: int = 20,
+    page_size: int = 10,
     keyword: str | None = None,
     team_id: int | None = Query(None, description="Filter by team id"),
     knowledge_base_id: int | None = Query(None, description="Filter by knowledge base"),

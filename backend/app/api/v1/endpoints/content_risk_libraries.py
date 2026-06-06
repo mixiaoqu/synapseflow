@@ -85,7 +85,7 @@ async def list_content_risk_logs(
     risk_level: str | None = Query(None, description="Optional risk level filter"),
     chat_log_id: int | None = Query(None, description="Optional related chat log id"),
     page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Rows per page"),
+    page_size: int = Query(10, ge=1, le=100, description="Rows per page"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_any_admin_role),
 ):

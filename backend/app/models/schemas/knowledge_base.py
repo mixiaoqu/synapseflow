@@ -82,7 +82,7 @@ class KnowledgeBaseListResponse(BaseModel):
     items: list[KnowledgeBaseListItem] = Field(default_factory=list)
     total: int = 0
     page: int = 1
-    page_size: int = 20
+    page_size: int = 10
 
 
 class KnowledgeBaseToggleActive(BaseModel):

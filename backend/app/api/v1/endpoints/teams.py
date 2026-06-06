@@ -27,7 +27,7 @@ router = APIRouter()
 @router.get("", response_model=TeamListResponse)
 async def list_teams(
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页条数"),
+    page_size: int = Query(10, ge=1, le=100, description="每页条数"),
     keyword: str | None = Query(None, description="搜索关键词，匹配名称或编码"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_any_admin_role),

@@ -21,13 +21,13 @@ from app.models.schemas.kb_chat import (
     KbChatLogDetail,
     KbChatLogItem,
     KbChatLogListResponse,
-    KbChatReviewRequest,
-    KbChatRetrievalFunnel,
-    KbChatRetrievalFunnelStage,
-    KbChatRetrievalQueryStat,
     KbChatPreviewRequest,
     KbChatRequest,
     KbChatResponse,
+    KbChatRetrievalFunnel,
+    KbChatRetrievalFunnelStage,
+    KbChatRetrievalQueryStat,
+    KbChatReviewRequest,
     KbChatSessionDetail,
     KbChatSessionSummary,
 )
@@ -235,7 +235,7 @@ async def submit_ask_feedback(
         raise HTTPException(status_code=404, detail="KB chat log not found")
     if existing.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Cannot submit feedback for another user")
-    row = await repo.submit_feedback(
+    await repo.submit_feedback(
         log_id=log_id,
         feedback_value=body.feedback_value,
         feedback_note=body.feedback_note,
@@ -273,7 +273,8 @@ async def admin_ask_preview(
 
 @admin_router.get("/logs", response_model=KbChatLogListResponse)
 async def list_ask_logs(
-    limit: int = Query(50, ge=1, le=200),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=200),
     team_id: int | None = Query(None),
     project_id: int | None = Query(None),
     project_app_id: int | None = Query(None),
@@ -295,7 +296,8 @@ async def list_ask_logs(
     created_from = datetime.combine(start_date, time.min) if start_date else None
     created_to = datetime.combine(end_date, time.max) if end_date else None
     records, total = await KbChatLogRepository(db).list_logs(
-        limit=limit,
+        page=page,
+        page_size=page_size,
         team_id=team_id,
         project_id=project_id,
         project_app_id=project_app_id,
@@ -351,6 +353,8 @@ async def list_ask_logs(
             for item in records
         ],
         total=total,
+        page=page,
+        page_size=page_size,
     )
 
 

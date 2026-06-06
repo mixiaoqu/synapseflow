@@ -6,6 +6,7 @@ export interface AdminNavItem {
     | "assistants"
     | "organizations"
     | "users"
+    | "qa-logs"
     | "content-risk-overview"
     | "content-risk-libraries"
     | "content-risk-logs";
@@ -14,7 +15,7 @@ export interface AdminNavItem {
 }
 
 export interface AdminNavGroup {
-  key: "knowledge-and-apps" | "organization-and-access" | "content-risk";
+  key: "knowledge-and-apps" | "operations-and-review" | "organization-and-access";
   label: string;
   items: AdminNavItem[];
 }
@@ -50,6 +51,32 @@ export const adminNavGroups: AdminNavGroup[] = [
     ],
   },
   {
+    key: "operations-and-review",
+    label: "运营与质检",
+    items: [
+      {
+        key: "qa-logs",
+        label: "问答日志",
+        to: "/qa-logs",
+      },
+      {
+        key: "content-risk-overview",
+        label: "风控总览",
+        to: "/content-risk/overview",
+      },
+      {
+        key: "content-risk-libraries",
+        label: "风控规则库",
+        to: "/content-risk/libraries",
+      },
+      {
+        key: "content-risk-logs",
+        label: "风控判定日志",
+        to: "/content-risk/logs",
+      },
+    ],
+  },
+  {
     key: "organization-and-access",
     label: "组织与权限",
     items: [
@@ -62,27 +89,6 @@ export const adminNavGroups: AdminNavGroup[] = [
         key: "users",
         label: "用户",
         to: "/users",
-      },
-    ],
-  },
-  {
-    key: "content-risk",
-    label: "内容风控",
-    items: [
-      {
-        key: "content-risk-overview",
-        label: "数据总览",
-        to: "/content-risk/overview",
-      },
-      {
-        key: "content-risk-libraries",
-        label: "全局规则库",
-        to: "/content-risk/libraries",
-      },
-      {
-        key: "content-risk-logs",
-        label: "判定日志",
-        to: "/content-risk/logs",
       },
     ],
   },

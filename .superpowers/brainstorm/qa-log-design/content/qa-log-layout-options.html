@@ -1,0 +1,89 @@
+<h2>问答日志页面：先选核心工作流</h2>
+<p class="subtitle">这页属于后台运营与质检工具，重点不是“好看”，而是让质检人员快速筛出问题、看懂原因、完成标注。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="margin:0">
+        <div class="mockup-header">A. 紧凑表格型</div>
+        <div class="mockup-body">
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px">
+            <input class="mock-input" style="width:130px" placeholder="关键词">
+            <input class="mock-input" style="width:120px" placeholder="回答状态">
+            <input class="mock-input" style="width:120px" placeholder="反馈">
+            <button class="mock-button">查询</button>
+          </div>
+          <div style="display:grid; grid-template-columns:80px 1.5fr 1.6fr 90px 80px 72px; gap:6px; font-size:10px">
+            <strong>时间</strong><strong>问题</strong><strong>回答摘要</strong><strong>检索</strong><strong>反馈</strong><strong>操作</strong>
+            <span>10:42</span><span>如何开通项目？</span><span>可在应用接入中...</span><span>命中 6</span><span>差评</span><span>详情</span>
+            <span>10:38</span><span>上传失败原因？</span><span>请检查文件格式...</span><span>无命中</span><span>-</span><span>详情</span>
+            <span>10:31</span><span>助手怎么绑定？</span><span>进入助手详情...</span><span>命中 3</span><span>好评</span><span>详情</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 日志查询台</h3>
+      <p>适合先把页面做成高密度日志表：筛选、排序、分页、详情抽屉。实现最稳，也最贴近已有风控日志页。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="margin:0">
+        <div class="mockup-header">B. 主从分栏型</div>
+        <div class="mockup-body" style="display:grid; grid-template-columns:42% 1fr; gap:10px">
+          <div>
+            <div style="display:flex; gap:6px; margin-bottom:8px">
+              <input class="mock-input" placeholder="问题 / 用户 / 应用">
+              <button class="mock-button">搜</button>
+            </div>
+            <div class="placeholder" style="height:38px; margin-bottom:6px">差评 · 无命中 · 6.2s</div>
+            <div class="placeholder" style="height:38px; margin-bottom:6px">待质检 · 命中 2 · 1.4s</div>
+            <div class="placeholder" style="height:38px">好评 · 命中 8 · 900ms</div>
+          </div>
+          <div>
+            <div class="placeholder" style="height:54px; margin-bottom:8px">用户问题 + 助手回答</div>
+            <div class="placeholder" style="height:42px; margin-bottom:8px">检索漏斗：改写 → 初筛 → 重排 → 引用</div>
+            <div class="placeholder" style="height:42px; margin-bottom:8px">命中文档片段</div>
+            <div style="display:flex; gap:6px"><button class="mock-button">标为正确</button><button class="mock-button">需优化</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 诊断工作台</h3>
+      <p>左侧选日志，右侧直接看完整诊断和质检动作。适合每天处理大量反馈，不用反复打开关闭抽屉。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="margin:0">
+        <div class="mockup-header">C. 质检队列型</div>
+        <div class="mockup-body">
+          <div style="display:flex; gap:8px; margin-bottom:10px">
+            <button class="mock-button">待处理 28</button>
+            <button class="mock-button">无命中 9</button>
+            <button class="mock-button">高延迟 6</button>
+            <button class="mock-button">差评 13</button>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
+            <div class="placeholder" style="height:74px">今日重点：差评、无命中、高延迟</div>
+            <div class="placeholder" style="height:74px">质检进度：已处理 / 待处理</div>
+          </div>
+          <div class="placeholder" style="height:78px; margin-top:8px">队列列表：按优先级排序，逐条标注</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. 质检任务台</h3>
+      <p>把日志转成“待处理队列”，突出差评、无命中、高延迟。适合已经有明确质检流程和日常 KPI 的团队。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我的建议</h3>
+  <p>当前代码里问答日志页还只是占位，但后端已支持列表、详情、筛选和人工质检。建议第一版采用 A 作为主结构，并在详情里吸收 B 的诊断信息。这样最贴合现有管理台，也能后续自然升级成 B。</p>
+</div>

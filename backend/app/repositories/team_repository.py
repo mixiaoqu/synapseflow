@@ -23,7 +23,7 @@ class TeamRepository:
         self,
         *,
         page: int = 1,
-        page_size: int = 20,
+        page_size: int = 10,
         keyword: str | None = None,
     ) -> tuple[list[Team], int]:
         """分页查询团队列表，支持按名称/编码模糊搜索。

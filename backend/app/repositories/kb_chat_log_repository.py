@@ -144,7 +144,8 @@ class KbChatLogRepository:
     async def list_logs(
         self,
         *,
-        limit: int = 50,
+        page: int = 1,
+        page_size: int = 10,
         team_id: int | None = None,
         project_id: int | None = None,
         project_app_id: int | None = None,
@@ -161,7 +162,9 @@ class KbChatLogRepository:
         high_latency_only: bool = False,
         high_latency_threshold_ms: int = 5000,
     ) -> tuple[list[KbChatLogRecord], int]:
-        normalized_limit = max(1, min(limit, 200))
+        normalized_page = max(1, page)
+        normalized_page_size = max(1, min(page_size, 200))
+        offset = (normalized_page - 1) * normalized_page_size
         stmt = (
             select(
                 KbChatLog,
@@ -202,7 +205,8 @@ class KbChatLogRepository:
         stmt = (
             stmt
             .order_by(KbChatLog.created_at.desc(), KbChatLog.id.desc())
-            .limit(normalized_limit)
+            .offset(offset)
+            .limit(normalized_page_size)
         )
         total_stmt = (
             select(func.count())

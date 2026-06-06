@@ -6,7 +6,12 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Product
-from app.models.schemas.product import ProductCreate, ProductListResponse, ProductResponse, ProductUpdate
+from app.models.schemas.product import (
+    ProductCreate,
+    ProductListResponse,
+    ProductResponse,
+    ProductUpdate,
+)
 from app.repositories.product_repository import ProductRecord, ProductRepository
 from app.repositories.team_repository import TeamRepository
 
@@ -61,7 +66,7 @@ class ProductService:
         *,
         team_id: int | None = None,
         page: int = 1,
-        page_size: int = 20,
+        page_size: int = 10,
     ) -> ProductListResponse:
         if team_id is not None:
             await self._ensure_team_access(team_id)

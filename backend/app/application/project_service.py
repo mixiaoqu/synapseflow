@@ -17,13 +17,13 @@ from app.models.schemas.project import (
     ProjectResponse,
     ProjectUpdate,
 )
+from app.repositories.product_repository import ProductRepository
 from app.repositories.project_repository import (
     ProjectAppRecord,
     ProjectAppRuntimeRecord,
     ProjectRecord,
     ProjectRepository,
 )
-from app.repositories.product_repository import ProductRepository
 from app.repositories.team_repository import TeamRepository
 
 
@@ -180,7 +180,7 @@ class ProjectService:
         keyword: str | None = None,
         status: str = "all",
         page: int = 1,
-        page_size: int = 20,
+        page_size: int = 10,
     ) -> ProjectListResponse:
         if team_id is not None:
             await self._ensure_team_access(team_id)

@@ -15,18 +15,18 @@ from app.application.kb_chat_service import get_kb_chat_service
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.assistant import (
+    AssistantAvailabilityResponse,
     AssistantBulkActionRequest,
     AssistantBulkActionResponse,
-    AssistantAvailabilityResponse,
     AssistantDependencyUsageResponse,
     AssistantModelOptionsResponse,
+    AssistantPreviewRequest,
     AssistantProfileCreate,
     AssistantProfileListResponse,
     AssistantProfileResponse,
     AssistantProfileSummary,
-    AssistantReorderRequest,
     AssistantProfileUpdate,
-    AssistantPreviewRequest,
+    AssistantReorderRequest,
 )
 from app.models.schemas.kb_chat import KbChatResponse
 
@@ -65,7 +65,7 @@ async def list_assistants(
     keyword: str | None = Query(None),
     status: str = Query("all", pattern="^(all|active|inactive)$"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(10, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):

@@ -15,6 +15,7 @@ import DocumentDetailPage from "@/modules/knowledge-bases/pages/DocumentDetailPa
 import KnowledgeBaseDetailPage from "@/modules/knowledge-bases/pages/KnowledgeBaseDetailPage.vue";
 import KnowledgeBaseListPage from "@/modules/knowledge-bases/pages/KnowledgeBaseListPage.vue";
 import DashboardPage from "@/modules/platform/pages/DashboardPage.vue";
+import QaLogListPage from "@/modules/qa-logs/pages/QaLogListPage.vue";
 import TeamListPage from "@/modules/organizations/pages/TeamListPage.vue";
 import UserListPage from "@/modules/users/pages/UserListPage.vue";
 import ProjectAppDetailPage from "@/modules/projects/pages/ProjectAppDetailPage.vue";
@@ -167,6 +168,15 @@ const router = createRouter({
             parent: "assistants",
             title: "助手详情",
             description: "编辑助手配置并进行预览调试。",
+          },
+        },
+        {
+          path: "qa-logs",
+          name: "qa-logs",
+          component: QaLogListPage,
+          meta: {
+            title: "问答日志",
+            description: "查看问答记录、检索命中、用户反馈和人工质检结果。",
           },
         },
         {

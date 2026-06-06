@@ -37,7 +37,7 @@ const filters = reactive({
 
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 });
 
@@ -188,16 +188,6 @@ onMounted(() => {
 
 <template>
   <section class="content-risk-logs-page">
-    <header class="content-risk-logs-page__header">
-      <div>
-        <h1>判定日志</h1>
-        <p>查询每一次内容风控检测记录，定位触发规则、命中文本、最终动作和后续问答日志关联。</p>
-      </div>
-      <el-button :icon="Refresh" :loading="loading" @click="loadLogs">
-        刷新
-      </el-button>
-    </header>
-
     <AppError
       v-if="loadError"
       title="判定日志加载失败"
@@ -213,31 +203,99 @@ onMounted(() => {
     <AdminListPanel v-else>
       <AdminTableToolbar>
         <template #left>
-          <el-select v-model="filters.scene" class="content-risk-logs-page__filter" @change="handleFilterChange">
-            <el-option label="全部场景" value="all" />
-            <el-option label="用户提问" value="query" />
-            <el-option label="AI 回答" value="answer" />
+          <el-select
+            v-model="filters.scene"
+            class="content-risk-logs-page__filter"
+            @change="handleFilterChange"
+          >
+            <el-option
+              label="全部场景"
+              value="all"
+            />
+            <el-option
+              label="用户提问"
+              value="query"
+            />
+            <el-option
+              label="AI 回答"
+              value="answer"
+            />
           </el-select>
-          <el-select v-model="filters.action" class="content-risk-logs-page__filter" @change="handleFilterChange">
-            <el-option label="全部动作" value="all" />
-            <el-option label="放行" value="pass" />
-            <el-option label="拦截" value="block" />
-            <el-option label="人工复核" value="review" />
-            <el-option label="仅记录" value="log" />
+          <el-select
+            v-model="filters.action"
+            class="content-risk-logs-page__filter"
+            @change="handleFilterChange"
+          >
+            <el-option
+              label="全部动作"
+              value="all"
+            />
+            <el-option
+              label="放行"
+              value="pass"
+            />
+            <el-option
+              label="拦截"
+              value="block"
+            />
+            <el-option
+              label="人工复核"
+              value="review"
+            />
+            <el-option
+              label="仅记录"
+              value="log"
+            />
           </el-select>
-          <el-select v-model="filters.riskLevel" class="content-risk-logs-page__filter" @change="handleFilterChange">
-            <el-option label="全部风险" value="all" />
-            <el-option label="高风险" value="high" />
-            <el-option label="中风险" value="medium" />
-            <el-option label="低风险" value="low" />
+          <el-select
+            v-model="filters.riskLevel"
+            class="content-risk-logs-page__filter"
+            @change="handleFilterChange"
+          >
+            <el-option
+              label="全部风险"
+              value="all"
+            />
+            <el-option
+              label="高风险"
+              value="high"
+            />
+            <el-option
+              label="中风险"
+              value="medium"
+            />
+            <el-option
+              label="低风险"
+              value="low"
+            />
           </el-select>
-          <el-select v-model="filters.blocked" class="content-risk-logs-page__filter" @change="handleFilterChange">
-            <el-option label="全部结果" value="all" />
-            <el-option label="已拦截" value="blocked" />
-            <el-option label="未拦截" value="recorded" />
+          <el-select
+            v-model="filters.blocked"
+            class="content-risk-logs-page__filter"
+            @change="handleFilterChange"
+          >
+            <el-option
+              label="全部结果"
+              value="all"
+            />
+            <el-option
+              label="已拦截"
+              value="blocked"
+            />
+            <el-option
+              label="未拦截"
+              value="recorded"
+            />
           </el-select>
         </template>
         <template #right>
+          <el-button
+            :icon="Refresh"
+            :loading="loading"
+            @click="loadLogs"
+          >
+            刷新
+          </el-button>
           <el-input
             v-model="filters.chatLogId"
             class="content-risk-logs-page__chat-log"
@@ -247,98 +305,169 @@ onMounted(() => {
             @keyup.enter="handleFilterChange"
             @clear="handleFilterChange"
           />
-          <el-button :icon="Search" type="primary" @click="handleFilterChange">
+          <el-button
+            :icon="Search"
+            type="primary"
+            @click="handleFilterChange"
+          >
             查询
           </el-button>
-          <el-button v-if="activeFilterCount > 0" @click="resetFilters">
+          <el-button
+            v-if="activeFilterCount > 0"
+            @click="resetFilters"
+          >
             重置
           </el-button>
         </template>
       </AdminTableToolbar>
-
-      <div class="content-risk-logs-page__summary">
-        <span>当前页 {{ logs.length }} 条</span>
-        <span>匹配总数 {{ pagination.total }}</span>
-        <span v-if="activeFilterCount > 0">已启用 {{ activeFilterCount }} 个筛选条件</span>
-      </div>
 
       <el-table
         v-loading="loading"
         :data="logs"
         row-key="id"
       >
-        <el-table-column label="时间" min-width="150">
+        <el-table-column
+          label="时间"
+          min-width="150"
+        >
           <template #default="{ row }">
             <span class="content-risk-logs-page__muted">{{ formatDateTime(row.createdAt) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="来源" min-width="170">
+        <el-table-column
+          label="来源"
+          min-width="170"
+        >
           <template #default="{ row }">
-            <span class="content-risk-logs-page__source" :title="sourceName(row)">
+            <span
+              class="content-risk-logs-page__source"
+              :title="sourceName(row)"
+            >
               {{ sourceName(row) }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="场景" min-width="105">
+        <el-table-column
+          label="场景"
+          min-width="105"
+        >
           <template #default="{ row }">
             {{ sceneLabel(row.scene) }}
           </template>
         </el-table-column>
-        <el-table-column label="文本片段" min-width="340">
+        <el-table-column
+          label="文本片段"
+          min-width="340"
+        >
           <template #default="{ row }">
-            <p class="content-risk-logs-page__snippet" :title="row.checkedText">{{ row.checkedText || "-" }}</p>
-            <p v-if="row.matchedText" class="content-risk-logs-page__hit">命中：{{ row.matchedText }}</p>
+            <p
+              class="content-risk-logs-page__snippet"
+              :title="row.checkedText"
+            >
+              {{ row.checkedText || "-" }}
+            </p>
+            <p
+              v-if="row.matchedText"
+              class="content-risk-logs-page__hit"
+            >
+              命中：{{ row.matchedText }}
+            </p>
           </template>
         </el-table-column>
-        <el-table-column label="命中规则" min-width="180">
+        <el-table-column
+          label="命中规则"
+          min-width="180"
+        >
           <template #default="{ row }">
             <div class="content-risk-logs-page__tags">
-              <el-tag size="small" type="danger" effect="plain">
+              <el-tag
+                size="small"
+                type="danger"
+                effect="plain"
+              >
                 {{ primaryRuleName(row) }}
               </el-tag>
-              <el-tag v-if="row.hits.length > 1" size="small" type="info" effect="plain">
+              <el-tag
+                v-if="row.hits.length > 1"
+                size="small"
+                type="info"
+                effect="plain"
+              >
                 +{{ row.hits.length - 1 }}
               </el-tag>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="风险" min-width="105">
+        <el-table-column
+          label="风险"
+          min-width="105"
+        >
           <template #default="{ row }">
-            <el-tag size="small" :type="riskLevelTagType(row.riskLevel)" effect="plain">
+            <el-tag
+              size="small"
+              :type="riskLevelTagType(row.riskLevel)"
+              effect="plain"
+            >
               {{ riskLevelLabel(row.riskLevel) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="动作" min-width="110">
+        <el-table-column
+          label="动作"
+          min-width="110"
+        >
           <template #default="{ row }">
-            <el-tag size="small" :type="actionTagType(row.action)" effect="plain">
+            <el-tag
+              size="small"
+              :type="actionTagType(row.action)"
+              effect="plain"
+            >
               {{ actionLabel(row.action) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="耗时" min-width="90">
+        <el-table-column
+          label="耗时"
+          min-width="90"
+        >
           <template #default="{ row }">
             <span class="content-risk-logs-page__muted">{{ row.elapsedMs }}ms</span>
           </template>
         </el-table-column>
-        <el-table-column label="问答日志" min-width="105">
+        <el-table-column
+          label="问答日志"
+          min-width="105"
+        >
           <template #default="{ row }">
             <span class="content-risk-logs-page__muted">{{ row.chatLogId ?? "-" }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="96" fixed="right">
+        <el-table-column
+          label="操作"
+          width="96"
+          fixed="right"
+        >
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">
+            <el-button
+              link
+              type="primary"
+              @click="openDetail(row)"
+            >
               详情
             </el-button>
           </template>
         </el-table-column>
         <template #empty>
-          <div class="content-risk-logs-page__empty">暂无判定日志</div>
+          <div class="content-risk-logs-page__empty">
+            暂无判定日志
+          </div>
         </template>
       </el-table>
 
-      <div v-if="pagination.total > 0" class="content-risk-logs-page__pagination">
+      <div
+        v-if="pagination.total > 0"
+        class="content-risk-logs-page__pagination"
+      >
         <el-pagination
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.pageSize"
@@ -351,8 +480,15 @@ onMounted(() => {
       </div>
     </AdminListPanel>
 
-    <el-drawer v-model="detailVisible" title="判定日志详情" size="560px">
-      <div v-if="selectedLog" class="content-risk-logs-page__detail">
+    <el-drawer
+      v-model="detailVisible"
+      title="判定日志详情"
+      size="560px"
+    >
+      <div
+        v-if="selectedLog"
+        class="content-risk-logs-page__detail"
+      >
         <dl>
           <div>
             <dt>判定时间</dt>
@@ -392,14 +528,22 @@ onMounted(() => {
 
         <section>
           <h3>命中规则</h3>
-          <div v-if="selectedLog.hits.length > 0" class="content-risk-logs-page__hits">
-            <div v-for="hit in selectedLog.hits" :key="`${hit.libraryId}-${hit.ruleId}-${hit.matchedText}`">
+          <div
+            v-if="selectedLog.hits.length > 0"
+            class="content-risk-logs-page__hits"
+          >
+            <div
+              v-for="hit in selectedLog.hits"
+              :key="`${hit.libraryId}-${hit.ruleId}-${hit.matchedText}`"
+            >
               <strong>{{ hit.ruleName }}</strong>
               <span>{{ hit.riskCategory }} · {{ riskLevelLabel(hit.riskLevel) }} · {{ actionLabel(hit.action) }}</span>
               <p>{{ hit.matchedText }}</p>
             </div>
           </div>
-          <p v-else>-</p>
+          <p v-else>
+            -
+          </p>
         </section>
       </div>
     </el-drawer>
@@ -413,50 +557,12 @@ onMounted(() => {
   gap: 16px;
 }
 
-.content-risk-logs-page__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.content-risk-logs-page__header h1 {
-  margin: 0;
-  color: var(--admin-text);
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.content-risk-logs-page__header p {
-  max-width: 760px;
-  margin: 6px 0 0;
-  color: var(--admin-text-muted);
-  font-size: 13px;
-  line-height: 1.7;
-}
-
 .content-risk-logs-page__filter {
   width: 132px;
 }
 
 .content-risk-logs-page__chat-log {
   width: 180px;
-}
-
-.content-risk-logs-page__summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  border-bottom: 1px solid var(--admin-border-soft);
-  padding: 10px 12px;
-  color: var(--admin-text-muted);
-  font-size: 12px;
-}
-
-.content-risk-logs-page__summary span {
-  border-radius: var(--admin-radius-sm);
-  background: var(--admin-surface-muted);
-  padding: 5px 8px;
 }
 
 .content-risk-logs-page__source {
@@ -595,10 +701,6 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
-  .content-risk-logs-page__header {
-    flex-direction: column;
-  }
-
   .content-risk-logs-page__filter,
   .content-risk-logs-page__chat-log {
     width: 100%;

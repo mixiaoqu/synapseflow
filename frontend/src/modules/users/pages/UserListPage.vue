@@ -88,7 +88,7 @@ const searchKeyword = ref("");
 const roleFilter = ref("all");
 const statusFilter = ref("all");
 
-const pagination = ref({ page: 1, pageSize: 20, total: 0 });
+const pagination = ref({ page: 1, pageSize: 10, total: 0 });
 
 const createDialogVisible = ref(false);
 const createLoading = ref(false);

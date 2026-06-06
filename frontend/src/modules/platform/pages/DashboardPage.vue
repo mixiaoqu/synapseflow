@@ -34,7 +34,6 @@ const inactiveAssistantTotal = ref(0);
 const projects = ref<ProjectSummary[]>([]);
 const projectTotal = ref(0);
 
-const selectedTeamName = computed(() => teamScopeStore.selectedTeam?.name ?? "未选择团队");
 const projectAppTotal = computed(() =>
   projects.value.reduce((total, item) => total + item.app_count, 0),
 );
@@ -174,18 +173,21 @@ watch(
     />
 
     <template v-else>
-      <header class="dashboard-page__header">
-        <div>
-          <p class="dashboard-page__eyebrow">当前团队：{{ selectedTeamName }}</p>
-          <h1 class="dashboard-page__title">控制台</h1>
-        </div>
-        <el-button :loading="loading" @click="loadDashboard">
+      <div class="dashboard-page__actions">
+        <el-button
+          :loading="loading"
+          @click="loadDashboard"
+        >
           <el-icon><RefreshRight /></el-icon>
           刷新
         </el-button>
-      </header>
+      </div>
 
-      <section v-loading="loading" class="dashboard-page__metrics" element-loading-text="正在更新控制台">
+      <section
+        v-loading="loading"
+        class="dashboard-page__metrics"
+        element-loading-text="正在更新控制台"
+      >
         <article class="dashboard-metric">
           <span class="dashboard-metric__label">待处理文档</span>
           <strong>{{ pendingDocumentTotal }}</strong>
@@ -215,10 +217,19 @@ watch(
               <h2>待处理知识库</h2>
               <p>优先查看索引中、待审核和失败文档。</p>
             </div>
-            <el-button link type="primary" @click="router.push('/knowledge-bases')">查看全部</el-button>
+            <el-button
+              link
+              type="primary"
+              @click="router.push('/knowledge-bases')"
+            >
+              查看全部
+            </el-button>
           </div>
 
-          <div v-if="recentKnowledgeBases.length === 0" class="dashboard-panel__empty">
+          <div
+            v-if="recentKnowledgeBases.length === 0"
+            class="dashboard-panel__empty"
+          >
             当前团队暂无知识库。
           </div>
           <template v-else>
@@ -250,10 +261,19 @@ watch(
               <h2>助手状态</h2>
               <p>检查当前团队可用助手和最近配置。</p>
             </div>
-            <el-button link type="primary" @click="router.push('/assistants')">管理助手</el-button>
+            <el-button
+              link
+              type="primary"
+              @click="router.push('/assistants')"
+            >
+              管理助手
+            </el-button>
           </div>
 
-          <div v-if="assistants.length === 0" class="dashboard-panel__empty">
+          <div
+            v-if="assistants.length === 0"
+            class="dashboard-panel__empty"
+          >
             当前团队暂无助手。
           </div>
           <template v-else>
@@ -269,7 +289,10 @@ watch(
                 <strong>{{ item.name }}</strong>
                 <span>{{ item.llm_model_key || "未指定模型" }}</span>
               </span>
-              <el-tag :type="item.is_active ? 'success' : 'info'" effect="plain">
+              <el-tag
+                :type="item.is_active ? 'success' : 'info'"
+                effect="plain"
+              >
                 {{ item.is_active ? "启用" : "停用" }}
               </el-tag>
             </button>
@@ -282,10 +305,19 @@ watch(
               <h2>接入应用</h2>
               <p>进入项目发布渠道，检查嵌入入口、默认助手和绑定知识库。</p>
             </div>
-            <el-button link type="primary" @click="router.push('/projects')">管理项目</el-button>
+            <el-button
+              link
+              type="primary"
+              @click="router.push('/projects')"
+            >
+              管理项目
+            </el-button>
           </div>
 
-          <div v-if="recentProjects.length === 0" class="dashboard-panel__empty">
+          <div
+            v-if="recentProjects.length === 0"
+            class="dashboard-panel__empty"
+          >
             当前团队暂无项目。
           </div>
           <template v-else>
@@ -333,24 +365,11 @@ watch(
   gap: 16px;
 }
 
-.dashboard-page__header {
+.dashboard-page__actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
-}
-
-.dashboard-page__eyebrow {
-  margin: 0 0 4px;
-  color: var(--admin-text-muted);
-  font-size: 13px;
-}
-
-.dashboard-page__title {
-  margin: 0;
-  color: var(--admin-text);
-  font-size: 22px;
-  font-weight: 700;
 }
 
 .dashboard-page__metrics {
@@ -510,7 +529,7 @@ watch(
 }
 
 @media (max-width: 860px) {
-  .dashboard-page__header,
+  .dashboard-page__actions,
   .dashboard-panel__header {
     flex-direction: column;
     align-items: stretch;

@@ -51,7 +51,7 @@ class ProjectListResponse(BaseModel):
     items: list[ProjectResponse] = Field(default_factory=list)
     total: int = 0
     page: int = 1
-    page_size: int = 20
+    page_size: int = 10
 
 
 class ProjectAppCreate(BaseModel):
@@ -97,7 +97,7 @@ class ProjectAppListResponse(BaseModel):
     items: list[ProjectAppResponse] = Field(default_factory=list)
     total: int = 0
     page: int = 1
-    page_size: int = 20
+    page_size: int = 10
 
 
 class EmbedSessionCreate(BaseModel):

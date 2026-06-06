@@ -20,16 +20,16 @@ from app.models.schemas.document import (
     DocumentChunksResponse,
     DocumentContentUpdate,
     DocumentCreate,
-    FailedIndexingItem,
     DocumentListItem,
     DocumentListResponse,
     DocumentResponse,
     DocumentVersionItem,
     DocumentVersionsResponse,
+    FailedIndexingItem,
     IndexingPanelSummaryResponse,
 )
-from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.repositories.document_category_repository import DocumentCategoryRepository
+from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.index_job_repository import IndexJobRepository
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
@@ -38,19 +38,19 @@ from app.services.document_index_state import (
     compute_content_hash,
     is_indexed_status,
 )
+from app.services.document_indexer import persist_document_chunk_plan, prepare_document_chunk_plan
 from app.services.document_lifecycle import (
     DOC_STATUS_ARCHIVED,
     DOC_STATUS_DRAFT,
     DOC_STATUS_PENDING_REVIEW,
     DOC_STATUS_PUBLISHED,
 )
-from app.services.document_indexer import persist_document_chunk_plan, prepare_document_chunk_plan
 from app.services.graph_store import get_graph_store
 from app.services.vector_store import delete_by_document_id
 from app.utils.document_parse import (
     MAX_FILE_SIZE,
-    ParsedDocument,
     SUPPORTED_EXTENSIONS,
+    ParsedDocument,
     parse_raw_document_content,
     parse_uploaded_document_structured,
     render_parsed_document,
@@ -616,7 +616,7 @@ class DocumentService:
         status: str | None = None,
     ) -> DocumentListResponse:
         page = max(page, 1)
-        page_size = 20 if page_size < 1 or page_size > 100 else page_size
+        page_size = 10 if page_size < 1 or page_size > 100 else page_size
 
         repo = DocumentRepository(db, user_id=user_id)
         status_counts = await repo.get_status_counts(

@@ -42,7 +42,7 @@ const statusLoadingId = ref<number | null>(null);
 const deletingAssistantId = ref<number | null>(null);
 const pagination = ref({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 });
 let searchTimer: ReturnType<typeof setTimeout> | undefined;

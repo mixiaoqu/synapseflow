@@ -7,23 +7,23 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AssistantProfile
 from app.application.kb_chat_service import get_kb_chat_service
 from app.core.config import config_registry
+from app.db.models import AssistantProfile
 from app.models.schemas.assistant import (
+    AssistantAvailabilityResponse,
     AssistantBulkActionRequest,
     AssistantBulkActionResponse,
-    AssistantAvailabilityResponse,
     AssistantDependencyUsageResponse,
-    AssistantProfileListResponse,
     AssistantModelOption,
     AssistantModelOptionsResponse,
+    AssistantPreviewRequest,
     AssistantProfileCreate,
+    AssistantProfileListResponse,
     AssistantProfileResponse,
-    AssistantReorderRequest,
     AssistantProfileSummary,
     AssistantProfileUpdate,
-    AssistantPreviewRequest,
+    AssistantReorderRequest,
 )
 from app.repositories.assistant_profile_repository import (
     AssistantDependencyRecord,
@@ -175,7 +175,7 @@ class AssistantService:
         keyword: str | None = None,
         status: str = "all",
         page: int = 1,
-        page_size: int = 20,
+        page_size: int = 10,
     ) -> AssistantProfileListResponse:
         normalized_page = max(1, int(page))
         normalized_page_size = min(100, max(1, int(page_size)))

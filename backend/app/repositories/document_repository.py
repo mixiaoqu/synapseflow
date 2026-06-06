@@ -14,7 +14,6 @@ from app.repositories.access_scope import (
     accessible_knowledge_base_condition,
 )
 from app.services.category_scope import resolve_category_subtree_ids
-from app.services.document_lifecycle import DOC_STATUS_DRAFT, DOC_STATUS_PENDING_REVIEW
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
     INDEX_STATUS_INDEXED,
@@ -22,6 +21,7 @@ from app.services.document_index_state import (
     INDEX_STATUS_QUEUED,
     compute_content_hash,
 )
+from app.services.document_lifecycle import DOC_STATUS_DRAFT, DOC_STATUS_PENDING_REVIEW
 from app.utils.time import utc_now
 
 
@@ -128,7 +128,7 @@ class DocumentRepository:
         self,
         *,
         page: int = 1,
-        page_size: int = 20,
+        page_size: int = 10,
         keyword: str | None = None,
         team_id: int | None = None,
         knowledge_base_id: int | None = None,
@@ -448,7 +448,6 @@ class DocumentRepository:
             return None
         root_id = orig.root_id or orig.id
         latest_doc = await self.get_latest_by_root_id(root_id)
-        current_doc = await self.get_current_by_root_id(root_id)
         max_version = getattr(latest_doc, "version", None)
         new_doc = Document(
             user_id=self.user_id,

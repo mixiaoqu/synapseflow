@@ -27,7 +27,7 @@ const loadError = ref<unknown>(null);
 const hasLoadedData = ref(false);
 const pagination = ref({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 });
 const createProductDialogVisible = ref(false);
