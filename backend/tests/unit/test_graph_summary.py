@@ -58,6 +58,29 @@ def test_build_entity_summary_prompt_emphasizes_definition_role_scope():
     assert "第一句：定义该实体是什么" in prompt
     assert "第二句：只写它在当前知识库中的核心角色或最关键用途" in prompt
     assert "第三句：写最重要的范围、约束、别名、状态；如果有 extra_attributes" in prompt
+    assert "summary_focus" in prompt
+    assert "优先说明所属模块、承担的界面或业务职责、关联对象" in prompt
+
+
+def test_build_entity_summary_prompt_uses_entity_type_specific_focus():
+    prompt = build_entity_summary_prompt(
+        {
+            "normalized_name": "create-user-api",
+            "display_name": "Create User API",
+            "entity_type": "API",
+            "aliases": [],
+            "entity_props": {
+                "attr_method": "POST",
+                "attr_path": "/api/v1/users",
+            },
+            "mentions": [],
+            "relations": [],
+        }
+    )
+
+    assert "summary_focus" in prompt
+    assert "优先说明 method/path/route、输入输出对象、所属服务或调用场景" in prompt
+    assert "/api/v1/users" in prompt
 
 
 def test_refresh_entity_summaries_writes_generated_summary(monkeypatch):

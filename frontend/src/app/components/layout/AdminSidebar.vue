@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Component } from "vue";
-import { computed, onMounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
 import {
   ArrowDown,
@@ -19,7 +19,6 @@ import {
 
 import { adminNavGroups, adminPrimaryNav } from "@/app/navigation/admin-nav";
 import { useAuthStore } from "@/stores/auth";
-import { useTeamScopeStore } from "@/stores/team-scope";
 
 defineProps<{
   collapsed: boolean;
@@ -33,16 +32,6 @@ const emit = defineEmits<{
 
 const route = useRoute();
 const authStore = useAuthStore();
-const teamScopeStore = useTeamScopeStore();
-
-const selectedTeamId = computed({
-  get() {
-    return teamScopeStore.selectedTeamId;
-  },
-  set(value: number | null) {
-    teamScopeStore.setSelectedTeam(value);
-  },
-});
 
 const navIcons: Record<
   (typeof adminPrimaryNav)[number]["key"] | (typeof adminNavGroups)[number]["items"][number]["key"],
@@ -95,10 +84,6 @@ function isGroupActive(group: (typeof adminNavGroups)[number]) {
 function isNavActive(to: string) {
   return route.path.startsWith(to);
 }
-
-onMounted(() => {
-  void teamScopeStore.bootstrap();
-});
 </script>
 
 <template>
@@ -222,55 +207,10 @@ onMounted(() => {
       </section>
     </nav>
 
-    <div
-      v-if="!collapsed || mobile"
-      class="shrink-0 border-t border-slate-800/60 bg-slate-900/30 p-4"
-    >
-      <div class="px-1">
-        <div class="mb-1.5 flex items-center justify-between">
-          <span class="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-            Workspace
-          </span>
-        </div>
-        <el-select
-          v-model="selectedTeamId"
-          class="!w-full custom-dark-select"
-          size="default"
-          :loading="teamScopeStore.loading"
-          placeholder="切换团队..."
-          :disabled="!teamScopeStore.hasTeams"
-        >
-          <el-option
-            v-for="team in teamScopeStore.teams"
-            :key="team.id"
-            :label="team.name"
-            :value="team.id"
-          />
-        </el-select>
-        <p v-if="teamScopeStore.errorMessage" class="mt-1.5 text-[11px] text-rose-400/90">
-          {{ teamScopeStore.errorMessage }}
-        </p>
-      </div>
-    </div>
   </aside>
 </template>
 
 <style scoped>
-:deep(.custom-dark-select .el-input__wrapper) {
-  background-color: rgba(30, 41, 59, 0.4) !important;
-  box-shadow: 0 0 0 1px rgba(71, 85, 105, 0.4) inset !important;
-  border-radius: 6px;
-}
-
-:deep(.custom-dark-select .el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.85) inset !important;
-}
-
-:deep(.custom-dark-select .el-input__inner) {
-  color: #cbd5e1 !important;
-  font-size: 13px;
-}
-
 .admin-sidebar__nav-link--active {
   background: rgba(37, 99, 235, 0.12);
   color: #60a5fa;

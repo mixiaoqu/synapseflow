@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.registry import config_registry
-from app.core.llm import get_llm_for_analysis
 from app.db.models import Document, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 from app.repositories.document_chunk_repository import DocumentChunkRepository
@@ -20,7 +19,6 @@ from app.services.graph_extraction import extract_chunk_graphs_batch
 from app.services.graph_indexer import DEFAULT_GRAPH_BATCH_SIZE, GraphIndexer
 from app.services.graph_models import ChunkGraphExtraction, GraphChunkRecord, GraphEntityRecord, GraphRelationRecord
 from app.services.graph_normalizer import normalize_chunk_graph
-from app.services.graph_summary import refresh_entity_summaries, refresh_relation_summaries
 from app.services.graph_store import get_graph_store
 from app.services.semantic_chunk import DocumentChunkPlan, VectorIndexChunk, build_chunk_plan, build_vector_index_chunks, plan_text_chunks
 from app.services.vector_store import add_document_chunks, delete_by_document_id
@@ -160,6 +158,15 @@ def _merge_entity_records(
         aliases.append(cleaned)
         seen.add(cleaned)
 
+    alias_keys: list[str] = []
+    seen_alias_keys: set[str] = set()
+    for alias_key in (*existing.alias_keys, *incoming.alias_keys):
+        cleaned = str(alias_key or "").strip()
+        if not cleaned or cleaned in seen_alias_keys:
+            continue
+        alias_keys.append(cleaned)
+        seen_alias_keys.add(cleaned)
+
     evidence = existing.evidence.strip()
     incoming_evidence = incoming.evidence.strip()
     if incoming_evidence and incoming_evidence not in evidence:
@@ -169,21 +176,25 @@ def _merge_entity_records(
     if entity_type == "OTHER" and incoming.entity_type != "OTHER":
         entity_type = incoming.entity_type
 
+    display_name = _choose_preferred_display_name(
+        existing.display_name,
+        incoming.display_name,
+        existing.normalized_name,
+    )
+
     return GraphEntityRecord(
         team_id=existing.team_id,
         knowledge_base_id=existing.knowledge_base_id,
         document_id=existing.document_id,
         document_chunk_id=existing.document_chunk_id,
         normalized_name=existing.normalized_name,
-        display_name=_choose_preferred_display_name(
-            existing.display_name,
-            incoming.display_name,
-            existing.normalized_name,
-        ),
+        display_name=display_name,
         entity_type=entity_type,
         aliases=tuple(aliases),
         attributes=attributes,
         evidence=evidence,
+        canonical_name=existing.canonical_name or incoming.canonical_name or display_name,
+        alias_keys=tuple(alias_keys),
     )
 
 
@@ -230,6 +241,8 @@ def _graph_extraction_metadata(extraction: ChunkGraphExtraction) -> dict[str, An
                 "display_name": entity.display_name,
                 "entity_type": entity.entity_type,
                 "aliases": list(entity.aliases),
+                "canonical_name": entity.canonical_name,
+                "alias_keys": list(entity.alias_keys),
                 "attributes": entity.attributes,
                 "evidence": entity.evidence,
             }
@@ -259,6 +272,8 @@ def _build_graph_write_preview(
             {
                 "normalized_name": entity.normalized_name,
                 "display_name": entity.display_name,
+                "canonical_name": entity.canonical_name,
+                "alias_keys": list(entity.alias_keys),
                 "team_id": entity.team_id,
                 "knowledge_base_id": entity.knowledge_base_id,
                 "document_id": entity.document_id,
@@ -387,7 +402,7 @@ async def index_document_graph(
     title: str | None = None,
     *,
     commit: bool = True,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     graph_cfg = config_registry.get_graph_config()
     if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
         logger.bind(document_pipeline_log=True).info(
@@ -506,35 +521,9 @@ async def index_document_graph(
     )
 
     await store.prune_orphan_entities()
-    try:
-        summary_llm = get_llm_for_analysis()
-        await refresh_entity_summaries(
-            store=store,
-            knowledge_base_id=int(document_scope.knowledge_base_id),
-            team_id=int(document_scope.team_id),
-            normalized_names=list(entity_records.keys()),
-            llm=summary_llm,
-        )
-        await refresh_relation_summaries(
-            store=store,
-            knowledge_base_id=int(document_scope.knowledge_base_id),
-            team_id=int(document_scope.team_id),
-            document_id=document_id,
-            llm=summary_llm,
-        )
-        logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱摘要刷新完成 doc_id={} entities={} relations={}",
-            document_id,
-            len(entity_records),
-            len(relation_records),
-        )
-    except Exception as exc:
-        logger.warning("Graph summary refresh failed for document_id={}: {}", document_id, exc)
-        logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱摘要刷新失败 doc_id={} error={}",
-            document_id,
-            exc,
-        )
+    summary["team_id"] = int(document_scope.team_id)
+    summary["knowledge_base_id"] = int(document_scope.knowledge_base_id)
+    summary["summary_entity_names"] = list(entity_records.keys())
     if commit:
         await db.commit()
     logger.bind(document_pipeline_log=True).info(
@@ -556,7 +545,7 @@ async def index_document_graph_chunk(
     title: str | None = None,
     *,
     commit: bool = True,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     return await index_document_graph_chunks(
         db,
         document_id=document_id,
@@ -575,7 +564,7 @@ async def index_document_graph_chunks(
     title: str | None = None,
     *,
     commit: bool = True,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     graph_cfg = config_registry.get_graph_config()
     if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
         logger.bind(document_pipeline_log=True).info(
@@ -712,7 +701,7 @@ async def finalize_document_graph(
     title: str | None = None,
     *,
     commit: bool = True,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     graph_cfg = config_registry.get_graph_config()
     if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
         return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
@@ -766,31 +755,10 @@ async def finalize_document_graph(
         "entities": len(entity_names),
         "mentions": len(entity_names),
         "relations": len(relation_keys),
+        "team_id": int(document_scope.team_id),
+        "knowledge_base_id": int(document_scope.knowledge_base_id),
+        "summary_entity_names": sorted(entity_names),
     }
-    try:
-        summary_llm = get_llm_for_analysis()
-        await refresh_entity_summaries(
-            store=store,
-            knowledge_base_id=int(document_scope.knowledge_base_id),
-            team_id=int(document_scope.team_id),
-            normalized_names=sorted(entity_names),
-            llm=summary_llm,
-        )
-        await refresh_relation_summaries(
-            store=store,
-            knowledge_base_id=int(document_scope.knowledge_base_id),
-            team_id=int(document_scope.team_id),
-            document_id=document_id,
-            llm=summary_llm,
-        )
-        logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱摘要刷新完成 doc_id={} entities={} chunks={}",
-            document_id,
-            len(entity_names),
-            len(completed_rows),
-        )
-    except Exception as exc:
-        logger.warning("Graph summary refresh failed for document_id={}: {}", document_id, exc)
 
     if commit:
         await db.commit()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from app.services.graph_models import (
     ChunkGraphExtraction,
     GraphChunkRecord,
@@ -177,6 +179,32 @@ def _normalize_name(value: str) -> str:
     return _clean_text(value).casefold()
 
 
+def _normalize_alias_key(value: str) -> str:
+    cleaned = _clean_text(value)
+    if not cleaned:
+        return ""
+    separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", cleaned)
+    separated = re.sub(r"[_\-/.]+", " ", separated)
+    separated = re.sub(r"\s+", " ", separated)
+    return separated.strip().casefold()
+
+
+def _build_alias_keys(*values: str, aliases: tuple[str, ...]) -> tuple[str, ...]:
+    keys: list[str] = []
+    seen: set[str] = set()
+    for value in (*values, *aliases):
+        key = _normalize_alias_key(value)
+        if not key or key in seen:
+            continue
+        keys.append(key)
+        seen.add(key)
+        compact_key = key.replace(" ", "")
+        if compact_key and compact_key != key and compact_key not in seen:
+            keys.append(compact_key)
+            seen.add(compact_key)
+    return tuple(keys)
+
+
 def _is_noise_entity(name: str) -> bool:
     cleaned = _clean_text(name)
     if len(cleaned) < 2:
@@ -261,10 +289,17 @@ def normalize_chunk_graph(
         normalized_name = _normalize_name(entity.normalized_name or display_name)
         if _is_noise_entity(display_name) or _is_noise_entity(normalized_name):
             continue
+        canonical_name = _clean_text(entity.canonical_name or display_name) or display_name
         cleaned_aliases = tuple(
             alias
             for alias in (_clean_text(item) for item in entity.aliases)
             if alias and alias.casefold() != normalized_name
+        )
+        alias_keys = _build_alias_keys(
+            normalized_name,
+            display_name,
+            canonical_name,
+            aliases=(*cleaned_aliases, *entity.alias_keys),
         )
         deduped_entities.setdefault(
             normalized_name,
@@ -281,6 +316,8 @@ def normalize_chunk_graph(
                 aliases=cleaned_aliases,
                 attributes=_clean_entity_attributes(entity.attributes, entity_type=entity.entity_type)[0],
                 evidence=_clean_text(entity.evidence),
+                canonical_name=canonical_name,
+                alias_keys=alias_keys,
                 raw_attributes=dict(entity.attributes or {}),
             ),
         )

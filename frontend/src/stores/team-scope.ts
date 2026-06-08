@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 
-import { listTeams } from "@/shared/api/teams";
-import type { TeamSummary } from "@/shared/types/team";
+import { listTeamOptions } from "@/shared/api/teams";
+import type { TeamOption } from "@/shared/types/team";
 
 const SELECTED_TEAM_ID_KEY = "synapseflow.admin.selected_team_id";
 
@@ -33,7 +33,7 @@ function setStoredSelectedTeamId(teamId: number | null) {
 }
 
 interface TeamScopeState {
-  teams: TeamSummary[];
+  teams: TeamOption[];
   selectedTeamId: number | null;
   loading: boolean;
   errorMessage: string;
@@ -52,8 +52,11 @@ export const useTeamScopeStore = defineStore("team-scope", {
     hasTeams: (state) => state.teams.length > 0,
   },
   actions: {
-    async bootstrap() {
+    async bootstrap(options: { allowAllTeams?: boolean; force?: boolean } = {}) {
       if (this.loading) {
+        return;
+      }
+      if (!options.force && this.teams.length > 0) {
         return;
       }
 
@@ -61,8 +64,10 @@ export const useTeamScopeStore = defineStore("team-scope", {
       this.errorMessage = "";
 
       try {
-        const result = await listTeams();
-        const teams = result.items;
+        const teams = await listTeamOptions({
+          limit: 20,
+          include_team_id: this.selectedTeamId ?? undefined,
+        });
         this.teams = teams;
 
         if (teams.length === 0) {
@@ -73,6 +78,12 @@ export const useTeamScopeStore = defineStore("team-scope", {
 
         const hasStoredSelection = teams.some((item) => item.id === this.selectedTeamId);
         if (hasStoredSelection) {
+          return;
+        }
+
+        if (options.allowAllTeams) {
+          this.selectedTeamId = null;
+          setStoredSelectedTeamId(null);
           return;
         }
 
@@ -87,6 +98,24 @@ export const useTeamScopeStore = defineStore("team-scope", {
     setSelectedTeam(teamId: number | null) {
       this.selectedTeamId = teamId;
       setStoredSelectedTeamId(teamId);
+    },
+    async searchOptions(keyword?: string) {
+      if (this.loading) {
+        return;
+      }
+      this.loading = true;
+      this.errorMessage = "";
+      try {
+        this.teams = await listTeamOptions({
+          keyword: keyword?.trim() || undefined,
+          limit: 20,
+          include_team_id: this.selectedTeamId ?? undefined,
+        });
+      } catch (error) {
+        this.errorMessage = error instanceof Error ? error.message : "团队列表加载失败";
+      } finally {
+        this.loading = false;
+      }
     },
     clear() {
       this.teams = [];

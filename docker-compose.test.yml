@@ -6,13 +6,13 @@ services:
     env_file:
       - .env.test
     ports:
-      - "5433:5432"
+      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_test_data:/var/lib/postgresql/data
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+        - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
       interval: 10s
       timeout: 5s
       retries: 5
@@ -26,7 +26,7 @@ services:
       - --appendonly
       - "yes"
     ports:
-      - "6380:6379"
+      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_REDIS_PORT:-6380}:6379"
     volumes:
       - redis_test_data:/data
     healthcheck:
@@ -38,6 +38,27 @@ services:
       timeout: 5s
       retries: 5
 
+  neo4j-test:
+    image: neo4j:5-community
+    container_name: synapseflow-neo4j-test
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-change-this-test-graph-password}
+    ports:
+      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_NEO4J_HTTP_PORT:-7475}:7474"
+      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_NEO4J_BOLT_PORT:-7688}:7687"
+    volumes:
+      - neo4j_test_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q --spider http://127.0.0.1:7474 || exit 1
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
 volumes:
   postgres_test_data:
   redis_test_data:
+  neo4j_test_data:

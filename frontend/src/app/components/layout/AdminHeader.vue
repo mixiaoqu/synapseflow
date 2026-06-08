@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import {
   CaretBottom,
@@ -29,12 +29,27 @@ const teamScopeStore = useTeamScopeStore();
 const currentUserName = computed(() => authStore.user?.full_name || authStore.user?.username || "Admin User");
 const currentUserRole = computed(() => authStore.user?.role || "System Operator");
 const currentUserInitial = computed(() => currentUserName.value.trim().charAt(0).toUpperCase() || "A");
+const isSystemAdmin = computed(() => authStore.user?.role === "system_admin");
+const shouldShowTeamSwitcher = computed(() => isSystemAdmin.value || teamScopeStore.teams.length > 1);
+
+const selectedTeamId = computed({
+  get() {
+    return teamScopeStore.selectedTeamId === null ? "all" : String(teamScopeStore.selectedTeamId);
+  },
+  set(value: string) {
+    teamScopeStore.setSelectedTeam(value === "all" ? null : Number(value));
+  },
+});
 
 async function handleLogout() {
   teamScopeStore.clear();
   authStore.signOut();
   await router.replace("/login");
 }
+
+onMounted(() => {
+  void teamScopeStore.bootstrap({ allowAllTeams: isSystemAdmin.value });
+});
 </script>
 
 <template>
@@ -70,6 +85,34 @@ async function handleLogout() {
     </div>
 
     <div class="flex shrink-0 items-center gap-2">
+      <el-select
+        v-if="shouldShowTeamSwitcher"
+        v-model="selectedTeamId"
+        class="admin-header__team-select"
+        size="default"
+        filterable
+        remote
+        reserve-keyword
+        :remote-method="teamScopeStore.searchOptions"
+        :loading="teamScopeStore.loading"
+        :disabled="!isSystemAdmin && !teamScopeStore.hasTeams"
+        placeholder="选择团队"
+        :teleported="true"
+        popper-class="admin-header__team-select-popper"
+      >
+        <el-option
+          v-if="isSystemAdmin"
+          label="全部团队"
+          value="all"
+        />
+        <el-option
+          v-for="team in teamScopeStore.teams"
+          :key="team.id"
+          :label="team.name"
+          :value="String(team.id)"
+        />
+      </el-select>
+
       <el-dropdown trigger="click" placement="bottom-end">
         <button
           type="button"
@@ -114,5 +157,19 @@ async function handleLogout() {
   border: 1px solid var(--admin-primary-border);
   background: var(--admin-primary-soft);
   color: var(--admin-primary);
+}
+
+.admin-header__team-select {
+  width: 180px;
+}
+
+:global(.admin-header__team-select-popper .el-select-dropdown__list) {
+  max-height: 280px;
+}
+
+@media (max-width: 640px) {
+  .admin-header__team-select {
+    width: 132px;
+  }
 }
 </style>

@@ -62,6 +62,45 @@ class TeamRepository:
         rows = list(result.scalars().all())
         return rows, total
 
+    async def list_team_options(
+        self,
+        *,
+        keyword: str | None = None,
+        limit: int = 20,
+        team_ids: list[int] | None = None,
+        include_team_id: int | None = None,
+    ) -> list[Team]:
+        base_query = select(Team)
+        if team_ids is not None:
+            if not team_ids:
+                return []
+            base_query = base_query.where(Team.id.in_(team_ids))
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            base_query = base_query.where(
+                or_(
+                    Team.name.ilike(pattern),
+                    Team.code.ilike(pattern),
+                )
+            )
+
+        result = await self.db.execute(
+            base_query.order_by(Team.name.asc(), Team.id.asc()).limit(max(1, min(limit, 100)))
+        )
+        teams = list(result.scalars().all())
+
+        if include_team_id is None or any(team.id == include_team_id for team in teams):
+            return teams
+
+        include_query = select(Team).where(Team.id == include_team_id)
+        if team_ids is not None:
+            include_query = include_query.where(Team.id.in_(team_ids))
+        include_result = await self.db.execute(include_query)
+        included = include_result.scalar_one_or_none()
+        if included is not None:
+            teams.append(included)
+        return teams
+
     async def list_user_teams(self) -> list[Team]:
         """List teams visible to the current user for scoped operations."""
         result = await self.db.execute(

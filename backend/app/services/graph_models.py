@@ -28,6 +28,8 @@ class GraphEntityRecord:
     aliases: tuple[str, ...]
     attributes: dict[str, Any]
     evidence: str
+    canonical_name: str | None = None
+    alias_keys: tuple[str, ...] = ()
     raw_attributes: dict[str, Any] | None = None
 
 

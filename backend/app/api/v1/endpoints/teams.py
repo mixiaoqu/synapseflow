@@ -22,6 +22,7 @@ from app.models.schemas.team import (
     TeamMemberCreate,
     TeamMemberResponse,
     TeamMemberUpdate,
+    TeamOptionResponse,
     TeamResponse,
     TeamUpdate,
 )
@@ -50,6 +51,25 @@ async def list_teams(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get("/options", response_model=list[TeamOptionResponse])
+async def list_team_options(
+    keyword: str | None = Query(None, description="搜索关键词，匹配名称或编码"),
+    limit: int = Query(20, ge=1, le=100, description="返回条数"),
+    include_team_id: int | None = Query(None, description="确保包含的当前团队 ID"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    permission_service = PermissionService(db)
+    accessible_team_ids = await permission_service.list_accessible_team_ids(current_user)
+    repo = TeamRepository(db, user_id=current_user.id)
+    return await repo.list_team_options(
+        keyword=keyword,
+        limit=limit,
+        team_ids=accessible_team_ids,
+        include_team_id=include_team_id,
     )
 
 

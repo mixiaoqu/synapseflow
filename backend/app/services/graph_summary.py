@@ -29,8 +29,32 @@ _ENTITY_SUMMARY_TEMPLATE = (
     "要求：\n"
     "1. 只能基于提供的信息总结，不要补充外部知识。\n"
     "2. 信息不足时允许只输出1-2句，不要为了凑满三句而编造内容。\n"
-    "3. 输出纯文本，不要 JSON，不要使用项目符号。"
+    "3. 不同实体类型优先提炼 summary_focus 中列出的关键信息；没有对应信息时不要编造。\n"
+    "4. 输出纯文本，不要 JSON，不要使用项目符号。"
 )
+
+_ENTITY_TYPE_SUMMARY_FOCUS = {
+    "API": "优先说明 method/path/route、输入输出对象、所属服务或调用场景。",
+    "BUTTON": "优先说明 label/action、触发目标、权限或状态约束。",
+    "COMPONENT": "优先说明所属模块、承担的界面或业务职责、关联对象。",
+    "CONFIG": "优先说明配置键、默认值、影响范围和生效约束。",
+    "DIALOG": "优先说明触发入口、确认/取消动作、影响的业务对象。",
+    "FEATURE": "优先说明功能目标、所属模块、关键入口和使用场景。",
+    "FORM": "优先说明表单用途、核心字段、提交动作和校验约束。",
+    "LIST": "优先说明列表对象、筛选/排序条件和主要操作。",
+    "MENU": "优先说明菜单标题、路径、父级入口和承载页面。",
+    "MODULE": "优先说明模块边界、核心职责、入口路径或关联功能。",
+    "PAGE": "优先说明页面标题/路由、所属模块、核心操作和展示对象。",
+    "PERMISSION": "优先说明权限编码、控制的操作、适用角色或范围。",
+    "ROLE": "优先说明角色职责、可访问范围和关键权限。",
+    "SERVICE": "优先说明服务职责、接口/模块边界、依赖或调用场景。",
+    "STATUS": "优先说明状态含义、适用对象、流转或限制条件。",
+    "STEP": "优先说明步骤顺序、动作、前后置条件和状态变化。",
+    "TABLE": "优先说明表格对象、核心列、数据来源和可执行操作。",
+    "WORKFLOW": "优先说明流程目标、起止条件、关键步骤和参与对象。",
+}
+
+_DEFAULT_ENTITY_SUMMARY_FOCUS = "优先说明身份、核心用途、适用范围、关键属性和最有价值的一两个证据点。"
 
 
 def _coerce_text(content: Any) -> str:
@@ -74,6 +98,11 @@ def _extract_raw_attribute_map(raw_value: Any) -> dict[str, Any]:
         if isinstance(parsed, dict):
             return {str(key).strip(): value for key, value in parsed.items() if str(key).strip()}
     return {}
+
+
+def _entity_summary_focus(entity_type: Any) -> str:
+    normalized_type = str(entity_type or "").strip().upper()
+    return _ENTITY_TYPE_SUMMARY_FOCUS.get(normalized_type, _DEFAULT_ENTITY_SUMMARY_FOCUS)
 
 
 def _normalize_summary_context(context: dict[str, Any]) -> dict[str, Any]:
@@ -126,6 +155,7 @@ def _normalize_summary_context(context: dict[str, Any]) -> dict[str, Any]:
         "normalized_name": context.get("normalized_name"),
         "display_name": context.get("display_name"),
         "entity_type": context.get("entity_type"),
+        "summary_focus": _entity_summary_focus(context.get("entity_type")),
         "aliases": list(context.get("aliases") or []),
         "attributes": entity_attributes,
         "extra_attributes": extra_attributes,
@@ -335,6 +365,7 @@ async def refresh_entity_summaries(
             rows.append(
                 {
                     "normalized_name": context.get("normalized_name"),
+                    "canonical_name": context.get("canonical_name"),
                     "display_name": context.get("display_name"),
                     "entity_type": context.get("entity_type"),
                     "team_id": team_id,

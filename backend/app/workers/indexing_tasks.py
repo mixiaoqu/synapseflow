@@ -137,6 +137,19 @@ if dramatiq is not None:
         )
 
 
+    @dramatiq.actor(queue_name=settings.DRAMATIQ_GRAPH_INDEXING_QUEUE)
+    async def refresh_entity_summaries_actor(
+        team_id: int,
+        knowledge_base_id: int,
+        normalized_names: list[str],
+    ) -> None:
+        await indexing_service.refresh_entity_summaries_task(
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            normalized_names=normalized_names,
+        )
+
+
     @dramatiq.actor(queue_name=settings.DRAMATIQ_INDEXING_QUEUE)
     async def reindex_current_document_actor(
         target_document_id: int,
@@ -175,4 +188,5 @@ else:
     index_document_graph_chunk_actor = _MissingActor("index_document_graph_chunk_actor")
     index_document_graph_chunks_actor = _MissingActor("index_document_graph_chunks_actor")
     finalize_document_graph_actor = _MissingActor("finalize_document_graph_actor")
+    refresh_entity_summaries_actor = _MissingActor("refresh_entity_summaries_actor")
     reindex_current_document_graph_actor = _MissingActor("reindex_current_document_graph_actor")

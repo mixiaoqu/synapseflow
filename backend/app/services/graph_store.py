@@ -373,6 +373,8 @@ class Neo4jGraphStore:
                 "display_name": entity.display_name,
                 "entity_type": entity.entity_type,
                 "aliases": list(entity.aliases),
+                "canonical_name": entity.canonical_name or entity.display_name,
+                "alias_keys": list(entity.alias_keys),
                 "attributes": _prepare_attributes(entity.attributes),
                 "raw_attributes_json": _serialize_raw_attributes(entity.raw_attributes),
             }
@@ -387,8 +389,10 @@ class Neo4jGraphStore:
                 normalized_name: row.normalized_name
             })
             SET e.display_name = row.display_name,
+                e.canonical_name = row.canonical_name,
                 e.entity_type = row.entity_type,
                 e.aliases = row.aliases,
+                e.alias_keys = row.alias_keys,
                 e.raw_attributes_json = row.raw_attributes_json
             SET e += row.attributes
             """,
@@ -519,13 +523,17 @@ class Neo4jGraphStore:
           AND (
             toLower(e.normalized_name) = $candidate
             OR toLower(e.display_name) = $candidate
+            OR toLower(coalesce(e.canonical_name, "")) = $candidate
             OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) = $candidate)
+            OR any(alias_key IN coalesce(e.alias_keys, []) WHERE alias_key = $candidate)
           )
         RETURN
             e.normalized_name AS normalized_name,
+            e.canonical_name AS canonical_name,
             e.display_name AS display_name,
             e.entity_type AS entity_type,
-            coalesce(e.aliases, []) AS aliases
+            coalesce(e.aliases, []) AS aliases,
+            coalesce(e.alias_keys, []) AS alias_keys
         """
         async with self._driver.session(database=self._database) as session:
             result = await session.run(
@@ -557,7 +565,9 @@ class Neo4jGraphStore:
           AND (
             e.normalized_name IN $normalized_names
             OR toLower(e.normalized_name) IN $lookup_names
+            OR toLower(coalesce(e.canonical_name, "")) IN $lookup_names
             OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) IN $lookup_names)
+            OR any(alias_key IN coalesce(e.alias_keys, []) WHERE alias_key IN $lookup_names)
           )
         OPTIONAL MATCH (e)-[:HAS_SUMMARY]->(s:EntitySummary)
         OPTIONAL MATCH (e)-[m:MENTIONED_IN]->(c:Chunk)
@@ -568,9 +578,11 @@ class Neo4jGraphStore:
           AND rel.team_id = $team_id
         RETURN
             e.normalized_name AS normalized_name,
+            e.canonical_name AS canonical_name,
             e.display_name AS display_name,
             e.entity_type AS entity_type,
             coalesce(e.aliases, []) AS aliases,
+            coalesce(e.alias_keys, []) AS alias_keys,
             s.summary AS summary,
             properties(e) AS entity_props,
             e.raw_attributes_json AS raw_attributes_json,
@@ -617,6 +629,7 @@ class Neo4jGraphStore:
                 knowledge_base_id: row.knowledge_base_id
             })
             SET s.display_name = row.display_name,
+                s.canonical_name = coalesce(row.canonical_name, row.display_name),
                 s.entity_type = row.entity_type,
                 s.summary = row.summary
             MERGE (e)-[:HAS_SUMMARY]->(s)
@@ -644,22 +657,30 @@ class Neo4jGraphStore:
           AND (
             toLower(source.normalized_name) IN $lookup_names
             OR toLower(target.normalized_name) IN $lookup_names
+            OR toLower(coalesce(source.canonical_name, "")) IN $lookup_names
+            OR toLower(coalesce(target.canonical_name, "")) IN $lookup_names
             OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) IN $lookup_names)
             OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) IN $lookup_names)
+            OR any(alias_key IN coalesce(source.alias_keys, []) WHERE alias_key IN $lookup_names)
+            OR any(alias_key IN coalesce(target.alias_keys, []) WHERE alias_key IN $lookup_names)
           )
         OPTIONAL MATCH (source)-[:HAS_SUMMARY]->(source_summary:EntitySummary)
         OPTIONAL MATCH (target)-[:HAS_SUMMARY]->(target_summary:EntitySummary)
         RETURN
             source.normalized_name AS source_normalized_name,
+            source.canonical_name AS source_canonical_name,
             source.display_name AS source_display_name,
             source.entity_type AS source_entity_type,
             coalesce(source.aliases, []) AS source_aliases,
+            coalesce(source.alias_keys, []) AS source_alias_keys,
             source_summary.summary AS source_summary,
             properties(source) AS source_props,
             target.normalized_name AS target_normalized_name,
+            target.canonical_name AS target_canonical_name,
             target.display_name AS target_display_name,
             target.entity_type AS target_entity_type,
             coalesce(target.aliases, []) AS target_aliases,
+            coalesce(target.alias_keys, []) AS target_alias_keys,
             target_summary.summary AS target_summary,
             properties(target) AS target_props,
             r.relation_type AS relation_type,
@@ -727,6 +748,7 @@ class Neo4jGraphStore:
           AND (
             e.normalized_name IN $entity_names
             OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) IN $entity_names)
+            OR any(alias_key IN coalesce(e.alias_keys, []) WHERE alias_key IN $entity_names)
           )
         OPTIONAL MATCH (e)-[mention:MENTIONED_IN]->(mention_chunk:Chunk)
         OPTIONAL MATCH (e)-[rel:RELATED]-(other:Entity)

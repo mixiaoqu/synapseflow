@@ -7,6 +7,12 @@ export interface TeamSummary {
   updated_at: string;
 }
 
+export interface TeamOption {
+  id: number;
+  name: string;
+  code: string | null;
+}
+
 /** 团队成员记录 */
 export interface TeamMember {
   id: number;

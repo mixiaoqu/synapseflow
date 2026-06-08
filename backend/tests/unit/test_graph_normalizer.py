@@ -74,6 +74,8 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
     )
 
     assert [entity.normalized_name for entity in normalized.entities] == ["postgresql"]
+    assert normalized.entities[0].canonical_name == "PostgreSQL"
+    assert normalized.entities[0].alias_keys == ("postgresql", "postgre sql", "postgres")
     assert normalized.relations == []
 
 
@@ -124,6 +126,8 @@ def test_normalize_chunk_graph_keeps_only_type_specific_entity_attributes():
         "meaning": "should drop",
         "owner": "平台组",
     }
+    assert "submit button" in normalized.entities[0].alias_keys
+    assert "submitbutton" in normalized.entities[0].alias_keys
 
 
 def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():

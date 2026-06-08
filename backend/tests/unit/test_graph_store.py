@@ -89,8 +89,20 @@ def test_upsert_entities_scopes_entity_identity_by_team_and_knowledge_base():
     assert "team_id: row.team_id" in query
     assert "knowledge_base_id: row.knowledge_base_id" in query
     assert "normalized_name: row.normalized_name" in query
+    assert "e.canonical_name = row.canonical_name" in query
+    assert "e.alias_keys = row.alias_keys" in query
     assert params["rows"][0]["team_id"] == 1
     assert params["rows"][0]["knowledge_base_id"] == 2
+    assert params["rows"][0]["canonical_name"] == "ProjectApp"
+    assert params["rows"][0]["alias_keys"] == []
+
+
+def test_entity_lookup_queries_include_alias_keys():
+    query = graph_store.Neo4jGraphStore.lookup_entities_for_grounding.__code__.co_consts
+    joined = "\n".join(str(item) for item in query)
+
+    assert "e.alias_keys" in joined
+    assert "alias_key = $candidate" in joined
 
 
 def test_upsert_relations_scopes_related_identity_by_team_and_knowledge_base():

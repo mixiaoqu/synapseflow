@@ -13,7 +13,7 @@ This file provides guidance to Codex when working with this repository. It is ge
 - 如果某种状态按当前实现本不应出现，应优先显式暴露问题，而不是静默兼容。
 - 小范围文案、提示词、规则收口等不涉及行为变化的修改，不需要每次都额外编写测试脚本；只有重大改造、行为变化、数据流改动或回归风险较高时才补测试。
 
-- ??????????? UTF-8 ???????????????????? PowerShell ??????????????????????
+- 中文日志、中文注释、中文文档使用 UTF-8 编写；PowerShell 读取和写入中文文件时也要显式使用 UTF-8。
 
 - 不需要跑构建，除非用户明确要求。
 - 遇见需求不清楚、实现路径有歧义、代码现状与需求冲突，或发现文档和代码不一致时，先向用户确认，不要直接按假设执行。
@@ -85,10 +85,12 @@ Current API router prefixes:
 - `/api/v1/documents`: upload/import, list/detail, content update, versions, indexing, review, publish/unpublish, and delete operations.
 - `/api/v1/document-categories`: document category CRUD.
 - `/api/v1/teams`: team and team member CRUD.
-- `/api/v1/projects`: project/app CRUD and embed preview.
+- `/api/v1/products`: product CRUD.
+- `/api/v1/projects`: project CRUD, project-app CRUD, and embed preview.
 - `/api/v1/users`: admin user management.
 - `/api/v1/content-risk`: content-risk rule library CRUD, rule CRUD, and test check.
 - `/api/v1/knowledge-bases`: knowledge-base CRUD.
+- `/api/v1/mcp`: bootstrap, scope resolution, search, and answer for read-only KB access.
 - health routes are registered without a versioned prefix tag in the router and also exist on the root app.
 
 Application/service layer anchors:
@@ -98,19 +100,22 @@ Application/service layer anchors:
 - `backend/app/application/document_service.py`: document lifecycle, content/version operations, review/publish transitions, and indexing triggers.
 - `backend/app/application/indexing_service.py`: indexing job orchestration.
 - `backend/app/application/project_service.py`: project and project app operations.
+- `backend/app/application/product_service.py`: product CRUD and team-scoped product listing.
+- `backend/app/application/mcp_service.py`: read-only MCP scope resolution plus search/answer proxying.
 - `backend/app/application/agent_service.py`: base agent context/state helpers.
 - `backend/app/application/stream_events.py`: SSE event envelope helpers.
 - `backend/app/application/workflow_meta.py`: node labels and workflow metadata for streamed UI.
 
 Domain services and repositories:
 
-- `backend/app/services/kb_retrieval.py`: vector/hybrid retrieval, reranking integration, empty/no-hit handling, and context assembly.
+- `backend/app/services/kb_text_retrieval.py`: text retrieval orchestration, reranking integration, empty/no-hit handling, and context assembly.
 - `backend/app/services/document_indexer.py`: document chunking, embedding, and index writes.
 - `backend/app/services/semantic_chunk.py`: semantic chunking.
 - `backend/app/services/vector_store.py`: pgvector/vector search access.
 - `backend/app/services/reranker.py`: reranker integration.
 - `backend/app/services/chat_memory.py`: chat session/message persistence.
 - `backend/app/services/content_risk_detection_service.py`: content-risk rule matching for query and answer interception.
+- `backend/app/services/kb_graph_retrieval.py` and related graph services: graph-based retrieval, summary, indexing, and cleanup helpers.
 - `backend/app/repositories/*`: database access layer for users, teams, documents, knowledge bases, projects, assistants, chat logs, index jobs, categories, and content-risk rules.
 
 Core data models currently include:
@@ -120,8 +125,8 @@ Core data models currently include:
 - `DocumentCategory`, `Document`, `DocumentChunk`, `Embedding`
 - `IndexJob`, `IndexJobDocument`
 - `AssistantProfile`
-- `Project`, `ProjectApp`
-- `ChatSession`, `ChatMessage`, `KbChatLog`
+- `Product`, `Project`, `ProjectApp`
+- `ChatSession`, `ChatMessage`, `KbChatLog`, `ContentRiskLog`
 - `ContentRiskLibrary`, `ContentRiskRule`
 
 ## Agent workflow system
@@ -131,16 +136,17 @@ The current graph registry is `backend/app/agents/runtime/factory.py`.
 Registered workflow:
 
 - `kb_chat`: defined by `backend/app/agents/graphs/kb_chat_graph.py`
-- Actual graph path: `plan_query -> rewrite_query -> retrieve -> answer`
+- Actual graph path: `analyze -> rewrite_query -> retrieve -> evaluate -> answer`
 - `backend/langgraph.json` exposes only `kb_chat`.
 
 Important workflow files:
 
 - `backend/app/agents/states/kb_chat_state.py`: KB chat state shape.
-- `backend/app/agents/nodes/kb_chat/plan_query.py`: retrieval planning.
+- `backend/app/agents/nodes/kb_chat/analyze.py`: retrieval strategy analysis.
 - `backend/app/agents/nodes/kb_chat/rewrite_query.py`: query rewriting.
 - `backend/app/agents/nodes/kb_chat/retrieve.py`: retrieval node.
-- `backend/app/agents/nodes/kb_chat/generate_answer.py`: answer generation and streamed token output.
+- `backend/app/agents/nodes/kb_chat/evaluate.py`: retrieval result evaluation.
+- `backend/app/agents/nodes/kb_chat/answer.py`: answer generation and streamed token output.
 - `backend/app/agents/prompts/kb_chat.py`: KB chat prompts.
 - `backend/app/agents/common/*`: shared retrieval, JSON LLM, document analysis, and streaming helpers.
 
@@ -173,7 +179,7 @@ Frontend entry points:
 Admin pages currently present:
 
 - `/dashboard`: admin dashboard placeholder.
-- `/projects`: project management.
+- `/projects`: product/project management entry.
 - `/projects/:projectId/apps`: project app list.
 - `/projects/:projectId/apps/new`: create project app.
 - `/projects/:projectId/apps/:appId`: project app detail.
@@ -183,10 +189,12 @@ Admin pages currently present:
 - `/assistants`: assistant management.
 - `/assistants/new`: create assistant.
 - `/assistants/:assistantId`: assistant detail.
+- `/qa-logs`: question-answer log review.
 - `/organizations`: team management.
 - `/users`: user management.
 - `/content-risk/overview`: content-risk overview.
 - `/content-risk/libraries`: global content-risk rule library.
+- `/content-risk/logs`: content-risk decision logs.
 
 Frontend integration anchors:
 
@@ -208,12 +216,20 @@ Only describe these as existing product surfaces unless code changes add more:
 - User login and session restoration.
 - End-user knowledge-base/assistant ask experience with streaming responses and chat history.
 - Embedded assistant experience for project apps.
-- Admin project and project-app management.
+- Admin product, project, and project-app management.
 - Admin knowledge-base, document, category, version, indexing, review, and publish management.
 - Admin assistant profile management and assistant preview/testing.
 - Admin team, member, user, and role management.
 - Admin QA log review and feedback flow.
 - Content-risk rule library management, rule testing, and query/answer interception.
+- Read-only MCP scope resolution, search, and answer access through `/api/v1/mcp` and the separate `mcp_server/` stdio tools.
+
+## Product / project / app relation
+
+- `Product` is the team-scoped top-level business container.
+- `Project` belongs to one `Product`.
+- `ProjectApp` belongs to one `Project` and binds one knowledge base, an optional document category, and an optional default assistant.
+- Chat sessions, KB chat logs, and content-risk logs persist the `product_id` / `project_id` / `project_app_id` context when that scope exists.
 
 Do not describe `kb_curation`, `suggest_revision`, or `doc_to_prototype` as implemented features unless corresponding code is added back to the repository. They are not registered in the current graph registry or API router.
 

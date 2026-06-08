@@ -102,6 +102,7 @@ const isForbidden = computed(() => Boolean(loadError.value) && isForbiddenError(
 const isSearchActive = computed(() => toolbar.search.trim().length > 0);
 const selectedCount = computed(() => selectedKnowledgeBaseIds.value.length);
 const hasMoreKnowledgeBases = computed(() => knowledgeBases.value.length < pagination.total);
+const selectedTeamName = computed(() => teamScopeStore.selectedTeam?.name ?? "未选择团队");
 const knowledgeBaseDialogTitle = computed(() =>
   dialogMode.value === "create" ? "创建知识库" : "编辑知识库",
 );

@@ -2,6 +2,7 @@ import { request } from "@/shared/api/http";
 import type {
   TeamBulkAction,
   TeamBulkActionResponse,
+  TeamOption,
   TeamMember,
   TeamListResponse,
   TeamRole,
@@ -64,6 +65,20 @@ export function deleteTeam(teamId: number) {
   return request<{ message: string }>({
     url: `/teams/${teamId}`,
     method: "DELETE",
+  });
+}
+
+interface ListTeamOptionsParams {
+  keyword?: string;
+  limit?: number;
+  include_team_id?: number;
+}
+
+export function listTeamOptions(params?: ListTeamOptionsParams) {
+  return request<TeamOption[]>({
+    url: "/teams/options",
+    method: "GET",
+    params,
   });
 }
 

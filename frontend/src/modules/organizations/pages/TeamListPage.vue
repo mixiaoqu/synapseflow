@@ -271,7 +271,7 @@ async function handleTeamSubmit() {
       ElMessage.success("团队已创建");
     }
     teamDialogVisible.value = false;
-    await teamScopeStore.bootstrap();
+    await teamScopeStore.bootstrap({ force: true });
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "操作失败");
   } finally {
@@ -298,7 +298,7 @@ async function handleDeleteTeam(team: TeamSummary) {
       activeTeam.value = null;
     }
     ElMessage.success("团队已删除");
-    await teamScopeStore.bootstrap();
+    await teamScopeStore.bootstrap({ force: true });
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "删除失败");
   }
@@ -325,7 +325,7 @@ async function handleBatchDeleteTeams() {
     const result = await bulkActionTeams(selectedTeamIds.value, "delete");
     ElMessage.success(`批量删除完成，影响 ${result.affected} 个团队`);
     await loadData();
-    await teamScopeStore.bootstrap();
+    await teamScopeStore.bootstrap({ force: true });
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "批量删除团队失败");
   } finally {
