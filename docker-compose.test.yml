@@ -1,3 +1,12 @@
+x-backend-test-image: &backend-test-image
+  image: synapseflow-backend:test
+  build:
+    context: ./backend
+    dockerfile: ../docker/backend/Dockerfile
+    args:
+      UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+      PYTORCH_CPU_FIND_LINKS: ${SF_PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
+
 services:
   postgres-test:
     image: pgvector/pgvector:pg16
@@ -58,7 +67,72 @@ services:
       retries: 10
       start_period: 30s
 
+  backend-worker-indexing-test:
+    <<: *backend-test-image
+    container_name: synapseflow-backend-worker-indexing-test
+    restart: unless-stopped
+    environment: &backend-test-env
+      ENV: test
+      DEBUG: "false"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-synapseflow_test}:${POSTGRES_PASSWORD:-change-this-test-db-password}@postgres-test:5432/${POSTGRES_DB:-synapseflow_test}
+      REDIS_URL: redis://redis-test:6379/0
+      DRAMATIQ_INDEXING_QUEUE: ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing}
+      DRAMATIQ_GRAPH_INDEXING_QUEUE: ${SF_DRAMATIQ_GRAPH_INDEXING_QUEUE:-graph_indexing}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      MOYU_API_KEY: ${MOYU_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      EMBEDDING_PROVIDER: ${SF_EMBEDDING_PROVIDER:-siliconflow}
+      EMBEDDING_API_URL: ${SF_EMBEDDING_API_URL:-https://api.siliconflow.cn/v1/embeddings}
+      EMBEDDING_MODEL: ${SF_EMBEDDING_MODEL:-BAAI/bge-m3}
+      EMBEDDING_DIMENSIONS: ${SF_EMBEDDING_DIMENSIONS:-}
+      GRAPH_ENABLED: "true"
+      GRAPH_INDEXING_ENABLED: "true"
+      GRAPH_URI: bolt://neo4j-test:7687
+      GRAPH_USERNAME: neo4j
+      GRAPH_PASSWORD: ${NEO4J_PASSWORD:-change-this-test-graph-password}
+      GRAPH_DATABASE: neo4j
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+      HF_HOME: /app/.cache/huggingface
+      LOG_LEVEL: ${SF_LOG_LEVEL:-INFO}
+    volumes:
+      - backend_test_hf_cache:/app/.cache/huggingface
+      - backend_test_previews:/app/previews
+      - backend_test_uploads:/app/uploads
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - uv run dramatiq --queues ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing} --processes ${SF_DRAMATIQ_INDEXING_PROCESSES:-1} --threads ${SF_DRAMATIQ_INDEXING_THREADS:-2} app.workers.indexing_tasks
+
+  backend-worker-graph-indexing-test:
+    <<: *backend-test-image
+    container_name: synapseflow-backend-worker-graph-indexing-test
+    restart: unless-stopped
+    environment: *backend-test-env
+    volumes:
+      - backend_test_hf_cache:/app/.cache/huggingface
+      - backend_test_previews:/app/previews
+      - backend_test_uploads:/app/uploads
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+      neo4j-test:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - uv run dramatiq --queues ${SF_DRAMATIQ_GRAPH_INDEXING_QUEUE:-graph_indexing} --processes ${SF_DRAMATIQ_GRAPH_PROCESSES:-1} --threads ${SF_DRAMATIQ_GRAPH_THREADS:-1} app.workers.indexing_tasks
+
 volumes:
   postgres_test_data:
   redis_test_data:
   neo4j_test_data:
+  backend_test_hf_cache:
+  backend_test_previews:
+  backend_test_uploads:
