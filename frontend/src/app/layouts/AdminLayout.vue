@@ -51,10 +51,10 @@ function getRouteTitle(routeName: string) {
   );
 }
 
-function buildRouteBreadcrumbs(routeName: string) {
+function buildRouteBreadcrumbs(routeName: string): AdminBreadcrumb[] {
   const matchedRoute = resolveBreadcrumbRoute(routeName);
   const parentName = typeof matchedRoute.meta.parent === "string" ? matchedRoute.meta.parent : null;
-  const parentItems = parentName ? buildRouteBreadcrumbs(parentName) : [];
+  const parentItems: AdminBreadcrumb[] = parentName ? buildRouteBreadcrumbs(parentName) : [];
 
   return [
     ...parentItems,

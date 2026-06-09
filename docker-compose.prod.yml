@@ -114,6 +114,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-synapseflow}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-synapseflow}
       REDIS_URL: redis://redis:6379/0
       DRAMATIQ_INDEXING_QUEUE: ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing}
+      DRAMATIQ_EVALUATION_QUEUE: ${SF_DRAMATIQ_EVALUATION_QUEUE:-evaluation}
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:?set SILICONFLOW_API_KEY}
       EMBEDDING_PROVIDER: ${SF_EMBEDDING_PROVIDER:-siliconflow}
       EMBEDDING_API_URL: ${SF_EMBEDDING_API_URL:-https://api.siliconflow.cn/v1/embeddings}
@@ -121,6 +122,7 @@ services:
       EMBEDDING_DIMENSIONS: ${SF_EMBEDDING_DIMENSIONS:-}
       HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
       MOYU_API_KEY: ${MOYU_API_KEY:?set MOYU_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}
       RERANK_ENABLED: ${SF_RERANK_ENABLED:-true}
       RERANK_PROVIDER: ${SF_RERANK_PROVIDER:-siliconflow}
       RERANK_MODEL: ${SF_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
@@ -221,6 +223,27 @@ services:
       - sh
       - -c
       - uv run dramatiq --queues ${SF_DRAMATIQ_GRAPH_INDEXING_QUEUE:-graph_indexing} --processes ${SF_DRAMATIQ_GRAPH_PROCESSES:-1} --threads ${SF_DRAMATIQ_GRAPH_THREADS:-1} app.workers.indexing_tasks
+    logging: *default-logging
+
+  backend-worker-evaluation:
+    <<: *backend-image
+    restart: unless-stopped
+    environment: *backend-env
+    volumes:
+      - backend_hf_cache:/app/.cache/huggingface
+      - backend_previews:/app/previews
+      - backend_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synapseflow-network
+    command:
+      - sh
+      - -c
+      - uv run dramatiq --queues ${SF_DRAMATIQ_EVALUATION_QUEUE:-evaluation} --processes ${SF_DRAMATIQ_EVALUATION_PROCESSES:-1} --threads ${SF_DRAMATIQ_EVALUATION_THREADS:-1} app.workers.evaluation_tasks
     logging: *default-logging
 
   frontend:

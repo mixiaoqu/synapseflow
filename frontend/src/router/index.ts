@@ -9,8 +9,11 @@ import AssistantDetailPage from "@/modules/assistants/pages/AssistantDetailPage.
 import AssistantListPage from "@/modules/assistants/pages/AssistantListPage.vue";
 import ContentRiskLibrariesPage from "@/modules/content-risk/pages/ContentRiskLibrariesPage.vue";
 import ContentRiskLogsPage from "@/modules/content-risk/pages/ContentRiskLogsPage.vue";
-import ContentRiskOverviewPage from "@/modules/content-risk/pages/ContentRiskOverviewPage.vue";
 import EmbedAssistantPage from "@/modules/embed/pages/EmbedAssistantPage.vue";
+import EvaluationDatasetDetailPage from "@/modules/evaluations/pages/EvaluationDatasetDetailPage.vue";
+import EvaluationKnowledgeBasePage from "@/modules/evaluations/pages/EvaluationKnowledgeBasePage.vue";
+import EvaluationOverviewPage from "@/modules/evaluations/pages/EvaluationOverviewPage.vue";
+import EvaluationReportsPage from "@/modules/evaluations/pages/EvaluationReportsPage.vue";
 import DocumentDetailPage from "@/modules/knowledge-bases/pages/DocumentDetailPage.vue";
 import KnowledgeBaseDetailPage from "@/modules/knowledge-bases/pages/KnowledgeBaseDetailPage.vue";
 import KnowledgeBaseListPage from "@/modules/knowledge-bases/pages/KnowledgeBaseListPage.vue";
@@ -180,6 +183,55 @@ const router = createRouter({
           },
         },
         {
+          path: "evaluations",
+          name: "evaluations",
+          component: EvaluationOverviewPage,
+          meta: {
+            title: "评测集",
+            description: "维护知识库问答评测集、用例和运行入口。",
+          },
+        },
+        {
+          path: "evaluations/knowledge-bases",
+          name: "evaluation-knowledge-bases",
+          component: EvaluationKnowledgeBasePage,
+          meta: {
+            parent: "evaluations",
+            title: "评测知识库",
+            description: "管理评测专用知识库。",
+          },
+        },
+        {
+          path: "evaluations/datasets/:datasetId",
+          name: "evaluation-dataset-detail",
+          component: EvaluationDatasetDetailPage,
+          meta: {
+            parent: "evaluations",
+            title: "评测集详情",
+            description: "维护评测用例和评测运行入口。",
+          },
+        },
+        {
+          path: "evaluations/runs/:runId",
+          name: "evaluation-run-report",
+          component: EvaluationReportsPage,
+          meta: {
+            parent: "evaluations",
+            title: "评测报告",
+            description: "查看单次评测运行的报告和用例结果。",
+          },
+        },
+        {
+          path: "evaluations/reports",
+          name: "evaluation-reports",
+          component: EvaluationReportsPage,
+          meta: {
+            parent: "evaluations",
+            title: "评测任务 / 报告",
+            description: "查看后台评测任务状态和单次评测报告。",
+          },
+        },
+        {
           path: "organizations",
           name: "organizations",
           component: TeamListPage,
@@ -199,20 +251,11 @@ const router = createRouter({
         },
         {
           path: "content-risk",
-          redirect: "/content-risk/overview",
+          redirect: "/content-risk/logs",
         },
         {
           path: "governance",
-          redirect: "/content-risk/overview",
-        },
-        {
-          path: "content-risk/overview",
-          name: "content-risk-overview",
-          component: ContentRiskOverviewPage,
-          meta: {
-            title: "内容风控中心 - 数据总览",
-            description: "查看内容风控整体运行情况、核心指标和最近拦截日志。",
-          },
+          redirect: "/content-risk/logs",
         },
         {
           path: "content-risk/libraries",
@@ -228,7 +271,6 @@ const router = createRouter({
           name: "content-risk-logs",
           component: ContentRiskLogsPage,
           meta: {
-            parent: "content-risk-overview",
             title: "内容风控中心 - 判定日志",
             description: "查询内容风控触发记录、命中规则、风险等级和最终动作。",
           },

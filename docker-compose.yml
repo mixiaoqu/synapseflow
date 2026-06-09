@@ -98,6 +98,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - DRAMATIQ_INDEXING_QUEUE=${DRAMATIQ_INDEXING_QUEUE:-indexing}
+      - DRAMATIQ_EVALUATION_QUEUE=${DRAMATIQ_EVALUATION_QUEUE:-evaluation}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
       - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
       - HF_HOME=/app/.cache/huggingface
@@ -141,6 +142,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - DRAMATIQ_INDEXING_QUEUE=${DRAMATIQ_INDEXING_QUEUE:-indexing}
+      - DRAMATIQ_EVALUATION_QUEUE=${DRAMATIQ_EVALUATION_QUEUE:-evaluation}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
       - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
       - HF_HOME=/app/.cache/huggingface
@@ -168,7 +170,7 @@ services:
     command:
       - sh
       - -c
-      - uv run dramatiq app.workers.indexing_tasks --processes 1 --threads 1
+      - uv run dramatiq app.workers.indexing_tasks app.workers.evaluation_tasks --processes 1 --threads 1
 
   frontend:
     build:

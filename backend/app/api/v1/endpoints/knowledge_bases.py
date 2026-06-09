@@ -86,6 +86,7 @@ def _build_knowledge_base_list_item(row) -> KnowledgeBaseListItem:
         name=row.knowledge_base.name,
         team_id=row.knowledge_base.team_id,
         description=getattr(row.knowledge_base, "description", None),
+        purpose=getattr(row.knowledge_base, "purpose", "business"),
         is_active=getattr(row.knowledge_base, "is_active", True),
         created_at=row.knowledge_base.created_at,
         updated_at=row.knowledge_base.updated_at,
@@ -273,7 +274,12 @@ async def get_knowledge_base(
     current_user: User = Depends(require_content_roles),
 ):
     repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
-    rows = await repo.list_with_count(knowledge_base_id=knowledge_base_id, offset=0, limit=1)
+    rows = await repo.list_with_count(
+        knowledge_base_id=knowledge_base_id,
+        purpose=None,
+        offset=0,
+        limit=1,
+    )
     if not rows:
         raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
     return _build_knowledge_base_with_count(rows[0])

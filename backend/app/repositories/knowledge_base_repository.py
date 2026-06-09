@@ -79,6 +79,7 @@ class KnowledgeBaseRepository:
         *,
         knowledge_base_id: int | None = None,
         team_id: int | None = None,
+        purpose: str | None = "business",
         active_only: bool = False,
         keyword: str | None = None,
         offset: int = 0,
@@ -144,6 +145,8 @@ class KnowledgeBaseRepository:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
         if knowledge_base_id is not None:
             stmt = stmt.where(KnowledgeBase.id == knowledge_base_id)
+        if purpose is not None:
+            stmt = stmt.where(KnowledgeBase.purpose == purpose)
         if active_only:
             stmt = stmt.where(KnowledgeBase.is_active.is_(True))
         if keyword and keyword.strip():
@@ -198,6 +201,7 @@ class KnowledgeBaseRepository:
         self,
         *,
         team_id: int | None = None,
+        purpose: str | None = "business",
         active_only: bool = False,
         keyword: str | None = None,
     ) -> int:
@@ -208,6 +212,8 @@ class KnowledgeBaseRepository:
         )
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if purpose is not None:
+            stmt = stmt.where(KnowledgeBase.purpose == purpose)
         if active_only:
             stmt = stmt.where(KnowledgeBase.is_active.is_(True))
         if keyword and keyword.strip():
@@ -224,6 +230,7 @@ class KnowledgeBaseRepository:
         self,
         *,
         team_id: int | None = None,
+        purpose: str | None = "business",
         active_only: bool = False,
         offset: int = 0,
         limit: int = 20,
@@ -233,6 +240,8 @@ class KnowledgeBaseRepository:
         )
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if purpose is not None:
+            stmt = stmt.where(KnowledgeBase.purpose == purpose)
         if active_only:
             stmt = stmt.where(KnowledgeBase.is_active.is_(True))
         stmt = stmt.order_by(KnowledgeBase.created_at.desc()).offset(offset).limit(limit)
@@ -309,6 +318,7 @@ class KnowledgeBaseRepository:
         *,
         team_id: int = 1,
         description: str | None = None,
+        purpose: str = "business",
     ) -> KnowledgeBase:
         """Create a knowledge base."""
         knowledge_base = KnowledgeBase(
@@ -316,6 +326,7 @@ class KnowledgeBaseRepository:
             team_id=team_id,
             name=name.strip(),
             description=(description or "").strip() or None,
+            purpose=purpose,
         )
         self.db.add(knowledge_base)
         await self.db.commit()

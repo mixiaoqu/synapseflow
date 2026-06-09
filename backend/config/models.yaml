@@ -49,7 +49,7 @@ model_assets:
 
   deepseek-v4-flash:
     type: chat
-    provider: moyu
+    provider: deepseek
     model: deepseek-v4-flash
     name:  DeepSeek V4 Flash
     request_timeout: 180
@@ -58,7 +58,7 @@ model_assets:
 
   deepseek-v4-pro:
     type: chat
-    provider: moyu
+    provider: deepseek
     model: deepseek-v4-pro
     name:  DeepSeek V4 pro
     request_timeout: 180

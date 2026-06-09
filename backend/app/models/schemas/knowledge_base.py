@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 KnowledgeBaseStatus = Literal["available", "indexing", "error", "empty"]
 DocumentIndexStatus = Literal["queued", "processing", "indexed", "failed"]
 KnowledgeBaseBulkAction = Literal["enable", "disable", "delete", "reindex"]
+KnowledgeBasePurpose = Literal["business", "evaluation"]
 
 
 class KnowledgeBaseCreate(BaseModel):
@@ -34,6 +35,7 @@ class KnowledgeBaseResponse(BaseModel):
     name: str
     team_id: int
     description: str | None = None
+    purpose: KnowledgeBasePurpose = "business"
     is_active: bool = True
     created_at: datetime
     updated_at: datetime

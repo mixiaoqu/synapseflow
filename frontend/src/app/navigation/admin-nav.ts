@@ -4,10 +4,12 @@ export interface AdminNavItem {
     | "projects"
     | "knowledge-bases"
     | "assistants"
+    | "evaluations"
+    | "evaluation-knowledge-bases"
+    | "evaluation-reports"
     | "organizations"
-    | "users"
+    | "roles-permissions"
     | "qa-logs"
-    | "content-risk-overview"
     | "content-risk-libraries"
     | "content-risk-logs";
   label: string;
@@ -15,32 +17,35 @@ export interface AdminNavItem {
 }
 
 export interface AdminNavGroup {
-  key: "knowledge-and-apps" | "operations-and-review" | "organization-and-access";
+  key: "overview" | "build-and-apps" | "testing-and-evaluation" | "runtime-and-security" | "system-and-organization";
   label: string;
   items: AdminNavItem[];
 }
 
-export const adminPrimaryNav: AdminNavItem[] = [
-  {
-    key: "dashboard",
-    label: "控制台",
-    to: "/dashboard",
-  },
-];
-
 export const adminNavGroups: AdminNavGroup[] = [
   {
-    key: "knowledge-and-apps",
-    label: "知识与应用",
+    key: "overview",
+    label: "概览",
+    items: [
+      {
+        key: "dashboard",
+        label: "控制台",
+        to: "/dashboard",
+      },
+    ],
+  },
+  {
+    key: "build-and-apps",
+    label: "构建与应用",
     items: [
       {
         key: "knowledge-bases",
-        label: "知识库",
+        label: "企业知识库",
         to: "/knowledge-bases",
       },
       {
         key: "assistants",
-        label: "助手",
+        label: "智能助手",
         to: "/assistants",
       },
       {
@@ -51,43 +56,59 @@ export const adminNavGroups: AdminNavGroup[] = [
     ],
   },
   {
-    key: "operations-and-review",
-    label: "运营与质检",
+    key: "testing-and-evaluation",
+    label: "测试与评测",
+    items: [
+      {
+        key: "evaluations",
+        label: "评测集管理",
+        to: "/evaluations",
+      },
+      {
+        key: "evaluation-reports",
+        label: "评测任务 / 报告",
+        to: "/evaluations/reports",
+      },
+      {
+        key: "evaluation-knowledge-bases",
+        label: "测试基准库",
+        to: "/evaluations/knowledge-bases",
+      },
+    ],
+  },
+  {
+    key: "runtime-and-security",
+    label: "运行与安全",
     items: [
       {
         key: "qa-logs",
-        label: "问答日志",
+        label: "问答对话日志",
         to: "/qa-logs",
       },
       {
-        key: "content-risk-overview",
-        label: "风控总览",
-        to: "/content-risk/overview",
-      },
-      {
         key: "content-risk-libraries",
-        label: "风控规则库",
+        label: "风控规则配置",
         to: "/content-risk/libraries",
       },
       {
         key: "content-risk-logs",
-        label: "风控判定日志",
+        label: "风控拦截日志",
         to: "/content-risk/logs",
       },
     ],
   },
   {
-    key: "organization-and-access",
-    label: "组织与权限",
+    key: "system-and-organization",
+    label: "系统与组织",
     items: [
       {
         key: "organizations",
-        label: "团队",
+        label: "成员与团队",
         to: "/organizations",
       },
       {
-        key: "users",
-        label: "用户",
+        key: "roles-permissions",
+        label: "角色与权限",
         to: "/users",
       },
     ],

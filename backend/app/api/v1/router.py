@@ -10,6 +10,7 @@ from app.api.v1.endpoints import (
     document_categories,
     documents,
     embed,
+    evaluations,
     health,
     knowledge_bases,
     mcp,
@@ -47,4 +48,9 @@ api_router.include_router(
     knowledge_bases.router,
     prefix="/knowledge-bases",
     tags=["knowledge-bases"],
+)
+api_router.include_router(
+    evaluations.router,
+    prefix="/evaluations",
+    tags=["evaluations"],
 )

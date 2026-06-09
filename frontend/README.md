@@ -82,7 +82,6 @@ pnpm build
 - `/assistants/:assistantId`
 - `/organizations`
 - `/users`
-- `/content-risk/overview`
 - `/content-risk/libraries`
 
 ## 认证与请求流

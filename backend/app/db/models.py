@@ -136,6 +136,7 @@ class KnowledgeBase(Base):
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, default=1, index=True)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
+    purpose = Column(String(30), nullable=False, default="business", index=True)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
@@ -612,3 +613,101 @@ class ContentRiskLog(Base):
     hits = Column(JSON, nullable=False, default=list)
     elapsed_ms = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), default=utc_now, index=True)
+
+
+class EvalDataset(Base):
+    """Evaluation dataset bound to one evaluation knowledge base."""
+
+    __tablename__ = "eval_datasets"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String(100), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version = Column(String(50), nullable=False, default="v1")
+    status = Column(String(20), nullable=False, default="draft", index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class EvalCase(Base):
+    """One question and expected answer in an evaluation dataset."""
+
+    __tablename__ = "eval_cases"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    dataset_id = Column(
+        Integer,
+        ForeignKey("eval_datasets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    question = Column(Text, nullable=False)
+    expected_answer = Column(Text, nullable=False)
+    expected_doc_ids = Column(JSON, nullable=False, default=list)
+    expected_snippets = Column(JSON, nullable=False, default=list)
+    expected_chunk_ids = Column(JSON, nullable=False, default=list)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class EvalRun(Base):
+    """One execution of an evaluation dataset."""
+
+    __tablename__ = "eval_runs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    dataset_id = Column(
+        Integer,
+        ForeignKey("eval_datasets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_name = Column(String(100), nullable=True)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    model_config = Column(JSON, nullable=False, default=dict)
+    kb_snapshot = Column(JSON, nullable=False, default=dict)
+    total_cases = Column(Integer, nullable=False, default=0)
+    passed_cases = Column(Integer, nullable=False, default=0)
+    failed_cases = Column(Integer, nullable=False, default=0)
+    average_score = Column(Integer, nullable=False, default=0)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+
+
+class EvalCaseResult(Base):
+    """Result for one evaluation case in one run."""
+
+    __tablename__ = "eval_case_results"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    run_id = Column(
+        Integer,
+        ForeignKey("eval_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    case_id = Column(
+        Integer,
+        ForeignKey("eval_cases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status = Column(String(20), nullable=False, default="failed", index=True)
+    score = Column(Integer, nullable=False, default=0)
+    actual_answer = Column(Text, nullable=False, default="")
+    retrieved_doc_ids = Column(JSON, nullable=False, default=list)
+    retrieved_chunk_ids = Column(JSON, nullable=False, default=list)
+    judge_result = Column(JSON, nullable=False, default=dict)
+    latency_ms = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)

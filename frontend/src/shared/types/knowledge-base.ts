@@ -1,6 +1,7 @@
 export type KnowledgeBaseStatus = "available" | "indexing" | "error" | "empty";
 export type DocumentIndexStatus = "queued" | "processing" | "indexed" | "failed";
 export type KnowledgeBaseBulkAction = "enable" | "disable" | "delete" | "reindex";
+export type KnowledgeBasePurpose = "business" | "evaluation";
 
 export interface KnowledgeBaseRecentDocument {
   id: number;
@@ -19,6 +20,7 @@ export interface KnowledgeBaseSummary {
   name: string;
   team_id: number;
   description: string | null;
+  purpose: KnowledgeBasePurpose;
   is_active: boolean;
   created_at: string;
   updated_at: string;

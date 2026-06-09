@@ -1,0 +1,451 @@
+"""Evaluation repository."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.models import (
+    Document,
+    DocumentChunk,
+    EvalCase,
+    EvalCaseResult,
+    EvalDataset,
+    EvalRun,
+    KnowledgeBase,
+    User,
+)
+from app.repositories.access_scope import accessible_knowledge_base_condition
+from app.utils.time import utc_now
+
+
+class EvaluationRepository:
+    """Persist evaluation datasets, cases, runs, and results."""
+
+    def __init__(self, db: AsyncSession, user_id: int, user: User | None = None):
+        self.db = db
+        self.user_id = user_id
+        self.user = user
+
+    async def list_datasets(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 20,
+        keyword: str | None = None,
+    ) -> list[EvalDataset]:
+        stmt = (
+            select(EvalDataset)
+            .join(KnowledgeBase, KnowledgeBase.id == EvalDataset.knowledge_base_id)
+            .where(accessible_knowledge_base_condition(self.user_id, user=self.user))
+            .order_by(EvalDataset.created_at.desc(), EvalDataset.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(or_(EvalDataset.name.ilike(pattern), EvalDataset.description.ilike(pattern)))
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def count_datasets(self, *, keyword: str | None = None) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(EvalDataset)
+            .join(KnowledgeBase, KnowledgeBase.id == EvalDataset.knowledge_base_id)
+            .where(accessible_knowledge_base_condition(self.user_id, user=self.user))
+        )
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(or_(EvalDataset.name.ilike(pattern), EvalDataset.description.ilike(pattern)))
+        return int((await self.db.execute(stmt)).scalar() or 0)
+
+    async def get_dataset(self, dataset_id: int) -> EvalDataset | None:
+        result = await self.db.execute(
+            select(EvalDataset)
+            .join(KnowledgeBase, KnowledgeBase.id == EvalDataset.knowledge_base_id)
+            .where(
+                EvalDataset.id == dataset_id,
+                accessible_knowledge_base_condition(self.user_id, user=self.user),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_dataset(
+        self,
+        *,
+        name: str,
+        knowledge_base_id: int,
+        description: str | None,
+        version: str,
+        status: str,
+    ) -> EvalDataset:
+        row = EvalDataset(
+            name=name.strip(),
+            description=(description or "").strip() or None,
+            knowledge_base_id=knowledge_base_id,
+            version=version.strip(),
+            status=status,
+            created_by=self.user_id,
+        )
+        self.db.add(row)
+        await self.db.commit()
+        await self.db.refresh(row)
+        return row
+
+    async def update_dataset(
+        self,
+        dataset: EvalDataset,
+        *,
+        name: str,
+        knowledge_base_id: int,
+        description: str | None,
+        version: str,
+        status: str,
+    ) -> EvalDataset:
+        dataset.name = name.strip()
+        dataset.description = (description or "").strip() or None
+        dataset.knowledge_base_id = knowledge_base_id
+        dataset.version = version.strip()
+        dataset.status = status
+        await self.db.commit()
+        await self.db.refresh(dataset)
+        return dataset
+
+    async def list_cases(self, dataset_id: int, *, enabled_only: bool = False) -> list[EvalCase]:
+        stmt = (
+            select(EvalCase)
+            .where(EvalCase.dataset_id == dataset_id)
+            .order_by(EvalCase.created_at.asc(), EvalCase.id.asc())
+        )
+        if enabled_only:
+            stmt = stmt.where(EvalCase.enabled.is_(True))
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_case(self, case_id: int) -> EvalCase | None:
+        result = await self.db.execute(select(EvalCase).where(EvalCase.id == case_id))
+        return result.scalar_one_or_none()
+
+    async def list_cases_by_ids(self, dataset_id: int, case_ids: list[int]) -> list[EvalCase]:
+        normalized_case_ids = [int(item) for item in case_ids if int(item) > 0]
+        if not normalized_case_ids:
+            return []
+        result = await self.db.execute(
+            select(EvalCase)
+            .where(
+                EvalCase.dataset_id == dataset_id,
+                EvalCase.id.in_(normalized_case_ids),
+            )
+            .order_by(EvalCase.id.asc())
+        )
+        return list(result.scalars().all())
+
+    async def create_case(
+        self,
+        *,
+        dataset_id: int,
+        question: str,
+        expected_answer: str,
+        expected_doc_ids: list[int],
+        expected_snippets: list[str],
+        expected_chunk_ids: list[int],
+        enabled: bool,
+    ) -> EvalCase:
+        row = EvalCase(
+            dataset_id=dataset_id,
+            question=question.strip(),
+            expected_answer=expected_answer.strip(),
+            expected_doc_ids=list(expected_doc_ids),
+            expected_snippets=list(expected_snippets),
+            expected_chunk_ids=list(expected_chunk_ids),
+            enabled=enabled,
+        )
+        self.db.add(row)
+        await self.db.commit()
+        await self.db.refresh(row)
+        return row
+
+    async def update_case(
+        self,
+        case: EvalCase,
+        *,
+        question: str,
+        expected_answer: str,
+        expected_doc_ids: list[int],
+        expected_snippets: list[str],
+        expected_chunk_ids: list[int],
+        enabled: bool,
+    ) -> EvalCase:
+        case.question = question.strip()
+        case.expected_answer = expected_answer.strip()
+        case.expected_doc_ids = list(expected_doc_ids)
+        case.expected_snippets = list(expected_snippets)
+        case.expected_chunk_ids = list(expected_chunk_ids)
+        case.enabled = enabled
+        await self.db.commit()
+        await self.db.refresh(case)
+        return case
+
+    async def delete_case(self, case: EvalCase) -> None:
+        await self.db.delete(case)
+        await self.db.commit()
+
+    async def delete_cases(self, cases: list[EvalCase]) -> int:
+        for case in cases:
+            await self.db.delete(case)
+        await self.db.commit()
+        return len(cases)
+
+    async def create_run(
+        self,
+        *,
+        dataset_id: int,
+        run_name: str | None,
+        kb_snapshot: dict[str, Any],
+        model_config: dict[str, Any],
+        total_cases: int,
+    ) -> EvalRun:
+        row = EvalRun(
+            dataset_id=dataset_id,
+            run_name=(run_name or "").strip() or None,
+            status="running",
+            kb_snapshot=dict(kb_snapshot),
+            model_config=dict(model_config),
+            total_cases=total_cases,
+            started_at=utc_now(),
+            created_by=self.user_id,
+        )
+        self.db.add(row)
+        await self.db.commit()
+        await self.db.refresh(row)
+        return row
+
+    async def finish_run(
+        self,
+        run: EvalRun,
+        *,
+        status: str,
+        passed_cases: int,
+        failed_cases: int,
+        average_score: int,
+    ) -> EvalRun:
+        run.status = status
+        run.passed_cases = passed_cases
+        run.failed_cases = failed_cases
+        run.average_score = average_score
+        run.finished_at = utc_now()
+        await self.db.commit()
+        await self.db.refresh(run)
+        return run
+
+    async def mark_run_failed(self, run: EvalRun) -> EvalRun:
+        run.status = "failed"
+        run.finished_at = utc_now()
+        await self.db.commit()
+        await self.db.refresh(run)
+        return run
+
+    async def list_runs_page(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 20,
+        keyword: str | None = None,
+        status: str | None = None,
+        dataset_id: int | None = None,
+    ) -> list[tuple[EvalRun, EvalDataset]]:
+        conditions = [accessible_knowledge_base_condition(self.user_id, user=self.user)]
+        if dataset_id is not None:
+            conditions.append(EvalRun.dataset_id == dataset_id)
+        if status and status.strip():
+            conditions.append(EvalRun.status == status.strip())
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            conditions.append(
+                or_(
+                    EvalRun.run_name.ilike(pattern),
+                    EvalDataset.name.ilike(pattern),
+                )
+            )
+
+        stmt = (
+            select(EvalRun, EvalDataset)
+            .join(EvalDataset, EvalDataset.id == EvalRun.dataset_id)
+            .join(KnowledgeBase, KnowledgeBase.id == EvalDataset.knowledge_base_id)
+            .where(*conditions)
+            .order_by(EvalRun.created_at.desc(), EvalRun.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list((await self.db.execute(stmt)).all())
+
+    async def count_runs(
+        self,
+        *,
+        keyword: str | None = None,
+        status: str | None = None,
+        dataset_id: int | None = None,
+    ) -> int:
+        conditions = [accessible_knowledge_base_condition(self.user_id, user=self.user)]
+        if dataset_id is not None:
+            conditions.append(EvalRun.dataset_id == dataset_id)
+        if status and status.strip():
+            conditions.append(EvalRun.status == status.strip())
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            conditions.append(
+                or_(
+                    EvalRun.run_name.ilike(pattern),
+                    EvalDataset.name.ilike(pattern),
+                )
+            )
+
+        stmt = (
+            select(func.count())
+            .select_from(EvalRun)
+            .join(EvalDataset, EvalDataset.id == EvalRun.dataset_id)
+            .join(KnowledgeBase, KnowledgeBase.id == EvalDataset.knowledge_base_id)
+            .where(*conditions)
+        )
+        return int((await self.db.execute(stmt)).scalar() or 0)
+
+    async def get_run(self, run_id: int) -> EvalRun | None:
+        result = await self.db.execute(select(EvalRun).where(EvalRun.id == run_id))
+        return result.scalar_one_or_none()
+
+    async def create_case_result(
+        self,
+        *,
+        run_id: int,
+        case_id: int,
+        status: str,
+        score: int,
+        actual_answer: str,
+        retrieved_doc_ids: list[int],
+        retrieved_chunk_ids: list[int],
+        judge_result: dict[str, Any],
+        latency_ms: int | None,
+        error_message: str | None,
+    ) -> EvalCaseResult:
+        row = EvalCaseResult(
+            run_id=run_id,
+            case_id=case_id,
+            status=status,
+            score=score,
+            actual_answer=actual_answer,
+            retrieved_doc_ids=list(retrieved_doc_ids),
+            retrieved_chunk_ids=list(retrieved_chunk_ids),
+            judge_result=dict(judge_result),
+            latency_ms=latency_ms,
+            error_message=error_message,
+        )
+        self.db.add(row)
+        await self.db.commit()
+        await self.db.refresh(row)
+        return row
+
+    async def list_case_results(self, run_id: int) -> list[EvalCaseResult]:
+        result = await self.db.execute(
+            select(EvalCaseResult)
+            .where(EvalCaseResult.run_id == run_id)
+            .order_by(EvalCaseResult.id.asc())
+        )
+        return list(result.scalars().all())
+
+    async def list_retrieved_chunk_details(
+        self,
+        *,
+        chunk_ids: list[int],
+    ) -> list[tuple[DocumentChunk, Document]]:
+        normalized_chunk_ids = [int(item) for item in chunk_ids if int(item) > 0]
+        if not normalized_chunk_ids:
+            return []
+
+        stmt = (
+            select(DocumentChunk, Document)
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(DocumentChunk.id.in_(normalized_chunk_ids))
+            .order_by(Document.id.asc(), DocumentChunk.chunk_index.asc(), DocumentChunk.id.asc())
+        )
+        return list((await self.db.execute(stmt)).all())
+
+    async def list_expected_chunk_details(
+        self,
+        *,
+        knowledge_base_id: int,
+        chunk_ids: list[int],
+    ) -> list[tuple[DocumentChunk, Document]]:
+        normalized_chunk_ids = [int(item) for item in chunk_ids if int(item) > 0]
+        if not normalized_chunk_ids:
+            return []
+
+        stmt = (
+            select(DocumentChunk, Document)
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(
+                Document.knowledge_base_id == knowledge_base_id,
+                DocumentChunk.id.in_(normalized_chunk_ids),
+            )
+            .order_by(Document.id.asc(), DocumentChunk.chunk_index.asc(), DocumentChunk.id.asc())
+        )
+        return list((await self.db.execute(stmt)).all())
+
+    async def search_chunks(
+        self,
+        *,
+        knowledge_base_id: int,
+        query: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[tuple[DocumentChunk, Document, float]], int]:
+        conditions = [
+            Document.knowledge_base_id == knowledge_base_id,
+            Document.is_current.is_(True),
+            DocumentChunk.chunk_kind == "child",
+        ]
+        normalized_query = (query or "").strip()
+        if normalized_query:
+            pattern = f"%{normalized_query}%"
+            conditions.append(
+                or_(
+                    Document.title.ilike(pattern),
+                    DocumentChunk.content.ilike(pattern),
+                    DocumentChunk.search_text.ilike(pattern),
+                )
+            )
+
+        total_stmt = (
+            select(func.count())
+            .select_from(DocumentChunk)
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(*conditions)
+        )
+        total = int((await self.db.execute(total_stmt)).scalar_one() or 0)
+
+        normalized_limit = max(1, min(50, limit))
+        normalized_offset = max(0, offset)
+        stmt = (
+            select(DocumentChunk, Document)
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(*conditions)
+            .order_by(Document.updated_at.desc(), Document.id.asc(), DocumentChunk.chunk_index.asc())
+            .offset(normalized_offset)
+            .limit(normalized_limit)
+        )
+        rows = (await self.db.execute(stmt)).all()
+        normalized_query_lower = normalized_query.lower()
+        results: list[tuple[DocumentChunk, Document, float]] = []
+        for chunk, document in rows:
+            content = (chunk.content or "").lower()
+            title = (document.title or "").lower()
+            score = (
+                1.0
+                if normalized_query_lower
+                and (normalized_query_lower in content or normalized_query_lower in title)
+                else 0.0
+            )
+            results.append((chunk, document, score))
+        return results, total

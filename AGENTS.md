@@ -192,7 +192,6 @@ Admin pages currently present:
 - `/qa-logs`: question-answer log review.
 - `/organizations`: team management.
 - `/users`: user management.
-- `/content-risk/overview`: content-risk overview.
 - `/content-risk/libraries`: global content-risk rule library.
 - `/content-risk/logs`: content-risk decision logs.
 
