@@ -1,8 +1,11 @@
 """Project and embedded application schemas."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+ProjectAppTerminalType = Literal["web", "h5", "mini_program", "admin", "api", "other"]
 
 
 class ProjectCreate(BaseModel):
@@ -54,13 +57,25 @@ class ProjectListResponse(BaseModel):
     page_size: int = 10
 
 
+class ProjectBulkActionRequest(BaseModel):
+    project_ids: list[int] = Field(default_factory=list, min_length=1)
+    action: Literal["enable", "disable", "delete"]
+
+
+class ProjectBulkActionResponse(BaseModel):
+    action: Literal["enable", "disable", "delete"]
+    affected_ids: list[int] = Field(default_factory=list)
+    affected_count: int = 0
+
+
 class ProjectAppCreate(BaseModel):
     code: str = Field(..., min_length=1, max_length=120)
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
-    knowledge_base_id: int = Field(..., gt=0)
+    knowledge_base_id: int | None = Field(default=None, gt=0)
     category_id: int | None = Field(default=None, gt=0)
     default_assistant_id: int | None = Field(default=None, gt=0)
+    terminal_type: ProjectAppTerminalType = "web"
     is_active: bool = True
 
 
@@ -68,9 +83,10 @@ class ProjectAppUpdate(BaseModel):
     code: str = Field(..., min_length=1, max_length=120)
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
-    knowledge_base_id: int = Field(..., gt=0)
+    knowledge_base_id: int | None = Field(default=None, gt=0)
     category_id: int | None = Field(default=None, gt=0)
     default_assistant_id: int | None = Field(default=None, gt=0)
+    terminal_type: ProjectAppTerminalType = "web"
     is_active: bool = True
 
 
@@ -88,6 +104,7 @@ class ProjectAppResponse(BaseModel):
     category_name: str | None = None
     default_assistant_id: int | None = None
     default_assistant_name: str | None = None
+    terminal_type: ProjectAppTerminalType = "web"
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -98,6 +115,17 @@ class ProjectAppListResponse(BaseModel):
     total: int = 0
     page: int = 1
     page_size: int = 10
+
+
+class ProjectAppBulkActionRequest(BaseModel):
+    app_ids: list[int] = Field(default_factory=list, min_length=1)
+    action: Literal["enable", "disable", "delete"]
+
+
+class ProjectAppBulkActionResponse(BaseModel):
+    action: Literal["enable", "disable", "delete"]
+    affected_ids: list[int] = Field(default_factory=list)
+    affected_count: int = 0
 
 
 class EmbedSessionCreate(BaseModel):

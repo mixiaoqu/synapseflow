@@ -265,9 +265,11 @@ class ProjectApp(Base):
         nullable=True,
         index=True,
     )
+    terminal_type = Column(String(40), nullable=False, default="web")
     is_active = Column(Boolean, nullable=False, default=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
 
 class DocumentCategory(Base):
     """Knowledge-base scoped document category."""
@@ -493,6 +495,9 @@ class ChatSession(Base):
         index=True,
     )
     summary = Column(Text, nullable=True)
+    title = Column(String(255), nullable=True)
+    preview = Column(Text, nullable=True)
+    message_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

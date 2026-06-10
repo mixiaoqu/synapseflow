@@ -17,7 +17,10 @@ import {
 } from "@element-plus/icons-vue";
 
 import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
+import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
+import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   bulkActionKnowledgeBases,
@@ -711,14 +714,12 @@ watch(
       <el-button link type="primary" @click="resetFilters">清除筛选</el-button>
     </AppEmpty>
 
-      <el-table
+      <AdminDataTable
         v-else-if="viewMode === 'table'"
-        v-loading="loading"
         :data="displayedKnowledgeBases"
-        row-key="id"
-        class="kb-list-page__table"
-        height="calc(100vh - 260px)"
-        element-loading-text="正在更新知识库列表"
+        :loading="loading"
+        table-class="kb-list-page__table"
+        loading-text="正在更新知识库列表"
         @selection-change="handleTableSelectionChange"
       >
         <el-table-column type="selection" width="44" fixed="left" />
@@ -783,7 +784,7 @@ watch(
             </div>
           </template>
         </el-table-column>
-      </el-table>
+      </AdminDataTable>
 
       <div v-else class="kb-list-page__card-wrap">
         <div class="kb-list-page__card-toolbar">
@@ -925,38 +926,32 @@ watch(
         </div>
     </div>
 
-      <div
+      <AdminPagination
         v-if="viewMode === 'table' && displayedKnowledgeBases.length > 0"
-        class="kb-list-page__pagination"
-      >
-      <el-pagination
-        v-model:current-page="pagination.page"
-        v-model:page-size="pagination.pageSize"
+        :current-page="pagination.page"
+        :page-size="pagination.pageSize"
         :page-sizes="[10, 20, 50]"
-        layout="total, sizes, prev, pager, next"
         :total="pagination.total"
-        @current-change="handlePageChange"
-        @size-change="handleSizeChange"
+        @page-change="handlePageChange"
+        @page-size-change="handleSizeChange"
       />
-    </div>
     </AdminListPanel>
 
-    <el-dialog
+    <AdminDialog
       v-model="isKnowledgeBaseDialogVisible"
       :title="knowledgeBaseDialogTitle"
       width="560px"
-      :close-on-click-modal="false"
-      :close-on-press-escape="!knowledgeBaseFormLoading"
+      :loading="knowledgeBaseFormLoading"
       @closed="resetKnowledgeBaseForm"
     >
-      <div class="kb-dialog__scope">
-        <span class="kb-dialog__scope-label">所属团队</span>
-        <span class="kb-dialog__scope-value">{{ selectedTeamName }}</span>
+      <div class="admin-dialog__scope">
+        <span class="admin-dialog__scope-label">所属团队</span>
+        <span class="admin-dialog__scope-value">{{ selectedTeamName }}</span>
       </div>
 
       <el-form
         label-position="top"
-        class="kb-dialog__form"
+        class="admin-dialog__form"
       >
         <el-form-item label="知识库名称" required>
           <el-input
@@ -980,20 +975,18 @@ watch(
       </el-form>
 
       <template #footer>
-        <div class="kb-dialog__footer">
-          <el-button :disabled="knowledgeBaseFormLoading" @click="closeKnowledgeBaseDialog">
-            取消
-          </el-button>
-          <el-button
-            type="primary"
-            :loading="knowledgeBaseFormLoading"
-            @click="submitKnowledgeBaseForm"
-          >
-            {{ knowledgeBaseDialogActionText }}
-          </el-button>
-        </div>
+        <el-button :disabled="knowledgeBaseFormLoading" @click="closeKnowledgeBaseDialog">
+          取消
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="knowledgeBaseFormLoading"
+          @click="submitKnowledgeBaseForm"
+        >
+          {{ knowledgeBaseDialogActionText }}
+        </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
 
     <Teleport to="body">
       <Transition name="delete-overlay">
@@ -1111,7 +1104,7 @@ watch(
 }
 
 .kb-list-page__card-wrap {
-  height: calc(100vh - 260px);
+  height: var(--admin-table-height);
   overflow: auto;
   border-top: 1px solid var(--admin-border-soft);
   background: var(--admin-surface);
@@ -1139,14 +1132,6 @@ watch(
 .kb-list-page__load-more-text {
   color: var(--admin-text-muted);
   font-size: 13px;
-}
-
-.kb-list-page__pagination {
-  display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid var(--admin-border-soft);
-  background: var(--admin-surface);
-  padding: 12px;
 }
 
 .kb-card {
@@ -1365,71 +1350,6 @@ watch(
 
 .kb-card__action-button--danger:hover {
   color: var(--admin-danger);
-}
-
-.kb-dialog__scope {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-  border: 1px solid var(--admin-border);
-  border-radius: var(--admin-radius-lg);
-  background: var(--admin-surface-muted);
-  padding: 12px 14px;
-}
-
-.kb-dialog__scope-label {
-  color: var(--admin-text-muted);
-  font-size: 13px;
-}
-
-.kb-dialog__scope-value {
-  color: var(--admin-text);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.kb-dialog__form {
-  margin-top: 8px;
-}
-
-.kb-dialog__footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
-
-:deep(.el-dialog) {
-  overflow: hidden;
-  border: 1px solid var(--admin-border);
-  border-radius: var(--admin-radius-lg);
-  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18);
-}
-
-:deep(.el-dialog .el-dialog__header) {
-  display: flex;
-  align-items: center;
-  min-height: 54px;
-  margin: 0;
-  border-bottom: 1px solid var(--admin-border-soft);
-  background: var(--admin-surface-muted);
-  padding: 0 18px;
-}
-
-:deep(.el-dialog .el-dialog__title) {
-  color: var(--admin-text);
-  font-size: 15px;
-  font-weight: 700;
-}
-
-:deep(.el-dialog .el-dialog__body) {
-  padding: 18px;
-}
-
-:deep(.el-dialog .el-dialog__footer) {
-  border-top: 1px solid var(--admin-border-soft);
-  background: var(--admin-surface);
-  padding: 12px 18px;
 }
 
 @media (max-width: 1280px) {

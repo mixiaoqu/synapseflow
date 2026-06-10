@@ -12,7 +12,10 @@ import {
 } from "@element-plus/icons-vue";
 
 import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
+import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
+import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import { bulkActionUsers, createUser, deleteUser, getUser, listUsers, updateUser } from "@/shared/api/users";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
@@ -27,7 +30,7 @@ import { TEAM_ROLE_LABELS } from "@/shared/types/team";
 import type { AdminUser, CreateUserPayload, UpdateUserPayload } from "@/shared/types/user";
 
 const AVATAR_PALETTES = [
-  "background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe",
+  "background:var(--admin-primary-soft);color:var(--admin-primary-hover);border-color:var(--admin-primary-border)",
   "background:#ecfeff;color:#0e7490;border-color:#a5f3fc",
   "background:#ecfdf5;color:#047857;border-color:#bbf7d0",
   "background:#f5f3ff;color:#6d28d9;border-color:#ddd6fe",
@@ -409,7 +412,13 @@ function handleResetSearch() {
 }
 
 /** 切换每页条数（重置到第一页） */
-function handleSizeChange() {
+function handlePageChange(page: number) {
+  pagination.value.page = page;
+  void loadData();
+}
+
+function handleSizeChange(pageSize: number) {
+  pagination.value.pageSize = pageSize;
   pagination.value.page = 1;
   void loadData();
 }
@@ -535,14 +544,12 @@ onMounted(() => {
         </el-button>
       </AppEmpty>
 
-      <el-table
+      <AdminDataTable
         v-else
-        v-loading="loading"
         :data="users"
-        row-key="id"
-        class="user-list-page__table"
-        height="calc(100vh - 260px)"
-        element-loading-text="正在更新用户列表"
+        :loading="loading"
+        table-class="user-list-page__table"
+        loading-text="正在更新用户列表"
         @selection-change="handleSelectionChange"
       >
         <el-table-column type="selection" width="44" fixed="left" />
@@ -617,28 +624,24 @@ onMounted(() => {
             </div>
           </template>
         </el-table-column>
-      </el-table>
+      </AdminDataTable>
 
-      <div v-if="users.length > 0" class="user-list-page__pagination">
-        <el-pagination
-          v-model:current-page="pagination.page"
-          v-model:page-size="pagination.pageSize"
-          :total="pagination.total"
-          :page-sizes="[10, 20, 50]"
-          layout="total, sizes, prev, pager, next"
-          @current-change="loadData"
-          @size-change="handleSizeChange"
-        />
-      </div>
+      <AdminPagination
+        v-if="users.length > 0"
+        :current-page="pagination.page"
+        :page-size="pagination.pageSize"
+        :total="pagination.total"
+        @page-change="handlePageChange"
+        @page-size-change="handleSizeChange"
+      />
     </AdminListPanel>
 
     <!-- 新建用户弹窗 -->
-    <el-dialog
+    <AdminDialog
       v-model="createDialogVisible"
       title="新建用户"
       width="520px"
-      class="user-list-page__dialog"
-      :close-on-click-modal="false"
+      :loading="createLoading"
     >
       <el-form label-position="top" @submit.prevent="handleCreate">
         <div class="user-list-page__form-row">
@@ -698,15 +701,14 @@ onMounted(() => {
           创建用户
         </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
 
     <!-- 编辑用户弹窗 -->
-    <el-dialog
+    <AdminDialog
       v-model="editDialogVisible"
       title="编辑用户"
       width="520px"
-      class="user-list-page__dialog"
-      :close-on-click-modal="false"
+      :loading="editLoading"
     >
       <div v-if="editItem" class="user-list-page__edit-header">
         <span class="user-list-page__avatar" :style="avatarStyle(editItem.id)">
@@ -764,14 +766,13 @@ onMounted(() => {
           保存修改
         </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
 
-    <el-dialog
+    <AdminDialog
       v-model="detailDialogVisible"
       title="用户详情"
       width="520px"
-      class="user-list-page__dialog"
-      :close-on-click-modal="false"
+      :loading="detailLoading"
     >
       <div v-loading="detailLoading" class="user-list-page__detail">
         <template v-if="detailItem">
@@ -831,14 +832,13 @@ onMounted(() => {
           </dl>
         </template>
       </div>
-    </el-dialog>
+    </AdminDialog>
 
-    <el-dialog
+    <AdminDialog
       v-model="resetPasswordDialogVisible"
       title="重置密码"
       width="460px"
-      class="user-list-page__dialog"
-      :close-on-click-modal="false"
+      :loading="resetPasswordLoading"
     >
       <div v-if="resetPasswordItem" class="user-list-page__edit-header">
         <span class="user-list-page__avatar" :style="avatarStyle(resetPasswordItem.id)">
@@ -874,7 +874,7 @@ onMounted(() => {
           确认重置
         </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
   </section>
 </template>
 
@@ -970,75 +970,6 @@ onMounted(() => {
   min-height: 220px;
 }
 
-:deep(.user-list-page__dialog.el-dialog) {
-  overflow: hidden;
-  border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18);
-}
-
-:deep(.user-list-page__dialog .el-dialog__header) {
-  display: flex;
-  align-items: center;
-  min-height: 54px;
-  margin: 0;
-  border-bottom: 1px solid #e2e8f0;
-  background: #f8fafc;
-  padding: 0 18px;
-}
-
-:deep(.user-list-page__dialog .el-dialog__title) {
-  color: #0f172a;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-:deep(.user-list-page__dialog .el-dialog__headerbtn) {
-  top: 0;
-  right: 10px;
-  width: 36px;
-  height: 54px;
-}
-
-:deep(.user-list-page__dialog .el-dialog__body) {
-  padding: 18px;
-}
-
-:deep(.user-list-page__dialog .el-dialog__footer) {
-  border-top: 1px solid #e2e8f0;
-  background: #ffffff;
-  padding: 12px 18px;
-}
-
-:deep(.user-list-page__dialog .el-form-item) {
-  margin-bottom: 16px;
-}
-
-:deep(.user-list-page__dialog .el-form-item__label) {
-  color: #475569;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-:deep(.user-list-page__dialog .el-input__wrapper),
-:deep(.user-list-page__dialog .el-select__wrapper),
-:deep(.user-list-page__dialog .el-textarea__inner) {
-  border-radius: 7px;
-  box-shadow: 0 0 0 1px #cbd5e1 inset;
-}
-
-:deep(.user-list-page__dialog .el-input__wrapper:hover),
-:deep(.user-list-page__dialog .el-select__wrapper:hover),
-:deep(.user-list-page__dialog .el-textarea__inner:hover) {
-  box-shadow: 0 0 0 1px #94a3b8 inset;
-}
-
-:deep(.user-list-page__dialog .el-input__wrapper.is-focus),
-:deep(.user-list-page__dialog .el-select__wrapper.is-focused),
-:deep(.user-list-page__dialog .el-textarea__inner:focus) {
-  box-shadow: 0 0 0 1px var(--admin-primary) inset;
-}
-
 .user-list-page__detail-list {
   display: grid;
   gap: 12px;
@@ -1092,14 +1023,6 @@ onMounted(() => {
   color: #64748b;
   font-size: 12px;
   font-weight: 500;
-}
-
-.user-list-page__pagination {
-  display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid #e2e8f0;
-  background: #ffffff;
-  padding: 12px;
 }
 
 /* 弹窗表单 */

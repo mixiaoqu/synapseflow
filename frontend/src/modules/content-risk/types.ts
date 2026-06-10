@@ -76,11 +76,17 @@ export interface ContentRiskRuleListResponse {
     created_at: string | null;
     updated_at: string | null;
   }>;
+  total: number;
+  page: number;
+  page_size: number;
 }
 
 export interface ListContentRiskRulesParams {
   keyword?: string;
   enabled?: boolean;
+  scene?: ContentRiskScene;
+  page?: number;
+  page_size?: number;
 }
 
 export interface ContentRiskRuleUpsertPayload {

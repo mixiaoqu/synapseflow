@@ -6,6 +6,7 @@
 
 <style scoped>
 .admin-list-panel {
+  --admin-table-height: calc(100vh - 260px);
   overflow: hidden;
   border: 1px solid var(--admin-border);
   border-radius: var(--admin-radius-lg);

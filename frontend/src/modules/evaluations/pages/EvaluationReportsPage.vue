@@ -17,7 +17,9 @@ import {
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 
+import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   executeEvalDataset,
@@ -559,33 +561,6 @@ onMounted(() => {
 <template>
   <div class="evaluation-report-page">
     <AdminListPanel v-if="!isReportDetail">
-      <AdminTableToolbar>
-        <template #left>
-          <div class="evaluation-report-page__heading">
-            <strong>评测任务 / 报告</strong>
-            <div class="evaluation-report-page__meta">
-              <span>统一查看后台评测任务状态、得分和报告入口</span>
-            </div>
-          </div>
-        </template>
-        <template #right>
-          <el-button
-            type="primary"
-            :icon="Plus"
-            @click="openCreateDrawer"
-          >
-            新建评测任务
-          </el-button>
-          <el-button
-            :icon="RefreshRight"
-            :loading="taskLoading"
-            @click="loadTaskRuns"
-          >
-            刷新
-          </el-button>
-        </template>
-      </AdminTableToolbar>
-
       <AdminTableToolbar class="evaluation-report-page__task-toolbar">
         <template #left>
           <el-input
@@ -631,6 +606,22 @@ onMounted(() => {
             重置
           </el-button>
         </template>
+        <template #right>
+          <el-button
+            type="primary"
+            :icon="Plus"
+            @click="openCreateDrawer"
+          >
+            新建评测任务
+          </el-button>
+          <el-button
+            :icon="RefreshRight"
+            :loading="taskLoading"
+            @click="loadTaskRuns"
+          >
+            刷新
+          </el-button>
+        </template>
       </AdminTableToolbar>
 
       <AppError
@@ -650,11 +641,10 @@ onMounted(() => {
           description="在评测集详情页运行评测后，任务会出现在这里。"
         />
         <template v-else>
-          <el-table
-            v-loading="taskLoading && taskHasLoadedData"
+          <AdminDataTable
             :data="taskRows"
-            class="evaluation-report-page__task-table"
-            row-key="id"
+            :loading="taskLoading && taskHasLoadedData"
+            table-class="evaluation-report-page__task-table"
           >
             <el-table-column
               label="任务名称 / ID"
@@ -748,19 +738,15 @@ onMounted(() => {
                 </el-button>
               </template>
             </el-table-column>
-          </el-table>
-          <div class="evaluation-report-page__pagination">
-            <el-pagination
-              background
-              layout="total, sizes, prev, pager, next"
-              :current-page="taskPagination.page"
-              :page-size="taskPagination.pageSize"
-              :page-sizes="[10, 20, 50]"
-              :total="taskPagination.total"
-              @current-change="handleTaskPageChange"
-              @size-change="handleTaskPageSizeChange"
-            />
-          </div>
+          </AdminDataTable>
+          <AdminPagination
+            :current-page="taskPagination.page"
+            :page-size="taskPagination.pageSize"
+            :page-sizes="[10, 20, 50]"
+            :total="taskPagination.total"
+            @page-change="handleTaskPageChange"
+            @page-size-change="handleTaskPageSizeChange"
+          />
         </template>
       </template>
     </AdminListPanel>
@@ -1320,15 +1306,6 @@ onMounted(() => {
   font-weight: 500;
 }
 
-.evaluation-report-page__pagination {
-  display: flex;
-  min-height: 64px;
-  align-items: center;
-  justify-content: flex-end;
-  border-top: 1px solid var(--admin-border-soft);
-  padding: 12px 16px;
-}
-
 .evaluation-report-page__drawer-body {
   display: flex;
   flex-direction: column;
@@ -1798,7 +1775,7 @@ onMounted(() => {
 .evaluation-report-page__tooltip-content strong {
   display: block;
   margin-bottom: 6px;
-  color: #bfdbfe;
+  color: var(--admin-primary-border);
   font-size: 12px;
 }
 

@@ -220,7 +220,7 @@ export const embedApi = {
     });
   },
 
-  listSessions(token: string, limit: number = 30) {
+  listSessions(token: string, limit: number = 10) {
     return getJson<EmbedSessionSummary[]>(`/embed/assistant/sessions?limit=${limit}`, {
       token,
     });

@@ -229,17 +229,22 @@ async def list_content_risk_rules(
     library_id: int,
     keyword: str | None = Query(None, description="Optional keyword"),
     enabled: bool | None = Query(None, description="Optional enabled filter"),
+    scene: str | None = Query(None, pattern="^(query|answer)$", description="Optional scene filter"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_system_admin),
 ):
     del current_user
-    items = await ContentRiskLibraryService().list_rules(
+    return await ContentRiskLibraryService().list_rules(
         library_id,
         db=db,
         keyword=keyword,
         enabled=enabled,
+        scene=scene,
+        page=page,
+        page_size=page_size,
     )
-    return ContentRiskRuleListResponse(items=items)
 
 
 @router.post(
@@ -274,5 +279,23 @@ async def update_content_risk_rule(
         rule_id,
         db=db,
         payload=body,
+        actor_user_id=current_user.id,
+    )
+
+
+@router.delete(
+    "/libraries/{library_id}/rules/{rule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_content_risk_rule(
+    library_id: int,
+    rule_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_system_admin),
+):
+    await ContentRiskLibraryService().delete_rule(
+        library_id,
+        rule_id,
+        db=db,
         actor_user_id=current_user.id,
     )

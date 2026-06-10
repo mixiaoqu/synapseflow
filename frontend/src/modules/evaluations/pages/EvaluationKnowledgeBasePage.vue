@@ -4,7 +4,10 @@ import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { Delete, Plus, RefreshRight, Search } from "@element-plus/icons-vue";
 
+import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
+import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   createEvaluationKnowledgeBase,
@@ -60,7 +63,7 @@ const form = reactive({
   description: "",
 });
 const dialogTitle = computed(() =>
-  dialogMode.value === "create" ? "创建评测知识库" : "编辑评测知识库信息",
+  dialogMode.value === "create" ? "创建评测基准库" : "编辑评测基准库信息",
 );
 const dialogActionText = computed(() => (dialogMode.value === "create" ? "创建" : "保存"));
 
@@ -151,7 +154,7 @@ async function loadEvaluationKnowledgeBases() {
       return;
     }
     if (hasLoadedData.value) {
-      ElMessage.error(error instanceof Error ? error.message : "评测知识库刷新失败，请稍后重试。");
+      ElMessage.error(error instanceof Error ? error.message : "评测基准库刷新失败，请稍后重试。");
     } else {
       loadError.value = error;
     }
@@ -193,7 +196,7 @@ async function submitKnowledgeBaseForm() {
   const description = form.description.trim();
   const teamId = teamScopeStore.selectedTeamId;
   if (!name) {
-    ElMessage.warning("请输入评测知识库名称。");
+    ElMessage.warning("请输入评测基准库名称。");
     return;
   }
   if (!teamId) {
@@ -209,13 +212,13 @@ async function submitKnowledgeBaseForm() {
         description: description || null,
         team_id: teamId,
       });
-      ElMessage.success("已创建评测知识库。");
+      ElMessage.success("已创建评测基准库。");
     } else if (editingKnowledgeBaseId.value) {
       await updateKnowledgeBase(editingKnowledgeBaseId.value, {
         name,
         description: description || null,
       });
-      ElMessage.success("已保存评测知识库信息。");
+      ElMessage.success("已保存评测基准库信息。");
     }
     createDialogVisible.value = false;
     refreshFromFirstPage();
@@ -241,8 +244,8 @@ async function handleBulkAction(action: KnowledgeBaseBulkAction) {
   if (action === "delete") {
     try {
       await ElMessageBox.confirm(
-        `将删除已选的 ${knowledgeBaseIds.length} 个评测知识库及其文档。`,
-        "批量删除评测知识库",
+        `将删除已选的 ${knowledgeBaseIds.length} 个评测基准库及其文档。`,
+        "批量删除评测基准库",
         {
           type: "warning",
           confirmButtonText: "删除所选",
@@ -262,7 +265,7 @@ async function handleBulkAction(action: KnowledgeBaseBulkAction) {
     if (result.failed.length > 0) {
       ElMessage.warning(`已处理 ${result.affected} 个，${result.failed.length} 个失败。`);
     } else {
-      ElMessage.success(`已处理 ${result.affected} 个评测知识库。`);
+      ElMessage.success(`已处理 ${result.affected} 个评测基准库。`);
     }
     await loadEvaluationKnowledgeBases();
   } finally {
@@ -302,7 +305,7 @@ watch(
             v-model="searchKeyword"
             clearable
             class="evaluation-kb-page__search"
-            placeholder="搜索评测知识库名称或说明"
+            placeholder="搜索评测基准库名称或说明"
             :prefix-icon="Search"
             @keyup.enter="refreshFromFirstPage"
             @clear="refreshFromFirstPage"
@@ -318,7 +321,7 @@ watch(
 
         <template #right>
           <span class="kb-list-page__toolbar-note">
-            共 {{ pagination.total }} 个评测知识库
+            共 {{ pagination.total }} 个评测基准库
           </span>
           <el-button
             :disabled="selectedKnowledgeBaseCount === 0"
@@ -356,25 +359,25 @@ watch(
             :icon="Plus"
             @click="openCreateDialog"
           >
-            创建评测知识库
+            创建评测基准库
           </el-button>
         </template>
       </AdminTableToolbar>
 
       <AppError
         v-if="loadError"
-        title="评测知识库加载失败"
+        title="评测基准库加载失败"
         description="请检查服务状态或稍后重试。"
         @retry="loadEvaluationKnowledgeBases"
       />
       <AppLoading
         v-else-if="loading && !hasLoadedData"
-        text="正在加载评测知识库..."
+        text="正在加载评测基准库..."
       />
       <AppEmpty
         v-else-if="!loading && rows.length === 0"
-        :title="isSearchActive ? '没有匹配的评测知识库' : '还没有评测知识库'"
-        :description="isSearchActive ? '换个关键词再试一次。' : '创建一个 evaluation 知识库后，就可以绑定评测集。'"
+        :title="isSearchActive ? '没有匹配的评测基准库' : '还没有评测基准库'"
+        :description="isSearchActive ? '换个关键词再试一次。' : '创建基准库并上传稳定文档后，就可以绑定评测集。'"
       >
         <template #actions>
           <el-button
@@ -389,17 +392,16 @@ watch(
             :icon="Plus"
             @click="openCreateDialog"
           >
-            创建评测知识库
+            创建评测基准库
           </el-button>
         </template>
       </AppEmpty>
 
       <template v-else>
-        <el-table
+        <AdminDataTable
           ref="knowledgeBaseTableRef"
           :data="rows"
-          class="kb-list-page__table"
-          row-key="id"
+          table-class="kb-list-page__table"
           @selection-change="handleKnowledgeBaseSelectionChange"
         >
           <el-table-column
@@ -477,35 +479,31 @@ watch(
               </el-button>
             </template>
           </el-table-column>
-        </el-table>
+        </AdminDataTable>
 
-        <div class="kb-list-page__pagination">
-          <el-pagination
-            background
-            layout="total, sizes, prev, pager, next"
-            :current-page="pagination.page"
-            :page-size="pagination.pageSize"
-            :page-sizes="[10, 20, 50]"
-            :total="pagination.total"
-            @current-change="handlePageChange"
-            @size-change="handlePageSizeChange"
-          />
-        </div>
+        <AdminPagination
+          :current-page="pagination.page"
+          :page-size="pagination.pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="pagination.total"
+          @page-change="handlePageChange"
+          @page-size-change="handlePageSizeChange"
+        />
       </template>
     </AdminListPanel>
 
-    <el-dialog
+    <AdminDialog
       v-model="createDialogVisible"
       :title="dialogTitle"
       width="520px"
+      :loading="createLoading"
       :close-on-click-modal="!createLoading"
-      :close-on-press-escape="!createLoading"
     >
       <el-alert
         class="kb-list-page__dialog-alert"
         :title="dialogMode === 'create'
-          ? '评测知识库用于固定评测数据。完成文档和索引准备后，请避免随意变更；后续需要调整内容时，建议创建新的评测库版本。'
-          : '这里只修改评测知识库的名称和说明，不会改变文档、切片或索引。'"
+          ? '评测基准库用于沉淀稳定的评测数据来源。完成文档和索引准备后，建议保持内容稳定；如需调整数据范围，可创建新的基准库版本。'
+          : '这里只修改评测基准库的名称和说明，不会改变文档、切片或索引。'"
         type="info"
         show-icon
         :closable="false"
@@ -522,7 +520,7 @@ watch(
             v-model="form.name"
             maxlength="100"
             show-word-limit
-            placeholder="例如：客服问答评测库 v1"
+            placeholder="例如：客服问答基准库 v1"
           />
         </el-form-item>
         <el-form-item label="说明">
@@ -532,7 +530,7 @@ watch(
             :rows="4"
             maxlength="500"
             show-word-limit
-            placeholder="说明该评测库覆盖的文档范围、版本和用途"
+            placeholder="说明该基准库覆盖的文档范围、版本和用途"
           />
         </el-form-item>
       </el-form>
@@ -551,7 +549,7 @@ watch(
           {{ dialogActionText }}
         </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
   </div>
 </template>
 
@@ -610,15 +608,6 @@ watch(
 .kb-list-page__metric-note {
   margin-top: 4px;
   font-size: 12px;
-}
-
-.kb-list-page__pagination {
-  display: flex;
-  min-height: 56px;
-  align-items: center;
-  justify-content: flex-end;
-  border-top: 1px solid var(--admin-border-soft);
-  padding: 12px;
 }
 
 .kb-list-page__table :deep(.el-table__cell) {

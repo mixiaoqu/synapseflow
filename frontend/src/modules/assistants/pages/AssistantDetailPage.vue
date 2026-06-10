@@ -784,10 +784,10 @@ watch(
   align-items: center;
   gap: 8px;
   margin-bottom: 18px;
-  border: 1px solid #dbeafe;
+  border: 1px solid var(--admin-primary-border);
   border-radius: 12px;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: var(--admin-primary-soft);
+  color: var(--admin-primary-hover);
   font-size: 13px;
   line-height: 1.6;
   padding: 12px 14px;

@@ -62,12 +62,15 @@ class ProjectRepository:
         self,
         *,
         team_id: int | None = None,
+        product_id: int | None = None,
         keyword: str | None = None,
         is_active: bool | None = None,
     ) -> int:
         stmt = select(func.count()).select_from(Project).join(Product, Product.id == Project.product_id)
         if team_id is not None:
             stmt = stmt.where(Project.team_id == team_id)
+        if product_id is not None:
+            stmt = stmt.where(Project.product_id == product_id)
         if keyword and keyword.strip():
             pattern = f"%{keyword.strip()}%"
             stmt = stmt.where(
@@ -87,6 +90,7 @@ class ProjectRepository:
         self,
         *,
         team_id: int | None = None,
+        product_id: int | None = None,
         keyword: str | None = None,
         is_active: bool | None = None,
         offset: int = 0,
@@ -103,6 +107,8 @@ class ProjectRepository:
         )
         if team_id is not None:
             stmt = stmt.where(Project.team_id == team_id)
+        if product_id is not None:
+            stmt = stmt.where(Project.product_id == product_id)
         if keyword and keyword.strip():
             pattern = f"%{keyword.strip()}%"
             stmt = stmt.where(
@@ -206,6 +212,7 @@ class ProjectRepository:
                     knowledge_base_id=source_app.knowledge_base_id,
                     category_id=source_app.category_id,
                     default_assistant_id=source_app.default_assistant_id,
+                    terminal_type=source_app.terminal_type,
                     is_active=source_app.is_active,
                 )
             )

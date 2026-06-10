@@ -163,7 +163,12 @@ export async function listContentRiskRules(
     params,
   });
 
-  return response.items.map(mapRule);
+  return {
+    items: response.items.map(mapRule),
+    total: response.total,
+    page: response.page,
+    pageSize: response.page_size,
+  };
 }
 
 export async function createContentRiskRule(
@@ -191,6 +196,13 @@ export async function updateContentRiskRule(
   });
 
   return mapRule(response);
+}
+
+export async function deleteContentRiskRule(libraryId: number, ruleId: number) {
+  await request<void>({
+    url: `/content-risk/libraries/${libraryId}/rules/${ruleId}`,
+    method: "DELETE",
+  });
 }
 
 export async function testContentRiskText(payload: ContentRiskTestPayload) {

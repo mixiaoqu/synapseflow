@@ -148,6 +148,7 @@ export function useEmbeddedAssistant() {
   const sessions = ref<SessionSummary[]>([]);
   const sessionsLoading = ref(false);
   const sessionsError = ref<string | null>(null);
+  const sessionsLoaded = ref(false);
   const deletingSessionId = ref<string | null>(null);
 
   let activeAbortController: AbortController | null = null;
@@ -176,10 +177,14 @@ export function useEmbeddedAssistant() {
     streamPhase.value = { nodeId: null, status: null };
   }
 
-  async function loadSessions() {
+  async function loadSessions(options: { force?: boolean } = {}) {
     if (!token.value) {
       sessions.value = [];
       sessionsError.value = null;
+      sessionsLoaded.value = false;
+      return;
+    }
+    if (sessionsLoading.value || (sessionsLoaded.value && !options.force)) {
       return;
     }
 
@@ -188,6 +193,7 @@ export function useEmbeddedAssistant() {
     try {
       const response = await embedApi.listSessions(token.value);
       sessions.value = response.map((session) => toSessionSummary(session));
+      sessionsLoaded.value = true;
     } catch (err) {
       sessionsError.value = formatEmbedError(err, "加载历史对话失败。");
     } finally {
@@ -205,6 +211,9 @@ export function useEmbeddedAssistant() {
     contextLabel.value = "";
     pageContext.value = null;
     pageConfig.value = null;
+    sessions.value = [];
+    sessionsError.value = null;
+    sessionsLoaded.value = false;
     isInitializing.value = true;
 
     if (!token.value) {
@@ -232,7 +241,6 @@ export function useEmbeddedAssistant() {
       suggestions.value = bootstrap.page_config
         ? [...bootstrap.page_config.suggested_questions]
         : [...bootstrap.suggested_prompts];
-      await loadSessions();
     } catch (err) {
       error.value = formatEmbedError(err, "初始化助手失败。");
     } finally {
@@ -422,7 +430,9 @@ export function useEmbeddedAssistant() {
       isTyping.value = false;
       streamStatus.value = null;
       streamPhase.value = { nodeId: null, status: null };
-      await loadSessions();
+      if (sessionsLoaded.value) {
+        await loadSessions({ force: true });
+      }
       await scrollToBottom();
     }
   }
@@ -461,6 +471,7 @@ export function useEmbeddedAssistant() {
     try {
       await embedApi.deleteSession(token.value, sessionId);
       sessions.value = sessions.value.filter((session) => session.id !== sessionId);
+      sessionsLoaded.value = true;
       if (currentSessionId.value === sessionId) {
         startNewConversation();
       }

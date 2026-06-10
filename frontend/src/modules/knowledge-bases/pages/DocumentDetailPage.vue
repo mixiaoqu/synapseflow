@@ -506,7 +506,7 @@ watch(
 
 .doc-preview__document-title .el-icon {
   flex-shrink: 0;
-  color: #2563eb;
+  color: var(--admin-primary);
 }
 
 .doc-preview__document-meta {
@@ -543,8 +543,8 @@ watch(
 
 .doc-preview__highlight {
   border-radius: 6px;
-  background: rgba(37, 99, 235, 0.14);
-  color: #1d4ed8;
+  background: var(--admin-primary-soft);
+  color: var(--admin-primary-hover);
   font-weight: 600;
 }
 
@@ -581,13 +581,13 @@ watch(
 }
 
 .chunk-card:hover {
-  border-color: #93c5fd;
+  border-color: var(--admin-primary-border);
   box-shadow: 0 10px 24px rgba(37, 99, 235, 0.08);
   transform: translateY(-1px);
 }
 
 .chunk-card.is-active {
-  border-color: #2563eb;
+  border-color: var(--admin-primary);
   box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.18);
 }
 
@@ -602,14 +602,14 @@ watch(
 }
 
 .chunk-card__index {
-  color: #2563eb;
+  color: var(--admin-primary);
   font-weight: 700;
 }
 
 .chunk-card__kind {
   border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: var(--admin-primary-soft);
+  color: var(--admin-primary-hover);
   padding: 2px 8px;
 }
 

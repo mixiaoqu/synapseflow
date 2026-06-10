@@ -11,7 +11,10 @@ import {
 } from "@element-plus/icons-vue";
 
 import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
+import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
+import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   addTeamMember,
@@ -37,7 +40,7 @@ import type { TeamRole, TeamSummary, TeamMember } from "@/shared/types/team";
 import type { AdminUser } from "@/shared/types/user";
 
 const AVATAR_PALETTES = [
-  "background:#eff6ff;color:#1d4ed8",
+  "background:var(--admin-primary-soft);color:var(--admin-primary-hover)",
   "background:#ecfdf5;color:#059669",
   "background:#f5f3ff;color:#7c3aed",
   "background:#fffbeb;color:#d97706",
@@ -542,7 +545,13 @@ function handleResetSearch() {
 }
 
 /** 切换每页条数（重置到第一页） */
-function handleSizeChange() {
+function handlePageChange(page: number) {
+  pagination.value.page = page;
+  void loadData();
+}
+
+function handleSizeChange(pageSize: number) {
+  pagination.value.pageSize = pageSize;
   pagination.value.page = 1;
   void loadData();
 }
@@ -635,14 +644,12 @@ watch(memberSearchKeyword, (value) => {
         </el-button>
       </AppEmpty>
 
-      <el-table
+      <AdminDataTable
         v-else
-        v-loading="loading"
         :data="teams"
-        row-key="id"
-        class="team-list-page__table"
-        height="calc(100vh - 260px)"
-        element-loading-text="正在更新团队列表"
+        :loading="loading"
+        table-class="team-list-page__table"
+        loading-text="正在更新团队列表"
         @selection-change="handleTeamSelectionChange"
       >
         <el-table-column type="selection" width="44" fixed="left" />
@@ -688,27 +695,23 @@ watch(memberSearchKeyword, (value) => {
             </el-button>
           </template>
         </el-table-column>
-      </el-table>
-      <div v-if="teams.length > 0" class="team-list-page__pagination">
-        <el-pagination
-          v-model:current-page="pagination.page"
-          v-model:page-size="pagination.pageSize"
-          :total="pagination.total"
-          :page-sizes="[10, 20, 50]"
-          layout="total, sizes, prev, pager, next"
-          @current-change="loadData"
-          @size-change="handleSizeChange"
-        />
-      </div>
+      </AdminDataTable>
+      <AdminPagination
+        v-if="teams.length > 0"
+        :current-page="pagination.page"
+        :page-size="pagination.pageSize"
+        :total="pagination.total"
+        @page-change="handlePageChange"
+        @page-size-change="handleSizeChange"
+      />
     </AdminListPanel>
 
     <!-- 新建/编辑团队弹窗 -->
-    <el-dialog
+    <AdminDialog
       v-model="teamDialogVisible"
       :title="editingTeam ? '编辑团队' : '新建团队'"
       width="560px"
-      class="team-list-page__dialog"
-      :close-on-click-modal="false"
+      :loading="teamFormLoading"
     >
       <el-form label-position="top" @submit.prevent="handleTeamSubmit">
         <el-form-item label="团队名称" required>
@@ -770,15 +773,14 @@ watch(memberSearchKeyword, (value) => {
           {{ editingTeam ? "保存修改" : "创建团队" }}
         </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
 
     <!-- 成员管理弹窗 -->
-    <el-dialog
+    <AdminDialog
       v-model="memberDialogVisible"
       :title="activeTeam ? `${activeTeam.name} · 成员管理` : '成员管理'"
       width="880px"
-      class="team-list-page__dialog"
-      :close-on-click-modal="false"
+      :loading="memberLoading"
       @close="closeMemberPanel"
     >
       <div v-if="!memberLoaded" class="team-list-page__member-panel__loading">
@@ -970,7 +972,7 @@ watch(memberSearchKeyword, (value) => {
       <template #footer>
         <el-button @click="memberDialogVisible = false">关闭</el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
   </section>
 </template>
 
@@ -991,14 +993,6 @@ watch(memberSearchKeyword, (value) => {
   color: #64748b;
   font-size: 13px;
   white-space: nowrap;
-}
-
-.team-list-page__pagination {
-  display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid #e2e8f0;
-  background: #ffffff;
-  padding: 12px;
 }
 
 .team-list-page__table {
@@ -1040,75 +1034,6 @@ watch(memberSearchKeyword, (value) => {
 .team-list-page__muted {
   color: #475569;
   font-size: 13px;
-}
-
-:deep(.team-list-page__dialog.el-dialog) {
-  overflow: hidden;
-  border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18);
-}
-
-:deep(.team-list-page__dialog .el-dialog__header) {
-  display: flex;
-  align-items: center;
-  min-height: 54px;
-  margin: 0;
-  border-bottom: 1px solid #e2e8f0;
-  background: #f8fafc;
-  padding: 0 18px;
-}
-
-:deep(.team-list-page__dialog .el-dialog__title) {
-  color: #0f172a;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-:deep(.team-list-page__dialog .el-dialog__headerbtn) {
-  top: 0;
-  right: 10px;
-  width: 36px;
-  height: 54px;
-}
-
-:deep(.team-list-page__dialog .el-dialog__body) {
-  padding: 18px;
-}
-
-:deep(.team-list-page__dialog .el-dialog__footer) {
-  border-top: 1px solid #e2e8f0;
-  background: #ffffff;
-  padding: 12px 18px;
-}
-
-:deep(.team-list-page__dialog .el-form-item) {
-  margin-bottom: 16px;
-}
-
-:deep(.team-list-page__dialog .el-form-item__label) {
-  color: #475569;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-:deep(.team-list-page__dialog .el-input__wrapper),
-:deep(.team-list-page__dialog .el-select__wrapper),
-:deep(.team-list-page__dialog .el-textarea__inner) {
-  border-radius: 7px;
-  box-shadow: 0 0 0 1px #cbd5e1 inset;
-}
-
-:deep(.team-list-page__dialog .el-input__wrapper:hover),
-:deep(.team-list-page__dialog .el-select__wrapper:hover),
-:deep(.team-list-page__dialog .el-textarea__inner:hover) {
-  box-shadow: 0 0 0 1px #94a3b8 inset;
-}
-
-:deep(.team-list-page__dialog .el-input__wrapper.is-focus),
-:deep(.team-list-page__dialog .el-select__wrapper.is-focused),
-:deep(.team-list-page__dialog .el-textarea__inner:focus) {
-  box-shadow: 0 0 0 1px var(--admin-primary) inset;
 }
 
 /* 成员管理弹窗 */

@@ -2,12 +2,16 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { CopyDocument, Delete, Plus, Search } from "@element-plus/icons-vue";
+import { CopyDocument, Delete, EditPen, Folder, Grid, MoreFilled, Plus, Search } from "@element-plus/icons-vue";
 
+import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
+import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
+import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
-import { createProduct, listProducts } from "@/shared/api/products";
-import { copyProject, createProject, deleteProject, listProjects } from "@/shared/api/projects";
+import { createProduct, deleteProduct, listProducts, updateProduct } from "@/shared/api/products";
+import { bulkActionProjects, copyProject, createProject, deleteProject, listProjects } from "@/shared/api/projects";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
@@ -20,11 +24,14 @@ const router = useRouter();
 const teamScopeStore = useTeamScopeStore();
 
 const keyword = ref("");
+const selectedProductId = ref<number | "all">("all");
 const projects = ref<ProjectSummary[]>([]);
 const products = ref<ProductSummary[]>([]);
 const loading = ref(false);
 const loadError = ref<unknown>(null);
 const hasLoadedData = ref(false);
+const selectedProjectIds = ref<number[]>([]);
+const batchActionLoading = ref<"" | "enable" | "disable" | "delete">("");
 const pagination = ref({
   page: 1,
   pageSize: 10,
@@ -34,6 +41,8 @@ const createProductDialogVisible = ref(false);
 const createDialogVisible = ref(false);
 const copyDialogVisible = ref(false);
 const creatingProduct = ref(false);
+const editingProduct = ref<ProductSummary | null>(null);
+const deletingProductId = ref<number | null>(null);
 const creating = ref(false);
 const copyingProjectId = ref<number | null>(null);
 const deletingProjectId = ref<number | null>(null);
@@ -64,12 +73,23 @@ const isForbidden = computed(() => Boolean(loadError.value) && isForbiddenError(
 const selectedTeamName = computed(() => teamScopeStore.selectedTeam?.name ?? "");
 const hasAvailableProducts = computed(() => products.value.length > 0);
 const hasActiveFilters = computed(() => keyword.value.trim().length > 0);
+const currentProduct = computed(() =>
+  selectedProductId.value === "all"
+    ? null
+    : products.value.find((item) => item.id === selectedProductId.value) ?? null,
+);
+const productDialogTitle = computed(() => (editingProduct.value ? "编辑产品" : "新建产品"));
+const productDialogSubmitText = computed(() => (editingProduct.value ? "保存产品" : "创建产品"));
+const productScopeTitle = computed(() => currentProduct.value?.name ?? "全部产品");
+const productScopeDescription = computed(() =>
+  currentProduct.value?.description?.trim() || "管理当前团队下的产品、项目和应用端接入配置。",
+);
 
 function resetCreateForm() {
   createForm.value = {
     name: "",
     code: "",
-    product_id: products.value[0]?.id ?? null,
+    product_id: currentProduct.value?.id ?? products.value[0]?.id ?? null,
     description: "",
     is_active: true,
   };
@@ -110,6 +130,7 @@ async function loadProjectList() {
     const [projectResult, productResult] = await Promise.all([
       listProjects({
         team_id: teamId,
+        product_id: selectedProductId.value === "all" ? undefined : selectedProductId.value,
         keyword: keyword.value.trim() || undefined,
         page: pagination.value.page,
         page_size: pagination.value.pageSize,
@@ -123,6 +144,7 @@ async function loadProjectList() {
     projects.value = projectResult.items;
     pagination.value.total = projectResult.total;
     products.value = productResult.items;
+    selectedProjectIds.value = [];
     hasLoadedData.value = true;
   } catch (error) {
     if (hasLoadedData.value) {
@@ -137,6 +159,7 @@ async function loadProjectList() {
 
 function handlePageChange(page: number) {
   pagination.value.page = page;
+  selectedProjectIds.value = [];
   void loadProjectList();
 }
 
@@ -147,7 +170,13 @@ function resetFilters() {
 
 function refreshProjectListFromFirstPage() {
   pagination.value.page = 1;
+  selectedProjectIds.value = [];
   void loadProjectList();
+}
+
+function selectProduct(productId: number | "all") {
+  selectedProductId.value = productId;
+  refreshProjectListFromFirstPage();
 }
 
 function openProjectApps(projectId: number) {
@@ -161,6 +190,18 @@ function openCreateProductDialog() {
   }
 
   resetCreateProductForm();
+  editingProduct.value = null;
+  createProductDialogVisible.value = true;
+}
+
+function openEditProductDialog(product: ProductSummary) {
+  editingProduct.value = product;
+  createProductForm.value = {
+    name: product.name,
+    code: product.code,
+    description: product.description ?? "",
+    is_active: product.is_active,
+  };
   createProductDialogVisible.value = true;
 }
 
@@ -198,7 +239,7 @@ function resetCopyProjectDialog() {
   };
 }
 
-async function submitCreateProduct() {
+async function submitProductForm() {
   if (creatingProduct.value) {
     return;
   }
@@ -223,16 +264,54 @@ async function submitCreateProduct() {
       description: createProductForm.value.description.trim() || null,
       is_active: createProductForm.value.is_active,
     };
-    const created = await createProduct(payload);
-    ElMessage.success(`已创建产品“${created.name}”。`);
+    const saved = editingProduct.value
+      ? await updateProduct(editingProduct.value.id, payload)
+      : await createProduct(payload);
+    ElMessage.success(`已${editingProduct.value ? "保存" : "创建"}产品“${saved.name}”。`);
     createProductDialogVisible.value = false;
+    selectedProductId.value = saved.id;
+    createForm.value.product_id = saved.id;
     await loadProjectList();
-    createForm.value.product_id = created.id;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "创建产品失败，请稍后重试。";
+    const message = error instanceof Error ? error.message : "产品保存失败，请稍后重试。";
     ElMessage.error(message);
   } finally {
     creatingProduct.value = false;
+  }
+}
+
+async function handleDeleteProduct(product: ProductSummary) {
+  if (deletingProductId.value) {
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确定删除产品“${product.name}”吗？删除后该产品下的项目和应用端配置将一起删除。`,
+      "删除产品",
+      {
+        type: "warning",
+        confirmButtonText: "删除产品",
+        cancelButtonText: "取消",
+      },
+    );
+  } catch {
+    return;
+  }
+
+  deletingProductId.value = product.id;
+  try {
+    await deleteProduct(product.id);
+    ElMessage.success(`已删除产品“${product.name}”。`);
+    if (selectedProductId.value === product.id) {
+      selectedProductId.value = "all";
+    }
+    await loadProjectList();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "删除产品失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    deletingProductId.value = null;
   }
 }
 
@@ -319,7 +398,7 @@ async function handleDeleteProject(project: ProjectSummary) {
 
   try {
     await ElMessageBox.confirm(
-      `确定删除项目“${project.name}”吗？删除后该项目下的发布渠道配置将一起删除。`,
+      `确定删除项目“${project.name}”吗？删除后该项目下的应用端配置将一起删除。`,
       "删除项目",
       {
         type: "warning",
@@ -335,6 +414,7 @@ async function handleDeleteProject(project: ProjectSummary) {
   try {
     await deleteProject(project.id);
     ElMessage.success(`已删除项目“${project.name}”。`);
+    selectedProjectIds.value = selectedProjectIds.value.filter((item) => item !== project.id);
     if (projects.value.length === 1 && pagination.value.page > 1) {
       pagination.value.page -= 1;
     }
@@ -347,6 +427,54 @@ async function handleDeleteProject(project: ProjectSummary) {
   }
 }
 
+function handleSelectionChange(selection: ProjectSummary[]) {
+  selectedProjectIds.value = selection.map((item) => item.id);
+}
+
+async function handleBatchAction(action: "enable" | "disable" | "delete") {
+  if (selectedProjectIds.value.length === 0 || batchActionLoading.value) {
+    return;
+  }
+
+  const actionTextMap = {
+    enable: "批量启用",
+    disable: "批量停用",
+    delete: "批量删除",
+  };
+  const actionText = actionTextMap[action];
+
+  try {
+    await ElMessageBox.confirm(
+      action === "delete"
+        ? `确定删除已选中的 ${selectedProjectIds.value.length} 个项目吗？删除后项目下的应用端配置将一起删除。`
+        : `确定${actionText}已选中的 ${selectedProjectIds.value.length} 个项目吗？`,
+      action === "delete" ? "批量删除项目" : actionText,
+      {
+        type: action === "delete" ? "warning" : "info",
+        confirmButtonText: action === "delete" ? "删除" : "确定",
+        cancelButtonText: "取消",
+      },
+    );
+  } catch {
+    return;
+  }
+
+  batchActionLoading.value = action;
+  try {
+    const result = await bulkActionProjects(selectedProjectIds.value, action);
+    ElMessage.success(`${actionText}完成，影响 ${result.affected_count} 个项目。`);
+    if (action === "delete" && projects.value.length === selectedProjectIds.value.length && pagination.value.page > 1) {
+      pagination.value.page -= 1;
+    }
+    await loadProjectList();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : `${actionText}失败，请稍后重试。`;
+    ElMessage.error(message);
+  } finally {
+    batchActionLoading.value = "";
+  }
+}
+
 onMounted(() => {
   void loadProjectList();
 });
@@ -355,6 +483,8 @@ watch(
   () => teamScopeStore.selectedTeamId,
   () => {
     pagination.value.page = 1;
+    selectedProductId.value = "all";
+    selectedProjectIds.value = [];
     void loadProjectList();
   },
 );
@@ -392,61 +522,158 @@ watch(keyword, () => {
       :show-retry="false"
     />
 
-    <AdminListPanel v-else>
-      <AdminTableToolbar>
-        <template #left>
-          <el-input
-            v-model="keyword"
-            clearable
-            placeholder="搜索项目名称、编码或产品..."
-            class="project-list-page__search"
-            @keyup.enter="refreshProjectListFromFirstPage"
-            @clear="refreshProjectListFromFirstPage"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-          <el-button :loading="loading" type="primary" @click="refreshProjectListFromFirstPage">
-            搜索
-          </el-button>
-          <el-button :disabled="loading" @click="resetFilters">重置</el-button>
-        </template>
-
-        <template #right>
-          <el-button @click="openCreateProductDialog">
+    <div v-else class="project-list-page__workspace">
+      <aside class="project-list-page__product-sidebar">
+        <div class="project-list-page__product-header">
+          <span>产品</span>
+          <el-button link type="primary" @click="openCreateProductDialog">
             <el-icon><Plus /></el-icon>
-            新建产品
           </el-button>
+        </div>
+
+        <div
+          :class="[
+            'project-list-page__product-item',
+            'project-list-page__product-item--overview',
+            selectedProductId === 'all' ? 'project-list-page__product-item--active' : '',
+          ]"
+        >
+          <button type="button" class="project-list-page__product-main" @click="selectProduct('all')">
+            <el-icon><Grid /></el-icon>
+            <span>全部产品</span>
+          </button>
+        </div>
+
+        <div class="project-list-page__product-list">
+          <div
+            v-for="product in products"
+            :key="product.id"
+            :class="[
+              'project-list-page__product-item',
+              selectedProductId === product.id ? 'project-list-page__product-item--active' : '',
+              !product.is_active ? 'project-list-page__product-item--disabled' : '',
+            ]"
+          >
+            <button type="button" class="project-list-page__product-main" @click="selectProduct(product.id)">
+              <el-icon><Folder /></el-icon>
+              <span>{{ product.name }}</span>
+            </button>
+
+            <el-dropdown trigger="click" @click.stop>
+              <button
+                type="button"
+                class="project-list-page__product-more"
+                aria-label="产品更多操作"
+                @click.stop
+              >
+                <el-icon><MoreFilled /></el-icon>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="openEditProductDialog(product)">
+                    <el-icon><EditPen /></el-icon>
+                    编辑产品
+                  </el-dropdown-item>
+                  <el-dropdown-item
+                    divided
+                    :disabled="deletingProductId === product.id"
+                    @click="handleDeleteProduct(product)"
+                  >
+                    <el-icon><Delete /></el-icon>
+                    删除产品
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </div>
+      </aside>
+
+      <AdminListPanel class="project-list-page__main">
+        <div class="project-list-page__scope-header">
+          <div>
+            <h2>{{ productScopeTitle }}</h2>
+            <p>{{ productScopeDescription }}</p>
+          </div>
           <el-button type="primary" @click="openCreateProjectDialog">
             <el-icon><Plus /></el-icon>
             新建项目
           </el-button>
-        </template>
-      </AdminTableToolbar>
+        </div>
 
-      <AppEmpty
-        v-if="displayedProjects.length === 0"
-        v-loading="loading"
-        class="project-list-page__empty"
-        :title="hasActiveFilters ? '未找到相关项目' : '暂无项目'"
-        description="当前筛选条件下没有可管理的业务项目。"
-      >
-        <el-button v-if="hasActiveFilters" link type="primary" @click="resetFilters">清除筛选</el-button>
-        <template v-else>
-          <el-button @click="openCreateProductDialog">新建产品</el-button>
-          <el-button type="primary" @click="openCreateProjectDialog">新建项目</el-button>
-        </template>
-      </AppEmpty>
+        <AdminTableToolbar>
+          <template #left>
+            <el-input
+              v-model="keyword"
+              clearable
+              placeholder="搜索项目名称、编码或产品..."
+              class="project-list-page__search"
+              @keyup.enter="refreshProjectListFromFirstPage"
+              @clear="refreshProjectListFromFirstPage"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+            <el-button :loading="loading" type="primary" @click="refreshProjectListFromFirstPage">
+              搜索
+            </el-button>
+            <el-button :disabled="loading" @click="resetFilters">重置</el-button>
+          </template>
 
-      <el-table
-        v-else
-        v-loading="loading"
-        :data="displayedProjects"
-        row-key="id"
-        class="project-list-page__table"
-        element-loading-text="正在更新项目列表"
-      >
+          <template #right>
+            <AdminBulkActions :selected-count="selectedProjectIds.length">
+              <el-button
+                link
+                type="primary"
+                :loading="batchActionLoading === 'enable'"
+                :disabled="Boolean(batchActionLoading)"
+                @click="handleBatchAction('enable')"
+              >
+                启用
+              </el-button>
+              <el-button
+                link
+                type="primary"
+                :loading="batchActionLoading === 'disable'"
+                :disabled="Boolean(batchActionLoading)"
+                @click="handleBatchAction('disable')"
+              >
+                停用
+              </el-button>
+              <el-button
+                link
+                type="danger"
+                :loading="batchActionLoading === 'delete'"
+                :disabled="Boolean(batchActionLoading)"
+                @click="handleBatchAction('delete')"
+              >
+                删除
+              </el-button>
+            </AdminBulkActions>
+          </template>
+        </AdminTableToolbar>
+
+        <AppEmpty
+          v-if="displayedProjects.length === 0"
+          v-loading="loading"
+          class="project-list-page__empty"
+          :title="hasActiveFilters ? '未找到相关项目' : '暂无项目'"
+          description="当前筛选条件下没有可管理的业务项目。"
+        >
+          <el-button v-if="hasActiveFilters" link type="primary" @click="resetFilters">清除筛选</el-button>
+          <el-button v-else type="primary" @click="openCreateProjectDialog">新建项目</el-button>
+        </AppEmpty>
+
+        <AdminDataTable
+          v-else
+          :data="displayedProjects"
+          :loading="loading"
+          table-class="project-list-page__table"
+          loading-text="正在更新项目列表"
+          @selection-change="handleSelectionChange"
+        >
+        <el-table-column type="selection" width="44" fixed="left" />
         <el-table-column label="项目名称" min-width="280">
           <template #default="{ row }">
             <div class="project-list-page__name-cell">
@@ -470,7 +697,7 @@ watch(keyword, () => {
             <span>{{ row.team_name || "未知团队" }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="发布渠道" width="120" align="center">
+        <el-table-column label="应用端" width="120" align="center">
           <template #default="{ row }">
             <span>{{ row.app_count }}</span>
           </template>
@@ -498,8 +725,8 @@ watch(keyword, () => {
               <el-icon><CopyDocument /></el-icon>
               <span>复制项目</span>
             </el-button>
-            <el-button type="primary" plain size="small" @click="openProjectApps(row.id)">
-              管理发布渠道
+            <el-button type="primary" link  size="small" @click="openProjectApps(row.id)">
+              管理应用端
             </el-button>
             <el-button
               link
@@ -512,29 +739,30 @@ watch(keyword, () => {
             </el-button>
           </template>
         </el-table-column>
-      </el-table>
-      <div v-if="pagination.total > pagination.pageSize" class="project-list-page__pagination">
-        <el-pagination
-          background
-          layout="prev, pager, next"
+        </AdminDataTable>
+        <AdminPagination
+          v-if="pagination.total > pagination.pageSize"
           :current-page="pagination.page"
           :page-size="pagination.pageSize"
           :total="pagination.total"
-          @current-change="handlePageChange"
+          layout="prev, pager, next"
+          @page-change="handlePageChange"
+          @page-size-change="() => undefined"
         />
-      </div>
-    </AdminListPanel>
+      </AdminListPanel>
+    </div>
 
-    <el-dialog
+    <AdminDialog
       v-model="createProductDialogVisible"
-      title="新建产品"
-      width="520px"
-      destroy-on-close
+      :title="productDialogTitle"
+      :loading="creatingProduct"
     >
-      <el-form label-position="top" @submit.prevent="submitCreateProduct">
-        <el-form-item label="所属团队">
-          <el-input :model-value="selectedTeamName || '未选择团队'" disabled />
-        </el-form-item>
+      <div class="admin-dialog__scope">
+        <span class="admin-dialog__scope-label">所属团队</span>
+        <span class="admin-dialog__scope-value">{{ selectedTeamName || "未选择团队" }}</span>
+      </div>
+
+      <el-form class="admin-dialog__form" label-position="top" @submit.prevent="submitProductForm">
         <el-form-item label="产品名称" required>
           <el-input
             v-model="createProductForm.name"
@@ -572,25 +800,24 @@ watch(keyword, () => {
       </el-form>
 
       <template #footer>
-        <div class="project-list-page__dialog-footer">
-          <el-button @click="createProductDialogVisible = false">取消</el-button>
-          <el-button type="primary" :loading="creatingProduct" @click="submitCreateProduct">
-            创建产品
-          </el-button>
-        </div>
+        <el-button @click="createProductDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="creatingProduct" @click="submitProductForm">
+          {{ productDialogSubmitText }}
+        </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
 
-    <el-dialog
+    <AdminDialog
       v-model="createDialogVisible"
       title="新建项目"
-      width="520px"
-      destroy-on-close
+      :loading="creating"
     >
-      <el-form label-position="top" @submit.prevent="submitCreateProject">
-        <el-form-item label="所属团队">
-          <el-input :model-value="selectedTeamName || '未选择团队'" disabled />
-        </el-form-item>
+      <div class="admin-dialog__scope">
+        <span class="admin-dialog__scope-label">所属团队</span>
+        <span class="admin-dialog__scope-value">{{ selectedTeamName || "未选择团队" }}</span>
+      </div>
+
+      <el-form class="admin-dialog__form" label-position="top" @submit.prevent="submitCreateProject">
         <el-form-item label="所属产品" required>
           <el-select
             v-model="createForm.product_id"
@@ -642,29 +869,41 @@ watch(keyword, () => {
       </el-form>
 
       <template #footer>
-        <div class="project-list-page__dialog-footer">
-          <el-button @click="createDialogVisible = false">取消</el-button>
-          <el-button type="primary" :loading="creating" @click="submitCreateProject">
-            创建并进入配置
-          </el-button>
-        </div>
+        <el-button @click="createDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="submitCreateProject">
+          创建并进入配置
+        </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
 
-    <el-dialog
+    <AdminDialog
       v-model="copyDialogVisible"
-      :title="copyingProject ? `复制项目：${copyingProject.name}` : '复制项目'"
-      width="520px"
-      destroy-on-close
+      title="复制项目"
+      :loading="copyingProjectId === copyingProject?.id"
       @closed="resetCopyProjectDialog"
     >
-      <el-form label-position="top" @submit.prevent="submitCopyProject">
-        <el-form-item label="所属团队">
-          <el-input :model-value="copyingProject?.team_name || selectedTeamName || '未选择团队'" disabled />
-        </el-form-item>
-        <el-form-item label="所属产品">
-          <el-input :model-value="copyingProject?.product_name || '未设置'" disabled />
-        </el-form-item>
+      <div class="admin-dialog__scope admin-dialog__scope--stacked">
+        <div>
+          <span class="admin-dialog__scope-label">来源项目</span>
+          <span class="admin-dialog__scope-value">{{ copyingProject?.name || "-" }}</span>
+        </div>
+        <div>
+          <span class="admin-dialog__scope-label">所属产品</span>
+          <span class="admin-dialog__scope-value">{{ copyingProject?.product_name || "未设置" }}</span>
+        </div>
+        <div>
+          <span class="admin-dialog__scope-label">所属团队</span>
+          <span class="admin-dialog__scope-value">
+            {{ copyingProject?.team_name || selectedTeamName || "未选择团队" }}
+          </span>
+        </div>
+      </div>
+
+      <p class="admin-dialog__hint">
+        复制后会保留原项目下所有应用端的知识库、限定分类和默认助手配置。
+      </p>
+
+      <el-form class="admin-dialog__form" label-position="top" @submit.prevent="submitCopyProject">
         <el-form-item label="项目名称" required>
           <el-input
             v-model="copyForm.name"
@@ -690,23 +929,18 @@ watch(keyword, () => {
           />
         </el-form-item>
       </el-form>
-      <p class="project-list-page__copy-hint">
-        复制后会保留原项目下所有发布渠道的知识库、限定分类和默认助手配置。
-      </p>
 
       <template #footer>
-        <div class="project-list-page__dialog-footer">
-          <el-button @click="copyDialogVisible = false">取消</el-button>
-          <el-button
-            type="primary"
-            :loading="copyingProjectId === copyingProject?.id"
-            @click="submitCopyProject"
-          >
-            复制并进入配置
-          </el-button>
-        </div>
+        <el-button @click="copyDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="copyingProjectId === copyingProject?.id"
+          @click="submitCopyProject"
+        >
+          复制并进入配置
+        </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
   </section>
 </template>
 
@@ -717,33 +951,146 @@ watch(keyword, () => {
   gap: 12px;
 }
 
+.project-list-page__workspace {
+  display: grid;
+  min-height: calc(100vh - 160px);
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.project-list-page__product-sidebar {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  border: 1px solid var(--admin-border-soft);
+  background: var(--admin-surface);
+}
+
+.project-list-page__product-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--admin-border-soft);
+  padding: 12px 14px;
+}
+
+.project-list-page__product-header span {
+  color: var(--admin-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.project-list-page__product-list {
+  display: grid;
+  gap: 4px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.project-list-page__product-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  width: 100%;
+  border-radius: var(--admin-radius-sm);
+  background: transparent;
+  color: var(--admin-text-muted);
+}
+
+.project-list-page__product-item:hover,
+.project-list-page__product-item--active {
+  background: var(--admin-primary-soft);
+  color: var(--admin-primary-hover);
+}
+
+.project-list-page__product-item--disabled {
+  opacity: 0.62;
+}
+
+.project-list-page__product-item--overview {
+  grid-template-columns: minmax(0, 1fr);
+  margin: 6px;
+}
+
+.project-list-page__product-main {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 9px 2px 9px 10px;
+  text-align: left;
+}
+
+.project-list-page__product-main span {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-list-page__product-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--admin-radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.project-list-page__product-item:hover .project-list-page__product-more,
+.project-list-page__product-item--active .project-list-page__product-more,
+.project-list-page__product-more:focus-visible {
+  opacity: 1;
+}
+
+.project-list-page__product-more:hover {
+  background: color-mix(in srgb, var(--admin-primary-soft) 70%, var(--admin-surface));
+  color: var(--admin-primary-hover);
+}
+
+.project-list-page__main {
+  min-width: 0;
+}
+
+.project-list-page__scope-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--admin-border-soft);
+  padding: 16px;
+}
+
+.project-list-page__scope-header h2 {
+  margin: 0;
+  color: var(--admin-text);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.project-list-page__scope-header p {
+  margin: 4px 0 0;
+  color: var(--admin-text-muted);
+  font-size: 13px;
+}
+
 .project-list-page__search {
   width: 280px;
 }
 
 .project-list-page__dialog-field {
   width: 100%;
-}
-
-.project-list-page__dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
-
-.project-list-page__pagination {
-  display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid #e2e8f0;
-  background: #ffffff;
-  padding: 12px;
-}
-
-.project-list-page__copy-hint {
-  margin: 0;
-  color: #64748b;
-  font-size: 13px;
-  line-height: 1.6;
 }
 
 .project-list-page__table {
@@ -777,6 +1124,14 @@ watch(keyword, () => {
 }
 
 @media (max-width: 960px) {
+  .project-list-page__workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .project-list-page__product-sidebar {
+    min-height: auto;
+  }
+
   .project-list-page__search {
     width: 100%;
   }

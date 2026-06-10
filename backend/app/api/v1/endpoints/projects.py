@@ -14,6 +14,10 @@ from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.project import (
     EmbedSessionResponse,
+    ProjectBulkActionRequest,
+    ProjectBulkActionResponse,
+    ProjectAppBulkActionRequest,
+    ProjectAppBulkActionResponse,
     ProjectAppCreate,
     ProjectAppListResponse,
     ProjectAppResponse,
@@ -38,6 +42,7 @@ def _resolve_embed_frontend_base_url(request: Request) -> str:
 @router.get("", response_model=ProjectListResponse)
 async def list_projects(
     team_id: int | None = Query(None),
+    product_id: int | None = Query(None),
     keyword: str | None = Query(None),
     status: str = Query("all", pattern="^(all|active|inactive)$"),
     page: int = Query(1, ge=1),
@@ -47,6 +52,7 @@ async def list_projects(
 ):
     return await ProjectService(db, user_id=current_user.id, user=current_user).list_projects_page(
         team_id=team_id,
+        product_id=product_id,
         keyword=keyword,
         status=status,
         page=page,
@@ -74,6 +80,15 @@ async def copy_project(
         project_id=project_id,
         payload=body,
     )
+
+
+@router.post("/bulk-action", response_model=ProjectBulkActionResponse)
+async def bulk_action_projects(
+    body: ProjectBulkActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await ProjectService(db, user_id=current_user.id, user=current_user).bulk_action_projects(body)
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -132,6 +147,19 @@ async def create_project_app(
     current_user: User = Depends(require_content_roles),
 ):
     return await ProjectService(db, user_id=current_user.id, user=current_user).create_app(
+        project_id=project_id,
+        payload=body,
+    )
+
+
+@router.post("/{project_id}/apps/bulk-action", response_model=ProjectAppBulkActionResponse)
+async def bulk_action_project_apps(
+    project_id: int,
+    body: ProjectAppBulkActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await ProjectService(db, user_id=current_user.id, user=current_user).bulk_action_apps(
         project_id=project_id,
         payload=body,
     )

@@ -19,6 +19,17 @@
   --admin-primary-border: #bfdbfe;
   --admin-primary-hover: #1d4ed8;
   --admin-primary-strong: #1e40af;
+  --el-color-primary: var(--admin-primary);
+  --el-color-primary-light-1: var(--admin-primary);
+  --el-color-primary-light-2: var(--admin-primary-light);
+  --el-color-primary-light-3: var(--admin-primary-light);
+  --el-color-primary-light-4: var(--admin-primary-light);
+  --el-color-primary-light-5: var(--admin-primary-light);
+  --el-color-primary-light-6: var(--admin-primary-border);
+  --el-color-primary-light-7: var(--admin-primary-border);
+  --el-color-primary-light-8: var(--admin-primary-soft);
+  --el-color-primary-light-9: var(--admin-primary-soft);
+  --el-color-primary-dark-2: var(--admin-primary-hover);
   --admin-danger: #dc2626;
   --admin-danger-hover: #b91c1c;
   --admin-warning: #b45309;

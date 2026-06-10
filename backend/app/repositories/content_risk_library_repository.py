@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ContentRiskLibrary, ContentRiskRule
@@ -61,17 +61,18 @@ class ContentRiskLibraryRepository:
         await self.db.delete(library)
         await self.db.commit()
 
-    async def list_rules(
+    def _build_rule_filters(
         self,
         library_id: int,
         *,
         keyword: str | None = None,
         enabled: bool | None = None,
-    ) -> list[ContentRiskRule]:
-        stmt = select(ContentRiskRule).where(ContentRiskRule.library_id == library_id)
+        scene: str | None = None,
+    ):
+        filters = [ContentRiskRule.library_id == library_id]
         if keyword:
             needle = f"%{keyword.strip()}%"
-            stmt = stmt.where(
+            filters.append(
                 or_(
                     ContentRiskRule.name.ilike(needle),
                     ContentRiskRule.description.ilike(needle),
@@ -80,10 +81,44 @@ class ContentRiskLibraryRepository:
                 )
             )
         if enabled is not None:
-            stmt = stmt.where(ContentRiskRule.enabled.is_(enabled))
-        result = await self.db.execute(
-            stmt.order_by(ContentRiskRule.created_at.desc(), ContentRiskRule.id.desc())
+            filters.append(ContentRiskRule.enabled.is_(enabled))
+        if scene == "query":
+            filters.append(ContentRiskRule.applies_to_query.is_(True))
+        elif scene == "answer":
+            filters.append(ContentRiskRule.applies_to_answer.is_(True))
+        return filters
+
+    async def count_rules(
+        self,
+        library_id: int,
+        *,
+        keyword: str | None = None,
+        enabled: bool | None = None,
+        scene: str | None = None,
+    ) -> int:
+        stmt = select(func.count()).select_from(ContentRiskRule).where(
+            *self._build_rule_filters(library_id, keyword=keyword, enabled=enabled, scene=scene)
         )
+        return int((await self.db.execute(stmt)).scalar() or 0)
+
+    async def list_rules(
+        self,
+        library_id: int,
+        *,
+        keyword: str | None = None,
+        enabled: bool | None = None,
+        scene: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[ContentRiskRule]:
+        stmt = (
+            select(ContentRiskRule)
+            .where(*self._build_rule_filters(library_id, keyword=keyword, enabled=enabled, scene=scene))
+            .order_by(ContentRiskRule.created_at.desc(), ContentRiskRule.id.desc())
+        )
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def list_enabled_rules_for_scene(self, scene: str) -> list[ContentRiskRule]:
@@ -144,3 +179,13 @@ class ContentRiskLibraryRepository:
         await self.db.commit()
         await self.db.refresh(rule)
         return rule
+
+    async def delete_rule(
+        self,
+        *,
+        library: ContentRiskLibrary,
+        rule: ContentRiskRule,
+    ) -> None:
+        library.rule_count = max(0, library.rule_count - 1)
+        await self.db.delete(rule)
+        await self.db.commit()

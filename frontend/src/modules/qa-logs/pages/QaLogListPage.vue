@@ -3,7 +3,9 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { Filter, Refresh, Search } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 
+import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import { listQaLogs } from "@/modules/qa-logs/api";
 import type { QaLogSummary } from "@/modules/qa-logs/types";
@@ -477,10 +479,9 @@ watch(
         </template>
       </AdminTableToolbar>
 
-      <el-table
-        v-loading="loading"
+      <AdminDataTable
         :data="logs"
-        row-key="id"
+        :loading="loading"
       >
         <el-table-column
           label="时间"
@@ -605,22 +606,17 @@ watch(
             暂无问答日志
           </div>
         </template>
-      </el-table>
+      </AdminDataTable>
 
-      <div
+      <AdminPagination
         v-if="pagination.total > 0"
-        class="qa-log-list-page__pagination"
-      >
-        <el-pagination
-          v-model:current-page="pagination.page"
-          v-model:page-size="pagination.pageSize"
-          :total="pagination.total"
-          :page-sizes="[10, 20, 50, 100]"
-          layout="total, sizes, prev, pager, next"
-          @current-change="handlePageChange"
-          @size-change="handlePageSizeChange"
-        />
-      </div>
+        :current-page="pagination.page"
+        :page-size="pagination.pageSize"
+        :total="pagination.total"
+        :page-sizes="[10, 20, 50, 100]"
+        @page-change="handlePageChange"
+        @page-size-change="handlePageSizeChange"
+      />
     </AdminListPanel>
 
     <el-drawer
@@ -787,14 +783,6 @@ watch(
   color: var(--admin-text-subtle);
   font-size: 13px;
   text-align: center;
-}
-
-.qa-log-list-page__pagination {
-  display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid var(--admin-border-soft);
-  background: var(--admin-surface);
-  padding: 12px;
 }
 
 .qa-log-list-page__advanced {

@@ -1,5 +1,9 @@
 import { request } from "@/shared/api/http";
 import type {
+  ProjectBulkAction,
+  ProjectBulkActionResponse,
+  ProjectAppBulkAction,
+  ProjectAppBulkActionResponse,
   ProjectAppEmbedPreviewResponse,
   ProjectAppListResponse,
   ProjectAppSummary,
@@ -12,6 +16,7 @@ import type {
 
 export function listProjects(params: {
   team_id?: number;
+  product_id?: number;
   keyword?: string;
   status?: "all" | "active" | "inactive";
   page: number;
@@ -51,6 +56,17 @@ export function deleteProject(projectId: number) {
   return request<{ message: string }>({
     url: `/projects/${projectId}`,
     method: "DELETE",
+  });
+}
+
+export function bulkActionProjects(projectIds: number[], action: ProjectBulkAction) {
+  return request<ProjectBulkActionResponse>({
+    url: "/projects/bulk-action",
+    method: "POST",
+    data: {
+      project_ids: projectIds,
+      action,
+    },
   });
 }
 
@@ -98,6 +114,21 @@ export function deleteProjectApp(projectId: number, appId: number) {
   return request<{ message: string }>({
     url: `/projects/${projectId}/apps/${appId}`,
     method: "DELETE",
+  });
+}
+
+export function bulkActionProjectApps(
+  projectId: number,
+  appIds: number[],
+  action: ProjectAppBulkAction,
+) {
+  return request<ProjectAppBulkActionResponse>({
+    url: `/projects/${projectId}/apps/bulk-action`,
+    method: "POST",
+    data: {
+      app_ids: appIds,
+      action,
+    },
   });
 }
 

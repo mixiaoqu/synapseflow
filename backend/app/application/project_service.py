@@ -10,6 +10,10 @@ from app.core.authz import PERMISSION_MANAGE_PROJECT, PERMISSION_VIEW_TEAM_RESOU
 from app.db.models import AssistantProfile, DocumentCategory, Product, Project, ProjectApp
 from app.db.models import User
 from app.models.schemas.project import (
+    ProjectBulkActionRequest,
+    ProjectBulkActionResponse,
+    ProjectAppBulkActionRequest,
+    ProjectAppBulkActionResponse,
     ProjectAppCreate,
     ProjectAppListResponse,
     ProjectAppResponse,
@@ -92,6 +96,7 @@ class ProjectService:
             category_name=record.category_name,
             default_assistant_id=app.default_assistant_id,
             default_assistant_name=record.assistant_name,
+            terminal_type=app.terminal_type,
             is_active=app.is_active,
             created_at=app.created_at,
             updated_at=app.updated_at,
@@ -143,10 +148,12 @@ class ProjectService:
         self,
         *,
         project: Project,
-        knowledge_base_id: int,
-    ) -> int:
+        knowledge_base_id: int | None,
+    ) -> int | None:
         from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
+        if knowledge_base_id is None:
+            return None
         kb_repository = KnowledgeBaseRepository(self.db, user_id=self.user_id, user=self.user)
         resolved_knowledge_base_id = int(knowledge_base_id)
         knowledge_base = await kb_repository.get_by_id(resolved_knowledge_base_id)
@@ -167,11 +174,16 @@ class ProjectService:
     async def _validate_category_id(
         self,
         *,
-        knowledge_base_id: int,
+        knowledge_base_id: int | None,
         category_id: int | None,
     ) -> int | None:
         if category_id is None:
             return None
+        if knowledge_base_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Document category requires a selected knowledge base",
+            )
         category = await self.db.get(DocumentCategory, int(category_id))
         if category is None:
             raise HTTPException(status_code=404, detail="Document category not found")
@@ -192,6 +204,7 @@ class ProjectService:
         self,
         *,
         team_id: int | None = None,
+        product_id: int | None = None,
         keyword: str | None = None,
         status: str = "all",
         page: int = 1,
@@ -204,11 +217,13 @@ class ProjectService:
         is_active = self._resolve_status_filter(status)
         total = await self.repository.count_projects(
             team_id=team_id,
+            product_id=product_id,
             keyword=keyword,
             is_active=is_active,
         )
         records = await self.repository.list_projects_page(
             team_id=team_id,
+            product_id=product_id,
             keyword=keyword,
             is_active=is_active,
             offset=(normalized_page - 1) * normalized_page_size,
@@ -282,6 +297,40 @@ class ProjectService:
             raise HTTPException(status_code=404, detail="Project not found")
         await self._ensure_team_permission(project.team_id, PERMISSION_MANAGE_PROJECT)
         await self.repository.delete_project(project)
+
+    async def bulk_action_projects(
+        self,
+        payload: ProjectBulkActionRequest,
+    ) -> ProjectBulkActionResponse:
+        normalized_ids = [project_id for project_id in payload.project_ids if project_id > 0]
+        if not normalized_ids:
+            raise HTTPException(status_code=400, detail="Project ids are required")
+        project_ids = list(dict.fromkeys(normalized_ids))
+
+        projects: list[Project] = []
+        for project_id in project_ids:
+            project = await self.repository.get_project(project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="One or more projects were not found")
+            await self._ensure_team_permission(project.team_id, PERMISSION_MANAGE_PROJECT)
+            projects.append(project)
+
+        if payload.action == "enable":
+            for project in projects:
+                project.is_active = True
+        elif payload.action == "disable":
+            for project in projects:
+                project.is_active = False
+        else:
+            for project in projects:
+                await self.db.delete(project)
+
+        await self.db.commit()
+        return ProjectBulkActionResponse(
+            action=payload.action,
+            affected_ids=project_ids,
+            affected_count=len(project_ids),
+        )
 
     async def copy_project(self, *, project_id: int, payload: ProjectCopy) -> ProjectResponse:
         project = await self.repository.get_project(project_id)
@@ -413,6 +462,7 @@ class ProjectService:
             knowledge_base_id=normalized_knowledge_base_id,
             category_id=normalized_category_id,
             default_assistant_id=payload.default_assistant_id,
+            terminal_type=payload.terminal_type,
             is_active=payload.is_active,
         )
         await self.repository.create_app(app)
@@ -461,6 +511,7 @@ class ProjectService:
         app.knowledge_base_id = normalized_knowledge_base_id
         app.category_id = normalized_category_id
         app.default_assistant_id = payload.default_assistant_id
+        app.terminal_type = payload.terminal_type
         app.is_active = payload.is_active
         await self.repository.update_app(app)
         record = await self.repository.get_app_record(app.id)
@@ -477,3 +528,43 @@ class ProjectService:
         if app is None or app.project_id != project_id:
             raise HTTPException(status_code=404, detail="Project app not found")
         await self.repository.delete_app(app)
+
+    async def bulk_action_apps(
+        self,
+        *,
+        project_id: int,
+        payload: ProjectAppBulkActionRequest,
+    ) -> ProjectAppBulkActionResponse:
+        project = await self.repository.get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        await self._ensure_team_permission(project.team_id, PERMISSION_MANAGE_PROJECT)
+
+        normalized_ids = [app_id for app_id in payload.app_ids if app_id > 0]
+        if not normalized_ids:
+            raise HTTPException(status_code=400, detail="Project app ids are required")
+        app_ids = list(dict.fromkeys(normalized_ids))
+
+        apps: list[ProjectApp] = []
+        for app_id in app_ids:
+            app = await self.repository.get_app(app_id)
+            if app is None or app.project_id != project_id:
+                raise HTTPException(status_code=404, detail="One or more project apps were not found")
+            apps.append(app)
+
+        if payload.action == "enable":
+            for app in apps:
+                app.is_active = True
+        elif payload.action == "disable":
+            for app in apps:
+                app.is_active = False
+        else:
+            for app in apps:
+                await self.db.delete(app)
+
+        await self.db.commit()
+        return ProjectAppBulkActionResponse(
+            action=payload.action,
+            affected_ids=app_ids,
+            affected_count=len(app_ids),
+        )

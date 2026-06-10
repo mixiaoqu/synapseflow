@@ -16,3 +16,18 @@ export function createProduct(payload: ProductUpsertPayload) {
     data: payload,
   });
 }
+
+export function updateProduct(productId: number, payload: ProductUpsertPayload) {
+  return request<ProductSummary>({
+    url: `/products/${productId}`,
+    method: "PUT",
+    data: payload,
+  });
+}
+
+export function deleteProduct(productId: number) {
+  return request<{ message: string }>({
+    url: `/products/${productId}`,
+    method: "DELETE",
+  });
+}

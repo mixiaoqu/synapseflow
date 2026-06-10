@@ -4,7 +4,10 @@ import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { Plus, RefreshRight, Search, VideoPlay } from "@element-plus/icons-vue";
 
+import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
+import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   bulkRunEvalDatasets,
@@ -228,7 +231,7 @@ async function submitDatasetForm() {
     return;
   }
   if (!form.knowledgeBaseId) {
-    ElMessage.warning("请选择绑定的评测知识库。");
+    ElMessage.warning("请选择绑定的评测基准库。");
     return;
   }
 
@@ -353,7 +356,7 @@ onMounted(() => {
       <AppEmpty
         v-else-if="!loading && rows.length === 0"
         :title="isSearchActive ? '没有匹配的评测集' : '还没有评测集'"
-        :description="isSearchActive ? '换个关键词再试一次。' : '创建评测集并绑定评测知识库后，就可以维护用例。'"
+        :description="isSearchActive ? '换个关键词再试一次。' : '创建评测集并绑定评测基准库后，就可以维护用例。'"
       >
         <template #actions>
           <el-button
@@ -374,11 +377,10 @@ onMounted(() => {
       </AppEmpty>
 
       <template v-else>
-        <el-table
+        <AdminDataTable
           ref="datasetTableRef"
           :data="rows"
-          class="evaluation-list-page__table"
-          row-key="id"
+          table-class="evaluation-list-page__table"
           @selection-change="handleDatasetSelectionChange"
         >
           <el-table-column
@@ -404,7 +406,7 @@ onMounted(() => {
             </template>
           </el-table-column>
           <el-table-column
-            label="评测知识库"
+            label="评测基准库"
             min-width="180"
           >
             <template #default="{ row }">
@@ -458,35 +460,31 @@ onMounted(() => {
               </el-button>
             </template>
           </el-table-column>
-        </el-table>
+        </AdminDataTable>
 
-        <div class="evaluation-list-page__pagination">
-          <el-pagination
-            background
-            layout="total, sizes, prev, pager, next"
-            :current-page="pagination.page"
-            :page-size="pagination.pageSize"
-            :page-sizes="[10, 20, 50]"
-            :total="pagination.total"
-            @current-change="handlePageChange"
-            @size-change="handlePageSizeChange"
-          />
-        </div>
+        <AdminPagination
+          :current-page="pagination.page"
+          :page-size="pagination.pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="pagination.total"
+          @page-change="handlePageChange"
+          @page-size-change="handlePageSizeChange"
+        />
       </template>
     </AdminListPanel>
 
-    <el-dialog
+    <AdminDialog
       v-model="dialogVisible"
       :title="dialogTitle"
       width="560px"
+      :loading="dialogLoading"
       :close-on-click-modal="!dialogLoading"
-      :close-on-press-escape="!dialogLoading"
     >
       <el-alert
         class="evaluation-list-page__dialog-alert"
         :title="dialogMode === 'create'
-          ? '评测集创建后会与所选评测知识库强绑定。用例中的期望文档和切片 ID 都基于这个知识库生成。'
-          : '这里只修改评测集名称、说明、版本和状态；绑定的评测知识库保持不变。'"
+          ? '评测集创建后会绑定一个评测基准库。用例中的期望文档和切片 ID 都基于该基准库生成。'
+          : '这里只修改评测集名称、说明、版本和状态；绑定的评测基准库保持不变。'"
         type="info"
         show-icon
         :closable="false"
@@ -517,7 +515,7 @@ onMounted(() => {
           />
         </el-form-item>
         <el-form-item
-          label="绑定评测知识库"
+          label="绑定评测基准库"
           required
         >
           <el-select
@@ -525,7 +523,7 @@ onMounted(() => {
             class="w-full"
             filterable
             :disabled="dialogMode === 'edit'"
-            placeholder="请选择评测知识库"
+            placeholder="请选择评测基准库"
           >
             <el-option
               v-for="item in evaluationKnowledgeBases"
@@ -582,7 +580,7 @@ onMounted(() => {
           {{ dialogActionText }}
         </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
   </div>
 </template>
 
@@ -634,15 +632,6 @@ onMounted(() => {
   color: var(--admin-text-secondary);
   font-size: 13px;
   font-weight: 600;
-}
-
-.evaluation-list-page__pagination {
-  display: flex;
-  min-height: 56px;
-  align-items: center;
-  justify-content: flex-end;
-  border-top: 1px solid var(--admin-border-soft);
-  padding: 12px;
 }
 
 .evaluation-list-page__table :deep(.el-table__cell) {

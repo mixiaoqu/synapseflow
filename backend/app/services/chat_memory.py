@@ -219,6 +219,7 @@ class DatabaseChatMemoryStore:
             session.category_id = category_id
             session.updated_at = utc_now()
 
+            messages_to_add = 0
             if normalized_user:
                 db.add(
                     ChatMessage(
@@ -227,6 +228,7 @@ class DatabaseChatMemoryStore:
                         content=normalized_user,
                     )
                 )
+                messages_to_add += 1
             if normalized_assistant:
                 db.add(
                     ChatMessage(
@@ -236,6 +238,15 @@ class DatabaseChatMemoryStore:
                         metadata_=assistant_metadata or None,
                     )
                 )
+                messages_to_add += 1
+
+            session.message_count = int(session.message_count or 0) + messages_to_add
+            title_source = normalized_user or normalized_assistant
+            if title_source and not str(session.title or "").strip():
+                session.title = self._truncate(title_source, 60)
+            latest_preview = normalized_assistant or normalized_user
+            if latest_preview:
+                session.preview = self._truncate(latest_preview, 120)
 
             await db.commit()
 
@@ -274,17 +285,13 @@ class DatabaseChatMemoryStore:
             if not sessions:
                 return []
 
-            messages_by_session = await self._load_messages_for_sessions(
-                db,
-                [session.id for session, _, _, _ in sessions],
-            )
             return [
                 self._build_session_summary(
                     session,
                     kb_name=knowledge_base_name,
                     assistant_name=assistant_name,
                     category_name=category_name,
-                    messages=messages_by_session.get(session.id, []),
+                    messages=None,
                 )
                 for session, knowledge_base_name, assistant_name, category_name in sessions
             ]
@@ -470,12 +477,12 @@ class DatabaseChatMemoryStore:
         kb_name: str | None,
         assistant_name: str | None,
         category_name: str | None,
-        messages: list[dict[str, Any]],
+        messages: list[dict[str, Any]] | None,
     ) -> ChatSessionSummaryRecord:
-        title = "New conversation"
-        preview: str | None = None
+        title = str(session.title or "").strip() or "New conversation"
+        preview = str(session.preview or "").strip() or None
 
-        for message in messages:
+        for message in messages or []:
             content = str(message.get("content") or "").strip()
             if not content:
                 continue
@@ -508,7 +515,7 @@ class DatabaseChatMemoryStore:
             assistant_name=assistant_name,
             category_id=session.category_id,
             category_name=category_name,
-            message_count=len(messages),
+            message_count=session.message_count or len(messages or []),
             created_at=session.created_at,
             updated_at=session.updated_at,
         )

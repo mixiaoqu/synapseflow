@@ -16,6 +16,7 @@ const emit = defineEmits<{
   select: [sessionId: string];
   create: [];
   delete: [sessionId: string];
+  load: [];
   refresh: [];
 }>();
 
@@ -38,7 +39,7 @@ const filteredSessions = computed(() => {
 
 watch(visible, (value) => {
   if (value) {
-    emit("refresh");
+    emit("load");
   } else {
     keyword.value = "";
   }

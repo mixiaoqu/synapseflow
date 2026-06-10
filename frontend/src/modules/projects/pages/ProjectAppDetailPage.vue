@@ -21,12 +21,19 @@ import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import type { AssistantSummary } from "@/shared/types/assistant";
 import type { DocumentCategoryTreeNode } from "@/shared/types/document-category";
 import type { KnowledgeBaseListItem } from "@/shared/types/knowledge-base";
-import type { ProjectAppSummary, ProjectAppUpsertPayload, ProjectSummary } from "@/shared/types/project";
+import {
+  PROJECT_APP_TERMINAL_TYPE_LABELS,
+  type ProjectAppSummary,
+  type ProjectAppTerminalType,
+  type ProjectAppUpsertPayload,
+  type ProjectSummary,
+} from "@/shared/types/project";
 
 interface ProjectAppFormState {
   code: string;
   name: string;
   description: string;
+  terminal_type: ProjectAppTerminalType;
   default_assistant_id: number | null;
   knowledge_base_id: number | null;
   category_id: number | null;
@@ -38,6 +45,7 @@ function createDefaultForm(): ProjectAppFormState {
     code: "",
     name: "",
     description: "",
+    terminal_type: "web",
     default_assistant_id: null,
     knowledge_base_id: null,
     category_id: null,
@@ -72,6 +80,7 @@ const previewLoading = ref(false);
 const previewEmbedUrl = ref("");
 const codeEditedManually = ref(false);
 const categoryPath = ref<number[]>([]);
+const rightPanelTab = ref<"sandbox" | "integration">("sandbox");
 
 const form = reactive(createDefaultForm());
 const categoryCascaderProps = {
@@ -93,19 +102,54 @@ const appId = computed(() => {
 });
 
 const isCreateMode = computed(() => route.name === "project-app-create");
-const pageTitle = computed(() => (isCreateMode.value ? "新建发布渠道" : "编辑发布渠道"));
+const pageTitle = computed(() => (isCreateMode.value ? "新建应用端" : "编辑应用端"));
 
 const selectedKnowledgeBase = computed(() =>
   knowledgeBases.value.find((item) => item.id === form.knowledge_base_id) ?? null,
+);
+
+const selectedAssistant = computed(() =>
+  assistants.value.find((item) => item.id === form.default_assistant_id) ?? null,
+);
+
+const terminalTypeLabel = computed(
+  () => PROJECT_APP_TERMINAL_TYPE_LABELS[form.terminal_type] ?? "其他",
 );
 
 const canGeneratePreview = computed(
   () => Boolean(projectId.value && appId.value && form.is_active),
 );
 
+const embedSessionRequestCode = computed(() => {
+  const productCode = project.value?.product_code || "product_code";
+  const projectCode = project.value?.code || "project_code";
+  const appCode = currentApp.value?.code || form.code.trim() || "app_code";
+
+  return `POST https://你的LangChain RAG知识库域名/api/v1/embed/sessions
+Authorization: Bearer <平台管理员提供的服务端接入 Token>
+Content-Type: application/json
+
+{
+  "product_code": "${productCode}",
+  "project_code": "${projectCode}",
+  "app_code": "${appCode}",
+  "external_user_id": "YOUR_USER_ID",
+  "external_user_name": "张三"
+}`;
+});
+
+const businessIframeCode = `<iframe
+  src="{embed_url}"
+  width="100%"
+  height="720"
+  frameborder="0"
+  allow="microphone"
+></iframe>`;
+
 const rules: FormRules<ProjectAppFormState> = {
   name: [{ required: true, message: "请输入应用名称", trigger: "blur" }],
   code: [{ required: true, message: "请输入应用编码", trigger: "blur" }],
+  terminal_type: [{ required: true, message: "请选择应用终端", trigger: "change" }],
   default_assistant_id: [{ required: true, message: "请选择默认助手", trigger: "change" }],
 };
 
@@ -114,6 +158,7 @@ function applyApp(app: ProjectAppSummary) {
   form.code = app.code;
   form.name = app.name;
   form.description = app.description ?? "";
+  form.terminal_type = app.terminal_type || "web";
   form.default_assistant_id = app.default_assistant_id;
   form.knowledge_base_id = app.knowledge_base_id;
   form.category_id = app.category_id;
@@ -128,7 +173,8 @@ function buildPayload(): ProjectAppUpsertPayload {
     code: form.code.trim(),
     name: form.name.trim(),
     description: form.description.trim() || null,
-    knowledge_base_id: Number(form.knowledge_base_id),
+    terminal_type: form.terminal_type,
+    knowledge_base_id: form.knowledge_base_id ? Number(form.knowledge_base_id) : null,
     category_id: selectedCategoryId,
     default_assistant_id: form.default_assistant_id,
     is_active: form.is_active,
@@ -232,7 +278,7 @@ async function loadPage() {
     }
 
     if (!appId.value) {
-      throw new Error("发布渠道标识无效。");
+      throw new Error("应用端标识无效。");
     }
 
     const appResponse = await getProjectApp(projectId.value, appId.value);
@@ -283,22 +329,22 @@ async function handleSave() {
   try {
     if (isCreateMode.value) {
       const created = await createProjectApp(projectId.value, payload);
-      ElMessage.success(`已创建发布渠道“${created.name}”。`);
+      ElMessage.success(`已创建应用端“${created.name}”。`);
       void router.replace(`/projects/${projectId.value}/apps/${created.id}`);
       return;
     }
 
     if (!appId.value) {
-      ElMessage.error("缺少发布渠道标识，无法保存。");
+      ElMessage.error("缺少应用端标识，无法保存。");
       return;
     }
 
     const updated = await updateProjectApp(projectId.value, appId.value, payload);
     currentApp.value = updated;
     applyApp(updated);
-    ElMessage.success(`已保存发布渠道“${updated.name}”。`);
+    ElMessage.success(`已保存应用端“${updated.name}”。`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "保存发布渠道失败，请稍后重试。";
+    const message = error instanceof Error ? error.message : "保存应用端失败，请稍后重试。";
     ElMessage.error(message);
   } finally {
     saveLoading.value = false;
@@ -328,9 +374,13 @@ async function copyPreviewUrl() {
     return;
   }
 
+  await copyText(previewEmbedUrl.value, "预览链接已复制。");
+}
+
+async function copyText(value: string, successMessage: string) {
   try {
-    await navigator.clipboard.writeText(previewEmbedUrl.value);
-    ElMessage.success("预览链接已复制。");
+    await navigator.clipboard.writeText(value);
+    ElMessage.success(successMessage);
   } catch {
     ElMessage.error("复制失败，请手动复制。");
   }
@@ -367,14 +417,14 @@ watch(
   <section class="project-app-detail-page">
     <AppLoading
       v-if="pageLoading"
-      title="发布渠道详情加载中"
+      title="应用端详情加载中"
       description="正在获取项目、助手、知识库及当前应用配置，请稍候。"
       :blocks="4"
     />
 
     <AppError
       v-else-if="pageError"
-      title="发布渠道详情加载失败"
+      title="应用端详情加载失败"
       description="暂时无法获取当前应用与发布配置，请稍后重试。"
       :error="pageError"
       @retry="loadPage"
@@ -425,6 +475,18 @@ watch(
                   />
                 </el-form-item>
               </el-col>
+              <el-col :span="12">
+                <el-form-item label="应用终端" prop="terminal_type">
+                  <el-select v-model="form.terminal_type" class="project-app-detail-page__full">
+                    <el-option
+                      v-for="(label, value) in PROJECT_APP_TERMINAL_TYPE_LABELS"
+                      :key="value"
+                      :label="label"
+                      :value="value"
+                    />
+                  </el-select>
+                </el-form-item>
+              </el-col>
               <el-col :span="24">
                 <el-form-item label="应用说明">
                   <el-input
@@ -433,7 +495,7 @@ watch(
                     :rows="3"
                     maxlength="500"
                     show-word-limit
-                    placeholder="描述该发布渠道的接入场景和目标用户"
+                    placeholder="描述该应用端的接入场景和目标用户"
                   />
                 </el-form-item>
               </el-col>
@@ -499,7 +561,7 @@ watch(
                 </el-option>
               </el-select>
               <div class="project-app-detail-page__hint">
-                当前发布渠道绑定一个知识库。
+                当前应用端绑定一个知识库。
               </div>
             </el-form-item>
 
@@ -543,42 +605,94 @@ watch(
         <div class="project-app-panel__header">
           <div class="project-app-detail-page__preview-header-main">
             <el-icon><Link /></el-icon>
-            <span>嵌入预览</span>
+            <span>测试与接入</span>
           </div>
-          <div v-if="previewEmbedUrl" class="project-app-detail-page__preview-header-actions">
-            <el-button size="small" @click="copyPreviewUrl">复制预览链接</el-button>
-            <el-button size="small" type="primary" plain @click="generatePreview">
-              刷新预览链接
-            </el-button>
+          <el-segmented
+            v-model="rightPanelTab"
+            :options="[
+              { label: '沙盒测试', value: 'sandbox' },
+              { label: '接入代码', value: 'integration' },
+            ]"
+          />
+        </div>
+
+        <div v-if="rightPanelTab === 'sandbox'" class="project-app-detail-page__preview-body">
+          <div class="project-app-detail-page__sandbox-summary">
+            <div>
+              <span>当前终端</span>
+              <strong>{{ terminalTypeLabel }} / {{ form.code || "未设置编码" }}</strong>
+            </div>
+            <div>
+              <span>默认助手</span>
+              <strong>{{ selectedAssistant?.name || "未绑定" }}</strong>
+            </div>
+          </div>
+
+          <div class="project-app-detail-page__preview-frame">
+            <template v-if="previewEmbedUrl">
+              <iframe
+                :src="previewEmbedUrl"
+                title="嵌入预览"
+                class="project-app-detail-page__iframe"
+              />
+            </template>
+
+            <template v-else-if="canGeneratePreview">
+              <AppEmpty
+                title="尚未生成沙盒测试链接"
+                description="当前应用端已保存并启用，可以生成一个短时有效的嵌入预览链接进行问答验证。"
+              >
+                <el-button type="primary" :loading="previewLoading" @click="generatePreview">
+                  生成沙盒测试
+                </el-button>
+              </AppEmpty>
+            </template>
+
+            <template v-else>
+              <AppEmpty
+                title="当前无法测试"
+                description="请先保存当前应用端；若应用端处于停用状态，也无法生成嵌入预览。"
+              />
+            </template>
           </div>
         </div>
 
-        <div class="project-app-detail-page__preview-body">
-          <template v-if="previewEmbedUrl">
-            <iframe
-              :src="previewEmbedUrl"
-              title="嵌入预览"
-              class="project-app-detail-page__iframe"
-            />
-          </template>
+        <div v-else class="project-app-detail-page__integration-body">
+          <div class="project-app-detail-page__integration-callout">
+            <strong>接入方式</strong>
+            <span>业务后端先换取短期 embed_url，再交给业务前端通过 iframe 渲染。服务端接入 Token 由平台管理员提供，不能暴露给浏览器。</span>
+          </div>
 
-          <template v-else-if="canGeneratePreview">
-            <AppEmpty
-              title="尚未生成嵌入预览"
-              description="当前应用已保存并启用，可以生成一个短时有效的嵌入预览链接。"
-            >
-              <el-button type="primary" :loading="previewLoading" @click="generatePreview">
-                生成嵌入预览
+          <section class="project-app-detail-page__code-section">
+            <div class="project-app-detail-page__code-heading">
+              <div>
+                <h3>1. 业务后端获取 embed_url</h3>
+                <p>使用产品编码、项目编码和应用端编码创建嵌入会话。</p>
+              </div>
+              <el-button size="small" @click="copyText(embedSessionRequestCode, '服务端请求示例已复制。')">
+                复制代码
               </el-button>
-            </AppEmpty>
-          </template>
+            </div>
+            <pre>{{ embedSessionRequestCode }}</pre>
+          </section>
 
-          <template v-else>
-            <AppEmpty
-              title="当前无法生成预览"
-              description="请先保存当前应用；若应用处于停用状态，也无法生成嵌入预览。"
-            />
-          </template>
+          <section class="project-app-detail-page__code-section">
+            <div class="project-app-detail-page__code-heading">
+              <div>
+                <h3>2. 业务前端嵌入 iframe</h3>
+                <p>将接口返回的 embed_url 填入 iframe src。</p>
+              </div>
+              <el-button size="small" @click="copyText(businessIframeCode, 'Iframe 代码已复制。')">
+                复制代码
+              </el-button>
+            </div>
+            <pre>{{ businessIframeCode }}</pre>
+          </section>
+
+          <div v-if="previewEmbedUrl" class="project-app-detail-page__preview-link-row">
+            <span>当前预览链接已生成</span>
+            <el-button size="small" type="primary" plain @click="copyPreviewUrl">复制预览链接</el-button>
+          </div>
         </div>
       </section>
     </section>
@@ -792,6 +906,48 @@ watch(
   padding: 16px;
 }
 
+.project-app-detail-page__sandbox-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.project-app-detail-page__sandbox-summary div,
+.project-app-detail-page__preview-link-row {
+  border: 1px solid var(--admin-border-soft);
+  border-radius: var(--admin-radius-md);
+  background: var(--admin-surface);
+  padding: 10px 12px;
+}
+
+.project-app-detail-page__sandbox-summary div {
+  display: grid;
+  gap: 4px;
+}
+
+.project-app-detail-page__sandbox-summary span,
+.project-app-detail-page__preview-link-row span {
+  color: var(--admin-text-muted);
+  font-size: 12px;
+}
+
+.project-app-detail-page__sandbox-summary strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--admin-text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-app-detail-page__preview-frame {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .project-app-detail-page__iframe {
   flex: 1;
   width: 100%;
@@ -799,6 +955,82 @@ watch(
   border: 1px solid var(--admin-border);
   border-radius: var(--admin-radius-lg);
   background: var(--admin-surface);
+}
+
+.project-app-detail-page__integration-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.project-app-detail-page__integration-callout {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--admin-border-soft);
+  border-radius: var(--admin-radius-md);
+  background: var(--admin-surface);
+  padding: 12px 14px;
+}
+
+.project-app-detail-page__integration-callout strong {
+  color: var(--admin-text);
+  font-size: 13px;
+}
+
+.project-app-detail-page__integration-callout span {
+  color: var(--admin-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.project-app-detail-page__code-section {
+  display: grid;
+  gap: 10px;
+}
+
+.project-app-detail-page__code-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-app-detail-page__code-heading h3 {
+  margin: 0;
+  color: var(--admin-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.project-app-detail-page__code-heading p {
+  margin: 4px 0 0;
+  color: var(--admin-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.project-app-detail-page__code-section pre {
+  margin: 0;
+  overflow: auto;
+  border-radius: var(--admin-radius-md);
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.project-app-detail-page__preview-link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 @media (max-width: 1280px) {
@@ -820,6 +1052,14 @@ watch(
   .project-app-panel__header,
   .project-app-panel__heading,
   .project-app-panel__actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .project-app-detail-page__sandbox-summary,
+  .project-app-detail-page__code-heading,
+  .project-app-detail-page__preview-link-row {
+    grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
   }

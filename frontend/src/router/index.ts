@@ -82,7 +82,7 @@ const router = createRouter({
           component: ProjectListPage,
           meta: {
             title: "应用与发布",
-            description: "项目列表与发布渠道管理入口。",
+            description: "产品、项目与应用端接入管理入口。",
           },
         },
         {
@@ -91,8 +91,8 @@ const router = createRouter({
           component: ProjectAppListPage,
           meta: {
             parent: "projects",
-            title: "发布渠道",
-            description: "当前项目下的应用与发布配置列表。",
+            title: "应用端",
+            description: "当前项目下的应用端与接入配置。",
           },
         },
         {
@@ -101,8 +101,8 @@ const router = createRouter({
           component: ProjectAppDetailPage,
           meta: {
             parent: "project-apps",
-            title: "新建发布渠道",
-            description: "新建项目下的应用与发布配置。",
+            title: "新建应用端",
+            description: "新建项目下的应用端与接入配置。",
           },
         },
         {
@@ -111,8 +111,8 @@ const router = createRouter({
           component: ProjectAppDetailPage,
           meta: {
             parent: "project-apps",
-            title: "发布渠道详情",
-            description: "编辑项目下的应用与发布配置。",
+            title: "应用端详情",
+            description: "编辑项目下的应用端与接入配置。",
           },
         },
         {
@@ -197,8 +197,8 @@ const router = createRouter({
           component: EvaluationKnowledgeBasePage,
           meta: {
             parent: "evaluations",
-            title: "评测知识库",
-            description: "管理评测专用知识库。",
+            title: "评测基准库",
+            description: "管理评测集绑定的稳定数据来源。",
           },
         },
         {

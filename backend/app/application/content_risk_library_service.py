@@ -11,6 +11,7 @@ from app.models.schemas.content_risk_library import (
     ContentRiskLibraryResponse,
     ContentRiskLibraryUpdate,
     ContentRiskRuleCreate,
+    ContentRiskRuleListResponse,
     ContentRiskRuleResponse,
     ContentRiskRuleUpdate,
 )
@@ -113,13 +114,36 @@ class ContentRiskLibraryService:
         db: AsyncSession,
         keyword: str | None = None,
         enabled: bool | None = None,
-    ) -> list[ContentRiskRuleResponse]:
+        scene: str | None = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> ContentRiskRuleListResponse:
         repository = ContentRiskLibraryRepository(db)
         library = await repository.get_library(library_id)
         if library is None:
             raise HTTPException(status_code=404, detail="Rule library not found")
-        rows = await repository.list_rules(library_id, keyword=keyword, enabled=enabled)
-        return [ContentRiskRuleResponse.model_validate(row) for row in rows]
+        normalized_page = max(1, int(page))
+        normalized_page_size = min(100, max(1, int(page_size)))
+        total = await repository.count_rules(
+            library_id,
+            keyword=keyword,
+            enabled=enabled,
+            scene=scene,
+        )
+        rows = await repository.list_rules(
+            library_id,
+            keyword=keyword,
+            enabled=enabled,
+            scene=scene,
+            offset=(normalized_page - 1) * normalized_page_size,
+            limit=normalized_page_size,
+        )
+        return ContentRiskRuleListResponse(
+            items=[ContentRiskRuleResponse.model_validate(row) for row in rows],
+            total=total,
+            page=normalized_page,
+            page_size=normalized_page_size,
+        )
 
     async def create_rule(
         self,
@@ -188,3 +212,21 @@ class ContentRiskLibraryService:
         rule.updated_by_user_id = actor_user_id
         row = await repository.update_rule(rule)
         return ContentRiskRuleResponse.model_validate(row)
+
+    async def delete_rule(
+        self,
+        library_id: int,
+        rule_id: int,
+        *,
+        db: AsyncSession,
+        actor_user_id: int | None,
+    ) -> None:
+        del actor_user_id
+        repository = ContentRiskLibraryRepository(db)
+        library = await repository.get_library(library_id)
+        if library is None:
+            raise HTTPException(status_code=404, detail="Rule library not found")
+        rule = await repository.get_rule(library_id, rule_id)
+        if rule is None:
+            raise HTTPException(status_code=404, detail="Rule not found")
+        await repository.delete_rule(library=library, rule=rule)

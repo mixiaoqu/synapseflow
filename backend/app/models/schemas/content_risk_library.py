@@ -97,6 +97,9 @@ class ContentRiskRuleListResponse(BaseModel):
     """Content-risk rule list response."""
 
     items: list[ContentRiskRuleResponse] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 10
 
 
 class ContentRiskTestRequest(BaseModel):

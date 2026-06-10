@@ -36,12 +36,21 @@ export interface ProjectCopyPayload {
   is_active: boolean;
 }
 
+export type ProjectBulkAction = "enable" | "disable" | "delete";
+
+export interface ProjectBulkActionResponse {
+  action: ProjectBulkAction;
+  affected_ids: number[];
+  affected_count: number;
+}
+
 export interface ProjectAppSummary {
   id: number;
   project_id: number;
   code: string;
   name: string;
   description: string | null;
+  terminal_type: ProjectAppTerminalType;
   knowledge_base_id: number | null;
   knowledge_base_name: string | null;
   category_id: number | null;
@@ -64,10 +73,30 @@ export interface ProjectAppUpsertPayload {
   code: string;
   name: string;
   description?: string | null;
-  knowledge_base_id: number;
+  terminal_type: ProjectAppTerminalType;
+  knowledge_base_id?: number | null;
   category_id?: number | null;
   default_assistant_id?: number | null;
   is_active: boolean;
+}
+
+export type ProjectAppTerminalType = "web" | "h5" | "mini_program" | "admin" | "api" | "other";
+
+export const PROJECT_APP_TERMINAL_TYPE_LABELS: Record<ProjectAppTerminalType, string> = {
+  web: "Web",
+  h5: "H5",
+  mini_program: "小程序",
+  admin: "管理后台",
+  api: "API",
+  other: "其他",
+};
+
+export type ProjectAppBulkAction = "enable" | "disable" | "delete";
+
+export interface ProjectAppBulkActionResponse {
+  action: ProjectAppBulkAction;
+  affected_ids: number[];
+  affected_count: number;
 }
 
 export interface ProjectAppEmbedPreviewResponse {

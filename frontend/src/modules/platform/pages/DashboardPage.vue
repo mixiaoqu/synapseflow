@@ -206,7 +206,7 @@ watch(
         <article class="dashboard-metric">
           <span class="dashboard-metric__label">接入应用</span>
           <strong>{{ projectAppTotal }}</strong>
-          <span>{{ projectTotal }} 个项目下的发布渠道</span>
+          <span>{{ projectTotal }} 个项目下的应用端</span>
         </article>
       </section>
 
@@ -303,7 +303,7 @@ watch(
           <div class="dashboard-panel__header">
             <div>
               <h2>接入应用</h2>
-              <p>进入项目发布渠道，检查嵌入入口、默认助手和绑定知识库。</p>
+              <p>进入项目应用端，检查嵌入入口、默认助手和绑定知识库。</p>
             </div>
             <el-button
               link
@@ -333,7 +333,7 @@ watch(
                 <strong>{{ item.name }}</strong>
                 <span>{{ item.product_name || "未设置产品" }} · {{ item.code }}</span>
               </span>
-              <span class="dashboard-list-row__badge">{{ item.app_count }} 个发布渠道</span>
+              <span class="dashboard-list-row__badge">{{ item.app_count }} 个应用端</span>
             </button>
           </template>
         </article>

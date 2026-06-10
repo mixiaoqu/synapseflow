@@ -15,7 +15,10 @@ import {
   VideoPlay,
 } from "@element-plus/icons-vue";
 
+import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
+import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   bulkDeleteEvalCases,
@@ -821,10 +824,9 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
             </template>
           </AdminTableToolbar>
 
-          <el-table
+          <AdminDataTable
             :data="pagedRows"
-            class="evaluation-dataset-detail-page__table"
-            row-key="id"
+            table-class="evaluation-dataset-detail-page__table"
             @selection-change="handleCaseSelectionChange"
           >
             <el-table-column
@@ -951,19 +953,15 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
                 </el-button>
               </template>
             </el-table-column>
-          </el-table>
-          <div class="evaluation-dataset-detail-page__pagination">
-            <el-pagination
-              background
-              layout="total, sizes, prev, pager, next"
-              :current-page="casePagination.page"
-              :page-size="casePagination.pageSize"
-              :page-sizes="[10, 20, 50]"
-              :total="filteredRows.length"
-              @current-change="handleCasePageChange"
-              @size-change="handleCasePageSizeChange"
-            />
-          </div>
+          </AdminDataTable>
+          <AdminPagination
+            :current-page="casePagination.page"
+            :page-size="casePagination.pageSize"
+            :page-sizes="[10, 20, 50]"
+            :total="filteredRows.length"
+            @page-change="handleCasePageChange"
+            @page-size-change="handleCasePageSizeChange"
+          />
         </template>
       </template>
     </AdminListPanel>
@@ -1112,12 +1110,12 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
       </template>
     </el-drawer>
 
-    <el-dialog
+    <AdminDialog
       v-model="runDialogVisible"
       title="运行评测"
       width="520px"
+      :loading="runLoading"
       :close-on-click-modal="!runLoading"
-      :close-on-press-escape="!runLoading"
     >
       <el-alert
         class="evaluation-dataset-detail-page__run-alert"
@@ -1154,9 +1152,9 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
           开始运行
         </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
 
-    <el-dialog
+    <AdminDialog
       v-model="chunkDialogVisible"
       title="选择知识库依据"
       width="860px"
@@ -1288,7 +1286,7 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
           确认选择
         </el-button>
       </template>
-    </el-dialog>
+    </AdminDialog>
   </div>
 </template>
 
@@ -1372,7 +1370,7 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
 }
 
 .evaluation-dataset-detail-page__qa-badge.is-answer {
-  background: #2563eb;
+  background: var(--admin-primary);
   color: #fff;
 }
 
@@ -1840,15 +1838,6 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
   color: var(--admin-text-secondary);
   font-size: 12px;
   line-height: 1.5;
-}
-
-.evaluation-dataset-detail-page__pagination {
-  display: flex;
-  min-height: 56px;
-  align-items: center;
-  justify-content: flex-end;
-  border-top: 1px solid var(--admin-border-soft);
-  padding: 12px 0 0;
 }
 
 .evaluation-dataset-detail-page__run-alert {

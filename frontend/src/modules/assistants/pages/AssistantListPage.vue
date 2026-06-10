@@ -9,7 +9,10 @@ import {
   Search,
 } from "@element-plus/icons-vue";
 
+import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
+import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   bulkActionAssistants,
@@ -21,7 +24,7 @@ import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import { useTeamScopeStore } from "@/stores/team-scope";
-import { isForbiddenError } from "@/shared/utils/error";
+import { AppRequestError, isForbiddenError } from "@/shared/utils/error";
 import type { AssistantSummary } from "@/shared/types/assistant";
 
 type StatusFilter = "all" | "active" | "inactive";
@@ -40,6 +43,8 @@ const loadError = ref<unknown>(null);
 const hasLoadedData = ref(false);
 const statusLoadingId = ref<number | null>(null);
 const deletingAssistantId = ref<number | null>(null);
+const selectedAssistantIds = ref<number[]>([]);
+const batchActionLoading = ref<"" | "enable" | "disable" | "delete">("");
 const pagination = ref({
   page: 1,
   pageSize: 10,
@@ -90,6 +95,7 @@ async function loadAssistantList() {
     pagination.value.total = result.total;
     pagination.value.page = result.page;
     pagination.value.pageSize = result.page_size;
+    selectedAssistantIds.value = [];
     hasLoadedData.value = true;
   } catch (error) {
     if (hasLoadedData.value) {
@@ -109,11 +115,13 @@ function resetFilters() {
 
 function handlePageChange(page: number) {
   pagination.value.page = page;
+  selectedAssistantIds.value = [];
   void loadAssistantList();
 }
 
 function refreshAssistantListFromFirstPage() {
   pagination.value.page = 1;
+  selectedAssistantIds.value = [];
   void loadAssistantList();
 }
 
@@ -131,7 +139,7 @@ function openAssistantDetail(assistantId: number) {
 }
 
 async function handleToggleStatus(assistant: AssistantSummary, nextValue: boolean | string | number) {
-  if (statusLoadingId.value) {
+  if (statusLoadingId.value || batchActionLoading.value) {
     return;
   }
 
@@ -187,6 +195,83 @@ async function handleDeleteAssistant(assistant: AssistantSummary) {
     ElMessage.error(message);
   } finally {
     deletingAssistantId.value = null;
+  }
+}
+
+function handleSelectionChange(selection: AssistantSummary[]) {
+  selectedAssistantIds.value = selection.map((item) => item.id);
+}
+
+async function executeBatchAction(action: "enable" | "disable" | "delete", options?: { force?: boolean }) {
+  const result = await bulkActionAssistants(selectedAssistantIds.value, action, options);
+  return result.affected_count;
+}
+
+async function handleBatchAction(action: "enable" | "disable" | "delete") {
+  if (selectedAssistantIds.value.length === 0 || batchActionLoading.value) {
+    return;
+  }
+
+  const actionTextMap = {
+    enable: "批量启用",
+    disable: "批量停用",
+    delete: "批量删除",
+  };
+  const actionText = actionTextMap[action];
+
+  try {
+    await ElMessageBox.confirm(
+      action === "delete"
+        ? `确定删除已选中的 ${selectedAssistantIds.value.length} 个助手吗？删除后不可恢复。`
+        : `确定${actionText}已选中的 ${selectedAssistantIds.value.length} 个助手吗？`,
+      action === "delete" ? "批量删除助手" : actionText,
+      {
+        type: action === "delete" ? "warning" : "info",
+        confirmButtonText: action === "delete" ? "删除" : "确定",
+        cancelButtonText: "取消",
+      },
+    );
+  } catch {
+    return;
+  }
+
+  batchActionLoading.value = action;
+  try {
+    const affectedCount = await executeBatchAction(action);
+    ElMessage.success(`${actionText}完成，影响 ${affectedCount} 个助手。`);
+    await loadAssistantList();
+  } catch (error) {
+    if (action === "delete" && error instanceof AppRequestError && error.status === 409) {
+      try {
+        await ElMessageBox.confirm(
+          `${error.message}。是否强制删除已选助手？`,
+          "强制删除助手",
+          {
+            type: "warning",
+            confirmButtonText: "强制删除",
+            cancelButtonText: "取消",
+          },
+        );
+      } catch {
+        return;
+      }
+
+      try {
+        const affectedCount = await executeBatchAction(action, { force: true });
+        ElMessage.success(`批量删除完成，影响 ${affectedCount} 个助手。`);
+        await loadAssistantList();
+        return;
+      } catch (forceError) {
+        const message = forceError instanceof Error ? forceError.message : "强制删除助手失败，请稍后重试。";
+        ElMessage.error(message);
+        return;
+      }
+    }
+
+    const message = error instanceof Error ? error.message : `${actionText}失败，请稍后重试。`;
+    ElMessage.error(message);
+  } finally {
+    batchActionLoading.value = "";
   }
 }
 
@@ -276,6 +361,35 @@ watch(
         </template>
 
         <template #right>
+          <AdminBulkActions :selected-count="selectedAssistantIds.length">
+            <el-button
+              link
+              type="primary"
+              :loading="batchActionLoading === 'enable'"
+              :disabled="Boolean(batchActionLoading)"
+              @click="handleBatchAction('enable')"
+            >
+              启用
+            </el-button>
+            <el-button
+              link
+              type="primary"
+              :loading="batchActionLoading === 'disable'"
+              :disabled="Boolean(batchActionLoading)"
+              @click="handleBatchAction('disable')"
+            >
+              停用
+            </el-button>
+            <el-button
+              link
+              type="danger"
+              :loading="batchActionLoading === 'delete'"
+              :disabled="Boolean(batchActionLoading)"
+              @click="handleBatchAction('delete')"
+            >
+              删除
+            </el-button>
+          </AdminBulkActions>
           <span class="assistant-list-page__scope">当前团队：{{ selectedTeamName }}</span>
           <el-button type="primary" @click="openCreateAssistant">
             <el-icon><Plus /></el-icon>
@@ -300,14 +414,15 @@ watch(
         </el-button>
       </AppEmpty>
 
-      <el-table
+      <AdminDataTable
         v-else
-        v-loading="loading"
         :data="displayedAssistants"
-        row-key="id"
-        class="assistant-list-page__table"
-        element-loading-text="正在更新助手列表"
+        :loading="loading"
+        table-class="assistant-list-page__table"
+        loading-text="正在更新助手列表"
+        @selection-change="handleSelectionChange"
       >
+        <el-table-column type="selection" width="44" fixed="left" />
         <el-table-column label="助手名称" min-width="280">
           <template #default="{ row }">
             <div class="assistant-list-page__name-cell">
@@ -358,17 +473,16 @@ watch(
             </el-button>
           </template>
         </el-table-column>
-      </el-table>
-      <div v-if="pagination.total > pagination.pageSize" class="assistant-list-page__pagination">
-        <el-pagination
-          background
-          layout="prev, pager, next"
-          :current-page="pagination.page"
-          :page-size="pagination.pageSize"
-          :total="pagination.total"
-          @current-change="handlePageChange"
-        />
-      </div>
+      </AdminDataTable>
+      <AdminPagination
+        v-if="pagination.total > pagination.pageSize"
+        :current-page="pagination.page"
+        :page-size="pagination.pageSize"
+        :total="pagination.total"
+        layout="prev, pager, next"
+        @page-change="handlePageChange"
+        @page-size-change="() => undefined"
+      />
     </AdminListPanel>
   </section>
 </template>
@@ -392,14 +506,6 @@ watch(
 
 .assistant-list-page__status {
   width: 132px;
-}
-
-.assistant-list-page__pagination {
-  display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid #e2e8f0;
-  background: #ffffff;
-  padding: 12px;
 }
 
 .assistant-list-page__table {

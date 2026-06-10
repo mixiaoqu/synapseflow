@@ -18,7 +18,10 @@ import {
 } from "@element-plus/icons-vue";
 
 import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
+import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
+import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   createDocumentCategory,
@@ -1601,12 +1604,11 @@ watch(
               <el-button link type="primary" @click="handleUploadClick">上传文档</el-button>
             </AppEmpty>
 
-            <el-table
+            <AdminDataTable
               v-else
               :data="documents"
-              v-loading="documentsLoading"
-              row-key="id"
-              class="kb-documents__table"
+              :loading="documentsLoading"
+              table-class="kb-documents__table"
               @selection-change="handleDocumentSelectionChange"
             >
               <el-table-column type="selection" width="48" />
@@ -1680,30 +1682,30 @@ watch(
                   </el-button>
                 </template>
               </el-table-column>
-            </el-table>
+            </AdminDataTable>
             </section>
 
             <footer class="kb-documents__footer">
-            <el-pagination
-              background
-              layout="total, prev, pager, next"
+            <AdminPagination
               :total="documentQuery.total"
               :page-size="documentQuery.pageSize"
               :current-page="documentQuery.page"
-              @current-change="handlePageChange"
+              layout="total, prev, pager, next"
+              @page-change="handlePageChange"
+              @page-size-change="() => undefined"
             />
             </footer>
           </AdminListPanel>
         </div>
       </section>
 
-      <el-dialog
+      <AdminDialog
         v-model="uploadDialogVisible"
         width="960px"
-        destroy-on-close
+        title="文档上传"
         class="kb-upload-dialog"
+        :loading="uploadLoading"
         :close-on-click-modal="!uploadLoading"
-        :close-on-press-escape="!uploadLoading"
         @closed="handleUploadDialogClosed"
       >
         <template #header>
@@ -1820,19 +1822,17 @@ watch(
         </div>
 
         <template #footer>
-          <div class="kb-upload-dialog__footer">
-            <el-button :disabled="uploadLoading" @click="closeUploadDialog">取消</el-button>
-            <el-button
-              type="primary"
-              :loading="uploadLoading"
-              :disabled="uploadQueue.length === 0"
-              @click="submitUploadQueue"
-            >
-              确认上传
-            </el-button>
-          </div>
+          <el-button :disabled="uploadLoading" @click="closeUploadDialog">取消</el-button>
+          <el-button
+            type="primary"
+            :loading="uploadLoading"
+            :disabled="uploadQueue.length === 0"
+            @click="submitUploadQueue"
+          >
+            确认上传
+          </el-button>
         </template>
-      </el-dialog>
+      </AdminDialog>
 
       <el-drawer
         v-model="detailDrawerVisible"
@@ -1959,9 +1959,9 @@ watch(
 }
 
 .kb-sidebar__item--active {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
+  border-color: var(--admin-primary-border);
+  background: var(--admin-primary-soft);
+  color: var(--admin-primary-hover);
 }
 
 .kb-sidebar__item--child {
@@ -1981,7 +1981,7 @@ watch(
 }
 
 .kb-sidebar__toggle:hover {
-  color: #2563eb;
+  color: var(--admin-primary);
 }
 
 .kb-sidebar__toggle .is-rotated {
@@ -2024,7 +2024,7 @@ watch(
 
 .kb-sidebar__item-more:hover {
   background: rgba(255, 255, 255, 0.9);
-  color: #2563eb;
+  color: var(--admin-primary);
 }
 
 .kb-documents {
@@ -2105,27 +2105,7 @@ watch(
   display: none;
 }
 
-:deep(.kb-upload-dialog) {
-  border-radius: 20px;
-}
-
-:deep(.kb-upload-dialog .el-dialog__header) {
-  border-bottom: 1px solid #e2e8f0;
-  margin-right: 0;
-  padding: 20px 24px 18px;
-}
-
-:deep(.kb-upload-dialog .el-dialog__body) {
-  padding: 0;
-}
-
-:deep(.kb-upload-dialog .el-dialog__footer) {
-  border-top: 1px solid #e2e8f0;
-  padding: 18px 24px 20px;
-}
-
-.kb-upload-dialog__header,
-.kb-upload-dialog__footer {
+.kb-upload-dialog__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2181,8 +2161,8 @@ watch(
 }
 
 .kb-upload-dropzone.is-dragging {
-  border-color: #2563eb;
-  background: #eff6ff;
+  border-color: var(--admin-primary);
+  background: var(--admin-primary-soft);
 }
 
 .kb-upload-dropzone__icon {
@@ -2192,8 +2172,8 @@ watch(
   width: 56px;
   height: 56px;
   border-radius: 999px;
-  background: #eff6ff;
-  color: #2563eb;
+  background: var(--admin-primary-soft);
+  color: var(--admin-primary);
 }
 
 .kb-upload-dropzone__title {
