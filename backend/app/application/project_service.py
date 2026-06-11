@@ -307,13 +307,15 @@ class ProjectService:
             raise HTTPException(status_code=400, detail="Project ids are required")
         project_ids = list(dict.fromkeys(normalized_ids))
 
-        projects: list[Project] = []
-        for project_id in project_ids:
-            project = await self.repository.get_project(project_id)
-            if project is None:
-                raise HTTPException(status_code=404, detail="One or more projects were not found")
-            await self._ensure_team_permission(project.team_id, PERMISSION_MANAGE_PROJECT)
-            projects.append(project)
+        projects = await self.repository.get_projects(project_ids)
+        if len(projects) != len(project_ids):
+            raise HTTPException(status_code=404, detail="One or more projects were not found")
+        if not await self.permission_service.has_all_team_permissions(
+            self.user,
+            [project.team_id for project in projects],
+            PERMISSION_MANAGE_PROJECT,
+        ):
+            raise HTTPException(status_code=403, detail="Team permission denied")
 
         if payload.action == "enable":
             for project in projects:
@@ -545,12 +547,9 @@ class ProjectService:
             raise HTTPException(status_code=400, detail="Project app ids are required")
         app_ids = list(dict.fromkeys(normalized_ids))
 
-        apps: list[ProjectApp] = []
-        for app_id in app_ids:
-            app = await self.repository.get_app(app_id)
-            if app is None or app.project_id != project_id:
-                raise HTTPException(status_code=404, detail="One or more project apps were not found")
-            apps.append(app)
+        apps = await self.repository.get_apps(app_ids)
+        if len(apps) != len(app_ids) or any(app.project_id != project_id for app in apps):
+            raise HTTPException(status_code=404, detail="One or more project apps were not found")
 
         if payload.action == "enable":
             for app in apps:

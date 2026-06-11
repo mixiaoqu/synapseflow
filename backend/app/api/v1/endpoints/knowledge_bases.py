@@ -4,13 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import require_content_roles
+from app.application.knowledge_base_service import knowledge_base_service
 from app.application.permission_service import PermissionService
-from app.application.document_service import document_service
 from app.core.authz import PERMISSION_MANAGE_KB_DRAFT
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.knowledge_base import (
-    KnowledgeBaseBulkActionFailure,
     KnowledgeBaseBulkActionRequest,
     KnowledgeBaseBulkActionResponse,
     KnowledgeBaseCreate,
@@ -172,98 +171,10 @@ async def bulk_action_knowledge_bases(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
-    unique_ids = list(dict.fromkeys(body.knowledge_base_ids))
-    failures: list[KnowledgeBaseBulkActionFailure] = []
-    affected = 0
-
-    if body.action in {"enable", "disable"}:
-        target_active = body.action == "enable"
-        changed_items = []
-        for knowledge_base_id in unique_ids:
-            knowledge_base = await repo.get_by_id(knowledge_base_id)
-            if not knowledge_base:
-                failures.append(
-                    KnowledgeBaseBulkActionFailure(
-                        id=knowledge_base_id,
-                        message="知识库不存在或无权访问",
-                    )
-                )
-                continue
-            await _require_manage_knowledge_base(
-                db=db,
-                current_user=current_user,
-                team_id=knowledge_base.team_id,
-            )
-            knowledge_base.is_active = target_active
-            changed_items.append(knowledge_base)
-        if changed_items:
-            await db.commit()
-            affected = len(changed_items)
-
-    elif body.action == "delete":
-        for knowledge_base_id in unique_ids:
-            knowledge_base = await repo.get_by_id(knowledge_base_id)
-            if not knowledge_base:
-                failures.append(
-                    KnowledgeBaseBulkActionFailure(
-                        id=knowledge_base_id,
-                        message="知识库不存在或无权访问",
-                    )
-                )
-                continue
-            await _require_manage_knowledge_base(
-                db=db,
-                current_user=current_user,
-                team_id=knowledge_base.team_id,
-            )
-            ok = await repo.delete(knowledge_base_id)
-            if ok:
-                affected += 1
-            else:
-                failures.append(
-                    KnowledgeBaseBulkActionFailure(
-                        id=knowledge_base_id,
-                        message="知识库不存在或无权访问",
-                    )
-                )
-
-    elif body.action == "reindex":
-        for knowledge_base_id in unique_ids:
-            knowledge_base = await repo.get_by_id(knowledge_base_id)
-            if not knowledge_base:
-                failures.append(
-                    KnowledgeBaseBulkActionFailure(
-                        id=knowledge_base_id,
-                        message="知识库不存在或无权访问",
-                    )
-                )
-                continue
-            await _require_manage_knowledge_base(
-                db=db,
-                current_user=current_user,
-                team_id=knowledge_base.team_id,
-            )
-            try:
-                await document_service.reindex_all_documents(
-                    db=db,
-                    user_id=current_user.id,
-                    knowledge_base_id=knowledge_base_id,
-                )
-                affected += 1
-            except Exception as exc:
-                failures.append(
-                    KnowledgeBaseBulkActionFailure(
-                        id=knowledge_base_id,
-                        message=str(exc) or "重建索引任务提交失败",
-                    )
-                )
-
-    return KnowledgeBaseBulkActionResponse(
-        action=body.action,
-        total=len(unique_ids),
-        affected=affected,
-        failed=failures,
+    return await knowledge_base_service.bulk_action(
+        db=db,
+        current_user=current_user,
+        body=body,
     )
 
 

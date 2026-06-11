@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, DocumentCategory, KnowledgeBase, User
@@ -168,15 +168,8 @@ class DocumentCategoryRepository:
         category = await self.get_by_id(category_id)
         if not category:
             return False
-        # Collect this category and all subcategory IDs
-        all_ids = await self.get_subtree_ids(category_id)
-        # Clear category_id on documents belonging to this category or subcategories
-        await self.db.execute(
-            update(Document)
-            .where(Document.category_id.in_(all_ids))
-            .values(category_id=None)
-        )
-        # Subcategories are auto-deleted by CASCADE on parent_id FK
+        category_ids = await self.get_subtree_ids(category_id)
+        await self.db.execute(delete(Document).where(Document.category_id.in_(category_ids)))
         await self.db.delete(category)
         await self.db.commit()
         return True

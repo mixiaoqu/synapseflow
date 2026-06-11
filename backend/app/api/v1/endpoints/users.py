@@ -131,26 +131,40 @@ async def bulk_action_users(
 ):
     repo = UserRepository(db)
     user_ids = list(dict.fromkeys(body.user_ids))
-    targets = [user for user_id in user_ids if (user := await repo.get_by_id(user_id)) is not None]
+    targets = await repo.get_by_ids(user_ids)
     if not targets:
         raise HTTPException(status_code=404, detail="未找到可操作的用户")
 
     if body.action == "delete":
+        active_admin_count = await repo.count_active_admins()
+        deleting_active_admin_count = sum(
+            1
+            for target in targets
+            if target.is_active and normalize_system_role(target.role) == SYSTEM_ROLE_ADMIN
+        )
+        if active_admin_count - deleting_active_admin_count <= 0:
+            raise HTTPException(status_code=400, detail="不能删除最后一个启用中的管理员")
         for target in targets:
-            await _ensure_user_delete_allowed(repo, current_user=current_user, target_user=target)
-        deleted = await repo.soft_delete_users([user.id for user in targets])
+            if target.id == current_user.id:
+                raise HTTPException(status_code=400, detail="不能删除当前登录账号")
+        deleted = await repo.soft_delete_loaded_users(targets)
         return {"message": "Deleted successfully", "affected": len(deleted)}
 
     target_active = body.action == "enable"
-    for target in targets:
-        await _ensure_user_update_allowed(
-            repo,
-            current_user=current_user,
-            target_user=target,
-            is_active=target_active,
+    if not target_active:
+        active_admin_count = await repo.count_active_admins()
+        disabling_active_admin_count = sum(
+            1
+            for target in targets
+            if target.is_active and normalize_system_role(target.role) == SYSTEM_ROLE_ADMIN
         )
-        await repo.update_user(target.id, is_active=target_active)
-    return {"message": "Updated successfully", "affected": len(targets)}
+        if active_admin_count - disabling_active_admin_count <= 0:
+            raise HTTPException(status_code=400, detail="不能停用最后一个启用中的管理员")
+    for target in targets:
+        if target.id == current_user.id and target_active is False:
+            raise HTTPException(status_code=400, detail="不能停用当前登录账号")
+    affected = await repo.update_users_active(targets, target_active)
+    return {"message": "Updated successfully", "affected": affected}
 
 
 @router.get("/{user_id}", response_model=AdminUserResponse)

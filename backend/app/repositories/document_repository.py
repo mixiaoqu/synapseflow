@@ -535,11 +535,68 @@ class DocumentRepository:
             return []
         result = await self.db.execute(
             select(Document).where(
-                Document.root_id.in_(root_ids),
+                or_(Document.root_id.in_(root_ids), Document.id.in_(root_ids)),
                 accessible_document_condition(self.user_id),
             )
         )
         return list(result.scalars().all())
+
+    async def get_live_by_root_ids(self, root_ids: set[int]) -> list[Document]:
+        """Fetch live documents for multiple version chains."""
+        if not root_ids:
+            return []
+        result = await self.db.execute(
+            select(Document).where(
+                or_(Document.root_id.in_(root_ids), Document.id.in_(root_ids)),
+                accessible_document_condition(self.user_id),
+                Document.is_live.is_(True),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def clear_live_flags_for_root_ids(
+        self,
+        root_ids: set[int],
+        *,
+        exclude_doc_ids: set[int] | None = None,
+    ) -> None:
+        """Clear live flags for multiple version chains."""
+        if not root_ids:
+            return
+        conditions = [
+            or_(Document.root_id.in_(root_ids), Document.id.in_(root_ids)),
+            accessible_document_condition(self.user_id),
+            Document.is_live.is_(True),
+        ]
+        if exclude_doc_ids:
+            conditions.append(Document.id.notin_(exclude_doc_ids))
+        await self.db.execute(update(Document).where(*conditions).values(is_live=False))
+
+    async def update_documents_status(
+        self,
+        docs: list[Document],
+        *,
+        status: str,
+        reviewer_id: int | None = None,
+        publisher_id: int | None = None,
+        is_live: bool | None = None,
+    ) -> None:
+        """Update status fields for already-loaded document rows."""
+        now = utc_now()
+        for doc in docs:
+            doc.status = status
+            if is_live is not None:
+                doc.is_live = is_live
+            if reviewer_id is not None:
+                doc.reviewed_by = reviewer_id
+                doc.reviewed_at = now
+            if publisher_id is not None:
+                doc.published_by = publisher_id
+                doc.published_at = now
+            elif status != "published":
+                doc.published_by = None
+                doc.published_at = None
+        await self.db.flush()
 
     async def delete_chain(self, docs: list[Document]) -> int:
         """Delete a full version chain."""

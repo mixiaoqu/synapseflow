@@ -99,11 +99,12 @@ async def bulk_action_teams(
     permission_service = PermissionService(db)
     repo = TeamRepository(db, user_id=current_user.id)
     if body.action == "delete":
-        for team_id in body.team_ids:
-            if not await permission_service.has_team_permission(
-                current_user, team_id, PERMISSION_DELETE_TEAM
-            ):
-                raise HTTPException(status_code=403, detail="Team delete permission denied")
+        if not await permission_service.has_all_team_permissions(
+            current_user,
+            body.team_ids,
+            PERMISSION_DELETE_TEAM,
+        ):
+            raise HTTPException(status_code=403, detail="Team delete permission denied")
         affected = await repo.delete_teams(body.team_ids)
         return TeamBulkActionResponse(affected=affected)
     raise HTTPException(status_code=400, detail="不支持的批量操作")

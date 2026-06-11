@@ -343,6 +343,28 @@ class KnowledgeBaseRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_ids(self, knowledge_base_ids: list[int]) -> list[KnowledgeBase]:
+        """Fetch knowledge bases by IDs within the current access scope."""
+        unique_ids = [int(item) for item in dict.fromkeys(knowledge_base_ids)]
+        if not unique_ids:
+            return []
+        result = await self.db.execute(
+            select(KnowledgeBase).where(
+                KnowledgeBase.id.in_(unique_ids),
+                accessible_knowledge_base_condition(self.user_id, user=self.user),
+            )
+        )
+        rows = list(result.scalars().all())
+        order = {knowledge_base_id: index for index, knowledge_base_id in enumerate(unique_ids)}
+        return sorted(rows, key=lambda item: order.get(int(item.id), len(order)))
+
+    async def set_active_many(self, knowledge_bases: list[KnowledgeBase], is_active: bool) -> int:
+        for knowledge_base in knowledge_bases:
+            knowledge_base.is_active = is_active
+        if knowledge_bases:
+            await self.db.commit()
+        return len(knowledge_bases)
+
     async def update(
         self,
         knowledge_base_id: int,
@@ -382,3 +404,27 @@ class KnowledgeBaseRepository:
         await self.db.delete(knowledge_base)
         await self.db.commit()
         return True
+
+    async def delete_many(self, knowledge_bases: list[KnowledgeBase]) -> int:
+        """Delete knowledge bases and their documents in one database transaction."""
+        if not knowledge_bases:
+            return 0
+        knowledge_base_ids = [int(item.id) for item in knowledge_bases]
+        await IndexJobRepository(
+            self.db,
+            user_id=self.user_id,
+        ).cancel_active_jobs_for_knowledge_bases(
+            knowledge_base_ids=knowledge_base_ids,
+            error_message="Knowledge base was deleted before indexing finished",
+        )
+        store = get_graph_store()
+        for knowledge_base in knowledge_bases:
+            await store.delete_knowledge_base_graph(
+                knowledge_base_id=int(knowledge_base.id),
+                team_id=int(knowledge_base.team_id),
+            )
+        await self.db.execute(delete(Document).where(Document.knowledge_base_id.in_(knowledge_base_ids)))
+        for knowledge_base in knowledge_bases:
+            await self.db.delete(knowledge_base)
+        await self.db.commit()
+        return len(knowledge_bases)

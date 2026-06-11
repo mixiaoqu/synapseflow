@@ -161,6 +161,15 @@ class ProjectRepository:
     async def get_project(self, project_id: int) -> Project | None:
         return await self.db.get(Project, project_id)
 
+    async def get_projects(self, project_ids: list[int]) -> list[Project]:
+        unique_ids = [int(project_id) for project_id in dict.fromkeys(project_ids)]
+        if not unique_ids:
+            return []
+        result = await self.db.execute(select(Project).where(Project.id.in_(unique_ids)))
+        rows = list(result.scalars().all())
+        order = {project_id: index for index, project_id in enumerate(unique_ids)}
+        return sorted(rows, key=lambda project: order.get(int(project.id), len(order)))
+
     async def get_project_by_code(self, code: str) -> Project | None:
         stmt = select(Project).where(Project.code == self.normalize_code(code))
         return (await self.db.execute(stmt)).scalar_one_or_none()
@@ -320,6 +329,15 @@ class ProjectRepository:
 
     async def get_app(self, app_id: int) -> ProjectApp | None:
         return await self.db.get(ProjectApp, app_id)
+
+    async def get_apps(self, app_ids: list[int]) -> list[ProjectApp]:
+        unique_ids = [int(app_id) for app_id in dict.fromkeys(app_ids)]
+        if not unique_ids:
+            return []
+        result = await self.db.execute(select(ProjectApp).where(ProjectApp.id.in_(unique_ids)))
+        rows = list(result.scalars().all())
+        order = {app_id: index for index, app_id in enumerate(unique_ids)}
+        return sorted(rows, key=lambda app: order.get(int(app.id), len(order)))
 
     async def list_app_entities(self, *, project_id: int) -> list[ProjectApp]:
         stmt = (

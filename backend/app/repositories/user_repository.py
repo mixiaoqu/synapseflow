@@ -40,6 +40,18 @@ class UserRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
+    async def get_by_ids(self, user_ids: list[int], *, include_deleted: bool = False) -> list[User]:
+        unique_ids = [int(user_id) for user_id in dict.fromkeys(user_ids)]
+        if not unique_ids:
+            return []
+        query = select(User).where(User.id.in_(unique_ids))
+        if not include_deleted:
+            query = query.where(User.deleted_at.is_(None))
+        result = await self.db.execute(query)
+        rows = list(result.scalars().all())
+        order = {user_id: index for index, user_id in enumerate(unique_ids)}
+        return sorted(rows, key=lambda user: order.get(int(user.id), len(order)))
+
     async def get_by_username(self, username: str, *, include_deleted: bool = True) -> User | None:
         normalized = _normalize_username(username)
         query = select(User).where(User.username == normalized)
@@ -217,13 +229,15 @@ class UserRepository:
         return user
 
     async def soft_delete_users(self, user_ids: list[int]) -> list[User]:
+        users = await self.get_by_ids(user_ids)
+        return await self.soft_delete_loaded_users(users)
+
+    async def soft_delete_loaded_users(self, users: list[User]) -> list[User]:
         deleted: list[User] = []
-        for user_id in user_ids:
-            user = await self.get_by_id(user_id)
-            if user is None:
-                continue
+        now = utc_now()
+        for user in users:
             user.is_active = False
-            user.deleted_at = utc_now()
+            user.deleted_at = now
             user.username = _deleted_username(user.id)
             user.email = _deleted_email(user.id)
             deleted.append(user)
@@ -232,3 +246,10 @@ class UserRepository:
             for user in deleted:
                 await self.db.refresh(user)
         return deleted
+
+    async def update_users_active(self, users: list[User], is_active: bool) -> int:
+        for user in users:
+            user.is_active = is_active
+        if users:
+            await self.db.commit()
+        return len(users)

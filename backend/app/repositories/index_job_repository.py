@@ -276,8 +276,22 @@ class IndexJobRepository:
         knowledge_base_id: int,
         error_message: str,
     ) -> int:
+        return await self.cancel_active_jobs_for_knowledge_bases(
+            knowledge_base_ids=[knowledge_base_id],
+            error_message=error_message,
+        )
+
+    async def cancel_active_jobs_for_knowledge_bases(
+        self,
+        *,
+        knowledge_base_ids: list[int],
+        error_message: str,
+    ) -> int:
+        unique_ids = [int(item) for item in dict.fromkeys(knowledge_base_ids)]
+        if not unique_ids:
+            return 0
         stmt = select(IndexJob.id).where(
-            IndexJob.knowledge_base_id == knowledge_base_id,
+            IndexJob.knowledge_base_id.in_(unique_ids),
             IndexJob.status.in_(ACTIVE_INDEX_JOB_STATUSES),
         )
         if self.user_id is not None:

@@ -1146,15 +1146,78 @@ class DocumentService:
         user_id: int,
         ids: list[int],
         action: str,
-        handler,
     ) -> BatchDocumentActionResponse:
-        succeeded_ids: list[int] = []
+        if action == "submit_for_review":
+            return await self._update_documents_status_batch(
+                db=db,
+                user_id=user_id,
+                ids=ids,
+                action=action,
+                status=DOC_STATUS_PENDING_REVIEW,
+                validator=self._assert_can_submit_for_review,
+            )
+        if action == "reject":
+            return await self._update_documents_status_batch(
+                db=db,
+                user_id=user_id,
+                ids=ids,
+                action=action,
+                status=DOC_STATUS_DRAFT,
+                validator=self._assert_can_reject,
+                reviewer_id=user_id,
+            )
+        if action == "publish":
+            return await self._publish_documents_batch_status(
+                db=db,
+                user_id=user_id,
+                ids=ids,
+                action=action,
+            )
+        if action == "unpublish":
+            return await self._update_documents_status_batch(
+                db=db,
+                user_id=user_id,
+                ids=ids,
+                action=action,
+                status=DOC_STATUS_ARCHIVED,
+                validator=self._assert_can_unpublish,
+                reviewer_id=user_id,
+                is_live=False,
+            )
+        raise ValueError(f"Unsupported batch document action: {action}")
+
+    async def _update_documents_status_batch(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        ids: list[int],
+        action: str,
+        status: str,
+        validator,
+        reviewer_id: int | None = None,
+        publisher_id: int | None = None,
+        is_live: bool | None = None,
+    ) -> BatchDocumentActionResponse:
+        unique_ids = list(dict.fromkeys(ids))
+        repo = DocumentRepository(db, user_id=user_id)
+        docs = await repo.get_by_ids(unique_ids)
+        docs_by_id = {doc.id: doc for doc in docs}
+        succeeded_docs: list[Document] = []
         failures: list[BatchDocumentActionFailure] = []
 
-        for doc_id in ids:
+        for doc_id in unique_ids:
+            doc = docs_by_id.get(doc_id)
+            if not doc:
+                failures.append(
+                    BatchDocumentActionFailure(
+                        document_id=doc_id,
+                        detail="Document not found",
+                    )
+                )
+                continue
             try:
-                await handler(db=db, user_id=user_id, doc_id=doc_id)
-                succeeded_ids.append(doc_id)
+                validator(doc)
             except Exception as error:  # noqa: BLE001
                 failures.append(
                     BatchDocumentActionFailure(
@@ -1162,8 +1225,87 @@ class DocumentService:
                         detail=self._http_error_detail(error),
                     )
                 )
-                await db.rollback()
+                continue
+            succeeded_docs.append(doc)
 
+        if succeeded_docs:
+            await repo.update_documents_status(
+                succeeded_docs,
+                status=status,
+                reviewer_id=reviewer_id,
+                publisher_id=publisher_id,
+                is_live=is_live,
+            )
+            await db.commit()
+
+        succeeded_ids = [doc.id for doc in succeeded_docs]
+        return BatchDocumentActionResponse(
+            action=action,
+            requested_count=len(ids),
+            succeeded_count=len(succeeded_ids),
+            failed_count=len(failures),
+            succeeded_ids=succeeded_ids,
+            failures=failures,
+        )
+
+    async def _publish_documents_batch_status(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        ids: list[int],
+        action: str,
+    ) -> BatchDocumentActionResponse:
+        unique_ids = list(dict.fromkeys(ids))
+        repo = DocumentRepository(db, user_id=user_id)
+        docs = await repo.get_by_ids(unique_ids)
+        docs_by_id = {doc.id: doc for doc in docs}
+        succeeded_docs: list[Document] = []
+        failures: list[BatchDocumentActionFailure] = []
+
+        for doc_id in unique_ids:
+            doc = docs_by_id.get(doc_id)
+            if not doc:
+                failures.append(
+                    BatchDocumentActionFailure(
+                        document_id=doc_id,
+                        detail="Document not found",
+                    )
+                )
+                continue
+            try:
+                self._assert_can_publish(doc)
+            except Exception as error:  # noqa: BLE001
+                failures.append(
+                    BatchDocumentActionFailure(
+                        document_id=doc_id,
+                        detail=self._http_error_detail(error),
+                    )
+                )
+                continue
+            succeeded_docs.append(doc)
+
+        if succeeded_docs:
+            root_ids = {getattr(doc, "root_id", None) or doc.id for doc in succeeded_docs}
+            succeeded_ids_set = {doc.id for doc in succeeded_docs}
+            previous_live_docs = [
+                doc
+                for doc in await repo.get_live_by_root_ids(root_ids)
+                if doc.id not in succeeded_ids_set and not getattr(doc, "is_current", False)
+            ]
+            await repo.clear_live_flags_for_root_ids(root_ids, exclude_doc_ids=succeeded_ids_set)
+            await repo.update_documents_status(
+                succeeded_docs,
+                status=DOC_STATUS_PUBLISHED,
+                reviewer_id=user_id,
+                publisher_id=user_id,
+                is_live=True,
+            )
+            for previous_live in previous_live_docs:
+                await delete_by_document_id(db, previous_live.id, commit=False)
+            await db.commit()
+
+        succeeded_ids = [doc.id for doc in succeeded_docs]
         return BatchDocumentActionResponse(
             action=action,
             requested_count=len(ids),
@@ -1179,7 +1321,6 @@ class DocumentService:
         db: AsyncSession,
         user_id: int,
         action: str,
-        handler,
         keyword: str | None = None,
         team_id: int | None = None,
         knowledge_base_id: int | None = None,
@@ -1199,7 +1340,6 @@ class DocumentService:
             user_id=user_id,
             ids=ids,
             action=action,
-            handler=handler,
         )
 
     async def submit_documents_for_review_batch(
@@ -1214,7 +1354,6 @@ class DocumentService:
             user_id=user_id,
             ids=ids,
             action="submit_for_review",
-            handler=self._submit_document_for_review,
         )
 
     async def submit_documents_for_review_by_filter(
@@ -1228,7 +1367,6 @@ class DocumentService:
             db=db,
             user_id=user_id,
             action="submit_for_review",
-            handler=self._submit_document_for_review,
             keyword=filter_body.keyword,
             team_id=filter_body.team_id,
             knowledge_base_id=filter_body.knowledge_base_id,
@@ -1248,7 +1386,6 @@ class DocumentService:
             user_id=user_id,
             ids=ids,
             action="reject",
-            handler=self._reject_document,
         )
 
     async def publish_documents_batch(
@@ -1263,7 +1400,6 @@ class DocumentService:
             user_id=user_id,
             ids=ids,
             action="publish",
-            handler=self._publish_document,
         )
 
     async def publish_documents_by_filter(
@@ -1277,7 +1413,6 @@ class DocumentService:
             db=db,
             user_id=user_id,
             action="publish",
-            handler=self._publish_document,
             keyword=filter_body.keyword,
             team_id=filter_body.team_id,
             knowledge_base_id=filter_body.knowledge_base_id,
@@ -1297,7 +1432,6 @@ class DocumentService:
             user_id=user_id,
             ids=ids,
             action="unpublish",
-            handler=self._unpublish_document,
         )
 
     async def delete_documents_batch(

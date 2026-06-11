@@ -68,6 +68,39 @@ class PermissionService:
         role = await self.get_team_role(user, team_id)
         return role is not None and has_team_role_permission(role, permission)
 
+    async def get_team_roles(self, user: User, team_ids: Sequence[int]) -> dict[int, str]:
+        if self.is_system_admin(user):
+            return {int(team_id): SYSTEM_ROLE_ADMIN for team_id in dict.fromkeys(team_ids)}
+        unique_ids = [int(team_id) for team_id in dict.fromkeys(team_ids)]
+        if not unique_ids:
+            return {}
+        result = await self.db.execute(
+            select(TeamMember.team_id, TeamMember.role).where(
+                TeamMember.user_id == user.id,
+                TeamMember.team_id.in_(unique_ids),
+            )
+        )
+        return {
+            int(team_id): normalize_team_role(role)
+            for team_id, role in result.all()
+            if role is not None
+        }
+
+    async def has_all_team_permissions(
+        self,
+        user: User,
+        team_ids: Sequence[int],
+        permission: str,
+    ) -> bool:
+        if self.is_system_admin(user):
+            return True
+        unique_ids = [int(team_id) for team_id in dict.fromkeys(team_ids)]
+        roles = await self.get_team_roles(user, unique_ids)
+        return all(
+            (role := roles.get(team_id)) is not None and has_team_role_permission(role, permission)
+            for team_id in unique_ids
+        )
+
     async def has_any_team_permission(
         self,
         user: User,
@@ -76,7 +109,5 @@ class PermissionService:
     ) -> bool:
         if self.is_system_admin(user):
             return True
-        for team_id in dict.fromkeys(team_ids):
-            if await self.has_team_permission(user, int(team_id), permission):
-                return True
-        return False
+        roles = await self.get_team_roles(user, team_ids)
+        return any(has_team_role_permission(role, permission) for role in roles.values())
