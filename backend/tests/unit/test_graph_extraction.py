@@ -28,7 +28,7 @@ def test_extract_chunk_graph_parses_llm_json_into_records():
             {
               "source": "ProjectApp",
               "target": "AssistantProfile",
-              "type": "USES",
+              "type": "TRIGGERS",
               "attributes": {"mode": "auto"},
               "evidence": "ProjectApp 默认绑定 AssistantProfile"
             }

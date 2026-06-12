@@ -7,8 +7,9 @@ import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
 import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
-import { listQaLogs } from "@/modules/qa-logs/api";
-import type { QaLogSummary } from "@/modules/qa-logs/types";
+import QaLogTraceDrawer from "@/modules/qa-logs/components/QaLogTraceDrawer.vue";
+import { getQaLogDetail, listQaLogs } from "@/modules/qa-logs/api";
+import type { QaLogDetail, QaLogSummary } from "@/modules/qa-logs/types";
 import { listProjects, listProjectApps } from "@/shared/api/projects";
 import { listTeams } from "@/shared/api/teams";
 import AppError from "@/shared/components/feedback/AppError.vue";
@@ -29,6 +30,9 @@ const loading = ref(false);
 const loadError = ref<unknown>(null);
 const hasLoadedData = ref(false);
 const advancedFilterVisible = ref(false);
+const detailDrawerVisible = ref(false);
+const detailLoading = ref(false);
+const activeLogDetail = ref<QaLogDetail | null>(null);
 const teams = ref<TeamSummary[]>([]);
 const projects = ref<ProjectSummary[]>([]);
 const projectApps = ref<ProjectAppSummary[]>([]);
@@ -207,6 +211,20 @@ async function loadLogs() {
     }
   } finally {
     loading.value = false;
+  }
+}
+
+async function openTraceDrawer(log: QaLogSummary) {
+  detailDrawerVisible.value = true;
+  detailLoading.value = true;
+  activeLogDetail.value = null;
+  try {
+    activeLogDetail.value = await getQaLogDetail(log.id);
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "加载检索 Trace 失败"));
+    detailDrawerVisible.value = false;
+  } finally {
+    detailLoading.value = false;
   }
 }
 
@@ -561,7 +579,7 @@ watch(
               >
                 {{ retrievalStatusLabel(row.retrievalStatus) }}
               </el-tag>
-              <span>{{ row.retrievedCount }} 条</span>
+              <span>{{ row.finalContextCount }} 条</span>
             </div>
           </template>
         </el-table-column>
@@ -599,6 +617,21 @@ watch(
         >
           <template #default="{ row }">
             <span class="qa-log-list-page__muted">{{ formatLatency(row.latencyMs) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column
+          label="操作"
+          width="120"
+          fixed="right"
+        >
+          <template #default="{ row }">
+            <el-button
+              link
+              type="primary"
+              @click="openTraceDrawer(row)"
+            >
+              查看 Trace
+            </el-button>
           </template>
         </el-table-column>
         <template #empty>
@@ -708,6 +741,12 @@ watch(
         </div>
       </template>
     </el-drawer>
+
+    <QaLogTraceDrawer
+      v-model="detailDrawerVisible"
+      :detail="activeLogDetail"
+      :loading="detailLoading"
+    />
   </section>
 </template>
 

@@ -124,7 +124,7 @@ def test_upsert_relations_scopes_related_identity_by_team_and_knowledge_base():
                     document_chunk_id=100,
                     source_normalized_name="projectapp",
                     target_normalized_name="assistantprofile",
-                    relation_type="USES",
+                    relation_type="TRIGGERS",
                     attributes={},
                     evidence="ProjectApp 默认绑定 AssistantProfile",
                 )

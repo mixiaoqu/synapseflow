@@ -49,8 +49,13 @@ class KbChatLogRecord:
     answer_text: str
     answer_status: str
     retrieval_status: str | None
-    retrieved_count: int
     latency_ms: int | None
+    text_hit_count: int
+    graph_hit_count: int
+    merged_candidate_count: int
+    final_context_count: int
+    empty_reason: str | None
+    rerank_enabled: bool
     feedback_value: str | None
     feedback_note: str | None
     suggested_review_label: str | None
@@ -59,13 +64,6 @@ class KbChatLogRecord:
     reviewed_at: datetime | None
     reviewed_by_user_id: int | None
     created_at: object
-
-
-@dataclass(slots=True)
-class KbChatDiagnosticDocRecord:
-    rank: int
-    content: str
-    metadata: dict[str, Any]
 
 
 @dataclass(slots=True)
@@ -82,10 +80,7 @@ class KbChatLogDetailRecord(KbChatLogRecord):
     team_name: str | None
     category_name: str | None
     retrieval_status_reason: str | None
-    retrieval_queries: list[str]
-    retrieval_funnel: dict[str, Any] | None
-    answer_context: str | None
-    retrieved_docs: list[KbChatDiagnosticDocRecord]
+    trace_payload: dict[str, Any] | None
     conversation_context: list[KbChatDiagnosticMessageRecord]
 
 
@@ -115,8 +110,14 @@ class KbChatLogRepository:
         answer_text: str,
         answer_status: str,
         retrieval_status: str | None,
-        retrieved_count: int,
         latency_ms: int | None,
+        text_hit_count: int = 0,
+        graph_hit_count: int = 0,
+        merged_candidate_count: int = 0,
+        final_context_count: int = 0,
+        empty_reason: str | None = None,
+        rerank_enabled: bool = False,
+        trace_payload: dict[str, Any] | None = None,
     ) -> KbChatLog:
         row = KbChatLog(
             user_id=user_id,
@@ -133,8 +134,14 @@ class KbChatLogRepository:
             answer_text=answer_text,
             answer_status=answer_status,
             retrieval_status=retrieval_status,
-            retrieved_count=retrieved_count,
             latency_ms=latency_ms,
+            text_hit_count=text_hit_count,
+            graph_hit_count=graph_hit_count,
+            merged_candidate_count=merged_candidate_count,
+            final_context_count=final_context_count,
+            empty_reason=empty_reason,
+            rerank_enabled=rerank_enabled,
+            trace_payload=trace_payload,
         )
         self.db.add(row)
         await self.db.commit()
@@ -268,8 +275,13 @@ class KbChatLogRepository:
                     answer_text=item.answer_text,
                     answer_status=item.answer_status,
                     retrieval_status=item.retrieval_status,
-                    retrieved_count=item.retrieved_count,
                     latency_ms=item.latency_ms,
+                    text_hit_count=int(item.text_hit_count or 0),
+                    graph_hit_count=int(item.graph_hit_count or 0),
+                    merged_candidate_count=int(item.merged_candidate_count or 0),
+                    final_context_count=int(item.final_context_count or 0),
+                    empty_reason=item.empty_reason,
+                    rerank_enabled=bool(item.rerank_enabled),
                     feedback_value=item.feedback_value,
                     feedback_note=item.feedback_note,
                     suggested_review_label=self._suggest_review_label(item),
@@ -346,7 +358,7 @@ class KbChatLogRepository:
         if created_to is not None:
             stmt = stmt.where(KbChatLog.created_at <= created_to)
         if zero_hits_only:
-            stmt = stmt.where(KbChatLog.retrieved_count == 0)
+            stmt = stmt.where(KbChatLog.final_context_count == 0)
         if high_latency_only:
             stmt = stmt.where(
                 KbChatLog.latency_ms.is_not(None),
@@ -498,13 +510,13 @@ class KbChatLogRepository:
     def _build_retrieval_status_reason(
         retrieval_status: str | None,
         *,
-        retrieved_count: int,
+        final_context_count: int,
     ) -> str | None:
         if retrieval_status in {"empty_collection", "empty_knowledge_base"}:
             return "当前范围内还没有完成索引的知识内容，因此本次没有可用于回答的文档片段。"
         if retrieval_status == "no_hits":
             return "当前范围内存在知识内容，但这次问题没有检索到足够相关的片段。"
-        if retrieval_status == "ok" and retrieved_count <= 0:
+        if retrieval_status == "ok" and final_context_count <= 0:
             return "检索流程执行成功，但没有保留可展示的命中文档片段。"
         return None
 
@@ -535,52 +547,19 @@ class KbChatLogRepository:
         session_messages: list[tuple[str, str, dict[str, Any] | None, datetime]],
     ) -> KbChatLogDetailRecord:
         target_index = None
-        target_metadata: dict[str, Any] = {}
-
         for index, (role, content, metadata, _) in enumerate(session_messages):
             metadata_obj = metadata if isinstance(metadata, dict) else {}
             if role == "assistant" and metadata_obj.get("log_id") == item.id:
                 target_index = index
-                target_metadata = metadata_obj
                 break
 
         if target_index is None:
-            for index, (role, content, metadata, _) in enumerate(session_messages):
+            for index, (role, content, _metadata, _) in enumerate(session_messages):
                 if role == "assistant" and content == item.answer_text:
                     target_index = index
-                    target_metadata = metadata if isinstance(metadata, dict) else {}
                     break
 
-        raw_retrieved_docs = target_metadata.get("retrieved_docs") or []
-        answer_context = (
-            target_metadata.get("answer_context")
-            if isinstance(target_metadata.get("answer_context"), str)
-            else None
-        )
-        retrieval_queries = [
-            str(value)
-            for value in (target_metadata.get("retrieval_queries") or [])
-            if str(value or "").strip()
-        ]
-        retrieval_funnel = (
-            target_metadata.get("retrieval_funnel")
-            if isinstance(target_metadata.get("retrieval_funnel"), dict)
-            else None
-        )
-
-        retrieved_docs: list[KbChatDiagnosticDocRecord] = []
-
-        for index, doc in enumerate(raw_retrieved_docs, start=1):
-            if not isinstance(doc, dict):
-                continue
-            content = str(doc.get("content") or "")
-            metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
-            record = KbChatDiagnosticDocRecord(
-                rank=index,
-                content=content,
-                metadata=metadata,
-            )
-            retrieved_docs.append(record)
+        trace_payload = item.trace_payload if isinstance(item.trace_payload, dict) else {}
 
         context_window: list[KbChatDiagnosticMessageRecord] = []
         if target_index is not None:
@@ -631,8 +610,13 @@ class KbChatLogRepository:
             answer_text=item.answer_text,
             answer_status=item.answer_status,
             retrieval_status=item.retrieval_status,
-            retrieved_count=item.retrieved_count,
             latency_ms=item.latency_ms,
+            text_hit_count=int(item.text_hit_count or 0),
+            graph_hit_count=int(item.graph_hit_count or 0),
+            merged_candidate_count=int(item.merged_candidate_count or 0),
+            final_context_count=int(item.final_context_count or 0),
+            empty_reason=item.empty_reason,
+            rerank_enabled=bool(item.rerank_enabled),
             feedback_value=item.feedback_value,
             feedback_note=item.feedback_note,
             suggested_review_label=KbChatLogRepository._suggest_review_label(item),
@@ -645,11 +629,8 @@ class KbChatLogRepository:
             team_name=team_name,
             retrieval_status_reason=KbChatLogRepository._build_retrieval_status_reason(
                 item.retrieval_status,
-                retrieved_count=item.retrieved_count,
+                final_context_count=int(item.final_context_count or 0),
             ),
-            retrieval_queries=retrieval_queries,
-            retrieval_funnel=retrieval_funnel,
-            answer_context=answer_context,
-            retrieved_docs=retrieved_docs,
+            trace_payload=trace_payload or None,
             conversation_context=context_window,
         )

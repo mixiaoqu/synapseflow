@@ -14,11 +14,13 @@ from app.services.graph_models import (
 _ALLOWED_RELATION_TYPES = {
     "RELATED_TO",
     "PART_OF",
-    "DEPENDS_ON",
-    "USES",
-    "CONNECTS_TO",
-    "STORES_IN",
-    "BELONGS_TO",
+    "CONTAINS",
+    "TRIGGERS",
+    "REQUIRES_PERMISSION",
+    "HAS_STATUS",
+    "NEXT_STEP",
+    "CONFIGURES",
+    "RESOLVES_ERROR",
     "MENTIONED_WITH",
 }
 _GENERIC_ENTITY_NAMES = {
@@ -145,6 +147,23 @@ _ENTITY_TYPE_ATTRIBUTE_KEYS = {
         "value",
         "meaning",
         "type",
+    },
+    "ERROR": {
+        "code",
+        "message",
+        "cause",
+        "severity",
+    },
+    "SOLUTION": {
+        "title",
+        "steps",
+        "result",
+    },
+    "OPERATION": {
+        "name",
+        "action",
+        "entry",
+        "target",
     },
     "PERSON": {
         "name",

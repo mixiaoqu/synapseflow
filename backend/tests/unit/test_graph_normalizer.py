@@ -61,7 +61,7 @@ def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
             document_chunk_id=11,
             source_normalized_name="postgresql",
             target_normalized_name="postgresql",
-            relation_type="USES",
+            relation_type="TRIGGERS",
             attributes={"mode": "direct"},
             evidence="自引用",
         )

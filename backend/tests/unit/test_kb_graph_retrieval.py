@@ -34,7 +34,7 @@ class FakeGraphStore:
                 "document_title": "Integration Guide",
                 "section_path": "Payments",
                 "chunk_text": "Prescription Flow connects to Payment through order settlement.",
-                "relation_type": "CONNECTS_TO",
+                "relation_type": "CONFIGURES",
                 "evidence": "Prescription Flow connects to Payment",
                 "matched_entities": ["Prescription Flow", "Payment"],
             }
@@ -77,7 +77,7 @@ def test_graph_retriever_returns_normalized_docs_and_trace():
     assert metadata["source"] == "graph"
     assert metadata["document_id"] == 10
     assert "chunk_index" not in metadata
-    assert metadata["graph_relation_type"] == "CONNECTS_TO"
+    assert metadata["graph_relation_type"] == "CONFIGURES"
     assert result["graph_primary_docs"][0]["metadata"]["source"] == "graph"
     assert result["graph_supporting_docs"][0]["metadata"]["supporting_section"] == "关联证据"
     assert result["trace"]["graph_used"] is True
@@ -227,7 +227,7 @@ def test_graph_retriever_uses_relation_pairs_for_direct_relation_lookup():
                     "document_title": "应用配置说明",
                     "section_path": "项目应用 / 助手配置",
                     "chunk_text": "项目应用需要先绑定助手配置。",
-                    "relation_type": "DEPENDS_ON",
+                    "relation_type": "REQUIRES_PERMISSION",
                     "evidence": "项目应用依赖助手配置。",
                     "matched_entities": ["项目应用", "助手配置"],
                 }

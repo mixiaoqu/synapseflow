@@ -102,7 +102,7 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
                 document_chunk_id=101,
                 source_normalized_name="projectapp",
                 target_normalized_name="assistantprofile",
-                relation_type="USES",
+                relation_type="TRIGGERS",
                 attributes={"mode": "auto"},
                 evidence="ProjectApp 默认绑定 AssistantProfile",
             )
@@ -151,7 +151,7 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
                 document_chunk_id=102,
                 source_normalized_name="projectapp",
                 target_normalized_name="assistantprofile",
-                relation_type="USES",
+                relation_type="TRIGGERS",
                 attributes={"mode": "auto"},
                 evidence="ProjectApp 也关联 AssistantProfile",
             )
@@ -210,7 +210,7 @@ def test_index_document_graph_runs_full_chunk_pipeline(monkeypatch):
     assert ("chunks", [101, 102]) in events
     assert ("entities", ["projectapp", "assistantprofile"]) in events
     assert ("mentions", [("projectapp", 101), ("projectapp", 102), ("assistantprofile", 102)]) in events
-    assert ("relations", ["USES"]) in events
+    assert ("relations", ["TRIGGERS"]) in events
     assert any(item[0] == "summary-list" for item in events)
     assert ("relation-summary-list", 9, 2, 1) in events
     assert any(item == ("summary-upsert", 0) for item in events)
@@ -274,7 +274,7 @@ def test_finalize_document_graph_refreshes_relation_summaries_for_current_docume
                                 {
                                     "source_normalized_name": "projectapp",
                                     "target_normalized_name": "assistantprofile",
-                                    "relation_type": "USES",
+                                    "relation_type": "TRIGGERS",
                                 }
                             ],
                         }

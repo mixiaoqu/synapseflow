@@ -32,7 +32,7 @@ def _coerce_text(content: Any) -> str:
 
 
 _ENTITY_ATTRIBUTE_GUIDANCE = """实体 attributes 只存该实体自身的稳定结构化事实,只保留实体类型专属属性。
-例如 PAGE 的 route/title/module，MENU 的 title/path/parent，FORM 的 title/fields/submit_label/validation，TABLE 的 title/columns/actions/data_source，LIST 的 title/item_label/filter/sort，BUTTON 的 label/action/permission/target，DIALOG 的 title/trigger/confirm_text/cancel_text，WORKFLOW 的 name/steps/start/end，STEP 的 name/order/action/status，ROLE 的 name/description/permissions，PERMISSION 的 code/name/description，STATUS 的 value/meaning/type，BUSINESS_OBJECT 的 name/description/category，API 的 method/path/route，CONFIG 的 key/default_value，PERSON 的 name/role/company/age/weight/height，PRODUCT 的 brand/sku/price/spec。
+例如 PAGE 的 route/title/module，MENU 的 title/path/parent，FORM 的 title/fields/submit_label/validation，TABLE 的 title/columns/actions/data_source，LIST 的 title/item_label/filter/sort，BUTTON 的 label/action/permission/target，DIALOG 的 title/trigger/confirm_text/cancel_text，WORKFLOW 的 name/steps/start/end，STEP 的 name/order/action/status，ROLE 的 name/description/permissions，PERMISSION 的 code/name/description，STATUS 的 value/meaning/type，BUSINESS_OBJECT 的 name/description/category，CONFIG 的 key/default_value，ERROR 的 code/message/cause/severity，SOLUTION 的 title/steps/result，OPERATION 的 name/action/entry/target。
 
 如果没有明确、可直接确认的稳定属性，可以返回空对象。
 属性 key 要简短且有业务含义，值尽量保持短文本、枚举值或可直接比较的结构化值。"""
@@ -74,9 +74,9 @@ def _build_graph_extraction_prompt(
 - ROLE
 - STATUS
 - BUSINESS_OBJECT
-- DATABASE
-- API
-- SERVICE
+- ERROR
+- SOLUTION
+- OPERATION
 - DOCUMENT
 - PERSON
 - TEAM
@@ -85,11 +85,13 @@ def _build_graph_extraction_prompt(
 允许的关系类型：
 - RELATED_TO
 - PART_OF
-- DEPENDS_ON
-- USES
-- CONNECTS_TO
-- STORES_IN
-- BELONGS_TO
+- CONTAINS
+- TRIGGERS
+- REQUIRES_PERMISSION
+- HAS_STATUS
+- NEXT_STEP
+- CONFIGURES
+- RESOLVES_ERROR
 - MENTIONED_WITH
 
  返回格式：
@@ -245,9 +247,9 @@ def _build_graph_extraction_batch_prompt(
 - ROLE
 - STATUS
 - BUSINESS_OBJECT
-- DATABASE
-- API
-- SERVICE
+- ERROR
+- SOLUTION
+- OPERATION
 - DOCUMENT
 - PERSON
 - TEAM
@@ -256,11 +258,13 @@ def _build_graph_extraction_batch_prompt(
 允许的关系类型：
 - RELATED_TO
 - PART_OF
-- DEPENDS_ON
-- USES
-- CONNECTS_TO
-- STORES_IN
-- BELONGS_TO
+- CONTAINS
+- TRIGGERS
+- REQUIRES_PERMISSION
+- HAS_STATUS
+- NEXT_STEP
+- CONFIGURES
+- RESOLVES_ERROR
 - MENTIONED_WITH
 
 返回格式：

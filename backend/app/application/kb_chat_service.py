@@ -254,8 +254,8 @@ class KbChatService(BaseAgentService):
             assistant_id=state.get("assistant_id"),
             category_id=state.get("category_id"),
             user_message=state.get("query", ""),
-            assistant_message=answer,
-            assistant_metadata={
+            answer_message=answer,
+            answer_metadata={
                 "answer_status": answer_status,
                 "log_id": log_id,
                 "workflow_id": state.get("workflow_id") or (state.get("metadata") or {}).get("workflow"),
@@ -372,6 +372,289 @@ class KbChatService(BaseAgentService):
         if result.get("answer"):
             return "answered"
         return "partial"
+
+    @staticmethod
+    def _resolve_retrieval_status(*, retrieval_trace: dict[str, Any], retrieved_count: int) -> str | None:
+        empty_reason = str(retrieval_trace.get("empty_reason") or "").strip()
+        if empty_reason in {"empty_knowledge_base", "empty_collection"}:
+            return empty_reason
+        if retrieved_count > 0:
+            return "ok"
+        if empty_reason:
+            return "no_hits"
+        return None
+
+    @staticmethod
+    def _build_log_trace_payload(
+        *,
+        state: dict[str, Any],
+        result: dict[str, Any],
+        retrieved_docs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        retrieval_trace = (
+            dict(result.get("retrieval_trace") or {})
+            if isinstance(result.get("retrieval_trace"), dict)
+            else {}
+        )
+        text_trace = (
+            dict(retrieval_trace.get("text") or {})
+            if isinstance(retrieval_trace.get("text"), dict)
+            else {}
+        )
+        graph_trace = (
+            dict(retrieval_trace.get("graph") or {})
+            if isinstance(retrieval_trace.get("graph"), dict)
+            else {}
+        )
+        rerank_trace = (
+            dict(retrieval_trace.get("rerank") or {})
+            if isinstance(retrieval_trace.get("rerank"), dict)
+            else {}
+        )
+        retrieval_funnel = (
+            text_trace.get("funnel")
+            if isinstance(text_trace.get("funnel"), dict)
+            else {}
+        )
+        semantic_query_stats = [
+            item
+            for item in list(retrieval_funnel.get("semantic_queries") or [])
+            if isinstance(item, dict)
+        ]
+        lexical_term_stats = [
+            item
+            for item in list(retrieval_funnel.get("lexical_terms") or [])
+            if isinstance(item, dict)
+        ]
+        def _string_items(value: Any) -> list[str]:
+            return [
+                str(item).strip()
+                for item in list(value or [])
+                if str(item or "").strip()
+            ]
+
+        semantic_queries = _string_items(result.get("semantic_queries")) or _string_items(
+            state.get("semantic_queries")
+        )
+        lexical_terms = _string_items(result.get("lexical_terms")) or _string_items(
+            state.get("lexical_terms")
+        )
+        candidate_entities = _string_items(result.get("candidate_entities")) or _string_items(
+            state.get("candidate_entities")
+        )
+        if not semantic_queries:
+            semantic_queries = [
+                str(item.get("query") or "").strip()
+                for item in semantic_query_stats
+                if str(item.get("query") or "").strip()
+            ]
+        if not lexical_terms:
+            lexical_terms = [
+                str(item.get("query") or "").strip()
+                for item in lexical_term_stats
+                if str(item.get("query") or "").strip()
+            ]
+        text_hit_count = int(text_trace.get("text_hits") or 0)
+        graph_hit_count = int(graph_trace.get("graph_hits") or 0)
+        merged_count = int(
+            retrieval_trace.get("merged_pool_count")
+            or text_trace.get("merged_candidate_count")
+            or 0
+        )
+        final_context_count = int(retrieval_trace.get("final_context_docs") or len(retrieved_docs))
+        rerank_count = int(rerank_trace.get("output_count") or final_context_count)
+
+        def _query_stat_total(items: list[dict[str, Any]]) -> int:
+            return sum(int(item.get("chunk_count") or 0) for item in items)
+
+        def _source_status(*, query_count: int, recall_count: int, empty_reason: Any = None) -> str:
+            reason = str(empty_reason or "").strip()
+            if reason in {"skipped", "disabled"}:
+                return reason
+            if query_count <= 0:
+                return "skipped"
+            if recall_count <= 0:
+                return reason or "no_hits"
+            return "normal"
+
+        def _source_type(metadata: dict[str, Any]) -> str:
+            source = str(metadata.get("source") or "").strip().lower()
+            if source in {"hybrid", "text_graph"}:
+                return "hybrid"
+            if source in {"graph", "graph_summary", "graph_relation_summary"}:
+                return "graph"
+            if source == "lexical":
+                return "lexical"
+            return "vector"
+
+        def _score(metadata: dict[str, Any]) -> float | None:
+            raw_score = metadata.get("rerank_score")
+            if raw_score is None:
+                raw_score = metadata.get("score")
+            if raw_score is None:
+                return None
+            try:
+                return round(float(raw_score), 3)
+            except (TypeError, ValueError):
+                return None
+
+        def _doc_identity(doc: dict[str, Any], metadata: dict[str, Any]) -> str:
+            return str(
+                metadata.get("document_chunk_id")
+                or metadata.get("chunk_id")
+                or metadata.get("document_id")
+                or doc.get("content")
+                or ""
+            )
+
+        def _build_trace_docs(raw_docs: list[Any]) -> list[dict[str, Any]]:
+            docs: list[dict[str, Any]] = []
+            top_change_by_title = {
+                str(item.get("title") or ""): item
+                for item in list(rerank_trace.get("top_changes") or [])
+                if isinstance(item, dict)
+            }
+            for index, doc in enumerate(raw_docs, start=1):
+                if not isinstance(doc, dict):
+                    continue
+                metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+                title = str(metadata.get("document_title") or f"候选片段 #{index}")
+                source_type = _source_type(metadata)
+                top_change = top_change_by_title.get(title) or {}
+                raw_original_rank = top_change.get("old_rank")
+                try:
+                    original_rank = int(raw_original_rank)
+                except (TypeError, ValueError):
+                    original_rank = index
+                docs.append(
+                    {
+                        "rank": int(doc.get("rank") or index),
+                        "original_rank": original_rank,
+                        "title": title,
+                        "section_path": str(metadata.get("section_path") or ""),
+                        "source_type": source_type,
+                        "source_label": {
+                            "hybrid": "Hybrid",
+                            "lexical": "Lexical",
+                            "graph": "Graph",
+                            "vector": "Vector",
+                        }[source_type],
+                        "score": _score(metadata),
+                        "selected": False,
+                        "identity": _doc_identity(doc, metadata),
+                        "content": str(doc.get("content") or ""),
+                        "metadata": dict(metadata),
+                    }
+                )
+            return docs
+
+        final_context_docs = _build_trace_docs(list(result.get("primary_evidence_docs") or retrieved_docs or []))
+        selected_identities = {
+            str(doc.get("identity") or "")
+            for doc in final_context_docs
+            if str(doc.get("identity") or "")
+        }
+        ranked_candidates = _build_trace_docs(
+            list(
+                result.get("reranked_primary_evidence_docs")
+                or result.get("primary_evidence_docs")
+                or retrieved_docs
+                or []
+            )
+        )
+        for doc in ranked_candidates:
+            doc["selected"] = bool(doc.get("identity") and doc.get("identity") in selected_identities)
+
+        return {
+            "query_clues": {
+                "semantic_queries": semantic_queries,
+                "lexical_terms": lexical_terms,
+                "candidate_entities": candidate_entities,
+            },
+            "source_summary": {
+                "vector": {
+                    "query_count": len(semantic_queries),
+                    "recall_count": _query_stat_total(semantic_query_stats),
+                    "candidate_count": text_hit_count,
+                    "status": _source_status(
+                        query_count=len(semantic_queries),
+                        recall_count=_query_stat_total(semantic_query_stats),
+                        empty_reason=text_trace.get("empty_reason"),
+                    ),
+                },
+                "lexical": {
+                    "query_count": len(lexical_terms),
+                    "recall_count": _query_stat_total(lexical_term_stats),
+                    "candidate_count": text_hit_count,
+                    "status": _source_status(
+                        query_count=len(lexical_terms),
+                        recall_count=_query_stat_total(lexical_term_stats),
+                        empty_reason=text_trace.get("empty_reason"),
+                    ),
+                },
+                "graph": {
+                    "query_count": len(candidate_entities),
+                    "recall_count": graph_hit_count,
+                    "candidate_count": int(retrieval_trace.get("graph_primary_count") or graph_hit_count),
+                    "status": _source_status(
+                        query_count=len(candidate_entities),
+                        recall_count=graph_hit_count,
+                        empty_reason=graph_trace.get("empty_reason"),
+                    ),
+                },
+            },
+            "funnel": {
+                "recall_total": text_hit_count + graph_hit_count,
+                "duplicates_folded": int(retrieval_trace.get("duplicates_folded") or 0),
+                "merged_count": merged_count,
+                "rerank_count": rerank_count,
+                "final_context_count": final_context_count,
+            },
+            "branch_summaries": {
+                "vector": [
+                    {
+                        "query": str(item.get("query") or "").strip(),
+                        "chunk_count": int(item.get("chunk_count") or 0),
+                    }
+                    for item in semantic_query_stats
+                    if str(item.get("query") or "").strip()
+                ],
+                "lexical": [
+                    {
+                        "query": str(item.get("query") or "").strip(),
+                        "chunk_count": int(item.get("chunk_count") or 0),
+                    }
+                    for item in lexical_term_stats
+                    if str(item.get("query") or "").strip()
+                ],
+                "graph": [
+                    {
+                        "query": entity,
+                        "chunk_count": graph_hit_count,
+                    }
+                    for entity in candidate_entities
+                ],
+            },
+            "ranked_candidates": ranked_candidates,
+            "final_context_docs": final_context_docs,
+            "supporting_evidence_docs": _build_trace_docs(list(result.get("supporting_evidence_docs") or [])),
+            "metadata_evidence_docs": _build_trace_docs(list(result.get("metadata_evidence_docs") or [])),
+            "debug": {
+                "retrieval_trace": (
+                    retrieval_trace
+                ),
+                "retrieval_evaluation": (
+                    dict(result.get("retrieval_evaluation") or {})
+                    if isinstance(result.get("retrieval_evaluation"), dict)
+                    else {}
+                ),
+                "rewrite_trace": (
+                    dict(result.get("rewrite_trace") or {})
+                    if isinstance(result.get("rewrite_trace"), dict)
+                    else {}
+                ),
+            },
+        }
 
     @staticmethod
     def _log_retrieval_summary(
@@ -704,6 +987,36 @@ class KbChatService(BaseAgentService):
         latency_ms: int | None,
     ) -> int | None:
         user_id = state.get("user_id")
+        retrieval_trace = (
+            dict(result.get("retrieval_trace") or {})
+            if isinstance(result.get("retrieval_trace"), dict)
+            else {}
+        )
+        text_trace = (
+            dict(retrieval_trace.get("text") or {})
+            if isinstance(retrieval_trace.get("text"), dict)
+            else {}
+        )
+        graph_trace = (
+            dict(retrieval_trace.get("graph") or {})
+            if isinstance(retrieval_trace.get("graph"), dict)
+            else {}
+        )
+        rerank_trace = (
+            dict(retrieval_trace.get("rerank") or {})
+            if isinstance(retrieval_trace.get("rerank"), dict)
+            else {}
+        )
+        retrieved_docs = list(result.get("retrieved_docs") or [])
+        trace_payload = self._build_log_trace_payload(
+            state=state,
+            result=result,
+            retrieved_docs=retrieved_docs,
+        )
+        retrieval_status = self._resolve_retrieval_status(
+            retrieval_trace=retrieval_trace,
+            retrieved_count=len(retrieved_docs),
+        )
         try:
             async with AsyncSessionLocal() as db:
                 repo = KbChatLogRepository(db)
@@ -721,9 +1034,19 @@ class KbChatService(BaseAgentService):
                     query=str(state.get("query") or ""),
                     answer_text=str(result.get("answer") or ""),
                     answer_status=self._resolve_answer_status(result),
-                    retrieval_status=None,
-                    retrieved_count=len(result.get("retrieved_docs", []) or []),
+                    retrieval_status=retrieval_status,
                     latency_ms=latency_ms,
+                    text_hit_count=int(text_trace.get("text_hits") or 0),
+                    graph_hit_count=int(graph_trace.get("graph_hits") or 0),
+                    merged_candidate_count=int(
+                        retrieval_trace.get("merged_pool_count")
+                        or text_trace.get("merged_candidate_count")
+                        or 0
+                    ),
+                    final_context_count=int(retrieval_trace.get("final_context_docs") or len(retrieved_docs)),
+                    empty_reason=str(retrieval_trace.get("empty_reason") or "") or None,
+                    rerank_enabled=bool(rerank_trace.get("enabled_for_primary_evidence")),
+                    trace_payload=trace_payload,
                 )
                 return row.id
         except Exception as exc:

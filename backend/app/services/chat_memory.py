@@ -86,8 +86,8 @@ class ChatMemoryStore(Protocol):
         assistant_id: int | None,
         category_id: int | None,
         user_message: str,
-        assistant_message: str,
-        assistant_metadata: dict[str, Any] | None = None,
+        answer_message: str,
+        answer_metadata: dict[str, Any] | None = None,
     ) -> None: ...
 
     async def list_sessions(
@@ -192,12 +192,12 @@ class DatabaseChatMemoryStore:
         assistant_id: int | None,
         category_id: int | None,
         user_message: str,
-        assistant_message: str,
-        assistant_metadata: dict[str, Any] | None = None,
+        answer_message: str,
+        answer_metadata: dict[str, Any] | None = None,
     ) -> None:
         normalized_user = (user_message or "").strip()
-        normalized_assistant = (assistant_message or "").strip()
-        if not normalized_user and not normalized_assistant:
+        normalized_answer = (answer_message or "").strip()
+        if not normalized_user and not normalized_answer:
             return
 
         async with AsyncSessionLocal() as db:
@@ -229,22 +229,22 @@ class DatabaseChatMemoryStore:
                     )
                 )
                 messages_to_add += 1
-            if normalized_assistant:
+            if normalized_answer:
                 db.add(
                     ChatMessage(
                         chat_session_id=session.id,
                         role="assistant",
-                        content=normalized_assistant,
-                        metadata_=assistant_metadata or None,
+                        content=normalized_answer,
+                        metadata_=answer_metadata or None,
                     )
                 )
                 messages_to_add += 1
 
             session.message_count = int(session.message_count or 0) + messages_to_add
-            title_source = normalized_user or normalized_assistant
+            title_source = normalized_user or normalized_answer
             if title_source and not str(session.title or "").strip():
                 session.title = self._truncate(title_source, 60)
-            latest_preview = normalized_assistant or normalized_user
+            latest_preview = normalized_answer or normalized_user
             if latest_preview:
                 session.preview = self._truncate(latest_preview, 120)
 

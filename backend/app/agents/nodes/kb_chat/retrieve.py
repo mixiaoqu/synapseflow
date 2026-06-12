@@ -399,6 +399,7 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
         graph_primary_docs,
         final_top_k=max(final_top_k, len(text_docs) + len(graph_primary_docs)),
     )
+    duplicates_folded = max(0, len(text_docs) + len(graph_primary_docs) - len(merged_docs))
     primary_docs: list[dict[str, Any]] = []
     metadata_docs: list[dict[str, Any]] = []
     for doc in merged_docs:
@@ -459,6 +460,8 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
         "primary_count": len(reranked_primary_docs),
         "supporting_count": len(supporting_docs),
         "metadata_count": len(metadata_docs),
+        "merged_pool_count": len(primary_docs) + len(metadata_docs),
+        "duplicates_folded": duplicates_folded,
         "graph_primary_count": len(graph_primary_docs),
         "graph_supporting_count": len(supporting_docs),
         "supporting_sections": [

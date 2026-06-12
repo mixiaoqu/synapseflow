@@ -2,6 +2,8 @@ import { request } from "@/shared/api/http";
 
 import type {
   ListQaLogsParams,
+  QaLogDetail,
+  QaLogDetailResponse,
   QaLogListResponse,
   QaLogSummary,
 } from "@/modules/qa-logs/types";
@@ -30,8 +32,13 @@ function mapQaLog(item: QaLogListResponse["items"][number]): QaLogSummary {
     answerText: item.answer_text,
     answerStatus: item.answer_status,
     retrievalStatus: item.retrieval_status,
-    retrievedCount: item.retrieved_count,
     latencyMs: item.latency_ms,
+    textHitCount: item.text_hit_count ?? 0,
+    graphHitCount: item.graph_hit_count ?? 0,
+    mergedCandidateCount: item.merged_candidate_count ?? 0,
+    finalContextCount: item.final_context_count ?? 0,
+    emptyReason: item.empty_reason ?? null,
+    rerankEnabled: item.rerank_enabled ?? false,
     feedbackValue: item.feedback_value,
     feedbackNote: item.feedback_note,
     suggestedReviewLabel: item.suggested_review_label,
@@ -40,6 +47,20 @@ function mapQaLog(item: QaLogListResponse["items"][number]): QaLogSummary {
     reviewedAt: item.reviewed_at,
     reviewedByUserId: item.reviewed_by_user_id,
     createdAt: item.created_at,
+  };
+}
+
+function mapQaLogDetail(item: QaLogDetailResponse): QaLogDetail {
+  return {
+    ...mapQaLog(item),
+    retrievalStatusReason: item.retrieval_status_reason,
+    tracePayload: item.trace_payload,
+    conversationContext: (item.conversation_context || []).map((message) => ({
+      role: message.role,
+      content: message.content,
+      createdAt: message.created_at,
+      isCurrentTurn: message.is_current_turn,
+    })),
   };
 }
 
@@ -56,4 +77,13 @@ export async function listQaLogs(params: ListQaLogsParams = {}) {
     pageSize: response.page_size,
     items: response.items.map(mapQaLog),
   };
+}
+
+export async function getQaLogDetail(logId: number) {
+  const response = await request<QaLogDetailResponse>({
+    url: `/admin/qa/logs/${logId}`,
+    method: "GET",
+  });
+
+  return mapQaLogDetail(response);
 }

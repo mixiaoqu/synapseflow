@@ -240,8 +240,8 @@ class FakeChatMemoryStore:
         assistant_id: int | None,
         category_id: int | None,
         user_message: str,
-        assistant_message: str,
-        assistant_metadata: dict | None = None,
+        answer_message: str,
+        answer_metadata: dict | None = None,
     ) -> None:
         self.save_calls.append(
             {
@@ -257,8 +257,8 @@ class FakeChatMemoryStore:
                 "assistant_id": assistant_id,
                 "category_id": category_id,
                 "user_message": user_message,
-                "assistant_message": assistant_message,
-                "assistant_metadata": assistant_metadata,
+                "answer_message": answer_message,
+                "answer_metadata": answer_metadata,
             }
         )
 
@@ -396,8 +396,8 @@ def test_kb_chat_invoke_uses_graph_result():
             "external_user_id": None,
         }
     ]
-    assert memory_store.save_calls[0]["assistant_message"] == "LangGraph helps compose flows."
-    assert memory_store.save_calls[0]["assistant_metadata"]["retrieval_queries"] == [
+    assert memory_store.save_calls[0]["answer_message"] == "LangGraph helps compose flows."
+    assert memory_store.save_calls[0]["answer_metadata"]["semantic_queries"] == [
         "What is LangGraph?",
         "LangGraph basics",
     ]
@@ -446,8 +446,8 @@ def test_kb_chat_stream_emits_standardized_envelopes():
     assert payloads[-1]["data"]["answer_status"] == "answered"
     assert payloads[-1]["data"]["session_id"]
     assert memory_store.load_calls[0]["session_id"] == payloads[-1]["data"]["session_id"]
-    assert memory_store.save_calls[0]["assistant_message"] == "LangGraph helps compose flows."
-    assert memory_store.save_calls[0]["assistant_metadata"]["retrieval_queries"] == [
+    assert memory_store.save_calls[0]["answer_message"] == "LangGraph helps compose flows."
+    assert memory_store.save_calls[0]["answer_metadata"]["semantic_queries"] == [
         "What is LangGraph?",
         "LangGraph basics",
     ]
@@ -478,7 +478,7 @@ def test_kb_chat_invoke_blocks_sensitive_query_before_graph_runs():
     assert response.answer_text.startswith("输入包含")
     assert response.retrieved_docs == []
     assert graph.last_state is None
-    assert memory_store.save_calls[0]["assistant_metadata"]["answer_status"] == "blocked"
+    assert memory_store.save_calls[0]["answer_metadata"]["answer_status"] == "blocked"
     assert sensitive_service.calls == [
         {
             "scene": "query",
@@ -515,7 +515,7 @@ def test_kb_chat_stream_completes_with_blocked_payload_when_sensitive_query_matc
     assert payloads[-1]["data"]["answer_status"] == "blocked"
     assert payloads[-1]["data"]["retrieved_docs"] == []
     assert graph.last_state is None
-    assert memory_store.save_calls[0]["assistant_metadata"]["answer_status"] == "blocked"
+    assert memory_store.save_calls[0]["answer_metadata"]["answer_status"] == "blocked"
 
 
 def test_kb_chat_build_initial_state_keeps_category_id():

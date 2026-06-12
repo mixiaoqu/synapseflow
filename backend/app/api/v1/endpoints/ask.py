@@ -17,7 +17,6 @@ from app.core.authz import PERMISSION_REVIEW_QA_LOG, PERMISSION_VIEW_QA_LOG
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.kb_chat import (
-    KbChatDiagnosticDoc,
     KbChatDiagnosticMessage,
     KbChatFeedbackRequest,
     KbChatLogDetail,
@@ -26,9 +25,6 @@ from app.models.schemas.kb_chat import (
     KbChatPreviewRequest,
     KbChatRequest,
     KbChatResponse,
-    KbChatRetrievalFunnel,
-    KbChatRetrievalFunnelStage,
-    KbChatRetrievalQueryStat,
     KbChatReviewRequest,
     KbChatSessionDetail,
     KbChatSessionSummary,
@@ -66,8 +62,13 @@ def _build_log_detail_response(record) -> KbChatLogDetail:
         answer_text=record.answer_text,
         answer_status=record.answer_status,
         retrieval_status=record.retrieval_status,
-        retrieved_count=record.retrieved_count,
         latency_ms=record.latency_ms,
+        text_hit_count=record.text_hit_count,
+        graph_hit_count=record.graph_hit_count,
+        merged_candidate_count=record.merged_candidate_count,
+        final_context_count=record.final_context_count,
+        empty_reason=record.empty_reason,
+        rerank_enabled=record.rerank_enabled,
         feedback_value=record.feedback_value,
         feedback_note=record.feedback_note,
         suggested_review_label=record.suggested_review_label,
@@ -81,46 +82,11 @@ def _build_log_detail_response(record) -> KbChatLogDetail:
         assistant_id=record.assistant_id,
         assistant_name=record.assistant_name,
         retrieval_status_reason=record.retrieval_status_reason,
-        retrieval_queries=list(record.retrieval_queries or []),
-        retrieval_funnel=(
-            KbChatRetrievalFunnel(
-                mode=record.retrieval_funnel.get("mode"),
-                query_count=int(record.retrieval_funnel.get("query_count") or 0),
-                rewritten_queries=[
-                    KbChatRetrievalQueryStat(
-                        query=str(item.get("query") or ""),
-                        chunk_count=int(item.get("chunk_count") or 0),
-                    )
-                    for item in (record.retrieval_funnel.get("rewritten_queries") or [])
-                    if isinstance(item, dict) and str(item.get("query") or "").strip()
-                ],
-                stages=[
-                    KbChatRetrievalFunnelStage(
-                        key=str(item.get("key") or ""),
-                        label=str(item.get("label") or ""),
-                        chunk_count=int(item.get("chunk_count") or 0),
-                        note=(
-                            str(item.get("note"))
-                            if isinstance(item.get("note"), str)
-                            else None
-                        ),
-                    )
-                    for item in (record.retrieval_funnel.get("stages") or [])
-                    if isinstance(item, dict) and str(item.get("key") or "").strip()
-                ],
-            )
-            if isinstance(record.retrieval_funnel, dict)
+        trace_payload=(
+            dict(record.trace_payload)
+            if isinstance(record.trace_payload, dict)
             else None
         ),
-        answer_context=record.answer_context,
-        retrieved_docs=[
-            KbChatDiagnosticDoc(
-                rank=doc.rank,
-                content=doc.content,
-                metadata=dict(doc.metadata or {}),
-            )
-            for doc in record.retrieved_docs
-        ],
         conversation_context=[
             KbChatDiagnosticMessage(
                 role=message.role,
@@ -367,8 +333,13 @@ async def list_ask_logs(
                 answer_text=item.answer_text,
                 answer_status=item.answer_status,
                 retrieval_status=item.retrieval_status,
-                retrieved_count=item.retrieved_count,
                 latency_ms=item.latency_ms,
+                text_hit_count=item.text_hit_count,
+                graph_hit_count=item.graph_hit_count,
+                merged_candidate_count=item.merged_candidate_count,
+                final_context_count=item.final_context_count,
+                empty_reason=item.empty_reason,
+                rerank_enabled=item.rerank_enabled,
                 feedback_value=item.feedback_value,
                 feedback_note=item.feedback_note,
                 suggested_review_label=item.suggested_review_label,

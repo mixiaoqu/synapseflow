@@ -36,7 +36,7 @@ def test_graph_models_expose_minimal_document_and_chunk_fields():
         document_chunk_id=34,
         source_normalized_name="projectapp",
         target_normalized_name="postgresql",
-        relation_type="USES",
+        relation_type="TRIGGERS",
         attributes={"mode": "direct"},
         evidence="ProjectApp 使用 PostgreSQL",
     )
@@ -45,7 +45,7 @@ def test_graph_models_expose_minimal_document_and_chunk_fields():
     assert chunk.team_id == 7
     assert chunk.knowledge_base_id == 8
     assert entity.display_name == "PostgreSQL"
-    assert relation.relation_type == "USES"
+    assert relation.relation_type == "TRIGGERS"
 
 
 def test_graph_indexer_writes_chunk_entities_and_relations():
@@ -107,7 +107,7 @@ def test_graph_indexer_writes_chunk_entities_and_relations():
             document_chunk_id=101,
             source_normalized_name="projectapp",
             target_normalized_name="assistantprofile",
-            relation_type="USES",
+            relation_type="TRIGGERS",
             attributes={},
             evidence="ProjectApp 默认绑定 AssistantProfile",
         )
@@ -175,7 +175,7 @@ def test_graph_indexer_skips_relation_without_known_entities():
             document_chunk_id=202,
             source_normalized_name="neo4j",
             target_normalized_name="unknown-service",
-            relation_type="USES",
+            relation_type="TRIGGERS",
             attributes={},
             evidence="无效关系",
         )

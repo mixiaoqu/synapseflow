@@ -27,7 +27,7 @@ def test_build_entity_summary_prompt_includes_context_payload():
             "relations": [
                 {
                     "other": "AssistantProfile",
-                    "relation_type": "USES",
+                    "relation_type": "TRIGGERS",
                     "evidence": "ProjectApp 默认绑定 AssistantProfile",
                     "relation_props": {"team_id": 1, "knowledge_base_id": 2},
                 }
@@ -37,7 +37,7 @@ def test_build_entity_summary_prompt_includes_context_payload():
 
     assert "ProjectApp" in prompt
     assert "平台组" in prompt
-    assert "USES" in prompt
+    assert "TRIGGERS" in prompt
     assert "固定三句骨架" in prompt
     assert "不要重复罗列关系" in prompt
 
@@ -226,7 +226,7 @@ def test_build_relation_summary_prompt_includes_context_payload():
         {
             "source_display_name": "ProjectApp",
             "target_display_name": "AssistantProfile",
-            "relation_type": "USES",
+            "relation_type": "TRIGGERS",
             "evidence": "ProjectApp 默认绑定 AssistantProfile",
             "relation_props": {"attr_mode": "auto"},
         }
@@ -234,7 +234,7 @@ def test_build_relation_summary_prompt_includes_context_payload():
 
     assert "ProjectApp" in prompt
     assert "AssistantProfile" in prompt
-    assert "USES" in prompt
+    assert "TRIGGERS" in prompt
 
 
 def test_refresh_relation_summaries_writes_generated_summary(monkeypatch):
@@ -256,7 +256,7 @@ def test_refresh_relation_summaries_writes_generated_summary(monkeypatch):
                     "target_entity_type": "COMPONENT",
                     "target_aliases": [],
                     "target_props": {},
-                    "relation_type": "USES",
+                    "relation_type": "TRIGGERS",
                     "evidence": "ProjectApp 默认绑定 AssistantProfile",
                     "relation_props": {"attr_mode": "auto"},
                 }
@@ -277,7 +277,7 @@ def test_refresh_relation_summaries_writes_generated_summary(monkeypatch):
                             {
                                 "source_normalized_name": "projectapp",
                                 "target_normalized_name": "assistantprofile",
-                                "relation_type": "USES",
+                                "relation_type": "TRIGGERS",
                                 "summary": "ProjectApp 通过默认绑定使用 AssistantProfile。",
                             }
                         ]
@@ -416,7 +416,7 @@ def test_entity_and_relation_refresh_can_share_llm_instance(monkeypatch):
                     "target_entity_type": "COMPONENT",
                     "target_aliases": [],
                     "target_props": {},
-                    "relation_type": "USES",
+                    "relation_type": "TRIGGERS",
                     "evidence": "ProjectApp 默认绑定 AssistantProfile",
                     "relation_props": {},
                 }
@@ -447,7 +447,7 @@ def test_entity_and_relation_refresh_can_share_llm_instance(monkeypatch):
                         {
                             "source_normalized_name": "projectapp",
                             "target_normalized_name": "assistantprofile",
-                            "relation_type": "USES",
+                            "relation_type": "TRIGGERS",
                             "summary": "ProjectApp 使用 AssistantProfile。",
                         }
                     ]

@@ -139,8 +139,13 @@ class KbChatLogItem(BaseModel):
     answer_text: str
     answer_status: str
     retrieval_status: str | None = None
-    retrieved_count: int = 0
     latency_ms: int | None = None
+    text_hit_count: int = 0
+    graph_hit_count: int = 0
+    merged_candidate_count: int = 0
+    final_context_count: int = 0
+    empty_reason: str | None = None
+    rerank_enabled: bool = False
     feedback_value: str | None = None
     feedback_note: str | None = None
     suggested_review_label: str | None = None
@@ -149,14 +154,6 @@ class KbChatLogItem(BaseModel):
     reviewed_at: datetime | None = None
     reviewed_by_user_id: int | None = None
     created_at: datetime
-
-
-class KbChatDiagnosticDoc(BaseModel):
-    """One retrieved chunk retained for QA diagnostics."""
-
-    rank: int = 0
-    content: str = ""
-    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class KbChatDiagnosticMessage(BaseModel):
@@ -168,31 +165,6 @@ class KbChatDiagnosticMessage(BaseModel):
     is_current_turn: bool = False
 
 
-class KbChatRetrievalQueryStat(BaseModel):
-    """One rewritten retrieval query and its recall count."""
-
-    query: str
-    chunk_count: int = 0
-
-
-class KbChatRetrievalFunnelStage(BaseModel):
-    """One stage in the retrieval funnel."""
-
-    key: str
-    label: str
-    chunk_count: int = 0
-    note: str | None = None
-
-
-class KbChatRetrievalFunnel(BaseModel):
-    """Structured retrieval funnel retained for diagnostics."""
-
-    mode: str | None = None
-    query_count: int = 0
-    rewritten_queries: List[KbChatRetrievalQueryStat] = Field(default_factory=list)
-    stages: List[KbChatRetrievalFunnelStage] = Field(default_factory=list)
-
-
 class KbChatLogDetail(KbChatLogItem):
     """Admin-facing detailed diagnostic view for one KB chat log."""
 
@@ -202,10 +174,7 @@ class KbChatLogDetail(KbChatLogItem):
     assistant_name: str | None = None
     category_name: str | None = None
     retrieval_status_reason: str | None = None
-    retrieval_queries: List[str] = Field(default_factory=list)
-    retrieval_funnel: KbChatRetrievalFunnel | None = None
-    answer_context: str | None = None
-    retrieved_docs: List[KbChatDiagnosticDoc] = Field(default_factory=list)
+    trace_payload: Dict[str, Any] | None = None
     conversation_context: List[KbChatDiagnosticMessage] = Field(default_factory=list)
 
 
