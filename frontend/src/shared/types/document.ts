@@ -1,4 +1,5 @@
 export type DocumentIndexStatus = "queued" | "processing" | "indexed" | "failed";
+export type GraphIndexStatus = "queued" | "processing" | "finalizing" | "indexed" | "failed";
 export type DocumentLifecycleStatus = "draft" | "pending_review" | "published" | "archived";
 
 export interface DocumentSummary {
@@ -14,7 +15,7 @@ export interface DocumentSummary {
   index_status: DocumentIndexStatus;
   index_error: string | null;
   indexed_at: string | null;
-  graph_index_status: DocumentIndexStatus;
+  graph_index_status: GraphIndexStatus;
   graph_index_error: string | null;
   graph_indexed_at: string | null;
   knowledge_base_id: number | null;

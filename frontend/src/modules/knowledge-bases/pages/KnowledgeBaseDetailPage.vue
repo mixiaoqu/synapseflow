@@ -339,15 +339,27 @@ function getDocumentTypeLabel(documentType: string | null) {
   return documentType.toUpperCase();
 }
 
-function getIndexStatusMeta(status: DocumentSummary["index_status"]) {
+function getIndexStatusMeta(status: DocumentSummary["index_status"] | DocumentSummary["graph_index_status"]) {
   const metaMap = {
     queued: { label: "排队中", type: "warning" as const },
     processing: { label: "处理中", type: "primary" as const },
+    finalizing: { label: "收尾中", type: "primary" as const },
     indexed: { label: "已索引", type: "success" as const },
     failed: { label: "失败", type: "danger" as const },
   };
 
   return metaMap[status];
+}
+
+function getIndexErrorText(
+  status: DocumentSummary["index_status"] | DocumentSummary["graph_index_status"],
+  error: string | null,
+) {
+  if (status !== "failed") {
+    return "";
+  }
+
+  return error?.trim() || "索引失败，请稍后重试。";
 }
 
 function getLifecycleStatusMeta(status: DocumentLifecycleStatus) {
@@ -1633,12 +1645,38 @@ watch(
                   <span>{{ formatFileSize(row.size) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="索引状态" width="120">
+              <el-table-column label="文本索引" width="140">
                 <template #default="{ row }">
-                  <StatusTag
-                    :label="getIndexStatusMeta(row.index_status).label"
-                    :type="getIndexStatusMeta(row.index_status).type"
-                  />
+                  <div class="kb-documents__index-cell">
+                    <StatusTag
+                      :label="getIndexStatusMeta(row.index_status).label"
+                      :type="getIndexStatusMeta(row.index_status).type"
+                    />
+                    <span
+                      v-if="row.index_status === 'failed'"
+                      class="kb-documents__index-error"
+                      :title="getIndexErrorText(row.index_status, row.index_error)"
+                    >
+                      {{ getIndexErrorText(row.index_status, row.index_error) }}
+                    </span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="图谱索引" width="140">
+                <template #default="{ row }">
+                  <div class="kb-documents__index-cell">
+                    <StatusTag
+                      :label="getIndexStatusMeta(row.graph_index_status).label"
+                      :type="getIndexStatusMeta(row.graph_index_status).type"
+                    />
+                    <span
+                      v-if="row.graph_index_status === 'failed'"
+                      class="kb-documents__index-error"
+                      :title="getIndexErrorText(row.graph_index_status, row.graph_index_error)"
+                    >
+                      {{ getIndexErrorText(row.graph_index_status, row.graph_index_error) }}
+                    </span>
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column label="发布状态" width="120">
@@ -2091,6 +2129,22 @@ watch(
 .kb-documents__name-copy span {
   color: #64748b;
   font-size: 12px;
+}
+
+.kb-documents__index-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kb-documents__index-error {
+  overflow: hidden;
+  color: #dc2626;
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kb-documents__footer {

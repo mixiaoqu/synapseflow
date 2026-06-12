@@ -9,6 +9,11 @@ providers:
     api_key_env: DEEPSEEK_API_KEY
     description: DeepSeek official OpenAI-compatible API
 
+  siliconflow:
+    api_base: https://api.siliconflow.cn/v1
+    api_key_env: SILICONFLOW_API_KEY
+    description: SiliconFlow OpenAI compatible API
+
 
 model_assets:
   glm-5-1:
@@ -49,8 +54,8 @@ model_assets:
 
   deepseek-v4-flash:
     type: chat
-    provider: deepseek
-    model: deepseek-v4-flash
+    provider: siliconflow
+    model: deepseek-ai/DeepSeek-V4-Flash
     name:  DeepSeek V4 Flash
     request_timeout: 180
     streaming: true
@@ -58,8 +63,8 @@ model_assets:
 
   deepseek-v4-pro:
     type: chat
-    provider: deepseek
-    model: deepseek-v4-pro
+    provider: siliconflow
+    model: deepseek-ai/DeepSeek-V4-Pro
     name:  DeepSeek V4 pro
     request_timeout: 180
     streaming: true
