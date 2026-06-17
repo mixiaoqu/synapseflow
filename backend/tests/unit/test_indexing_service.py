@@ -741,6 +741,96 @@ def test_schedule_document_graph_chunks_enqueues_child_chunks_after_claim(monkey
     ]
 
 
+def test_schedule_document_graph_chunks_splits_large_chunk_lists_into_parallel_batches(monkeypatch):
+    doc = SimpleNamespace(id=42, title="Doc 42", content_hash="hash-42")
+    queued_batches = []
+
+    async def fake_get_document(db, document_id):
+        assert document_id == 42
+        return doc
+
+    async def fake_set_job_document_status(db, **kwargs):
+        return None
+
+    async def fake_mark_job_document_failed(db, **kwargs):  # pragma: no cover
+        raise AssertionError("unexpected failure")
+
+    class FakeChunkRepository:
+        def __init__(self, db):
+            pass
+
+        async def get_child_chunks_for_document(self, document_id):
+            assert document_id == 42
+            return [
+                SimpleNamespace(id=100 + index, metadata_={"graph_extraction": {"status": "indexed"}})
+                for index in range(1, 26)
+            ]
+
+        async def update_metadata(self, chunk_id, metadata):
+            return None
+
+    class FakeGraphStore:
+        async def delete_document_graph(self, *, document_id):
+            return None
+
+        async def prune_orphan_entities(self):
+            return None
+
+    def fake_enqueue_document_graph_chunks(
+        *,
+        document_id,
+        document_chunk_ids,
+        expected_content_hash,
+        job_id,
+        title=None,
+    ):
+        queued_batches.append((document_id, document_chunk_ids, expected_content_hash, job_id, title))
+
+    class DummyExecuteResult:
+        rowcount = 1
+
+    class DummyDB:
+        async def execute(self, stmt):
+            return DummyExecuteResult()
+
+        async def commit(self):
+            return None
+
+    monkeypatch.setattr(indexing_service, "_get_document", fake_get_document)
+    monkeypatch.setattr(indexing_service, "_set_job_document_status", fake_set_job_document_status)
+    monkeypatch.setattr(indexing_service, "_mark_job_document_failed", fake_mark_job_document_failed)
+    monkeypatch.setattr(
+        "app.application.indexing_service.DocumentChunkRepository",
+        FakeChunkRepository,
+    )
+    monkeypatch.setattr(
+        "app.application.indexing_service.get_graph_store",
+        lambda: FakeGraphStore(),
+    )
+    monkeypatch.setattr(
+        indexing_service,
+        "enqueue_document_graph_chunks",
+        fake_enqueue_document_graph_chunks,
+    )
+
+    queued_count = asyncio.run(
+        indexing_service._schedule_document_graph_chunks(
+            DummyDB(),
+            document_id=42,
+            expected_content_hash="hash-42",
+            job_id=9,
+            title="Doc 42",
+        )
+    )
+
+    assert queued_count == 25
+    assert queued_batches == [
+        (42, list(range(101, 113)), "hash-42", 9, "Doc 42"),
+        (42, list(range(113, 125)), "hash-42", 9, "Doc 42"),
+        (42, [125], "hash-42", 9, "Doc 42"),
+    ]
+
+
 def test_enqueue_document_graph_chunks_sends_expected_content_hash(monkeypatch):
     captured = {}
 

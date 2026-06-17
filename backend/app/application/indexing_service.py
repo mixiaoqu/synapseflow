@@ -53,6 +53,7 @@ from app.utils.time import utc_now
 
 MAX_INDEX_ERROR_LENGTH = 1000
 MAX_INDEX_MESSAGE_DOCUMENTS = 20
+GRAPH_EXTRACTION_CHUNK_BATCH_SIZE = 12
 
 
 class IndexingService:
@@ -82,6 +83,19 @@ class IndexingService:
         return [
             list(documents[start : start + chunk_size])
             for start in range(0, len(documents), chunk_size)
+        ]
+
+    @staticmethod
+    def _chunk_graph_chunk_ids(
+        document_chunk_ids: Sequence[int],
+        *,
+        size: int = GRAPH_EXTRACTION_CHUNK_BATCH_SIZE,
+    ) -> list[list[int]]:
+        chunk_size = max(1, size)
+        normalized_ids = [int(chunk_id) for chunk_id in document_chunk_ids]
+        return [
+            normalized_ids[start : start + chunk_size]
+            for start in range(0, len(normalized_ids), chunk_size)
         ]
 
     @staticmethod
@@ -1741,18 +1755,22 @@ class IndexingService:
         await store.delete_document_graph(document_id=document_id)
         await store.prune_orphan_entities()
 
-        self.enqueue_document_graph_chunks(
-            document_id=document_id,
-            document_chunk_ids=[int(row.id) for row in child_rows],
-            expected_content_hash=expected_content_hash,
-            job_id=job_id,
-            title=title or doc.title,
-        )
+        chunk_id_batches = self._chunk_graph_chunk_ids([int(row.id) for row in child_rows])
+        for chunk_id_batch in chunk_id_batches:
+            self.enqueue_document_graph_chunks(
+                document_id=document_id,
+                document_chunk_ids=chunk_id_batch,
+                expected_content_hash=expected_content_hash,
+                job_id=job_id,
+                title=title or doc.title,
+            )
 
         logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱任务已调度 doc_id={} child_chunks={}",
+            "[文档管线] 图谱任务已调度 doc_id={} child_chunks={} batches={} batch_size={}",
             document_id,
             len(child_rows),
+            len(chunk_id_batches),
+            GRAPH_EXTRACTION_CHUNK_BATCH_SIZE,
         )
         return len(child_rows)
 

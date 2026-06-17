@@ -581,6 +581,7 @@ class Neo4jGraphStore:
             SET evidence += row.attributes
             MERGE (source)-[:HAS_RELATION_EVIDENCE]->(evidence)
             MERGE (evidence)-[:EVIDENCE_TARGET]->(target)
+            WITH row, evidence
             MATCH (chunk:Chunk {document_chunk_id: row.document_chunk_id})
             MERGE (evidence)-[:FROM_CHUNK]->(chunk)
             """,

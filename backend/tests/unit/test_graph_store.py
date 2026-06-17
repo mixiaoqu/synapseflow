@@ -146,6 +146,7 @@ def test_upsert_relations_scopes_related_identity_by_team_and_knowledge_base():
     assert "MERGE (evidence:RelationEvidence {" in query
     assert "MERGE (source)-[:HAS_RELATION_EVIDENCE]->(evidence)" in query
     assert "MERGE (evidence)-[:EVIDENCE_TARGET]->(target)" in query
+    assert "WITH row, evidence" in query
     assert "MATCH (chunk:Chunk {document_chunk_id: row.document_chunk_id})" in query
     assert "MERGE (evidence)-[:FROM_CHUNK]->(chunk)" in query
 
