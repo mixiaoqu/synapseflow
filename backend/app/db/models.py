@@ -1,7 +1,17 @@
 """Database ORM models."""
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import TSVECTOR
 
 from app.core.config import config_registry
@@ -329,6 +339,14 @@ class Document(Base):
     published_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     reviewed_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    parse_status = Column(String(20), nullable=False, default="parsed", index=True)
+    parse_error = Column(Text, nullable=True)
+    parse_started_at = Column(DateTime(timezone=True), nullable=True)
+    parsed_at = Column(DateTime(timezone=True), nullable=True)
+    staged_file_path = Column(String(1024), nullable=True)
+    staged_file_name = Column(String(255), nullable=True)
+    staged_file_size = Column(Integer, nullable=True)
+    staged_file_hash = Column(String(64), nullable=True)
     index_status = Column(String(20), nullable=False, default="queued", index=True)
     index_error = Column(Text, nullable=True)
     graph_index_status = Column(String(20), nullable=False, default="queued", index=True)

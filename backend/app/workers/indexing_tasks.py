@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import PurePath
 from typing import Any
 
+from app.application.document_parse_service import document_parse_service
 from app.application.indexing_service import indexing_service
 from app.core.config.settings import settings
 from app.services.embedding import warmup_embedding_model
@@ -53,6 +54,14 @@ class _MissingActor:
 
 
 if dramatiq is not None:
+
+    @dramatiq.actor(queue_name=settings.DRAMATIQ_INDEXING_QUEUE)
+    async def parse_document_actor(document_id: int, expected_staged_file_hash: str) -> None:
+        await document_parse_service.parse_document_task(
+            document_id=document_id,
+            expected_staged_file_hash=expected_staged_file_hash,
+        )
+
 
     @dramatiq.actor(queue_name=settings.DRAMATIQ_INDEXING_QUEUE)
     async def index_document_actor(document_id: int, expected_content_hash: str, job_id: int) -> None:
@@ -180,6 +189,7 @@ if dramatiq is not None:
         )
 
 else:
+    parse_document_actor = _MissingActor("parse_document_actor")
     index_document_actor = _MissingActor("index_document_actor")
     index_documents_batch_actor = _MissingActor("index_documents_batch_actor")
     reindex_current_document_actor = _MissingActor("reindex_current_document_actor")

@@ -136,6 +136,7 @@ services:
       GRAPH_DATABASE: ${GRAPH_DATABASE:-neo4j}
       PREVIEW_DIR: /app/previews
       UPLOAD_DIR: /app/uploads
+      DOCUMENT_STAGING_DIR: /app/uploaded_documents/staging
       LANGSMITH_TRACING: ${SF_LANGSMITH_TRACING:-false}
       LANGSMITH_API_KEY: ${SF_LANGSMITH_API_KEY:-}
       LANGSMITH_PROJECT: ${SF_LANGSMITH_PROJECT:-}
@@ -156,6 +157,7 @@ services:
       - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
       - backend_uploads:/app/uploads
+      - backend_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres:
         condition: service_healthy
@@ -189,6 +191,7 @@ services:
       - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
       - backend_uploads:/app/uploads
+      - backend_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres:
         condition: service_healthy
@@ -210,6 +213,7 @@ services:
       - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
       - backend_uploads:/app/uploads
+      - backend_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres:
         condition: service_healthy
@@ -233,6 +237,7 @@ services:
       - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
       - backend_uploads:/app/uploads
+      - backend_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres:
         condition: service_healthy
@@ -286,6 +291,7 @@ volumes:
   backend_hf_cache:
   backend_previews:
   backend_uploads:
+  backend_uploaded_documents:
 
 networks:
   synapseflow-network:

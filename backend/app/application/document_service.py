@@ -33,9 +33,10 @@ from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.index_job_repository import IndexJobRepository
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
+from app.services.document_file_storage import StagedDocumentFile, document_file_storage
 from app.services.document_index_state import (
+    INDEX_STATUS_FAILED,
     INDEX_STATUS_QUEUED,
-    compute_content_hash,
     is_indexed_status,
 )
 from app.services.document_indexer import persist_document_chunk_plan, prepare_document_chunk_plan
@@ -45,6 +46,12 @@ from app.services.document_lifecycle import (
     DOC_STATUS_PENDING_REVIEW,
     DOC_STATUS_PUBLISHED,
 )
+from app.services.document_parse_state import (
+    PARSE_STATUS_FAILED,
+    PARSE_STATUS_PARSED,
+    PARSE_STATUS_QUEUED,
+)
+from app.services.graph_index_state import GRAPH_INDEX_STATUS_FAILED
 from app.services.graph_store import get_graph_store
 from app.services.vector_store import delete_by_document_id
 from app.utils.document_parse import (
@@ -52,7 +59,6 @@ from app.utils.document_parse import (
     SUPPORTED_EXTENSIONS,
     ParsedDocument,
     parse_raw_document_content,
-    parse_uploaded_document_structured,
     render_parsed_document,
 )
 
@@ -166,20 +172,31 @@ class DocumentService:
             return name.strip() or filename, ext.lower()
         return filename, ""
 
-    def _parse_single_file(
-        self,
-        file: UploadFile,
-        content: bytes,
-    ) -> tuple[str, str | None, ParsedDocument, str]:
-        filename = file.filename or "unknown"
-        parsed, error = parse_uploaded_document_structured(filename, content)
-        if error or parsed is None:
-            raise HTTPException(status_code=400, detail=error or "Document parse failed")
-        text = render_parsed_document(parsed)
-        if not text.strip():
-            raise HTTPException(status_code=400, detail=f"File '{filename}' is empty")
-        title, doc_type = self._get_title_and_type(filename)
-        return title or parsed.title or "Untitled document", doc_type or None, parsed, text
+    @staticmethod
+    def _upload_extension(filename: str | None) -> str:
+        safe_filename = (filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+        if "." not in safe_filename:
+            return ""
+        return "." + safe_filename.rsplit(".", 1)[-1].lower()
+
+    @classmethod
+    def _assert_supported_upload(cls, file: UploadFile, content: bytes) -> None:
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail="File exceeds the 10MB limit")
+
+        ext = cls._upload_extension(file.filename)
+        if ext not in SUPPORTED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail="不支持的文件格式: %s，支持 %s"
+                % (ext or "无扩展名", ", ".join(sorted(SUPPORTED_EXTENSIONS))),
+            )
+
+    @classmethod
+    def _is_supported_batch_upload(cls, file: UploadFile, content: bytes) -> bool:
+        if len(content) > MAX_FILE_SIZE:
+            return False
+        return cls._upload_extension(file.filename) in SUPPORTED_EXTENSIONS
 
     @staticmethod
     def _parse_text_content(
@@ -330,6 +347,9 @@ class DocumentService:
             published_by=getattr(doc, "published_by", None),
             reviewed_at=getattr(doc, "reviewed_at", None),
             reviewed_by=getattr(doc, "reviewed_by", None),
+            parse_status=getattr(doc, "parse_status", PARSE_STATUS_PARSED),
+            parse_error=getattr(doc, "parse_error", None),
+            parsed_at=getattr(doc, "parsed_at", None),
             index_status=getattr(doc, "index_status", INDEX_STATUS_QUEUED),
             index_error=getattr(doc, "index_error", None),
             indexed_at=getattr(doc, "indexed_at", None),
@@ -351,10 +371,9 @@ class DocumentService:
         source_path: str | None,
     ) -> DocumentResponse:
         content = await file.read()
-        if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail="File exceeds the 10MB limit")
+        self._assert_supported_upload(file, content)
 
-        title, doc_type, parsed, text = self._parse_single_file(file, content)
+        title, doc_type = self._get_title_and_type(file.filename or "unknown")
         (
             knowledge_base_id,
             category_id,
@@ -368,40 +387,39 @@ class DocumentService:
         )
         repo = DocumentRepository(db, user_id=user_id)
         category_name = await repo.get_category_name(category_id)
-        doc = await repo.create(
-            title=title,
-            content=text,
-            document_type=doc_type,
-            size=len(text.encode("utf-8")),
-            knowledge_base_id=knowledge_base_id,
-            category_id=category_id,
-            source_path=source_path,
-            status=DOC_STATUS_PENDING_REVIEW,
-            commit=False,
-        )
-        await self._persist_document_structure(
-            db=db,
-            document_id=doc.id,
-            parsed_document=parsed,
-            title=doc.title,
-        )
-        await db.commit()
+        staged_path: str | None = None
+        try:
+            doc = await repo.create(
+                title=title or "Untitled document",
+                content="",
+                document_type=doc_type or None,
+                size=0,
+                knowledge_base_id=knowledge_base_id,
+                category_id=category_id,
+                source_path=source_path,
+                status=DOC_STATUS_DRAFT,
+                commit=False,
+            )
+            staged_file = document_file_storage.save_uploaded_file(
+                document_id=int(doc.id),
+                filename=file.filename,
+                content=content,
+            )
+            staged_path = staged_file.path
+            self._apply_staged_file_metadata(doc, staged_file)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            document_file_storage.delete_staged_file(staged_path)
+            raise
         await db.refresh(doc)
-        jobs = await indexing_service.enqueue_document_indexing_jobs(
-            db=db,
-            user_id=user_id,
-            document_id=doc.id,
-            expected_content_hash=doc.content_hash,
-            knowledge_base_id=knowledge_base_id,
-            title=f"索引《{doc.title}》",
-        )
         logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 索引任务已入队 doc_id={} title={} text_job_id={} graph_job_id={}",
+            "[文档管线] 上传已受理 doc_id={} title={} staged_file={}",
             doc.id,
             doc.title,
-            jobs.get("job_id", 0),
-            jobs.get("graph_job_id", 0),
+            getattr(doc, "staged_file_path", None) or "-",
         )
+        await self._enqueue_document_parse_task(db=db, doc=doc)
         logger.info("Uploaded document id={} title={}", doc.id, doc.title)
         return self._to_response(doc, category_name=category_name)
 
@@ -429,18 +447,15 @@ class DocumentService:
         repo = DocumentRepository(db, user_id=user_id)
         created: list[Document] = []
         category_names_by_doc_key: dict[int, str | None] = {}
-        parsed_by_doc_key: dict[int, ParsedDocument] = {}
         normalized_source_paths = list(source_paths or [])
+        staged_paths: list[str] = []
 
-        for index, file in enumerate(files):
-            try:
+        try:
+            for index, file in enumerate(files):
                 content = await file.read()
-                if len(content) > MAX_FILE_SIZE:
+                if not self._is_supported_batch_upload(file, content):
                     continue
-                ext = "." + (file.filename or "").rsplit(".", 1)[-1].lower()
-                if ext not in SUPPORTED_EXTENSIONS:
-                    continue
-                title, doc_type, parsed, text = self._parse_single_file(file, content)
+                title, doc_type = self._get_title_and_type(file.filename or "unknown")
                 (
                     resolved_knowledge_base_id,
                     resolved_category_id,
@@ -457,75 +472,45 @@ class DocumentService:
                     ),
                 )
                 category_name = await repo.get_category_name(resolved_category_id)
-                doc = Document(
-                    user_id=repo.user_id,
-                    title=title,
-                    content=text,
-                    document_type=doc_type,
-                    size=len(text.encode("utf-8")),
-                    content_hash=compute_content_hash(text),
-                    index_status=INDEX_STATUS_QUEUED,
-                    index_error=None,
-                    indexed_at=None,
-                    version=1,
-                    parent_id=None,
-                    is_latest=True,
-                    is_current=True,
-                    is_live=False,
+                doc = await repo.create(
+                    title=title or "Untitled document",
+                    content="",
+                    document_type=doc_type or None,
+                    size=0,
                     knowledge_base_id=resolved_knowledge_base_id,
                     category_id=resolved_category_id,
                     source_path=normalized_source_path,
-                    status=DOC_STATUS_PENDING_REVIEW,
+                    status=DOC_STATUS_DRAFT,
+                    commit=False,
                 )
-                await repo.add_for_batch(doc)
+                staged_file = document_file_storage.save_uploaded_file(
+                    document_id=int(doc.id),
+                    filename=file.filename,
+                    content=content,
+                )
+                staged_paths.append(staged_file.path)
+                self._apply_staged_file_metadata(doc, staged_file)
                 created.append(doc)
                 category_names_by_doc_key[id(doc)] = category_name
-                parsed_by_doc_key[id(doc)] = parsed
-            except HTTPException:
-                raise
-            except Exception:
-                logger.exception(
-                    "Batch upload aborted for file={} due to unexpected error",
-                    file.filename or "unknown",
-                )
-                raise
-
-        await repo.prepare_batch_create(created)
-        for doc in created:
-            parsed = parsed_by_doc_key.get(id(doc))
-            if parsed is None:
-                continue
-            await self._persist_document_structure(
-                db=db,
-                document_id=doc.id,
-                parsed_document=parsed,
-                title=doc.title,
-            )
-        await db.commit()
+            await db.commit()
+        except HTTPException:
+            await db.rollback()
+            for staged_path in staged_paths:
+                document_file_storage.delete_staged_file(staged_path)
+            raise
+        except Exception:
+            await db.rollback()
+            for staged_path in staged_paths:
+                document_file_storage.delete_staged_file(staged_path)
+            logger.exception("Batch upload aborted due to unexpected error")
+            raise
         for doc in created:
             await db.refresh(doc)
-        if not created:
-            return []
-        jobs = await indexing_service.enqueue_documents_batch_indexing_jobs(
-            db=db,
-            user_id=user_id,
-            documents=[(doc.id, doc.content_hash) for doc in created],
-            knowledge_base_id=(
-                created[0].knowledge_base_id
-                if created and all(doc.knowledge_base_id == created[0].knowledge_base_id for doc in created)
-                else None
-            ),
-            title=(
-                f"索引《{created[0].title}》"
-                if len(created) == 1
-                else f"批量索引 {len(created)} 个文档"
-            ),
-        )
+        for doc in created:
+            await self._enqueue_document_parse_task(db=db, doc=doc)
         logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 批量索引任务已入队 docs={} text_job_id={} graph_job_id={}",
+            "[文档管线] 批量上传已受理 docs={}",
             len(created),
-            jobs.get("job_id", 0),
-            jobs.get("graph_job_id", 0),
         )
         return [
             self._to_response(
@@ -647,6 +632,9 @@ class DocumentService:
                 created_at=doc.created_at,
                 updated_at=doc.updated_at,
                 indexed=is_indexed_status(getattr(doc, "index_status", None)),
+                parse_status=getattr(doc, "parse_status", PARSE_STATUS_PARSED),
+                parse_error=getattr(doc, "parse_error", None),
+                parsed_at=getattr(doc, "parsed_at", None),
                 index_status=getattr(doc, "index_status", INDEX_STATUS_QUEUED),
                 index_error=getattr(doc, "index_error", None),
                 indexed_at=getattr(doc, "indexed_at", None),
@@ -1251,6 +1239,55 @@ class DocumentService:
             failures=failures,
         )
 
+    @staticmethod
+    def _apply_staged_file_metadata(doc: Document, staged_file: StagedDocumentFile) -> None:
+        doc.parse_status = PARSE_STATUS_QUEUED
+        doc.parse_error = None
+        doc.parse_started_at = None
+        doc.parsed_at = None
+        doc.staged_file_path = staged_file.path
+        doc.staged_file_name = staged_file.filename
+        doc.staged_file_size = staged_file.size
+        doc.staged_file_hash = staged_file.content_hash
+
+    async def _enqueue_document_parse_task(
+        self,
+        *,
+        db: AsyncSession,
+        doc: Document,
+    ) -> None:
+        from app.application.document_parse_service import document_parse_service
+
+        expected_hash = str(getattr(doc, "staged_file_hash", "") or "")
+        if not expected_hash:
+            return
+        try:
+            document_parse_service.enqueue_document_parse_task(
+                document_id=int(doc.id),
+                expected_staged_file_hash=expected_hash,
+            )
+            logger.bind(document_pipeline_log=True).info(
+                "[文档管线] 解析任务已入队 doc_id={} title={}",
+                doc.id,
+                doc.title,
+            )
+        except Exception as exc:
+            error_message = self._http_error_detail(exc)
+            doc.parse_status = PARSE_STATUS_FAILED
+            doc.parse_error = error_message
+            doc.index_status = INDEX_STATUS_FAILED
+            doc.index_error = error_message
+            doc.graph_index_status = GRAPH_INDEX_STATUS_FAILED
+            doc.graph_index_error = error_message
+            await db.commit()
+            await db.refresh(doc)
+            logger.warning("Document parse dispatch failed doc_id={}: {}", doc.id, exc)
+
+    @staticmethod
+    def _delete_staged_files_for_documents(docs: Sequence[Document]) -> None:
+        for doc in docs:
+            document_file_storage.delete_staged_file(getattr(doc, "staged_file_path", None))
+
     async def _publish_documents_batch_status(
         self,
         *,
@@ -1452,6 +1489,7 @@ class DocumentService:
         root_ids = {getattr(doc, "root_id", None) or doc.id for doc in docs}
         chain_docs = await repo.get_chain_by_root_ids(root_ids)
         await self._delete_graph_for_documents(chain_docs)
+        self._delete_staged_files_for_documents(chain_docs)
         deleted = await repo.delete_chain(chain_docs)
         logger.info("Batch deleted documents ids={} deleted={}", ids, deleted)
         return {"message": f"Deleted {deleted} documents", "deleted": deleted}
@@ -1475,6 +1513,7 @@ class DocumentService:
         root_id = getattr(doc, "root_id", None) or doc.id
         chain_docs = await repo.get_chain_by_root_ids({root_id})
         await self._delete_graph_for_documents(chain_docs)
+        self._delete_staged_files_for_documents(chain_docs)
         await repo.delete_chain(chain_docs)
         logger.info("Deleted document id={} chain_size={}", doc_id, len(chain_docs))
         return {"message": "Deleted successfully"}

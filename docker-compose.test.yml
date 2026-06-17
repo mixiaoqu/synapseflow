@@ -91,6 +91,7 @@ services:
       GRAPH_USERNAME: neo4j
       GRAPH_PASSWORD: ${NEO4J_PASSWORD:-change-this-test-graph-password}
       GRAPH_DATABASE: neo4j
+      DOCUMENT_STAGING_DIR: /app/uploaded_documents/staging
       HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
       HF_HOME: /app/.cache/huggingface
       LOG_LEVEL: ${SF_LOG_LEVEL:-INFO}
@@ -98,6 +99,7 @@ services:
       - backend_test_hf_cache:/app/.cache/huggingface
       - backend_test_previews:/app/previews
       - backend_test_uploads:/app/uploads
+      - backend_test_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres-test:
         condition: service_healthy
@@ -117,6 +119,7 @@ services:
       - backend_test_hf_cache:/app/.cache/huggingface
       - backend_test_previews:/app/previews
       - backend_test_uploads:/app/uploads
+      - backend_test_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres-test:
         condition: service_healthy
@@ -136,3 +139,4 @@ volumes:
   backend_test_hf_cache:
   backend_test_previews:
   backend_test_uploads:
+  backend_test_uploaded_documents:

@@ -114,6 +114,7 @@ services:
       - GRAPH_USERNAME=${GRAPH_USERNAME:-neo4j}
       - GRAPH_PASSWORD=${GRAPH_PASSWORD:-synapseflow123}
       - GRAPH_DATABASE=${GRAPH_DATABASE:-neo4j}
+      - DOCUMENT_STAGING_DIR=${DOCUMENT_STAGING_DIR:-/app/uploaded_documents/staging}
     ports:
       - "8000:8000"
     volumes:
@@ -121,6 +122,7 @@ services:
       - backend_venv:/app/.venv
       - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
+      - backend_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres:
         condition: service_healthy
@@ -155,11 +157,13 @@ services:
       - GRAPH_USERNAME=${GRAPH_USERNAME:-neo4j}
       - GRAPH_PASSWORD=${GRAPH_PASSWORD:-synapseflow123}
       - GRAPH_DATABASE=${GRAPH_DATABASE:-neo4j}
+      - DOCUMENT_STAGING_DIR=${DOCUMENT_STAGING_DIR:-/app/uploaded_documents/staging}
     volumes:
       - ./backend:/app
       - backend_venv:/app/.venv
       - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
+      - backend_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres:
         condition: service_healthy
@@ -197,6 +201,7 @@ volumes:
   backend_venv:
   backend_hf_cache:
   backend_previews:
+  backend_uploaded_documents:
   redis_data:
   reranker_models:
 

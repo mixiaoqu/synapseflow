@@ -351,6 +351,25 @@ function getIndexStatusMeta(status: DocumentSummary["index_status"] | DocumentSu
   return metaMap[status];
 }
 
+function getParseStatusMeta(status: DocumentSummary["parse_status"]) {
+  const metaMap = {
+    queued: { label: "待解析", type: "warning" as const },
+    processing: { label: "解析中", type: "primary" as const },
+    parsed: { label: "已解析", type: "success" as const },
+    failed: { label: "解析失败", type: "danger" as const },
+  };
+
+  return metaMap[status];
+}
+
+function getParseErrorText(status: DocumentSummary["parse_status"], error: string | null) {
+  if (status !== "failed") {
+    return "";
+  }
+
+  return error?.trim() || "解析失败，请检查原文件后重传。";
+}
+
 function getIndexErrorText(
   status: DocumentSummary["index_status"] | DocumentSummary["graph_index_status"],
   error: string | null,
@@ -1653,6 +1672,23 @@ watch(
               <el-table-column label="大小" width="110">
                 <template #default="{ row }">
                   <span>{{ formatFileSize(row.size) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="解析状态" width="140">
+                <template #default="{ row }">
+                  <div class="kb-documents__index-cell">
+                    <StatusTag
+                      :label="getParseStatusMeta(row.parse_status).label"
+                      :type="getParseStatusMeta(row.parse_status).type"
+                    />
+                    <span
+                      v-if="row.parse_status === 'failed'"
+                      class="kb-documents__index-error"
+                      :title="getParseErrorText(row.parse_status, row.parse_error)"
+                    >
+                      {{ getParseErrorText(row.parse_status, row.parse_error) }}
+                    </span>
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column label="文本索引" width="140">

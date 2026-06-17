@@ -36,6 +36,13 @@ const indexStatusMeta = {
   failed: { label: "索引失败", type: "danger" as const },
 };
 
+const parseStatusMeta: Record<DocumentDetail["parse_status"], { label: string; type: "primary" | "warning" | "success" | "danger" }> = {
+  queued: { label: "待解析", type: "warning" },
+  processing: { label: "解析中", type: "primary" },
+  parsed: { label: "已解析", type: "success" },
+  failed: { label: "解析失败", type: "danger" },
+};
+
 const lifecycleStatusMeta: Record<DocumentLifecycleStatus, { label: string; type: "info" | "warning" | "success" | "danger" }> = {
   draft: { label: "草稿", type: "info" },
   pending_review: { label: "待审核", type: "warning" },
@@ -279,6 +286,10 @@ watch(
                       <span>{{ documentDetail.title }}</span>
                     </h1>
                     <StatusTag
+                      :label="parseStatusMeta[documentDetail.parse_status].label"
+                      :type="parseStatusMeta[documentDetail.parse_status].type"
+                    />
+                    <StatusTag
                       :label="indexStatusMeta[documentDetail.index_status].label"
                       :type="indexStatusMeta[documentDetail.index_status].type"
                     />
@@ -291,6 +302,9 @@ watch(
                     <span>分类：{{ documentDetail.category_name || "未分配分类" }}</span>
                     <span>{{ formatFileSize(documentDetail.size) }}</span>
                     <span>{{ documentChunks.length }} 个分块</span>
+                    <span v-if="documentDetail.parse_status === 'failed'">
+                      {{ documentDetail.parse_error || "解析失败，请检查原文件后重传。" }}
+                    </span>
                     <span>更新于 {{ formatDateTime(documentDetail.updated_at) }}</span>
                   </div>
                 </div>

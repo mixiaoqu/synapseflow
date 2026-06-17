@@ -61,6 +61,7 @@ class Settings(BaseSettings):
 
     PREVIEW_DIR: str = "./previews"
     UPLOAD_DIR: str = "./uploads"
+    DOCUMENT_STAGING_DIR: str = "./uploaded_documents/staging"
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024
 
     LANGSMITH_TRACING: bool = False

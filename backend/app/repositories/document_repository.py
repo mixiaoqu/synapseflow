@@ -22,6 +22,7 @@ from app.services.document_index_state import (
     compute_content_hash,
 )
 from app.services.document_lifecycle import DOC_STATUS_DRAFT, DOC_STATUS_PENDING_REVIEW
+from app.services.document_parse_state import PARSE_STATUS_PARSED
 from app.utils.time import utc_now
 
 
@@ -84,6 +85,14 @@ class DocumentRepository:
             document_type=document_type,
             size=size,
             content_hash=compute_content_hash(content),
+            parse_status=PARSE_STATUS_PARSED,
+            parse_error=None,
+            parse_started_at=None,
+            parsed_at=utc_now(),
+            staged_file_path=None,
+            staged_file_name=None,
+            staged_file_size=None,
+            staged_file_hash=None,
             index_status=INDEX_STATUS_QUEUED,
             index_error=None,
             indexed_at=None,
@@ -348,6 +357,14 @@ class DocumentRepository:
         doc.content = content
         doc.size = len(content.encode("utf-8"))
         doc.content_hash = compute_content_hash(content)
+        doc.parse_status = PARSE_STATUS_PARSED
+        doc.parse_error = None
+        doc.parse_started_at = None
+        doc.parsed_at = utc_now()
+        doc.staged_file_path = None
+        doc.staged_file_name = None
+        doc.staged_file_size = None
+        doc.staged_file_hash = None
         doc.index_status = INDEX_STATUS_QUEUED
         doc.index_error = None
         doc.indexed_at = None
@@ -456,6 +473,14 @@ class DocumentRepository:
             document_type=(latest_doc.document_type if latest_doc else orig.document_type),
             size=len(content.encode("utf-8")),
             content_hash=compute_content_hash(content),
+            parse_status=PARSE_STATUS_PARSED,
+            parse_error=None,
+            parse_started_at=None,
+            parsed_at=utc_now(),
+            staged_file_path=None,
+            staged_file_name=None,
+            staged_file_size=None,
+            staged_file_hash=None,
             index_status=INDEX_STATUS_QUEUED,
             index_error=None,
             indexed_at=None,

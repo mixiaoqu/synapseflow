@@ -1,5 +1,6 @@
 export type DocumentIndexStatus = "queued" | "processing" | "indexed" | "failed";
 export type GraphIndexStatus = "queued" | "processing" | "finalizing" | "indexed" | "failed";
+export type DocumentParseStatus = "queued" | "processing" | "parsed" | "failed";
 export type DocumentLifecycleStatus = "draft" | "pending_review" | "published" | "archived";
 
 export interface DocumentSummary {
@@ -12,6 +13,9 @@ export interface DocumentSummary {
   is_latest: boolean;
   is_live: boolean;
   indexed: boolean;
+  parse_status: DocumentParseStatus;
+  parse_error: string | null;
+  parsed_at: string | null;
   index_status: DocumentIndexStatus;
   index_error: string | null;
   indexed_at: string | null;

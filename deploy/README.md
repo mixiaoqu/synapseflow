@@ -102,7 +102,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
 - 生产环境不要使用默认引导账号密码
 - 让前端走同域名反代，避免把后端地址写死进前端构建产物
 - 流式接口必须关闭 Nginx 缓冲，否则聊天/生成流会卡成整包返回
-- `postgres_data`、`redis_data`、`backend_previews`、`backend_uploads` 必须持久化
+- `postgres_data`、`redis_data`、`backend_previews`、`backend_uploads`、`backend_uploaded_documents` 必须持久化
 - 生产环境把 `.env.prod` 排除出版本控制
 
 ## 常用命令

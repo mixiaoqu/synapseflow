@@ -1,0 +1,8 @@
+"""Document parse status constants."""
+
+PARSE_STATUS_QUEUED = "queued"
+PARSE_STATUS_PROCESSING = "processing"
+PARSE_STATUS_PARSED = "parsed"
+PARSE_STATUS_FAILED = "failed"
+
+ACTIVE_PARSE_STATUSES = frozenset({PARSE_STATUS_QUEUED, PARSE_STATUS_PROCESSING})

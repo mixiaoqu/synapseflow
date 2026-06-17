@@ -4,10 +4,12 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
 from app.utils.time import serialize_utc_datetime
 
 DocumentIndexStatus = Literal["queued", "processing", "indexed", "failed"]
 GraphIndexStatus = Literal["queued", "processing", "finalizing", "indexed", "failed"]
+DocumentParseStatus = Literal["queued", "processing", "parsed", "failed"]
 DocumentLifecycleStatus = Literal[
     "draft",
     "pending_review",
@@ -54,6 +56,9 @@ class DocumentResponse(BaseModel):
     published_by: int | None = None
     reviewed_at: datetime | None = None
     reviewed_by: int | None = None
+    parse_status: DocumentParseStatus = "parsed"
+    parse_error: str | None = None
+    parsed_at: datetime | None = None
     index_status: DocumentIndexStatus = "queued"
     index_error: str | None = None
     indexed_at: datetime | None = None
@@ -78,6 +83,9 @@ class DocumentListItem(BaseModel):
     is_latest: bool = True
     is_live: bool = False
     indexed: bool = False
+    parse_status: DocumentParseStatus = "parsed"
+    parse_error: str | None = None
+    parsed_at: datetime | None = None
     index_status: DocumentIndexStatus = "queued"
     index_error: str | None = None
     indexed_at: datetime | None = None
