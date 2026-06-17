@@ -13,7 +13,6 @@ def test_kb_chat_prompt_includes_layered_evidence_and_core_rules():
         evidence_status="empty",
         primary_context="Open project settings and click the create button.",
         supporting_context="The create button is available only after selecting a workspace.",
-        metadata_context="“项目”别名为 workspace project。",
     )
 
     assert "Current assistant name: Implementation Assistant" in prompt
@@ -28,8 +27,6 @@ def test_kb_chat_prompt_includes_layered_evidence_and_core_rules():
     assert "Open project settings and click the create button." in prompt
     assert "[Supporting evidence]" in prompt
     assert "available only after selecting a workspace" in prompt
-    assert "[Metadata]" in prompt
-    assert "别名为 workspace project" in prompt
     assert "[Configured welcome message]" not in prompt
     assert "[Configured input placeholder]" not in prompt
     assert "[Configured suggested prompts]" not in prompt

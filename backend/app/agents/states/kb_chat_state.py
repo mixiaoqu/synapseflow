@@ -27,7 +27,6 @@ class KbChatState(BaseAgentContext, total=False):
     chat_history: List[Dict[str, Any]]
     memory_summary: Optional[str]
     allowed_document_statuses: List[str]
-    retrieval_version_mode: str
 
     question_type: Optional[str]
     retrieval_strategy: Optional[str]
@@ -49,14 +48,11 @@ class KbChatState(BaseAgentContext, total=False):
     retrieval_evaluation: Dict[str, Any]
     evaluate_trace: Dict[str, Any]
     retrieved_docs: List[Dict[str, Any]]
-    graph_primary_docs: List[Dict[str, Any]]
-    graph_supporting_docs: List[Dict[str, Any]]
+    graph_facts: Dict[str, List[Dict[str, Any]]]
     primary_evidence_docs: List[Dict[str, Any]]
     supporting_evidence_docs: List[Dict[str, Any]]
-    metadata_evidence_docs: List[Dict[str, Any]]
     primary_context: str
     supporting_context: str
-    metadata_context: str
     context: str
     answer: str
     answer_status: str

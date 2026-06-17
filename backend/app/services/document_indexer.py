@@ -20,15 +20,36 @@ from app.services.graph_indexer import DEFAULT_GRAPH_BATCH_SIZE, GraphIndexer
 from app.services.graph_models import ChunkGraphExtraction, GraphChunkRecord, GraphEntityRecord, GraphRelationRecord
 from app.services.graph_normalizer import normalize_chunk_graph
 from app.services.graph_store import get_graph_store
-from app.services.semantic_chunk import DocumentChunkPlan, VectorIndexChunk, build_chunk_plan, build_vector_index_chunks, plan_text_chunks
+from app.services.semantic_chunk import (
+    DocumentChunkPlan,
+    VectorIndexChunk,
+    build_chunk_plan,
+    build_vector_index_chunks,
+    plan_jsonl_line_chunks,
+    plan_text_chunks,
+)
 from app.services.vector_store import add_document_chunks, delete_by_document_id
-from app.utils.document_parse import ParsedDocument
+from app.utils.document_parse import ParsedDocument, render_parsed_document
 
 
 def prepare_document_chunk_plan(
     parsed: ParsedDocument,
     title: str | None = None,
 ) -> DocumentChunkPlan:
+    if str(parsed.metadata.get("document_type") or "").lower() == "jsonl":
+        lines = [
+            str(line).strip()
+            for line in list(parsed.metadata.get("jsonl_lines") or [])
+            if str(line).strip()
+        ]
+        return plan_jsonl_line_chunks(
+            lines or [
+                line.strip()
+                for line in render_parsed_document(parsed).splitlines()
+                if line.strip()
+            ],
+            document_title=title or parsed.title,
+        )
     return build_chunk_plan(parsed, document_title=title or parsed.title)
 
 

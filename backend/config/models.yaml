@@ -54,8 +54,8 @@ model_assets:
 
   deepseek-v4-flash:
     type: chat
-    provider: siliconflow
-    model: deepseek-ai/DeepSeek-V4-Flash
+    provider: deepseek
+    model: deepseek-v4-flash
     name:  DeepSeek V4 Flash
     request_timeout: 180
     streaming: true
@@ -63,8 +63,8 @@ model_assets:
 
   deepseek-v4-pro:
     type: chat
-    provider: siliconflow
-    model: deepseek-ai/DeepSeek-V4-Pro
+    provider: deepseek
+    model: deepseek-v4-pro
     name:  DeepSeek V4 pro
     request_timeout: 180
     streaming: true
@@ -80,7 +80,7 @@ model_assets:
     max_tokens: 4096
 
 system_roles:
-  planner: deepseek-v4-pro
+  planner: deepseek-v4-flash
   analysis: deepseek-v4-flash
-  generation: deepseek-v4-pro
+  generation: deepseek-v4-flash
   tool: deepseek-v4-flash

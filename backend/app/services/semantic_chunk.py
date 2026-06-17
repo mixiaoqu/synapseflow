@@ -651,6 +651,155 @@ def plan_text_chunks(
     return build_chunk_plan(parsed, document_title=document_title)
 
 
+def plan_jsonl_line_chunks(
+    lines: list[str],
+    *,
+    document_title: str | None = None,
+) -> DocumentChunkPlan:
+    chunks = [line.strip() for line in lines if line.strip()]
+    full_text = "\n".join(chunks)
+    if not chunks:
+        return DocumentChunkPlan(full_text="", parent_chunks=[], child_chunks=[])
+
+    parent_chunks: list[PlannedChunk] = []
+    child_chunks: list[PlannedChunk] = []
+    cursor = 0
+    for chunk_index, chunk_text in enumerate(chunks):
+        start_offset = cursor
+        end_offset = start_offset + len(chunk_text)
+        parent_local_id = f"parent-{chunk_index}"
+        metadata = {
+            "chunk_strategy": "jsonl_line",
+            "line_no": chunk_index + 1,
+        }
+        parent_chunks.append(
+            PlannedChunk(
+                local_id=parent_local_id,
+                chunk_kind="parent",
+                chunk_index=chunk_index,
+                parent_local_id=None,
+                prev_local_id=None,
+                next_local_id=None,
+                section_path=None,
+                block_types=["jsonl_line"],
+                start_offset=start_offset,
+                end_offset=end_offset,
+                content=chunk_text,
+                search_text=_build_search_text(document_title, None, chunk_text),
+                metadata=dict(metadata),
+            )
+        )
+        child_chunks.append(
+            PlannedChunk(
+                local_id=f"child-{chunk_index}",
+                chunk_kind="child",
+                chunk_index=chunk_index,
+                parent_local_id=parent_local_id,
+                prev_local_id=None,
+                next_local_id=None,
+                section_path=None,
+                block_types=["jsonl_line"],
+                start_offset=start_offset,
+                end_offset=end_offset,
+                content=chunk_text,
+                search_text=_build_search_text(document_title, None, chunk_text),
+                metadata={
+                    **metadata,
+                    "hit_window_hint": {"prev": 0, "next": 0},
+                    "parent_chunk_index": chunk_index,
+                    "child_index_within_parent": 0,
+                },
+            )
+        )
+        cursor = end_offset + 1
+
+    return DocumentChunkPlan(
+        full_text=full_text,
+        parent_chunks=_link_chunks(parent_chunks),
+        child_chunks=_link_chunks(child_chunks),
+    )
+
+
+def plan_fixed_overlap_chunks(
+    text: str,
+    *,
+    document_title: str | None = None,
+) -> DocumentChunkPlan:
+    full_text = text.strip()
+    if not full_text:
+        return DocumentChunkPlan(full_text="", parent_chunks=[], child_chunks=[])
+
+    chunk_cfg = config_registry.get_rag_config().chunk
+    chunk_size = max(1, int(chunk_cfg.size))
+    chunk_overlap = max(0, int(chunk_cfg.overlap))
+    step = max(1, chunk_size - chunk_overlap)
+
+    parent_chunks: list[PlannedChunk] = []
+    child_chunks: list[PlannedChunk] = []
+    chunk_index = 0
+    start_offset = 0
+
+    while start_offset < len(full_text):
+        end_offset = min(len(full_text), start_offset + chunk_size)
+        chunk_text = full_text[start_offset:end_offset].strip()
+        if chunk_text:
+            parent_local_id = f"parent-{chunk_index}"
+            metadata = {
+                "chunk_strategy": "fixed_overlap",
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+            }
+            parent_chunks.append(
+                PlannedChunk(
+                    local_id=parent_local_id,
+                    chunk_kind="parent",
+                    chunk_index=chunk_index,
+                    parent_local_id=None,
+                    prev_local_id=None,
+                    next_local_id=None,
+                    section_path=None,
+                    block_types=["paragraph"],
+                    start_offset=start_offset,
+                    end_offset=end_offset,
+                    content=chunk_text,
+                    search_text=_build_search_text(document_title, None, chunk_text),
+                    metadata=dict(metadata),
+                )
+            )
+            child_chunks.append(
+                PlannedChunk(
+                    local_id=f"child-{chunk_index}",
+                    chunk_kind="child",
+                    chunk_index=chunk_index,
+                    parent_local_id=parent_local_id,
+                    prev_local_id=None,
+                    next_local_id=None,
+                    section_path=None,
+                    block_types=["paragraph"],
+                    start_offset=start_offset,
+                    end_offset=end_offset,
+                    content=chunk_text,
+                    search_text=_build_search_text(document_title, None, chunk_text),
+                    metadata={
+                        **metadata,
+                        "hit_window_hint": {"prev": 1, "next": 1},
+                        "parent_chunk_index": chunk_index,
+                        "child_index_within_parent": 0,
+                    },
+                )
+            )
+            chunk_index += 1
+        if end_offset >= len(full_text):
+            break
+        start_offset += step
+
+    return DocumentChunkPlan(
+        full_text=full_text,
+        parent_chunks=_link_chunks(parent_chunks),
+        child_chunks=_link_chunks(child_chunks),
+    )
+
+
 def build_vector_index_chunks(
     plan: DocumentChunkPlan,
     *,

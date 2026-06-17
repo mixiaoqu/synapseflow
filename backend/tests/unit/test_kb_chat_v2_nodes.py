@@ -97,10 +97,8 @@ def test_kb_chat_v2_graph_builds_execution_plan():
             "retrieved_docs": [],
             "primary_evidence_docs": [],
             "supporting_evidence_docs": [],
-            "metadata_evidence_docs": [],
             "primary_context": "",
             "supporting_context": "",
-            "metadata_context": "",
             "context": "",
             "retrieval_trace": {
                 "retrieval_strategy": state.get("retrieval_strategy"),
@@ -189,10 +187,8 @@ def test_kb_chat_v2_graph_routes_through_entity_grounding_before_retrieve():
                 }
             ],
             "supporting_evidence_docs": [],
-            "metadata_evidence_docs": [],
             "primary_context": "[1] 文档A\n项目应用需要绑定助手配置。",
             "supporting_context": "",
-            "metadata_context": "",
             "context": "[1] 文档A\n项目应用需要绑定助手配置。",
             "retrieval_trace": {"text": {"text_hits": 1}, "graph": {"graph_hits": 1}},
         }
@@ -686,14 +682,12 @@ def test_kb_chat_v2_retrieve_splits_primary_supporting_and_metadata(monkeypatch)
                 "team_id": 1,
                 "knowledge_base_id": 1,
                 "allowed_document_statuses": [],
-                "retrieval_version_mode": "live",
             }
         )
     )
 
     assert len(result["primary_evidence_docs"]) == 1
     assert len(result["supporting_evidence_docs"]) == 2
-    assert len(result["metadata_evidence_docs"]) == 0
     assert "热词用于提升搜索召回效率" in result["primary_context"]
     assert "[实体摘要]" in result["supporting_context"]
     assert "[关键关系]" in result["supporting_context"]
@@ -701,7 +695,6 @@ def test_kb_chat_v2_retrieve_splits_primary_supporting_and_metadata(monkeypatch)
     assert "DATABASE 类型实体" in result["supporting_context"]
     assert result["retrieval_trace"]["primary_count"] == 1
     assert result["retrieval_trace"]["supporting_count"] == 2
-    assert result["retrieval_trace"]["metadata_count"] == 0
 
 
 def test_kb_chat_v2_retrieve_reranks_primary_evidence_after_dedupe(monkeypatch):
@@ -816,7 +809,6 @@ def test_kb_chat_v2_retrieve_reranks_primary_evidence_after_dedupe(monkeypatch):
                 "team_id": 1,
                 "knowledge_base_id": 1,
                 "allowed_document_statuses": [],
-                "retrieval_version_mode": "live",
             }
         )
     )
@@ -835,7 +827,6 @@ def test_kb_chat_v2_answer_prompt_prefers_primary_evidence_and_keeps_supporting_
                 "query": "项目应用和助手配置是什么关系？",
                 "primary_context": "[1] 文档A\n项目应用需要绑定助手配置。",
                 "supporting_context": "[1] 关系摘要\nProjectApp 依赖 AssistantProfile。",
-                "metadata_context": "",
                 "retrieval_evaluation": {
                     "status": "sufficient",
                     "next_action": "answer",

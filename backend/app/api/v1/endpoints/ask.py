@@ -33,8 +33,6 @@ from app.models.schemas.team import TeamResponse
 from app.repositories.kb_chat_log_repository import KbChatLogRepository
 from app.services.document_lifecycle import (
     PREVIEW_ASK_DOCUMENT_STATUSES,
-    RETRIEVAL_VERSION_CURRENT,
-    RETRIEVAL_VERSION_LIVE,
     VISIBLE_ASK_DOCUMENT_STATUSES,
 )
 
@@ -244,11 +242,6 @@ async def admin_ask_preview(
         category_id=request.category_id,
         session_id=request.session_id,
         allowed_document_statuses=allowed_statuses,
-        retrieval_version_mode=(
-            RETRIEVAL_VERSION_CURRENT
-            if request.include_unpublished
-            else RETRIEVAL_VERSION_LIVE
-        ),
     )
     return await get_kb_chat_service().invoke(runtime_request, user_id=current_user.id)
 

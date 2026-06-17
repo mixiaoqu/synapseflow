@@ -6,6 +6,7 @@ import asyncio
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable
 
+from fastapi import HTTPException
 from loguru import logger
 
 from app.agents.runtime import AgentEventType
@@ -34,7 +35,7 @@ from app.services.content_risk_detection_service import (
     ContentRiskDetectionResult,
     get_content_risk_detection_service,
 )
-from app.services.document_lifecycle import RETRIEVAL_VERSION_LIVE, VISIBLE_ASK_DOCUMENT_STATUSES
+from app.services.document_lifecycle import VISIBLE_ASK_DOCUMENT_STATUSES
 
 if TYPE_CHECKING:
     from app.models.schemas.kb_chat import (
@@ -47,6 +48,8 @@ if TYPE_CHECKING:
 
 class KbChatService(BaseAgentService):
     """Encapsulates end-user knowledge-base chat orchestration."""
+
+    _PUBLIC_STREAM_ERROR_MESSAGE = "抱歉，当前服务暂时不可用，请稍后重试。"
 
     def __init__(
         self,
@@ -148,9 +151,6 @@ class KbChatService(BaseAgentService):
                     getattr(request, "allowed_document_statuses", None)
                     or VISIBLE_ASK_DOCUMENT_STATUSES
                 ),
-                "retrieval_version_mode": (
-                    getattr(request, "retrieval_version_mode", None) or RETRIEVAL_VERSION_LIVE
-                ),
                 "retrieved_docs": [],
                 "context": "",
                 "answer": "",
@@ -172,13 +172,18 @@ class KbChatService(BaseAgentService):
                 "graph_budget": 0,
                 "fusion_policy": None,
                 "graph_boost": None,
+                "graph_facts": {
+                    "text": [],
+                    "entities": [],
+                    "relations": [],
+                    "paths": [],
+                    "evidence": [],
+                },
                 "reranked_primary_evidence_docs": [],
                 "primary_evidence_docs": [],
                 "supporting_evidence_docs": [],
-                "metadata_evidence_docs": [],
                 "primary_context": "",
                 "supporting_context": "",
-                "metadata_context": "",
                 "answer_status": "",
                 "answer_trace": {},
             },
@@ -383,6 +388,14 @@ class KbChatService(BaseAgentService):
         if empty_reason:
             return "no_hits"
         return None
+
+    @classmethod
+    def _public_stream_error_message(cls, exc: Exception) -> str:
+        if isinstance(exc, HTTPException):
+            detail = exc.detail
+            if isinstance(detail, str) and detail.strip():
+                return detail.strip()
+        return cls._PUBLIC_STREAM_ERROR_MESSAGE
 
     @staticmethod
     def _build_log_trace_payload(
@@ -638,7 +651,6 @@ class KbChatService(BaseAgentService):
             "ranked_candidates": ranked_candidates,
             "final_context_docs": final_context_docs,
             "supporting_evidence_docs": _build_trace_docs(list(result.get("supporting_evidence_docs") or [])),
-            "metadata_evidence_docs": _build_trace_docs(list(result.get("metadata_evidence_docs") or [])),
             "debug": {
                 "retrieval_trace": (
                     retrieval_trace
@@ -1604,7 +1616,7 @@ class KbChatService(BaseAgentService):
             raise
         except Exception as exc:
             logger.exception("[KB Chat] stream failed after retrieval/answer stage: {}", exc)
-            yield emit_error(run_id, str(exc))
+            yield emit_error(run_id, self._public_stream_error_message(exc))
 
 
 kb_chat_service: KbChatService | None = None

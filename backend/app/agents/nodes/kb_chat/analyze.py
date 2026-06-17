@@ -10,6 +10,28 @@ from app.agents.nodes.kb_chat.route import build_kb_chat_route
 from app.agents.states import KbChatState
 from app.core.config.registry import config_registry
 
+RETRIEVAL_STRATEGIES = {
+    "text_only",
+    "graph_only",
+    "text_then_graph",
+    "graph_then_text",
+    "parallel_fusion",
+}
+TEXT_FIRST_QUESTION_TYPES = {
+    "definition_lookup",
+    "attribute_lookup",
+    "location_lookup",
+}
+GRAPH_FIRST_QUESTION_TYPES = {
+    "relationship_lookup",
+    "dependency_lookup",
+    "call_chain_lookup",
+}
+PARALLEL_QUESTION_TYPES = {
+    "summary_lookup",
+    "flow_lookup",
+}
+
 
 def _build_rewrite_plan(question_type: str, retrieval_complexity: str) -> dict[str, Any]:
     return {
@@ -19,13 +41,41 @@ def _build_rewrite_plan(question_type: str, retrieval_complexity: str) -> dict[s
     }
 
 
+def _select_retrieval_strategy(question_type: str, requested_strategy: str) -> str:
+    normalized_requested = str(requested_strategy or "").strip().lower()
+    if normalized_requested == "skip":
+        return "skip"
+    if normalized_requested in RETRIEVAL_STRATEGIES and normalized_requested != "parallel_fusion":
+        return normalized_requested
+
+    normalized_question_type = str(question_type or "").strip().lower()
+    if normalized_question_type in TEXT_FIRST_QUESTION_TYPES:
+        return "text_then_graph"
+    if normalized_question_type in GRAPH_FIRST_QUESTION_TYPES:
+        return "graph_then_text"
+    if normalized_question_type in PARALLEL_QUESTION_TYPES:
+        return "parallel_fusion"
+    return "parallel_fusion"
+
+
+def _strategy_channels(strategy: str) -> tuple[bool, bool]:
+    if strategy == "text_only":
+        return True, False
+    if strategy == "graph_only":
+        return False, True
+    if strategy in {"text_then_graph", "graph_then_text", "parallel_fusion"}:
+        return True, True
+    return False, False
+
+
 def _build_graph_plan(
     *,
     question_type: str,
     retrieval_strategy: str,
     graph_limit: int,
 ) -> dict[str, Any]:
-    if retrieval_strategy == "skip":
+    _text_enabled, graph_enabled = _strategy_channels(retrieval_strategy)
+    if retrieval_strategy == "skip" or not graph_enabled:
         return {
             "enabled": False,
             "limit": 0,
@@ -78,9 +128,13 @@ def _build_graph_plan(
 def _build_fusion_plan(*, question_type: str, retrieval_strategy: str) -> dict[str, Any]:
     if retrieval_strategy == "skip":
         return {"policy": "none", "graph_boost": "none"}
-    if question_type == "relationship_lookup":
+    if retrieval_strategy == "text_only":
+        return {"policy": "text_only", "graph_boost": "none"}
+    if retrieval_strategy == "graph_only":
+        return {"policy": "graph_only", "graph_boost": "high"}
+    if question_type in GRAPH_FIRST_QUESTION_TYPES:
         return {"policy": "balanced", "graph_boost": "high"}
-    if question_type == "summary_lookup":
+    if question_type in PARALLEL_QUESTION_TYPES:
         return {"policy": "text_primary", "graph_boost": "medium"}
     return {"policy": "text_primary", "graph_boost": "low"}
 
@@ -98,6 +152,7 @@ def _build_retrieval_plan(
     context_budget: int,
     rerank_enabled: bool,
 ) -> dict[str, Any]:
+    text_enabled, graph_enabled = _strategy_channels(retrieval_strategy)
     graph_plan = _build_graph_plan(
         question_type=question_type,
         retrieval_strategy=retrieval_strategy,
@@ -121,10 +176,15 @@ def _build_retrieval_plan(
         }
 
     return {
-        "retrieval_strategy": "parallel_fusion",
+        "strategy": retrieval_strategy,
+        "retrieval_strategy": retrieval_strategy,
+        "text_enabled": text_enabled,
+        "graph_enabled": graph_enabled,
+        "rerank_enabled": rerank_enabled,
+        "top_k": final_top_k,
         "channels": {
-            "vector": {"enabled": True, "recall_k": recall_k},
-            "lexical": {"enabled": True, "lexical_k": lexical_k},
+            "vector": {"enabled": text_enabled, "recall_k": recall_k if text_enabled else 0},
+            "lexical": {"enabled": text_enabled, "lexical_k": lexical_k if text_enabled else 0},
             "graph": graph_plan,
         },
         "rerank": {"enabled": rerank_enabled, "top_k": final_top_k},
@@ -144,20 +204,26 @@ def build_kb_chat_execution_plan(
     retrieval_strategy: str,
     retrieval_complexity: str,
 ) -> dict[str, Any]:
-    if retrieval_strategy == "skip":
+    selected_strategy = _select_retrieval_strategy(question_type, retrieval_strategy)
+    if selected_strategy == "skip":
         return {
             "rewrite": {
                 "enabled": False,
                 "question_type": question_type,
                 "retrieval_complexity": retrieval_complexity,
             },
+            "strategy": "skip",
             "retrieval_strategy": "skip",
+            "text_enabled": False,
+            "graph_enabled": False,
+            "rerank_enabled": False,
+            "top_k": 0,
             "channels": {
                 "vector": {"enabled": False, "recall_k": 0},
                 "lexical": {"enabled": False, "lexical_k": 0},
                 "graph": _build_graph_plan(
                     question_type=question_type,
-                    retrieval_strategy=retrieval_strategy,
+                    retrieval_strategy=selected_strategy,
                     graph_limit=0,
                 ),
             },
@@ -165,7 +231,7 @@ def build_kb_chat_execution_plan(
             "context": {"final_top_k": 0, "budget_chars": 0, "llm_reference_top_k": 0},
             "fusion": _build_fusion_plan(
                 question_type=question_type,
-                retrieval_strategy=retrieval_strategy,
+                retrieval_strategy=selected_strategy,
             ),
         }
 
@@ -181,7 +247,7 @@ def build_kb_chat_execution_plan(
         "rewrite": _build_rewrite_plan(question_type, retrieval_complexity),
         **_build_retrieval_plan(
             question_type=question_type,
-            retrieval_strategy=retrieval_strategy,
+            retrieval_strategy=selected_strategy,
             retrieval_complexity=retrieval_complexity,
             final_top_k=final_top_k,
             llm_reference_top_k=llm_reference_top_k,
@@ -229,10 +295,18 @@ async def kb_chat_analyze_node(
 
     result: dict[str, Any] = {
         "question_type": route["question_type"],
-        "retrieval_strategy": route["retrieval_strategy"],
+        "retrieval_strategy": execution_plan["retrieval_strategy"],
         "retrieval_complexity": route["retrieval_complexity"],
         "retrieval_required": route["retrieval_required"],
         "needs_clarification": route["needs_clarification"],
+        "candidate_entities": list(route.get("entities") or []),
+        "question_intent": {
+            "question_type": route["question_type"],
+            "entities": list(route.get("entities") or []),
+            "needs_path": bool(route.get("needs_path")),
+            "needs_relation": bool(route.get("needs_relation")),
+            "needs_summary": bool(route.get("needs_summary")),
+        },
         "route_reason": route["reason"],
         "route_trace": {"latency_ms": route_latency_ms},
         "retrieval_execution_plan": execution_plan,

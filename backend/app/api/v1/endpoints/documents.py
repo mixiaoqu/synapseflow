@@ -278,19 +278,6 @@ async def delete_document(
     )
 
 
-@router.post("/{doc_id}/submit-for-review", response_model=DocumentResponse)
-async def submit_document_for_review(
-    doc_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_content_roles),
-):
-    return await document_service.submit_document_for_review(
-        db=db,
-        user_id=current_user.id,
-        doc_id=doc_id,
-    )
-
-
 @router.post("/batch/submit-for-review", response_model=BatchDocumentActionResponse)
 async def submit_documents_for_review_batch(
     body: BatchDocumentActionRequest,
@@ -304,13 +291,13 @@ async def submit_documents_for_review_batch(
     )
 
 
-@router.post("/{doc_id}/reject", response_model=DocumentResponse)
-async def reject_document(
+@router.post("/{doc_id}/submit-for-review", response_model=DocumentResponse)
+async def submit_document_for_review(
     doc_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_review_roles),
+    current_user: User = Depends(require_content_roles),
 ):
-    return await document_service.reject_document(
+    return await document_service.submit_document_for_review(
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,
@@ -330,13 +317,13 @@ async def reject_documents_batch(
     )
 
 
-@router.post("/{doc_id}/publish", response_model=DocumentResponse)
-async def publish_document(
+@router.post("/{doc_id}/reject", response_model=DocumentResponse)
+async def reject_document(
     doc_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_review_roles),
 ):
-    return await document_service.publish_document(
+    return await document_service.reject_document(
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,
@@ -356,13 +343,13 @@ async def publish_documents_batch(
     )
 
 
-@router.post("/{doc_id}/unpublish", response_model=DocumentResponse)
-async def unpublish_document(
+@router.post("/{doc_id}/publish", response_model=DocumentResponse)
+async def publish_document(
     doc_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_review_roles),
 ):
-    return await document_service.unpublish_document(
+    return await document_service.publish_document(
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,
@@ -379,4 +366,17 @@ async def unpublish_documents_batch(
         db=db,
         user_id=current_user.id,
         ids=body.ids,
+    )
+
+
+@router.post("/{doc_id}/unpublish", response_model=DocumentResponse)
+async def unpublish_document(
+    doc_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    return await document_service.unpublish_document(
+        db=db,
+        user_id=current_user.id,
+        doc_id=doc_id,
     )

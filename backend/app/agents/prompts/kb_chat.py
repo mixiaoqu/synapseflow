@@ -41,7 +41,6 @@ def build_kb_chat_answer_prompt(
     evidence_status: str = "",
     primary_context: str = "",
     supporting_context: str = "",
-    metadata_context: str = "",
 ) -> str:
     """Build the prompt for the end-user knowledge-base chat flow."""
 
@@ -54,7 +53,6 @@ def build_kb_chat_answer_prompt(
     evidence_status_block = evidence_status.strip() or "sufficient"
     primary_block = sanitize_user_kb_context(primary_context).strip() or "(none)"
     supporting_block = sanitize_user_kb_context(supporting_context).strip() or "(none)"
-    metadata_block = sanitize_user_kb_context(metadata_context).strip() or "(none)"
 
     return f"""
 You are a knowledge-base assistant for end users.
@@ -95,9 +93,6 @@ Base constraints:
 
 [Supporting evidence]
 {supporting_block}
-
-[Metadata]
-{metadata_block}
 
 [Current user question]
 {query.strip()}

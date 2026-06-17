@@ -16,13 +16,17 @@ from app.core.llm import get_llm_for_planner
 ALLOWED_QUESTION_TYPES = {
     "summary_lookup",
     "relationship_lookup",
+    "dependency_lookup",
+    "call_chain_lookup",
+    "flow_lookup",
+    "location_lookup",
     "attribute_lookup",
     "definition_lookup",
     "chitchat",
     "out_of_scope",
 }
 ALLOWED_RETRIEVAL_COMPLEXITIES = {"fast", "standard", "broad"}
-ALLOWED_RETRIEVAL_STRATEGIES = {"skip", "parallel_fusion"}
+ALLOWED_RETRIEVAL_STRATEGIES = {"auto", "skip"}
 
 
 def _coerce_text(content: Any) -> str:
@@ -66,8 +70,11 @@ You classify one user turn for a knowledge-base QA workflow.
 Return JSON only:
 {{
   "question_type": "summary_lookup",
-  "retrieval_strategy": "parallel_fusion",
   "retrieval_complexity": "standard",
+  "entities": ["Order", "User"],
+  "needs_path": false,
+  "needs_relation": false,
+  "needs_summary": true,
   "needs_clarification": false,
   "reason": "short reason"
 }}
@@ -77,12 +84,12 @@ Allowed question_type values:
 - relationship_lookup
 - attribute_lookup
 - definition_lookup
+- location_lookup
+- flow_lookup
+- dependency_lookup
+- call_chain_lookup
 - chitchat
 - out_of_scope
-
-Allowed retrieval_strategy values:
-- skip
-- parallel_fusion
 
 Allowed retrieval_complexity values:
 - fast
@@ -91,11 +98,19 @@ Allowed retrieval_complexity values:
 
 Rules:
 - Do not answer the user.
-- Use retrieval_strategy=skip only for chitchat and out_of_scope.
+- Classify the user's retrieval intent. Do not decide how retrieval should execute.
 - Use summary_lookup for broad overviews, summaries, or multi-aspect synthesis.
 - Use relationship_lookup for explicit relations, dependencies, ownership, or multi-entity reasoning.
+- Use dependency_lookup for dependency direction questions.
+- Use call_chain_lookup for call chain or invocation path questions.
+- Use flow_lookup for process, lifecycle, or end-to-end flow questions.
+- Use location_lookup when the user asks where a capability, file, function, table, or config lives.
 - Use attribute_lookup for pure properties, structure, fields, state, values, or schema-like questions.
 - Use definition_lookup for concepts, meanings, definitions, or plain explanations.
+- Extract concrete entities mentioned by the user, such as class/function/table/module/file names.
+- Set needs_path=true when the answer needs file/function/module location.
+- Set needs_relation=true when the answer needs dependency, call, ownership, or association evidence.
+- Set needs_summary=true when the answer needs a module/file/model/process summary.
 - retrieval_complexity indicates retrieval scope and complexity, not question type.
 - Prefer fast for precise single-target lookups.
 - Prefer broad for overviews, multi-aspect comparisons, or complex follow-ups.
@@ -152,12 +167,12 @@ async def build_kb_chat_route(
         "definition_lookup",
     )
     raw_strategy = str(parsed.get("retrieval_strategy") or "").strip().lower()
-    if raw_strategy in ALLOWED_RETRIEVAL_STRATEGIES:
-        retrieval_strategy = raw_strategy
-    elif question_type in {"chitchat", "out_of_scope"}:
+    if question_type in {"chitchat", "out_of_scope"}:
         retrieval_strategy = "skip"
+    elif raw_strategy in ALLOWED_RETRIEVAL_STRATEGIES:
+        retrieval_strategy = raw_strategy
     else:
-        retrieval_strategy = "parallel_fusion"
+        retrieval_strategy = "auto"
 
     retrieval_complexity = _normalize_choice(
         parsed.get("retrieval_complexity"),
@@ -165,11 +180,20 @@ async def build_kb_chat_route(
         "standard",
     )
     needs_clarification = bool(parsed.get("needs_clarification"))
+    entities = [
+        _compact_text(str(item), limit=120)
+        for item in list(parsed.get("entities") or [])
+        if _compact_text(str(item), limit=120)
+    ]
     return {
         "question_type": question_type,
         "retrieval_strategy": retrieval_strategy,
         "retrieval_complexity": retrieval_complexity,
         "retrieval_required": retrieval_strategy != "skip",
+        "entities": entities,
+        "needs_path": bool(parsed.get("needs_path")),
+        "needs_relation": bool(parsed.get("needs_relation")),
+        "needs_summary": bool(parsed.get("needs_summary")),
         "needs_clarification": needs_clarification,
         "reason": _compact_text(str(parsed.get("reason") or ""), limit=240)
         or "Router selected the route.",
@@ -208,6 +232,7 @@ async def kb_chat_route_node(
         "retrieval_strategy": route["retrieval_strategy"],
         "retrieval_complexity": route["retrieval_complexity"],
         "retrieval_required": route["retrieval_required"],
+        "candidate_entities": route.get("entities") or [],
         "needs_clarification": route["needs_clarification"],
         "route_reason": route["reason"],
         "route_trace": {"latency_ms": int((perf_counter() - started_at) * 1000)},

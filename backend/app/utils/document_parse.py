@@ -12,7 +12,7 @@ from typing import Any
 
 from docx import Document as DocxDocument
 
-SUPPORTED_EXTENSIONS = frozenset({".txt", ".md", ".pdf", ".docx", ".doc"})
+SUPPORTED_EXTENSIONS = frozenset({".txt", ".md", ".jsonl", ".pdf", ".docx", ".doc"})
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 _PAGE_NOISE_RE = re.compile(r"^\s*(?:第\s*)?\d+\s*(?:页|/\s*\d+)?\s*$")
@@ -95,6 +95,8 @@ def parse_uploaded_document_structured(
                 document_type=ext.lstrip("."),
                 filename=filename,
             )
+        elif ext == ".jsonl":
+            parsed = _parse_jsonl_document(filename, content)
         elif ext == ".pdf":
             parsed = _parse_pdf_document(filename, content)
         elif ext == ".docx":
@@ -103,6 +105,8 @@ def parse_uploaded_document_structured(
             return None, "当前版本暂不直接支持 .doc，请先转换为 .docx 再上传"
         else:
             return None, "未实现的解析器: %s" % ext
+        if ext == ".jsonl":
+            return parsed, None
         return clean_parsed_document(parsed), None
     except Exception as exc:  # pragma: no cover - defensive
         return None, "文件解析失败: %s" % str(exc)
@@ -326,6 +330,38 @@ def _parse_text(content: bytes) -> str:
         except UnicodeDecodeError:
             continue
     raise ValueError("无法识别文件编码")
+
+
+def _parse_jsonl_document(filename: str, content: bytes) -> ParsedDocument:
+    text = _parse_text(content)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    blocks = [
+        ParsedBlock(
+            type="jsonl_line",
+            text=line,
+            metadata={"line_no": index + 1},
+        )
+        for index, line in enumerate(lines)
+    ]
+    return ParsedDocument(
+        title=_title_from_filename(filename),
+        metadata={
+            "source_type": "text",
+            "filename": filename,
+            "document_type": "jsonl",
+            "parser_name": "local-jsonl",
+            "jsonl_lines": lines,
+        },
+        blocks=blocks,
+        roots=[
+            ParsedNode(
+                node_type="jsonl_line",
+                text=line,
+                metadata={"line_no": index + 1},
+            )
+            for index, line in enumerate(lines)
+        ],
+    )
 
 
 def _parse_pdf_document(filename: str, content: bytes) -> ParsedDocument:

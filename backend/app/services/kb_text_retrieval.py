@@ -87,7 +87,6 @@ async def _knowledge_base_has_documents(
     category_id: int | None,
     user_id: int | None,
     document_statuses: list[str] | None,
-    retrieval_version_mode: str | None,
 ) -> bool:
     async with AsyncSessionLocal() as db:
         stmt = select(Document.id).where(
@@ -194,7 +193,6 @@ async def _retrieve_candidate_rows(
     recall_k: int,
     lexical_k: int = 0,
     document_statuses: list[str] | None = None,
-    retrieval_version_mode: str | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     rag = config_registry.get_rag_config().retrieval
     query_embedding = await asyncio.to_thread(embed_query, query)
@@ -213,7 +211,6 @@ async def _retrieve_candidate_rows(
                 knowledge_base_id=knowledge_base_id,
                 category_id=category_id,
                 document_statuses=document_statuses,
-                retrieval_version_mode=retrieval_version_mode,
                 rrf_k=rag.rrf_k,
                 pool_limit=max(pool_limit, 1),
             )
@@ -227,7 +224,6 @@ async def _retrieve_candidate_rows(
                 knowledge_base_id=knowledge_base_id,
                 category_id=category_id,
                 document_statuses=document_statuses,
-                retrieval_version_mode=retrieval_version_mode,
             )
 
     has_documents = True
@@ -238,7 +234,6 @@ async def _retrieve_candidate_rows(
             category_id=category_id,
             user_id=user_id,
             document_statuses=document_statuses,
-            retrieval_version_mode=retrieval_version_mode,
         )
 
     return results, has_documents
@@ -253,7 +248,6 @@ async def _retrieve_vector_candidate_rows(
     user_id: int | None,
     recall_k: int,
     document_statuses: list[str] | None = None,
-    retrieval_version_mode: str | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     query_embedding = await asyncio.to_thread(embed_query, query)
     async with AsyncSessionLocal() as db:
@@ -266,7 +260,6 @@ async def _retrieve_vector_candidate_rows(
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             document_statuses=document_statuses,
-            retrieval_version_mode=retrieval_version_mode,
         )
 
     has_documents = True
@@ -277,7 +270,6 @@ async def _retrieve_vector_candidate_rows(
             category_id=category_id,
             user_id=user_id,
             document_statuses=document_statuses,
-            retrieval_version_mode=retrieval_version_mode,
         )
     return results, has_documents
 
@@ -291,7 +283,6 @@ async def _retrieve_lexical_candidate_rows(
     user_id: int | None,
     lexical_k: int,
     document_statuses: list[str] | None = None,
-    retrieval_version_mode: str | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     async with AsyncSessionLocal() as db:
         results = await search_lexical(
@@ -303,7 +294,6 @@ async def _retrieve_lexical_candidate_rows(
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             document_statuses=document_statuses,
-            retrieval_version_mode=retrieval_version_mode,
         )
 
     has_documents = True
@@ -314,7 +304,6 @@ async def _retrieve_lexical_candidate_rows(
             category_id=category_id,
             user_id=user_id,
             document_statuses=document_statuses,
-            retrieval_version_mode=retrieval_version_mode,
         )
     return results, has_documents
 
@@ -650,7 +639,6 @@ async def run_kb_text_retrieval(
     llm_reference_top_k: int | None = None,
     context_budget: int | None = None,
     document_statuses: list[str] | None = None,
-    retrieval_version_mode: str | None = None,
     retrieval_mode: str | None = None,
     recall_k: int | None = None,
     lexical_k: int | None = None,
@@ -685,7 +673,6 @@ async def run_kb_text_retrieval(
         recall_k=resolved_recall_k,
         lexical_k=resolved_lexical_k,
         document_statuses=document_statuses,
-        retrieval_version_mode=retrieval_version_mode,
     )
     text_retrieval_latency_ms = int((perf_counter() - text_started_at) * 1000)
     raw_count = len(results)
@@ -756,7 +743,6 @@ async def run_multi_query_kb_text_retrieval(
     llm_reference_top_k: int | None = None,
     context_budget: int | None = None,
     document_statuses: list[str] | None = None,
-    retrieval_version_mode: str | None = None,
     retrieval_mode: str | None = None,
     recall_k: int | None = None,
     lexical_k: int | None = None,
@@ -779,7 +765,6 @@ async def run_multi_query_kb_text_retrieval(
             llm_reference_top_k=llm_reference_top_k,
             context_budget=context_budget,
             document_statuses=document_statuses,
-            retrieval_version_mode=retrieval_version_mode,
             retrieval_mode=retrieval_mode,
             recall_k=recall_k,
             lexical_k=lexical_k,
@@ -823,7 +808,6 @@ async def run_multi_query_kb_text_retrieval(
                 recall_k=per_query_recall_k,
                 lexical_k=per_query_lexical_k,
                 document_statuses=document_statuses,
-                retrieval_version_mode=retrieval_version_mode,
             )
             for item in queries
         ]
@@ -914,7 +898,6 @@ async def run_kb_channel_text_retrieval(
     llm_reference_top_k: int | None = None,
     context_budget: int | None = None,
     document_statuses: list[str] | None = None,
-    retrieval_version_mode: str | None = None,
     recall_k: int | None = None,
     lexical_k: int | None = None,
     rerank_enabled: bool | None = None,
@@ -957,7 +940,6 @@ async def run_kb_channel_text_retrieval(
                 user_id=user_id,
                 recall_k=vector_k,
                 document_statuses=document_statuses,
-                retrieval_version_mode=retrieval_version_mode,
             )
             for item in vector_queries
         ]
@@ -972,7 +954,6 @@ async def run_kb_channel_text_retrieval(
                 user_id=user_id,
                 lexical_k=term_k,
                 document_statuses=document_statuses,
-                retrieval_version_mode=retrieval_version_mode,
             )
             for item in terms
         ]

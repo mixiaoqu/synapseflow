@@ -1104,6 +1104,16 @@ async function handleIndexDocument(document: DocumentSummary) {
   }
 }
 
+async function handleSubmitDocumentForReview(document: DocumentSummary) {
+  await runBatchDocumentAction(
+    [document.id],
+    "提交审核",
+    `确定将文档"${document.title}"提交审核吗？`,
+    submitDocumentsForReviewBatch,
+    "提交审核",
+  );
+}
+
 async function handleRejectDocument(document: DocumentSummary) {
   await runBatchDocumentAction(
     [document.id],
@@ -1751,7 +1761,8 @@ watch(
             <div>
               <h3 class="kb-upload-dialog__title">文档上传</h3>
               <p class="kb-upload-dialog__subtitle">
-                支持拖拽、选择文件或文件夹，并按目录结构自动映射分类。
+                支持拖拽、选择文件或文件夹，并按目录结构自动映射分类。当前支持
+                .txt、.md、.jsonl、.pdf、.docx、.doc 文件。
               </p>
             </div>
 

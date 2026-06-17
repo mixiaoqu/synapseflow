@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed } from "vue";
 import { useRouter } from "vue-router";
 import {
   CaretBottom,
@@ -47,9 +47,6 @@ async function handleLogout() {
   await router.replace("/login");
 }
 
-onMounted(() => {
-  void teamScopeStore.bootstrap({ allowAllTeams: isSystemAdmin.value });
-});
 </script>
 
 <template>

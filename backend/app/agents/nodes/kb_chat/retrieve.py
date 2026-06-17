@@ -12,6 +12,7 @@ from app.agents.common.streaming import emit_progress, get_optional_stream_write
 from app.agents.states import KbChatState
 from app.core.config.settings import settings
 from app.services.chat_memory import format_chat_history
+from app.services.graph_entity_candidate_service import resolve_graph_candidate_entities
 from app.services.kb_graph_retrieval import GraphRetriever
 from app.services.kb_text_retrieval import run_kb_channel_text_retrieval
 from app.services.reranker import rerank
@@ -31,6 +32,163 @@ def _doc_key(doc: dict[str, Any]) -> tuple[Any, ...]:
     if source == "graph_relation_summary":
         return ("relation_summary", graph_mode, normalized_name, relation_type)
     return (source, graph_mode, normalized_name, relation_type, str(doc.get("content") or "").strip())
+
+
+def _build_graph_text_doc(fact: dict[str, Any]) -> dict[str, Any]:
+    metadata = {
+        "source": "graph",
+        "document_id": fact.get("document_id"),
+        "document_chunk_id": fact.get("document_chunk_id"),
+        "document_title": fact.get("document_title") or "Graph evidence",
+        "section_path": fact.get("section_path"),
+        "graph_mode": fact.get("graph_mode"),
+        "graph_relation_type": fact.get("relation_type"),
+        "graph_evidence": fact.get("evidence"),
+        "matched_entities": list(fact.get("matched_entities") or []),
+        "rank": fact.get("rank"),
+    }
+    if fact.get("chunk_index") is not None:
+        metadata["chunk_index"] = fact.get("chunk_index")
+    return {"content": str(fact.get("content") or "").strip(), "metadata": metadata}
+
+
+def _build_entity_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, Any] | None:
+    display_name = str(fact.get("display_name") or fact.get("normalized_name") or f"Entity {index}").strip()
+    entity_type = str(fact.get("entity_type") or "").strip()
+    summary = str(fact.get("summary") or "").strip()
+    mentions = list(fact.get("mentions") or [])
+
+    lines = [summary] if summary else []
+    if not lines:
+        lines.append(display_name)
+    if entity_type:
+        lines[0] = f"{lines[0]}（{entity_type}）" if lines[0] == display_name else lines[0]
+    if mentions:
+        mention_texts = [
+            f"{item.get('document_title') or 'Unknown'} / {item.get('section_path') or '-'}"
+            for item in mentions[:3]
+            if isinstance(item, dict) and (item.get("document_title") or item.get("section_path"))
+        ]
+        if mention_texts:
+            lines.append(f"出现于：{'; '.join(mention_texts)}")
+    content = "\n".join(line for line in lines if line).strip()
+    if not content:
+        return None
+
+    return {
+        "content": content,
+        "metadata": {
+            "source": "graph_summary",
+            "rank": fact.get("rank", index),
+            "normalized_name": fact.get("normalized_name"),
+            "document_title": display_name,
+            "section_path": None,
+            "graph_mode": "entity_summary",
+            "graph_summary": summary or None,
+            "matched_entities": [display_name] if display_name else [],
+            "supporting_section": "实体摘要",
+        },
+    }
+
+
+def _build_relation_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, Any] | None:
+    source = dict(fact.get("source") or {})
+    target = dict(fact.get("target") or {})
+    source_display = str(source.get("display_name") or source.get("normalized_name") or "Source").strip()
+    target_display = str(target.get("display_name") or target.get("normalized_name") or "Target").strip()
+    relation_type = str(fact.get("relation_type") or "RELATED_TO").strip()
+    summary = str(fact.get("summary") or "").strip()
+    evidence = str(fact.get("evidence") or "").strip()
+
+    lines = [summary or evidence or f"{source_display} -{relation_type}-> {target_display}"]
+    if source.get("summary"):
+        lines.append(f"Source summary: {str(source.get('summary')).strip()}")
+    if target.get("summary"):
+        lines.append(f"Target summary: {str(target.get('summary')).strip()}")
+    content = "\n".join(line for line in lines if line).strip()
+    if not content:
+        return None
+
+    return {
+        "content": content,
+        "metadata": {
+            "source": "graph_relation_summary",
+            "rank": fact.get("rank", index),
+            "normalized_name": f"{source.get('normalized_name')}::{relation_type}::{target.get('normalized_name')}",
+            "document_title": f"{source_display} -> {target_display}",
+            "section_path": None,
+            "graph_mode": "relation_evidence",
+            "graph_relation_type": relation_type,
+            "graph_summary": summary or None,
+            "graph_evidence": evidence or None,
+            "source_summary": source.get("summary"),
+            "target_summary": target.get("summary"),
+            "matched_entities": [name for name in [source_display, target_display] if name],
+            "supporting_section": "关键关系",
+        },
+    }
+
+
+def _build_evidence_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, Any] | None:
+    evidence = str(fact.get("evidence") or "").strip()
+    document_title = str(fact.get("document_title") or "关联证据").strip()
+    section_path = str(fact.get("section_path") or "").strip()
+    matched_entities = [
+        str(item).strip()
+        for item in list(fact.get("matched_entities") or [])
+        if str(item or "").strip()
+    ]
+
+    lines = [evidence] if evidence else []
+    if section_path:
+        lines.append(f"位置：{section_path}")
+    content = "\n".join(line for line in lines if line).strip()
+    if not content:
+        return None
+
+    return {
+        "content": content,
+        "metadata": {
+            "source": "graph_evidence_summary",
+            "rank": fact.get("rank", index),
+            "normalized_name": str(fact.get("document_chunk_id") or document_title),
+            "document_title": document_title,
+            "section_path": section_path or None,
+            "graph_mode": "relation_evidence",
+            "graph_evidence": evidence or None,
+            "graph_relation_type": fact.get("relation_type"),
+            "matched_entities": matched_entities,
+            "supporting_section": "关联证据",
+        },
+    }
+
+
+def _build_graph_docs_from_facts(graph_facts: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    primary_docs = [
+        _build_graph_text_doc(fact)
+        for fact in list(graph_facts.get("text") or [])
+        if isinstance(fact, dict) and str(fact.get("content") or "").strip()
+    ]
+    supporting_docs: list[dict[str, Any]] = []
+    for index, fact in enumerate(list(graph_facts.get("entities") or []), start=1):
+        if not isinstance(fact, dict):
+            continue
+        doc = _build_entity_fact_doc(fact, index=index)
+        if doc is not None:
+            supporting_docs.append(doc)
+    for index, fact in enumerate(list(graph_facts.get("relations") or []), start=1):
+        if not isinstance(fact, dict):
+            continue
+        doc = _build_relation_fact_doc(fact, index=index)
+        if doc is not None:
+            supporting_docs.append(doc)
+    for index, fact in enumerate(list(graph_facts.get("evidence") or []), start=1):
+        if not isinstance(fact, dict):
+            continue
+        doc = _build_evidence_fact_doc(fact, index=index)
+        if doc is not None:
+            supporting_docs.append(doc)
+    return primary_docs, supporting_docs
 
 
 def _merge_text_and_graph_docs(
@@ -260,16 +418,73 @@ def _compose_full_context(
     *,
     primary_context: str,
     supporting_context: str,
-    metadata_context: str,
 ) -> str:
     sections: list[str] = []
     if primary_context.strip():
         sections.append(f"[Primary evidence]\n{primary_context.strip()}")
     if supporting_context.strip():
         sections.append(f"[Supporting evidence]\n{supporting_context.strip()}")
-    if metadata_context.strip():
-        sections.append(f"[Metadata]\n{metadata_context.strip()}")
     return "\n\n".join(sections).strip()
+
+
+def _empty_text_result(reason: str = "skipped") -> dict[str, Any]:
+    return {
+        "retrieved_docs": [],
+        "context": "",
+        "kb_retrieval_status": reason,
+        "retrieval_trace": {
+            "text_retrieval_latency_ms": 0,
+            "total_latency_ms": 0,
+            "rerank": {},
+            "raw_candidate_count": 0,
+            "merged_candidate_count": 0,
+        },
+    }
+
+
+def _empty_graph_result(reason: str = "skipped", *, graph_mode: str | None = None) -> dict[str, Any]:
+    return {
+        "retrieved_docs": [],
+        "graph_facts": {"text": [], "entities": [], "relations": [], "paths": [], "evidence": []},
+        "trace": {
+            "graph_used": False,
+            "graph_mode": graph_mode,
+            "entity_count": 0,
+            "relation_pair_count": 0,
+            "relation_query_count": 0,
+            "graph_hits": 0,
+            "graph_primary_hits": 0,
+            "graph_supporting_hits": 0,
+            "empty_reason": reason,
+            "error": None,
+            "latency_ms": 0,
+        },
+    }
+
+
+def _extract_seed_terms_from_docs(docs: list[dict[str, Any]], *, limit: int) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+    for doc in docs:
+        metadata = dict(doc.get("metadata") or {})
+        candidates = [
+            metadata.get("document_title"),
+            metadata.get("section_path"),
+            metadata.get("normalized_name"),
+            *list(metadata.get("matched_entities") or []),
+        ]
+        for candidate in candidates:
+            value = " ".join(str(candidate or "").split()).strip()
+            if not value:
+                continue
+            key = value.casefold()
+            if key in seen:
+                continue
+            terms.append(value)
+            seen.add(key)
+            if len(terms) >= limit:
+                return terms
+    return terms
 
 
 async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
@@ -277,14 +492,11 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
     if str(state.get("retrieval_strategy") or "").strip().lower() == "skip":
         return {
             "retrieved_docs": [],
-            "graph_primary_docs": [],
-            "graph_supporting_docs": [],
+            "graph_facts": {"text": [], "entities": [], "relations": [], "paths": [], "evidence": []},
             "primary_evidence_docs": [],
             "supporting_evidence_docs": [],
-            "metadata_evidence_docs": [],
             "primary_context": "",
             "supporting_context": "",
-            "metadata_context": "",
             "context": "",
             "retrieval_trace": {
                 "retrieval_strategy": "skip",
@@ -339,16 +551,63 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
     retrieval_strategy = str(
         execution_plan.get("retrieval_strategy") or state.get("retrieval_strategy") or "parallel_fusion"
     ).strip().lower()
+    text_enabled = bool(
+        execution_plan.get(
+            "text_enabled",
+            bool(vector_plan.get("enabled", True)) or bool(lexical_plan.get("enabled", True)),
+        )
+    )
     final_top_k = int(context_plan.get("final_top_k") or 8)
     llm_reference_top_k = int(context_plan.get("llm_reference_top_k") or final_top_k)
     recall_k = int(vector_plan.get("recall_k") or final_top_k)
     lexical_k = int(lexical_plan.get("lexical_k") or final_top_k)
     graph_limit = int(graph_plan.get("limit") or final_top_k)
-    graph_enabled = bool(graph_plan.get("enabled", True))
+    graph_enabled = bool(execution_plan.get("graph_enabled", graph_plan.get("enabled", True)))
     graph_mode = _resolve_graph_mode_from_plan(graph_plan)
     context_budget = int(context_plan.get("budget_chars") or 9000)
     rerank_enabled = bool(settings.RERANK_ENABLED) and bool(rerank_plan.get("enabled"))
     question_type = str(state.get("question_type") or "definition_lookup").strip().lower()
+    resolved_graph_candidates = {
+        "candidate_entities": list(candidate_entities[:graph_limit]),
+        "matched_entities": [],
+        "trace": {
+            "lookup_terms": [],
+            "resolved_entities": list(candidate_entities[:graph_limit]),
+            "unmatched_terms": [],
+            "match_count": 0,
+            "fallback_used": True,
+            "skipped": not graph_enabled,
+        },
+    }
+    graph_candidate_entities = list(candidate_entities[:graph_limit])
+    async def _resolve_graph_candidates(seed_entities: list[str]) -> tuple[list[str], dict[str, Any]]:
+        fallback = {
+            "candidate_entities": list(seed_entities[:graph_limit]),
+            "matched_entities": [],
+            "trace": {
+                "lookup_terms": [],
+                "resolved_entities": list(seed_entities[:graph_limit]),
+                "unmatched_terms": [],
+                "match_count": 0,
+                "fallback_used": True,
+                "skipped": not graph_enabled,
+            },
+        }
+        if not graph_enabled or int(state.get("knowledge_base_id") or 0) <= 0 or int(state.get("team_id") or 0) <= 0:
+            return list(fallback.get("candidate_entities") or []), fallback
+        resolved = await resolve_graph_candidate_entities(
+            knowledge_base_id=int(state.get("knowledge_base_id") or 0),
+            team_id=int(state.get("team_id") or 0),
+            query=query,
+            candidate_entities=seed_entities,
+            lexical_terms=lexical_terms,
+            page_context=dict(state.get("page_context") or {}),
+            limit=graph_limit,
+        )
+        return list(resolved.get("candidate_entities") or []), resolved
+
+    if graph_enabled and retrieval_strategy != "text_then_graph":
+        graph_candidate_entities, resolved_graph_candidates = await _resolve_graph_candidates(candidate_entities)
 
     common_kwargs = {
         "team_id": state.get("team_id"),
@@ -360,25 +619,32 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
         "llm_reference_top_k": llm_reference_top_k,
         "context_budget": context_budget,
         "document_statuses": state.get("allowed_document_statuses"),
-        "retrieval_version_mode": state.get("retrieval_version_mode"),
         "recall_k": recall_k,
         "lexical_k": lexical_k,
         "rerank_enabled": rerank_enabled,
     }
 
-    async def _run_text_retrieval() -> dict[str, Any]:
+    async def _run_text_retrieval(
+        *,
+        search_queries: list[str] | None = None,
+        search_terms: list[str] | None = None,
+    ) -> dict[str, Any]:
+        if not text_enabled:
+            return _empty_text_result()
         return await run_kb_channel_text_retrieval(
             query=query,
-            semantic_queries=semantic_queries,
-            lexical_terms=lexical_terms,
+            semantic_queries=search_queries or semantic_queries,
+            lexical_terms=search_terms or lexical_terms,
             **common_kwargs,
         )
 
-    async def _run_graph_retrieval() -> dict[str, Any]:
+    async def _run_graph_retrieval(seed_entities: list[str] | None = None) -> dict[str, Any]:
+        if not graph_enabled:
+            return _empty_graph_result(graph_mode=graph_mode)
         return await GraphRetriever(enabled=graph_enabled).retrieve(
             knowledge_base_id=int(state.get("knowledge_base_id") or 0),
             team_id=int(state.get("team_id") or 0),
-            candidate_entities=candidate_entities,
+            candidate_entities=seed_entities or graph_candidate_entities,
             relation_pairs=list(state.get("relation_pairs") or []),
             relation_queries=list(state.get("relation_queries") or []),
             question_type=question_type,
@@ -388,39 +654,72 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
 
     text_result: dict[str, Any]
     graph_result: dict[str, Any]
-    text_result, graph_result = await asyncio.gather(_run_text_retrieval(), _run_graph_retrieval())
+    if retrieval_strategy == "text_only":
+        text_result = await _run_text_retrieval()
+        graph_result = _empty_graph_result(graph_mode=graph_mode)
+    elif retrieval_strategy == "graph_only":
+        graph_result = await _run_graph_retrieval()
+        text_result = _empty_text_result()
+    elif retrieval_strategy == "text_then_graph":
+        text_result = await _run_text_retrieval()
+        text_seed_entities = _dedupe_queries(
+            [
+                *candidate_entities,
+                *_extract_seed_terms_from_docs(
+                    list(text_result.get("retrieved_docs") or []),
+                    limit=graph_limit,
+                ),
+            ]
+        )
+        graph_candidate_entities, resolved_graph_candidates = await _resolve_graph_candidates(text_seed_entities)
+        graph_result = await _run_graph_retrieval(graph_candidate_entities)
+    elif retrieval_strategy == "graph_then_text":
+        graph_result = await _run_graph_retrieval()
+        graph_seed_terms = _extract_seed_terms_from_docs(
+            [
+                *_build_graph_docs_from_facts(dict(graph_result.get("graph_facts") or {}))[0],
+                *_build_graph_docs_from_facts(dict(graph_result.get("graph_facts") or {}))[1],
+            ],
+            limit=graph_limit,
+        )
+        semantic_queries = _dedupe_queries([*semantic_queries, *graph_seed_terms])
+        lexical_terms = _dedupe_terms([*lexical_terms, *graph_seed_terms])
+        text_result = await _run_text_retrieval(
+            search_queries=semantic_queries,
+            search_terms=lexical_terms,
+        )
+    else:
+        text_result, graph_result = await asyncio.gather(_run_text_retrieval(), _run_graph_retrieval())
 
     text_docs = list(text_result.get("retrieved_docs") or [])
-    graph_primary_docs = list(graph_result.get("graph_primary_docs") or [])
-    graph_supporting_docs = list(graph_result.get("graph_supporting_docs") or [])
+    graph_facts = dict(graph_result.get("graph_facts") or {})
+    graph_text_docs, graph_supporting_context_docs = _build_graph_docs_from_facts(graph_facts)
     merge_started_at = perf_counter()
     merged_docs = _merge_text_and_graph_docs(
         text_docs,
-        graph_primary_docs,
-        final_top_k=max(final_top_k, len(text_docs) + len(graph_primary_docs)),
+        graph_text_docs,
+        final_top_k=max(final_top_k, len(text_docs) + len(graph_text_docs)),
     )
-    duplicates_folded = max(0, len(text_docs) + len(graph_primary_docs) - len(merged_docs))
+    duplicates_folded = max(0, len(text_docs) + len(graph_text_docs) - len(merged_docs))
     primary_docs: list[dict[str, Any]] = []
-    metadata_docs: list[dict[str, Any]] = []
+    supporting_text_docs: list[dict[str, Any]] = []
     for doc in merged_docs:
         layer = _classify_evidence(doc, question_type=question_type)
         if layer == "primary":
             primary_docs.append(doc)
         else:
-            metadata_docs.append(doc)
+            supporting_text_docs.append(doc)
     reranked_primary_docs = (
         await rerank_retrieved_docs(query, primary_docs, final_top_k)
         if rerank_enabled
         else primary_docs[:final_top_k]
     )
-    supporting_docs = graph_supporting_docs
+    supporting_docs = supporting_text_docs + graph_supporting_context_docs
     primary_context = _build_layer_context(reranked_primary_docs)
     supporting_context = _build_supporting_context(supporting_docs)
-    metadata_context = _build_layer_context(metadata_docs)
     context = _compose_full_context(
         primary_context=primary_context,
         supporting_context=supporting_context,
-        metadata_context=metadata_context,
     )
     merge_latency_ms = int((perf_counter() - merge_started_at) * 1000)
     if format_chat_history(state.get("chat_history") or [], max_messages=4):
@@ -436,6 +735,7 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
     trace = {
         "retrieval_strategy": retrieval_strategy,
         "text": {
+            "skipped": not text_enabled,
             "semantic_query_count": len(semantic_queries),
             "lexical_term_count": len(lexical_terms),
             "text_hits": len(text_docs),
@@ -450,6 +750,7 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
             "lexical_k": lexical_k,
         },
         "graph": graph_trace,
+        "graph_candidate_resolution": dict(resolved_graph_candidates.get("trace") or {}),
         "rerank": rerank_trace,
         "final_hits": final_hits,
         "empty_reason": None if final_hits else "no_hits",
@@ -459,10 +760,9 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
         "merge_latency_ms": merge_latency_ms,
         "primary_count": len(reranked_primary_docs),
         "supporting_count": len(supporting_docs),
-        "metadata_count": len(metadata_docs),
-        "merged_pool_count": len(primary_docs) + len(metadata_docs),
+        "merged_pool_count": len(primary_docs) + len(supporting_text_docs),
         "duplicates_folded": duplicates_folded,
-        "graph_primary_count": len(graph_primary_docs),
+        "graph_primary_count": len(graph_text_docs),
         "graph_supporting_count": len(supporting_docs),
         "supporting_sections": [
             str((doc.get("metadata") or {}).get("supporting_section") or "").strip()
@@ -482,36 +782,33 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
         "final_context_docs": len(reranked_primary_docs),
     }
     logger.info(
-        "[KB Retrieve] done | strategy={} question_type={} semantic_queries={} lexical_terms={} candidate_entities={} relation_pairs={} relation_queries={} text_hits={} graph_hits={} graph_primary_count={} graph_supporting_count={} graph_empty_reason={} primary_count={} supporting_count={} metadata_count={} final_hits={} graph_evidence_count={}",
+        "[KB Retrieve] done | strategy={} question_type={} semantic_queries={} lexical_terms={} candidate_entities={} graph_candidate_entities={} relation_pairs={} relation_queries={} text_hits={} graph_hits={} graph_primary_count={} graph_supporting_count={} graph_empty_reason={} primary_count={} supporting_count={} final_hits={} graph_evidence_count={}",
         retrieval_strategy,
         question_type,
         semantic_queries,
         lexical_terms,
         candidate_entities,
+        graph_candidate_entities,
         list(state.get("relation_pairs") or []),
         list(state.get("relation_queries") or []),
         len(text_docs),
         graph_trace.get("graph_hits"),
-        len(graph_primary_docs),
+        len(graph_text_docs),
         len(supporting_docs),
         graph_trace.get("empty_reason"),
         len(reranked_primary_docs),
         len(supporting_docs),
-        len(metadata_docs),
         final_hits,
         trace["graph_evidence_count"],
     )
     return {
         "retrieved_docs": reranked_primary_docs,
-        "graph_primary_docs": graph_primary_docs,
-        "graph_supporting_docs": supporting_docs,
+        "graph_facts": graph_facts,
         "reranked_primary_evidence_docs": reranked_primary_docs,
         "primary_evidence_docs": reranked_primary_docs,
         "supporting_evidence_docs": supporting_docs,
-        "metadata_evidence_docs": metadata_docs,
         "primary_context": primary_context,
         "supporting_context": supporting_context,
-        "metadata_context": metadata_context,
         "context": context,
         "retrieval_trace": trace,
     }

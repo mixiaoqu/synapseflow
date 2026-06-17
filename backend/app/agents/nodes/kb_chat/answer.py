@@ -98,7 +98,6 @@ def _build_prompt(state: dict[str, Any]) -> str:
         evidence_status="sufficient",
         primary_context=state.get("primary_context") or "",
         supporting_context=state.get("supporting_context") or "",
-        metadata_context=state.get("metadata_context") or "",
     )
 
 
