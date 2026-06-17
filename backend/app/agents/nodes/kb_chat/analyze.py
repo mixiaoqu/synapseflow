@@ -95,6 +95,16 @@ def _build_graph_plan(
             "boost": "high",
         }
 
+    if question_type in {"dependency_lookup", "call_chain_lookup"}:
+        return {
+            "enabled": True,
+            "limit": graph_limit,
+            "intent": "relation_lookup",
+            "graph_mode": "relation_evidence",
+            "max_hops": 3,
+            "boost": "high",
+        }
+
     if question_type == "summary_lookup":
         return {
             "enabled": True,

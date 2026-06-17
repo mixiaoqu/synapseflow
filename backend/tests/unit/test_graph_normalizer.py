@@ -187,3 +187,61 @@ def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
 
     assert normalized.relations[0].relation_type == "RELATED_TO"
     assert normalized.relations[0].attributes == {"mode": "auto"}
+
+
+def test_normalize_chunk_graph_keeps_code_relation_types():
+    chunk = GraphChunkRecord(
+        team_id=1,
+        knowledge_base_id=2,
+        document_id=2,
+        document_chunk_id=23,
+        document_title="依赖关系",
+        section_path="模块",
+    )
+    entities = [
+        GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=2,
+            document_id=2,
+            document_chunk_id=23,
+            normalized_name="projectapp",
+            display_name="ProjectApp",
+            entity_type="COMPONENT",
+            aliases=(),
+            attributes={},
+            evidence="ProjectApp 依赖 AssistantProfile",
+        ),
+        GraphEntityRecord(
+            team_id=1,
+            knowledge_base_id=2,
+            document_id=2,
+            document_chunk_id=23,
+            normalized_name="assistantprofile",
+            display_name="AssistantProfile",
+            entity_type="COMPONENT",
+            aliases=(),
+            attributes={},
+            evidence="AssistantProfile 被 ProjectApp 使用",
+        ),
+    ]
+    relations = [
+        GraphRelationRecord(
+            team_id=1,
+            knowledge_base_id=2,
+            document_id=2,
+            document_chunk_id=23,
+            source_normalized_name="projectapp",
+            target_normalized_name="assistantprofile",
+            relation_type="depends_on",
+            attributes={},
+            evidence="ProjectApp 依赖 AssistantProfile",
+        )
+    ]
+
+    normalized = normalize_chunk_graph(
+        chunk=chunk,
+        entities=entities,
+        relations=relations,
+    )
+
+    assert normalized.relations[0].relation_type == "DEPENDS_ON"

@@ -143,9 +143,14 @@ def test_upsert_relations_scopes_related_identity_by_team_and_knowledge_base():
     assert "source_normalized_name: row.source_normalized_name" in query
     assert "target_normalized_name: row.target_normalized_name" in query
     assert "relation_type: row.relation_type" in query
+    assert "MERGE (evidence:RelationEvidence {" in query
+    assert "MERGE (source)-[:HAS_RELATION_EVIDENCE]->(evidence)" in query
+    assert "MERGE (evidence)-[:EVIDENCE_TARGET]->(target)" in query
+    assert "MATCH (chunk:Chunk {document_chunk_id: row.document_chunk_id})" in query
+    assert "MERGE (evidence)-[:FROM_CHUNK]->(chunk)" in query
 
 
-def test_delete_knowledge_base_graph_detaches_scoped_summary_entity_and_chunk_nodes():
+def test_delete_knowledge_base_graph_detaches_scoped_summary_entity_evidence_and_chunk_nodes():
     calls = []
     store = object.__new__(graph_store.Neo4jGraphStore)
 
@@ -156,7 +161,7 @@ def test_delete_knowledge_base_graph_detaches_scoped_summary_entity_and_chunk_no
 
     asyncio.run(store.delete_knowledge_base_graph(knowledge_base_id=2, team_id=1))
 
-    assert len(calls) == 3
+    assert len(calls) == 4
 
     summary_query, summary_params = calls[0]
     assert "MATCH (s:EntitySummary)" in summary_query
@@ -165,14 +170,21 @@ def test_delete_knowledge_base_graph_detaches_scoped_summary_entity_and_chunk_no
     assert "DETACH DELETE s" in summary_query
     assert summary_params == {"knowledge_base_id": 2, "team_id": 1}
 
-    entity_query, entity_params = calls[1]
+    evidence_query, evidence_params = calls[1]
+    assert "MATCH (re:RelationEvidence)" in evidence_query
+    assert "re.team_id = $team_id" in evidence_query
+    assert "re.knowledge_base_id = $knowledge_base_id" in evidence_query
+    assert "DETACH DELETE re" in evidence_query
+    assert evidence_params == {"knowledge_base_id": 2, "team_id": 1}
+
+    entity_query, entity_params = calls[2]
     assert "MATCH (e:Entity)" in entity_query
     assert "e.team_id = $team_id" in entity_query
     assert "e.knowledge_base_id = $knowledge_base_id" in entity_query
     assert "DETACH DELETE e" in entity_query
     assert entity_params == {"knowledge_base_id": 2, "team_id": 1}
 
-    chunk_query, chunk_params = calls[2]
+    chunk_query, chunk_params = calls[3]
     assert "MATCH (c:Chunk)" in chunk_query
     assert "c.team_id = $team_id" in chunk_query
     assert "c.knowledge_base_id = $knowledge_base_id" in chunk_query

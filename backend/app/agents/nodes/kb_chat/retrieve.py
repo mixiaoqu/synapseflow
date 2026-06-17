@@ -163,6 +163,44 @@ def _build_evidence_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, A
     }
 
 
+def _build_path_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, Any] | None:
+    signature = str(fact.get("signature") or "").strip()
+    content = str(fact.get("content") or "").strip()
+    hop_count = int(fact.get("hop_count") or 0)
+    evidence_rows = [dict(item) for item in list(fact.get("evidence") or []) if isinstance(item, dict)]
+    lines = [content or signature]
+    if signature and signature != lines[0]:
+        lines.append(f"路径：{signature}")
+    if hop_count > 0:
+        lines.append(f"跳数：{hop_count}")
+    if evidence_rows:
+        lines.extend(
+            [
+                f"{str(item.get('relation_type') or 'RELATED_TO').strip()}：{str(item.get('evidence') or '').strip()}"
+                for item in evidence_rows[:3]
+                if str(item.get("evidence") or "").strip()
+            ]
+        )
+    rendered = "\n".join(line for line in lines if line).strip()
+    if not rendered:
+        return None
+    return {
+        "content": rendered,
+        "metadata": {
+            "source": "graph_path_summary",
+            "rank": fact.get("rank", index),
+            "normalized_name": str(fact.get("path_id") or signature or index),
+            "document_title": f"多跳路径 {index}",
+            "section_path": None,
+            "graph_mode": "relation_evidence",
+            "graph_summary": content or None,
+            "graph_evidence": signature or None,
+            "matched_entities": list(fact.get("matched_entities") or []),
+            "supporting_section": "邻域补充",
+        },
+    }
+
+
 def _build_graph_docs_from_facts(graph_facts: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     primary_docs = [
         _build_graph_text_doc(fact)
@@ -186,6 +224,12 @@ def _build_graph_docs_from_facts(graph_facts: dict[str, Any]) -> tuple[list[dict
         if not isinstance(fact, dict):
             continue
         doc = _build_evidence_fact_doc(fact, index=index)
+        if doc is not None:
+            supporting_docs.append(doc)
+    for index, fact in enumerate(list(graph_facts.get("paths") or []), start=1):
+        if not isinstance(fact, dict):
+            continue
+        doc = _build_path_fact_doc(fact, index=index)
         if doc is not None:
             supporting_docs.append(doc)
     return primary_docs, supporting_docs
@@ -564,6 +608,7 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
     graph_limit = int(graph_plan.get("limit") or final_top_k)
     graph_enabled = bool(execution_plan.get("graph_enabled", graph_plan.get("enabled", True)))
     graph_mode = _resolve_graph_mode_from_plan(graph_plan)
+    graph_max_hops = int(graph_plan.get("max_hops") or state.get("graph_max_hops") or 1)
     context_budget = int(context_plan.get("budget_chars") or 9000)
     rerank_enabled = bool(settings.RERANK_ENABLED) and bool(rerank_plan.get("enabled"))
     question_type = str(state.get("question_type") or "definition_lookup").strip().lower()
@@ -649,6 +694,7 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
             relation_queries=list(state.get("relation_queries") or []),
             question_type=question_type,
             graph_mode=graph_mode,
+            max_hops=graph_max_hops,
             limit=graph_limit,
         )
 

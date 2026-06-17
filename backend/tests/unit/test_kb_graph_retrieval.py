@@ -54,6 +54,20 @@ class FakeGraphStore:
             }
         ]
 
+    async def search_relation_paths(
+        self,
+        *,
+        entity_names,
+        relation_pairs,
+        relation_queries,
+        knowledge_base_id,
+        team_id,
+        max_hops,
+        limit,
+    ):
+        assert max_hops >= 1
+        return []
+
 
 class FailingGraphStore:
     async def search_relation_evidence_for_pairs(self, *, relation_pairs, knowledge_base_id, team_id, limit):
@@ -69,6 +83,9 @@ class FailingGraphStore:
         raise RuntimeError("neo4j unavailable")
 
     async def search_related_evidence(self, *, entity_names, knowledge_base_id, team_id, limit):
+        raise RuntimeError("neo4j unavailable")
+
+    async def search_relation_paths(self, **kwargs):
         raise RuntimeError("neo4j unavailable")
 
 
@@ -433,3 +450,85 @@ def test_graph_retriever_filters_relation_summary_by_grounded_entities():
     assert result["graph_facts"]["text"][0]["content"] == "商品视频受上传限制约束。"
     assert result["graph_facts"]["relations"]
     assert [item["display_name"] for item in result["graph_facts"]["entities"]] == ["商品视频", "上传限制"]
+
+
+def test_graph_retriever_adds_multi_hop_paths_for_dependency_lookup():
+    class PathGraphStore:
+        async def list_entity_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names):
+            return []
+
+        async def list_relation_summary_contexts(self, *, knowledge_base_id, team_id, normalized_names, document_id=None):
+            return []
+
+        async def search_related_evidence(self, *, entity_names, knowledge_base_id, team_id, limit):
+            return []
+
+        async def search_relation_evidence_for_pairs(self, *, relation_pairs, knowledge_base_id, team_id, limit):
+            return []
+
+        async def search_relation_evidence_for_queries(self, *, relation_queries, knowledge_base_id, team_id, limit):
+            return []
+
+        async def search_relation_paths(
+            self,
+            *,
+            entity_names,
+            relation_pairs,
+            relation_queries,
+            knowledge_base_id,
+            team_id,
+            max_hops,
+            limit,
+        ):
+            assert entity_names == ["projectapp", "assistantprofile", "user"]
+            assert max_hops == 3
+            return [
+                {
+                    "path_id": "projectapp->assistantprofile->user",
+                    "signature": "ProjectApp -[DEPENDS_ON]-> AssistantProfile -[CALLS]-> User",
+                    "hop_count": 2,
+                    "content": "ProjectApp 先依赖 AssistantProfile，再由 AssistantProfile 调用 User。",
+                    "relation_types": ["DEPENDS_ON", "CALLS"],
+                    "matched_entities": ["ProjectApp", "AssistantProfile", "User"],
+                    "evidence": [
+                        {
+                            "relation_type": "DEPENDS_ON",
+                            "evidence": "ProjectApp 默认绑定 AssistantProfile",
+                            "document_title": "应用配置说明",
+                            "section_path": "项目应用 / 助手配置",
+                        },
+                        {
+                            "relation_type": "CALLS",
+                            "evidence": "AssistantProfile 调用 User 服务完成身份读取",
+                            "document_title": "调用链说明",
+                            "section_path": "助手配置 / 依赖服务",
+                        },
+                    ],
+                }
+            ]
+
+    result = asyncio.run(
+        GraphRetriever(store=PathGraphStore(), enabled=True).retrieve(
+            candidate_entities=["projectapp", "assistantprofile", "user"],
+            relation_pairs=[],
+            relation_queries=[],
+            knowledge_base_id=7,
+            team_id=3,
+            question_type="dependency_lookup",
+            graph_mode="relation_evidence",
+            max_hops=3,
+        )
+    )
+
+    assert result["graph_facts"]["paths"][0]["hop_count"] == 2
+    assert result["graph_facts"]["paths"][0]["signature"] == (
+        "ProjectApp -[DEPENDS_ON]-> AssistantProfile -[CALLS]-> User"
+    )
+    assert result["graph_facts"]["text"][0]["content"] == (
+        "ProjectApp 先依赖 AssistantProfile，再由 AssistantProfile 调用 User。"
+    )
+    assert result["graph_facts"]["text"][0]["document_title"] == "应用配置说明"
+    assert result["graph_facts"]["text"][0]["section_path"] == "项目应用 / 助手配置"
+    assert result["trace"]["graph_hits"] == 2
+    assert result["trace"]["graph_primary_hits"] == 1
+    assert result["trace"]["graph_supporting_hits"] == 1

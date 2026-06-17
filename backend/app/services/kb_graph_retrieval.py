@@ -390,6 +390,70 @@ def _build_text_facts_from_relations(
     return text_facts
 
 
+def _normalize_path_fact(row: dict[str, Any], *, rank: int) -> dict[str, Any] | None:
+    signature = _clean_text(row.get("signature"))
+    content = str(row.get("content") or "").strip()
+    matched_entities = [
+        _clean_text(item)
+        for item in list(row.get("matched_entities") or [])
+        if _clean_text(item)
+    ]
+    relation_types = [
+        _clean_text(item)
+        for item in list(row.get("relation_types") or [])
+        if _clean_text(item)
+    ]
+    evidence_rows = [dict(item) for item in list(row.get("evidence") or []) if isinstance(item, dict)]
+    if not signature and matched_entities:
+        signature = " -> ".join(matched_entities)
+    if not content and signature:
+        content = signature
+    if not signature and not content:
+        return None
+    return {
+        "rank": rank,
+        "path_id": _clean_text(row.get("path_id")) or signature,
+        "signature": signature or content,
+        "hop_count": int(row.get("hop_count") or max(0, len(relation_types))),
+        "content": content or signature,
+        "matched_entities": matched_entities,
+        "relation_types": relation_types,
+        "evidence": evidence_rows,
+    }
+
+
+def _build_text_facts_from_paths(path_facts: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    text_facts: list[dict[str, Any]] = []
+    for index, path_fact in enumerate(path_facts, start=1):
+        content = str(path_fact.get("content") or "").strip()
+        signature = _clean_text(path_fact.get("signature"))
+        document_info = next(
+            (dict(item) for item in list(path_fact.get("evidence") or []) if isinstance(item, dict)),
+            {},
+        )
+        if not content and not signature:
+            continue
+        text_facts.append(
+            {
+                "rank": index,
+                "content": content or signature,
+                "document_id": document_info.get("document_id"),
+                "document_chunk_id": document_info.get("document_chunk_id"),
+                "document_title": _clean_text(document_info.get("document_title"))
+                or f"Graph path #{index}",
+                "section_path": _clean_text(document_info.get("section_path")) or None,
+                "relation_type": "PATH",
+                "matched_entities": list(path_fact.get("matched_entities") or []),
+                "evidence": signature or None,
+                "path_id": path_fact.get("path_id"),
+                "path_signature": signature or None,
+            }
+        )
+        if len(text_facts) >= limit:
+            break
+    return text_facts
+
+
 def _align_evidence_fact_refs(
     evidence_facts: list[dict[str, Any]],
     relation_facts: list[dict[str, Any]],
@@ -505,6 +569,7 @@ class GraphRetriever:
         relation_queries: list[dict[str, Any]] | None = None,
         question_type: str | None = None,
         graph_mode: str | None = None,
+        max_hops: int = 1,
         limit: int = 8,
     ) -> dict[str, Any]:
         """Retrieve graph facts and return structured graph evidence plus trace."""
@@ -539,6 +604,7 @@ class GraphRetriever:
             "graph_hits": 0,
             "graph_primary_hits": 0,
             "graph_supporting_hits": 0,
+            "max_hops": int(max_hops or 1),
             "empty_reason": None,
             "error": None,
         }
@@ -572,6 +638,7 @@ class GraphRetriever:
         try:
             resolved_store = self._store or get_graph_store(require_indexing=False)
             tasks: list[tuple[str, Any]] = []
+            path_search = getattr(resolved_store, "search_relation_paths", None)
             if resolved_graph_mode in {"entity_summary", "neighborhood_summary"}:
                 tasks.append(
                     (
@@ -631,6 +698,25 @@ class GraphRetriever:
                             entity_names=entities,
                             knowledge_base_id=knowledge_base_id,
                             team_id=team_id,
+                            limit=limit,
+                        ),
+                    )
+                )
+            if (
+                callable(path_search)
+                and resolved_graph_mode in {"relation_evidence", "neighborhood_summary"}
+                and int(max_hops or 1) > 1
+            ):
+                tasks.append(
+                    (
+                        "paths",
+                        path_search(
+                            entity_names=entities,
+                            relation_pairs=resolved_relation_pairs,
+                            relation_queries=resolved_relation_queries,
+                            knowledge_base_id=knowledge_base_id,
+                            team_id=team_id,
+                            max_hops=int(max_hops or 1),
                             limit=limit,
                         ),
                     )
@@ -752,6 +838,13 @@ class GraphRetriever:
                         continue
                     relation_fact = _normalize_relation_summary_fact(dict(row), rank=index)
                     relation_facts.append(relation_fact)
+            elif name == "paths":
+                for offset, row in enumerate(rows, start=1):
+                    if not isinstance(row, dict):
+                        continue
+                    path_fact = _normalize_path_fact(dict(row), rank=index + offset)
+                    if path_fact is not None:
+                        path_facts.append(path_fact)
             else:
                 for offset, row in enumerate(rows):
                     if not isinstance(row, dict):
@@ -807,6 +900,12 @@ class GraphRetriever:
             deduped_evidence,
             limit=max(1, limit),
         )
+        text_facts.extend(
+            _build_text_facts_from_paths(
+                _dedupe_facts(path_facts, category="paths", limit=max(2, limit)),
+                limit=max(1, limit),
+            )
+        )
         graph_facts = {
             "text": _dedupe_facts(text_facts, category="text", limit=max(1, limit)),
             "entities": deduped_entities,
@@ -858,6 +957,7 @@ async def run_kb_graph_retrieval(
     limit: int = 8,
     question_type: str | None = None,
     graph_mode: str | None = None,
+    max_hops: int = 1,
 ) -> dict[str, Any]:
     """Retrieve KB graph evidence through the graph retriever."""
 
@@ -869,5 +969,6 @@ async def run_kb_graph_retrieval(
         team_id=team_id,
         question_type=question_type,
         graph_mode=graph_mode,
+        max_hops=max_hops,
         limit=limit,
     )

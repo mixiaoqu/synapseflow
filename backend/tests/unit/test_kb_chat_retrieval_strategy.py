@@ -32,6 +32,25 @@ def test_kb_chat_execution_plan_selects_strategy_from_question_type():
     assert summary_plan["graph_enabled"] is True
 
 
+def test_kb_chat_execution_plan_uses_multi_hop_graph_for_dependency_queries():
+    dependency_plan = build_kb_chat_execution_plan(
+        question_type="dependency_lookup",
+        retrieval_strategy="parallel_fusion",
+        retrieval_complexity="standard",
+    )
+    call_chain_plan = build_kb_chat_execution_plan(
+        question_type="call_chain_lookup",
+        retrieval_strategy="parallel_fusion",
+        retrieval_complexity="standard",
+    )
+
+    assert dependency_plan["retrieval_strategy"] == "graph_then_text"
+    assert dependency_plan["channels"]["graph"]["graph_mode"] == "relation_evidence"
+    assert dependency_plan["channels"]["graph"]["max_hops"] == 3
+    assert call_chain_plan["retrieval_strategy"] == "graph_then_text"
+    assert call_chain_plan["channels"]["graph"]["max_hops"] == 3
+
+
 def test_kb_chat_retrieve_text_only_runs_only_text_channel(monkeypatch):
     import app.agents.nodes.kb_chat.retrieve as retrieve_module
 
