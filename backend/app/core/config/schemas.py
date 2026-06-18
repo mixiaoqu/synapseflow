@@ -20,6 +20,9 @@ class GraphConfig:
     database: str
     llm_model_role: str
     extraction_max_chars: int
+    extraction_batch_max_chunks: int
+    extraction_batch_max_chars: int
+    extraction_concurrency: int
 
 
 @dataclass(frozen=True)

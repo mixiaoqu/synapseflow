@@ -25,13 +25,9 @@ def _doc_key(doc: dict[str, Any]) -> tuple[Any, ...]:
         return ("chunk", int(document_chunk_id))
     source = str(metadata.get("source") or "graph").strip()
     graph_mode = str(metadata.get("graph_mode") or "").strip()
-    normalized_name = str(metadata.get("normalized_name") or "").strip()
+    graph_key = str(metadata.get("graph_key") or "").strip()
     relation_type = str(metadata.get("graph_relation_type") or "").strip()
-    if source == "graph_summary":
-        return ("summary", graph_mode, normalized_name)
-    if source == "graph_relation_summary":
-        return ("relation_summary", graph_mode, normalized_name, relation_type)
-    return (source, graph_mode, normalized_name, relation_type, str(doc.get("content") or "").strip())
+    return (source, graph_mode, graph_key, relation_type, str(doc.get("content") or "").strip())
 
 
 def _build_graph_text_doc(fact: dict[str, Any]) -> dict[str, Any]:
@@ -53,24 +49,11 @@ def _build_graph_text_doc(fact: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_entity_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, Any] | None:
-    display_name = str(fact.get("display_name") or fact.get("normalized_name") or f"Entity {index}").strip()
+    display_name = str(fact.get("name") or f"Entity {index}").strip()
     entity_type = str(fact.get("entity_type") or "").strip()
-    summary = str(fact.get("summary") or "").strip()
-    mentions = list(fact.get("mentions") or [])
-
-    lines = [summary] if summary else []
-    if not lines:
-        lines.append(display_name)
+    lines = [display_name]
     if entity_type:
         lines[0] = f"{lines[0]}（{entity_type}）" if lines[0] == display_name else lines[0]
-    if mentions:
-        mention_texts = [
-            f"{item.get('document_title') or 'Unknown'} / {item.get('section_path') or '-'}"
-            for item in mentions[:3]
-            if isinstance(item, dict) and (item.get("document_title") or item.get("section_path"))
-        ]
-        if mention_texts:
-            lines.append(f"出现于：{'; '.join(mention_texts)}")
     content = "\n".join(line for line in lines if line).strip()
     if not content:
         return None
@@ -78,15 +61,14 @@ def _build_entity_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, Any
     return {
         "content": content,
         "metadata": {
-            "source": "graph_summary",
+            "source": "graph_entity",
             "rank": fact.get("rank", index),
-            "normalized_name": fact.get("normalized_name"),
+            "graph_key": fact.get("entity_id") or display_name,
             "document_title": display_name,
             "section_path": None,
-            "graph_mode": "entity_summary",
-            "graph_summary": summary or None,
+            "graph_mode": "relation_evidence",
             "matched_entities": [display_name] if display_name else [],
-            "supporting_section": "实体摘要",
+            "supporting_section": "实体",
         },
     }
 
@@ -94,17 +76,12 @@ def _build_entity_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, Any
 def _build_relation_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, Any] | None:
     source = dict(fact.get("source") or {})
     target = dict(fact.get("target") or {})
-    source_display = str(source.get("display_name") or source.get("normalized_name") or "Source").strip()
-    target_display = str(target.get("display_name") or target.get("normalized_name") or "Target").strip()
+    source_display = str(source.get("name") or "Source").strip()
+    target_display = str(target.get("name") or "Target").strip()
     relation_type = str(fact.get("relation_type") or "RELATED_TO").strip()
-    summary = str(fact.get("summary") or "").strip()
     evidence = str(fact.get("evidence") or "").strip()
 
-    lines = [summary or evidence or f"{source_display} -{relation_type}-> {target_display}"]
-    if source.get("summary"):
-        lines.append(f"Source summary: {str(source.get('summary')).strip()}")
-    if target.get("summary"):
-        lines.append(f"Target summary: {str(target.get('summary')).strip()}")
+    lines = [evidence or f"{source_display} -{relation_type}-> {target_display}"]
     content = "\n".join(line for line in lines if line).strip()
     if not content:
         return None
@@ -112,19 +89,16 @@ def _build_relation_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, A
     return {
         "content": content,
         "metadata": {
-            "source": "graph_relation_summary",
+            "source": "graph_relation",
             "rank": fact.get("rank", index),
-            "normalized_name": f"{source.get('normalized_name')}::{relation_type}::{target.get('normalized_name')}",
+            "graph_key": f"{source.get('entity_id') or source_display}::{relation_type}::{target.get('entity_id') or target_display}",
             "document_title": f"{source_display} -> {target_display}",
             "section_path": None,
             "graph_mode": "relation_evidence",
             "graph_relation_type": relation_type,
-            "graph_summary": summary or None,
             "graph_evidence": evidence or None,
-            "source_summary": source.get("summary"),
-            "target_summary": target.get("summary"),
             "matched_entities": [name for name in [source_display, target_display] if name],
-            "supporting_section": "关键关系",
+            "supporting_section": "关系",
         },
     }
 
@@ -149,16 +123,16 @@ def _build_evidence_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, A
     return {
         "content": content,
         "metadata": {
-            "source": "graph_evidence_summary",
+            "source": "graph_relation_evidence",
             "rank": fact.get("rank", index),
-            "normalized_name": str(fact.get("document_chunk_id") or document_title),
+            "graph_key": str(fact.get("document_chunk_id") or document_title),
             "document_title": document_title,
             "section_path": section_path or None,
             "graph_mode": "relation_evidence",
             "graph_evidence": evidence or None,
             "graph_relation_type": fact.get("relation_type"),
             "matched_entities": matched_entities,
-            "supporting_section": "关联证据",
+            "supporting_section": "关系证据",
         },
     }
 
@@ -187,16 +161,15 @@ def _build_path_fact_doc(fact: dict[str, Any], *, index: int) -> dict[str, Any] 
     return {
         "content": rendered,
         "metadata": {
-            "source": "graph_path_summary",
+            "source": "graph_path",
             "rank": fact.get("rank", index),
-            "normalized_name": str(fact.get("path_id") or signature or index),
+            "graph_key": str(fact.get("path_id") or signature or index),
             "document_title": f"多跳路径 {index}",
             "section_path": None,
             "graph_mode": "relation_evidence",
-            "graph_summary": content or None,
             "graph_evidence": signature or None,
             "matched_entities": list(fact.get("matched_entities") or []),
-            "supporting_section": "邻域补充",
+            "supporting_section": "路径",
         },
     }
 
@@ -251,7 +224,7 @@ def _merge_text_and_graph_docs(
         if graph_doc:
             metadata = {**dict(doc.get("metadata") or {})}
             graph_metadata = dict(graph_doc.get("metadata") or {})
-            metadata["graph_evidence"] = graph_metadata.get("graph_evidence") or graph_metadata.get("graph_summary")
+            metadata["graph_evidence"] = graph_metadata.get("graph_evidence")
             metadata["graph_relation_type"] = graph_metadata.get("graph_relation_type")
             metadata["matched_entities"] = graph_metadata.get("matched_entities") or []
             metadata["source"] = "text_graph"
@@ -306,7 +279,7 @@ def _build_context(docs: list[dict[str, Any]]) -> str:
     for index, doc in enumerate(docs, start=1):
         metadata = dict(doc.get("metadata") or {})
         title = metadata.get("document_title") or f"Evidence {index}"
-        evidence = metadata.get("graph_evidence") or metadata.get("graph_summary")
+        evidence = metadata.get("graph_evidence")
         content = str(doc.get("content") or "").strip()
         if evidence and evidence not in content:
             content = f"{content}\nGraph evidence: {evidence}".strip()
@@ -316,7 +289,7 @@ def _build_context(docs: list[dict[str, Any]]) -> str:
 
 
 def _build_supporting_context(docs: list[dict[str, Any]]) -> str:
-    section_order = ("实体摘要", "关键关系", "邻域补充", "关联证据")
+    section_order = ("实体", "关系", "路径", "关系证据")
     grouped: dict[str, list[dict[str, Any]]] = {name: [] for name in section_order}
     extras: list[dict[str, Any]] = []
     for doc in docs:
@@ -355,7 +328,7 @@ def _build_rerank_text(doc: dict[str, Any]) -> str:
     title = str(metadata.get("document_title") or "").strip()
     section_path = str(metadata.get("section_path") or "").strip()
     content = str(doc.get("content") or "").strip()
-    graph_evidence = str(metadata.get("graph_evidence") or metadata.get("graph_summary") or "").strip()
+    graph_evidence = str(metadata.get("graph_evidence") or "").strip()
 
     lines: list[str] = []
     if title:
@@ -409,12 +382,10 @@ def _resolve_graph_mode_from_plan(graph_plan: dict[str, Any]) -> str | None:
         return explicit_mode
 
     intent = str(graph_plan.get("intent") or "").strip().lower()
-    if intent == "entity_summary":
-        return "entity_summary"
-    if intent == "neighborhood_lookup":
-        return "neighborhood_summary"
     if intent == "relation_lookup":
         return "relation_evidence"
+    if intent in {"entity_summary", "neighborhood_lookup"}:
+        return "disabled"
     return None
 
 
@@ -437,7 +408,7 @@ def _format_doc_for_layer(doc: dict[str, Any], *, index: int) -> str:
     title = str(metadata.get("document_title") or f"Evidence {index}").strip()
     section_path = str(metadata.get("section_path") or "").strip()
     content = str(doc.get("content") or "").strip()
-    graph_evidence = str(metadata.get("graph_evidence") or metadata.get("graph_summary") or "").strip()
+    graph_evidence = str(metadata.get("graph_evidence") or "").strip()
 
     lines = [f"[{index}] {title}"]
     if section_path:
@@ -514,7 +485,7 @@ def _extract_seed_terms_from_docs(docs: list[dict[str, Any]], *, limit: int) -> 
         candidates = [
             metadata.get("document_title"),
             metadata.get("section_path"),
-            metadata.get("normalized_name"),
+            metadata.get("graph_key"),
             *list(metadata.get("matched_entities") or []),
         ]
         for candidate in candidates:
@@ -822,7 +793,8 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
             [
                 doc
                 for doc in reranked_primary_docs
-                if (doc.get("metadata") or {}).get("source") in {"graph", "text_graph", "graph_summary", "graph_relation_summary"}
+                if (doc.get("metadata") or {}).get("source")
+                in {"graph", "text_graph", "graph_relation", "graph_relation_evidence", "graph_path"}
             ]
         ),
         "final_context_docs": len(reranked_primary_docs),

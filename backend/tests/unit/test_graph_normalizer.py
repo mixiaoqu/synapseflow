@@ -1,247 +1,85 @@
 from app.services.graph_models import (
     GraphChunkRecord,
     GraphEntityRecord,
-    GraphRelationRecord,
+    GraphRelationCandidate,
+    build_entity_id,
 )
 from app.services.graph_normalizer import normalize_chunk_graph
 
 
-def test_normalize_chunk_graph_filters_noise_and_dedupes_entities():
+def _entity(*, name: str, entity_type: str, aliases=(), attributes=None):
+    return GraphEntityRecord(
+        id=build_entity_id(team_id=1, knowledge_base_id=2, entity_type=entity_type, name=name),
+        team_id=1,
+        knowledge_base_id=2,
+        name=name,
+        entity_type=entity_type,
+        aliases=tuple(aliases),
+        attributes=attributes or {},
+    )
+
+
+def test_normalize_chunk_graph_merges_same_type_and_name_only():
     chunk = GraphChunkRecord(
         team_id=1,
         knowledge_base_id=2,
-        document_id=1,
+        document_id=9,
         document_chunk_id=11,
-        document_title="配置",
-        section_path="数据库",
-    )
-    entities = [
-        GraphEntityRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=1,
-            document_chunk_id=11,
-            normalized_name="  PostgreSQL  ",
-            display_name=" PostgreSQL ",
-            entity_type="DATABASE",
-            aliases=("Postgres",),
-            attributes={"version": "15"},
-            evidence="结果写入 PostgreSQL",
-        ),
-        GraphEntityRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=1,
-            document_chunk_id=11,
-            normalized_name="postgresql",
-            display_name="PostgreSQL",
-            entity_type="DATABASE",
-            aliases=(),
-            attributes={"edition": "community"},
-            evidence="结果写入 PostgreSQL",
-        ),
-        GraphEntityRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=1,
-            document_chunk_id=11,
-            normalized_name="系统",
-            display_name="系统",
-            entity_type="OTHER",
-            aliases=(),
-            attributes={},
-            evidence="系统",
-        ),
-    ]
-    relations = [
-        GraphRelationRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=1,
-            document_chunk_id=11,
-            source_normalized_name="postgresql",
-            target_normalized_name="postgresql",
-            relation_type="TRIGGERS",
-            attributes={"mode": "direct"},
-            evidence="自引用",
-        )
-    ]
-
-    normalized = normalize_chunk_graph(
-        chunk=chunk,
-        entities=entities,
-        relations=relations,
-    )
-
-    assert [entity.normalized_name for entity in normalized.entities] == ["postgresql"]
-    assert normalized.entities[0].canonical_name == "PostgreSQL"
-    assert normalized.entities[0].alias_keys == ("postgresql", "postgre sql", "postgres")
-    assert normalized.relations == []
-
-
-def test_normalize_chunk_graph_keeps_only_type_specific_entity_attributes():
-    chunk = GraphChunkRecord(
-        team_id=1,
-        knowledge_base_id=2,
-        document_id=1,
-        document_chunk_id=11,
-        document_title="按钮",
-        section_path="说明",
-    )
-    entities = [
-        GraphEntityRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=1,
-            document_chunk_id=11,
-            normalized_name="submit-button",
-            display_name="提交按钮",
-            entity_type="BUTTON",
-            aliases=(),
-            attributes={
-                "label": "提交",
-                "action": "submit",
-                "permission": "project:edit",
-                "target": "保存项目",
-                "meaning": "should drop",
-                "owner": "平台组",
-            },
-            evidence="提交按钮用于提交表单",
-        )
-    ]
-
-    normalized = normalize_chunk_graph(chunk=chunk, entities=entities, relations=[])
-
-    assert normalized.entities[0].attributes == {
-        "label": "提交",
-        "action": "submit",
-        "permission": "project:edit",
-        "target": "保存项目",
-    }
-    assert normalized.entities[0].raw_attributes == {
-        "label": "提交",
-        "action": "submit",
-        "permission": "project:edit",
-        "target": "保存项目",
-        "meaning": "should drop",
-        "owner": "平台组",
-    }
-    assert "submit button" in normalized.entities[0].alias_keys
-    assert "submitbutton" in normalized.entities[0].alias_keys
-
-
-def test_normalize_chunk_graph_keeps_valid_relations_and_maps_unknown_type():
-    chunk = GraphChunkRecord(
-        team_id=1,
-        knowledge_base_id=2,
-        document_id=2,
-        document_chunk_id=22,
-        document_title="组件关系",
-        section_path=None,
-    )
-    entities = [
-        GraphEntityRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=2,
-            document_chunk_id=22,
-            normalized_name="projectapp",
-            display_name="ProjectApp",
-            entity_type="COMPONENT",
-            aliases=(),
-            attributes={"module": "项目管理"},
-            evidence="ProjectApp 默认绑定 AssistantProfile",
-        ),
-        GraphEntityRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=2,
-            document_chunk_id=22,
-            normalized_name="assistantprofile",
-            display_name="AssistantProfile",
-            entity_type="COMPONENT",
-            aliases=(),
-            attributes={"module_path": "/admin/projects"},
-            evidence="ProjectApp 默认绑定 AssistantProfile",
-        ),
-    ]
-    relations = [
-        GraphRelationRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=2,
-            document_chunk_id=22,
-            source_normalized_name="projectapp",
-            target_normalized_name="assistantprofile",
-            relation_type="BINDS_TO",
-            attributes={"mode": "auto"},
-            evidence="ProjectApp 默认绑定 AssistantProfile",
-        )
-    ]
-
-    normalized = normalize_chunk_graph(
-        chunk=chunk,
-        entities=entities,
-        relations=relations,
-    )
-
-    assert normalized.relations[0].relation_type == "RELATED_TO"
-    assert normalized.relations[0].attributes == {"mode": "auto"}
-
-
-def test_normalize_chunk_graph_keeps_code_relation_types():
-    chunk = GraphChunkRecord(
-        team_id=1,
-        knowledge_base_id=2,
-        document_id=2,
-        document_chunk_id=23,
-        document_title="依赖关系",
+        chunk_index=0,
+        document_title="关系说明",
         section_path="模块",
     )
-    entities = [
-        GraphEntityRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=2,
-            document_chunk_id=23,
-            normalized_name="projectapp",
-            display_name="ProjectApp",
-            entity_type="COMPONENT",
-            aliases=(),
-            attributes={},
-            evidence="ProjectApp 依赖 AssistantProfile",
-        ),
-        GraphEntityRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=2,
-            document_chunk_id=23,
-            normalized_name="assistantprofile",
-            display_name="AssistantProfile",
-            entity_type="COMPONENT",
-            aliases=(),
-            attributes={},
-            evidence="AssistantProfile 被 ProjectApp 使用",
-        ),
-    ]
-    relations = [
-        GraphRelationRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=2,
-            document_chunk_id=23,
-            source_normalized_name="projectapp",
-            target_normalized_name="assistantprofile",
-            relation_type="depends_on",
-            attributes={},
-            evidence="ProjectApp 依赖 AssistantProfile",
-        )
-    ]
-
     normalized = normalize_chunk_graph(
         chunk=chunk,
-        entities=entities,
-        relations=relations,
+        entities=[
+            _entity(name="Payment", entity_type="MODULE", aliases=("支付模块",), attributes={"owner": "A"}),
+            _entity(name="Payment", entity_type="MODULE", aliases=("Settlement",), attributes={"domain": "billing"}),
+            _entity(name="Payment", entity_type="STATUS"),
+            _entity(name="系统", entity_type="OTHER"),
+        ],
+        relation_candidates=[
+            GraphRelationCandidate(
+                source_name="Payment",
+                source_entity_type="MODULE",
+                target_name="Payment",
+                target_entity_type="STATUS",
+                relation_type="HAS_STATUS",
+                evidence_text="Payment 有状态 Payment",
+            )
+        ],
     )
 
-    assert normalized.relations[0].relation_type == "DEPENDS_ON"
+    assert len(normalized.entities) == 2
+    module_entity = next(entity for entity in normalized.entities if entity.entity_type == "MODULE")
+    assert module_entity.aliases == ("支付模块", "Settlement")
+    assert module_entity.attributes == {"owner": "A", "domain": "billing"}
+    assert len(normalized.relation_candidates) == 1
+
+
+def test_normalize_chunk_graph_drops_relation_without_resolved_entities():
+    chunk = GraphChunkRecord(
+        team_id=1,
+        knowledge_base_id=2,
+        document_id=9,
+        document_chunk_id=12,
+        chunk_index=1,
+        document_title="依赖说明",
+        section_path=None,
+    )
+    normalized = normalize_chunk_graph(
+        chunk=chunk,
+        entities=[_entity(name="ProjectApp", entity_type="COMPONENT")],
+        relation_candidates=[
+            GraphRelationCandidate(
+                source_name="ProjectApp",
+                source_entity_type="COMPONENT",
+                target_name="AssistantProfile",
+                target_entity_type="COMPONENT",
+                relation_type="CALLS",
+                evidence_text="ProjectApp calls AssistantProfile",
+            )
+        ],
+    )
+
+    assert normalized.entities[0].name == "ProjectApp"
+    assert normalized.relation_candidates == []

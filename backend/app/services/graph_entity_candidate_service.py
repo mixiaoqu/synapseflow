@@ -75,29 +75,23 @@ def _build_lookup_terms(
 
 def _score_match(row: dict[str, Any], term: str, source: str) -> tuple[int, str]:
     normalized_term = _normalize_lookup_key(term)
-    normalized_name = _normalize_lookup_key(row.get("normalized_name"))
-    display_name = _normalize_lookup_key(row.get("display_name"))
-    canonical_name = _normalize_lookup_key(row.get("canonical_name"))
-    alias_keys = {_normalize_lookup_key(item) for item in list(row.get("alias_keys") or [])}
+    normalized_name = _normalize_lookup_key(row.get("name"))
     aliases = {_normalize_lookup_key(item) for item in list(row.get("aliases") or [])}
 
     match_type = "fuzzy"
     score = 50
     if normalized_name == normalized_term:
         score = 100
-        match_type = "normalized_name_exact"
-    elif display_name == normalized_term:
-        score = 95
-        match_type = "display_name_exact"
-    elif canonical_name == normalized_term:
-        score = 92
-        match_type = "canonical_name_exact"
-    elif normalized_term in alias_keys:
-        score = 88
-        match_type = "alias_key_exact"
+        match_type = "name_exact"
     elif normalized_term in aliases:
-        score = 85
+        score = 92
         match_type = "alias_exact"
+    elif normalized_term in normalized_name:
+        score = 78
+        match_type = "name_contains"
+    elif any(normalized_term in alias for alias in aliases):
+        score = 70
+        match_type = "alias_contains"
 
     if source == "rewrite_candidate":
         score += 8
@@ -154,28 +148,30 @@ async def resolve_graph_candidate_entities(
             unmatched_terms.append(term["text"])
             continue
         for row in rows:
-            normalized_name = _normalize_text(row.get("normalized_name"))
-            if not normalized_name:
+            entity_id = _normalize_text(row.get("entity_id"))
+            name = _normalize_text(row.get("name"))
+            if not entity_id or not name:
                 continue
             score, match_type = _score_match(dict(row), term["text"], term["source"])
-            existing = matched_rows.get(normalized_name)
+            existing = matched_rows.get(entity_id)
             payload = {
-                "normalized_name": normalized_name,
-                "display_name": _normalize_text(row.get("display_name")) or normalized_name,
+                "entity_id": entity_id,
+                "name": name,
                 "entity_type": _normalize_text(row.get("entity_type")) or "OTHER",
+                "aliases": [_normalize_text(item) for item in list(row.get("aliases") or []) if _normalize_text(item)],
                 "score": score,
                 "match_type": match_type,
                 "matched_text": term["text"],
                 "matched_source": term["source"],
             }
             if existing is None or int(payload["score"]) > int(existing["score"]):
-                matched_rows[normalized_name] = payload
+                matched_rows[entity_id] = payload
 
     matched_entities = sorted(
         matched_rows.values(),
-        key=lambda item: (-int(item["score"]), item["normalized_name"]),
+        key=lambda item: (-int(item["score"]), item["name"], item["entity_id"]),
     )[: max(1, limit)]
-    resolved_entities = [str(item["normalized_name"]) for item in matched_entities]
+    resolved_entities = [str(item["name"]) for item in matched_entities]
     fallback_entities = [_normalize_text(item) for item in list(candidate_entities or []) if _normalize_text(item)]
     fallback_entities = list(dict.fromkeys(fallback_entities))
     final_entities = resolved_entities or fallback_entities[: max(1, limit)]

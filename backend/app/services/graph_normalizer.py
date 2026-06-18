@@ -1,14 +1,14 @@
-"""Lightweight normalization and filtering for graph extraction results."""
+"""Normalization and filtering for graph extraction results."""
 
 from __future__ import annotations
-
-import re
 
 from app.services.graph_models import (
     ChunkGraphExtraction,
     GraphChunkRecord,
     GraphEntityRecord,
-    GraphRelationRecord,
+    GraphRelationCandidate,
+    build_entity_id,
+    clean_graph_text,
 )
 
 _ALLOWED_RELATION_TYPES = {
@@ -36,209 +36,21 @@ _ALLOWED_RELATION_TYPES = {
     "RESOLVES_ERROR",
     "MENTIONED_WITH",
 }
+
 _GENERIC_ENTITY_NAMES = {
     "系统",
     "功能",
     "模块",
     "页面",
 }
-_ENTITY_TYPE_ATTRIBUTE_KEYS = {
-    "API": {
-        "method",
-        "path",
-        "request_method",
-        "route",
-        "route_name",
-        "route_path",
-    },
-    "COMPONENT": {
-        "module",
-        "module_path",
-        "route",
-        "route_name",
-        "route_path",
-    },
-    "CONFIG": {
-        "module",
-        "module_path",
-    },
-    "MENU": {
-        "title",
-        "path",
-        "parent",
-    },
-    "FORM": {
-        "title",
-        "fields",
-        "submit_label",
-        "validation",
-    },
-    "TABLE": {
-        "title",
-        "columns",
-        "actions",
-        "data_source",
-    },
-    "LIST": {
-        "title",
-        "item_label",
-        "filter",
-        "sort",
-    },
-    "DATABASE": {
-        "table_name",
-        "table_type",
-    },
-    "DOCUMENT": {
-        "page",
-        "section",
-        "title",
-    },
-    "FEATURE": {
-        "module",
-        "module_path",
-        "route",
-        "route_name",
-        "route_path",
-    },
-    "WORKFLOW": {
-        "name",
-        "steps",
-        "start",
-        "end",
-    },
-    "STEP": {
-        "name",
-        "order",
-        "action",
-        "status",
-    },
-    "MODULE": {
-        "module",
-        "module_path",
-        "route",
-        "route_name",
-        "route_path",
-    },
-    "PERMISSION": {
-        "code",
-        "name",
-        "description",
-    },
-    "PAGE": {
-        "route",
-        "route_name",
-        "route_path",
-        "title",
-        "module",
-    },
-    "BUTTON": {
-        "label",
-        "action",
-        "permission",
-        "target",
-    },
-    "DIALOG": {
-        "title",
-        "trigger",
-        "confirm_text",
-        "cancel_text",
-    },
-    "SERVICE": {
-        "module",
-        "module_path",
-        "route",
-        "route_name",
-        "route_path",
-    },
-    "ROLE": {
-        "name",
-        "description",
-        "permissions",
-    },
-    "STATUS": {
-        "value",
-        "meaning",
-        "type",
-    },
-    "ERROR": {
-        "code",
-        "message",
-        "cause",
-        "severity",
-    },
-    "SOLUTION": {
-        "title",
-        "steps",
-        "result",
-    },
-    "OPERATION": {
-        "name",
-        "action",
-        "entry",
-        "target",
-    },
-    "PERSON": {
-        "name",
-        "role",
-        "company",
-        "age",
-        "weight",
-        "height",
-    },
-    "TEAM": {
-        "role",
-    },
-    "BUSINESS_OBJECT": {
-        "name",
-        "description",
-        "category",
-    },
-    "PRODUCT": {
-        "brand",
-        "sku",
-        "price",
-        "spec",
-    },
-}
 
 
-def _clean_text(value: str) -> str:
-    return " ".join((value or "").split()).strip()
-
-
-def _normalize_name(value: str) -> str:
-    return _clean_text(value).casefold()
-
-
-def _normalize_alias_key(value: str) -> str:
-    cleaned = _clean_text(value)
-    if not cleaned:
-        return ""
-    separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", cleaned)
-    separated = re.sub(r"[_\-/.]+", " ", separated)
-    separated = re.sub(r"\s+", " ", separated)
-    return separated.strip().casefold()
-
-
-def _build_alias_keys(*values: str, aliases: tuple[str, ...]) -> tuple[str, ...]:
-    keys: list[str] = []
-    seen: set[str] = set()
-    for value in (*values, *aliases):
-        key = _normalize_alias_key(value)
-        if not key or key in seen:
-            continue
-        keys.append(key)
-        seen.add(key)
-        compact_key = key.replace(" ", "")
-        if compact_key and compact_key != key and compact_key not in seen:
-            keys.append(compact_key)
-            seen.add(compact_key)
-    return tuple(keys)
+def _entity_key(entity_type: str, name: str) -> tuple[str, str]:
+    return (clean_graph_text(entity_type).upper() or "OTHER", clean_graph_text(name))
 
 
 def _is_noise_entity(name: str) -> bool:
-    cleaned = _clean_text(name)
+    cleaned = clean_graph_text(name)
     if len(cleaned) < 2:
         return True
     if cleaned.isdigit():
@@ -248,143 +60,159 @@ def _is_noise_entity(name: str) -> bool:
     return False
 
 
-def _allowed_entity_attribute_keys(entity_type: str) -> set[str]:
-    return set(_ENTITY_TYPE_ATTRIBUTE_KEYS.get(_clean_text(entity_type or "OTHER").upper(), set()))
-
-
-def _clean_entity_attributes(
-    raw_attributes: dict[str, object] | None,
-    *,
-    entity_type: str | None = None,
-) -> tuple[dict[str, object], dict[str, object]]:
-    if not raw_attributes:
-        return {}, {}
-    attributes: dict[str, object] = {}
-    extras: dict[str, object] = {}
-    allowed_keys = _allowed_entity_attribute_keys(entity_type) if entity_type else set()
-    for key, value in raw_attributes.items():
-        cleaned_key = _clean_text(str(key)).casefold()
-        if not cleaned_key:
-            continue
-        target = attributes if cleaned_key in allowed_keys else extras
-        if isinstance(value, str):
-            cleaned_value = _clean_text(value)
-            if cleaned_value:
-                target[cleaned_key] = cleaned_value
-            continue
-        if isinstance(value, (int, float, bool)):
-            target[cleaned_key] = value
-            continue
-        if value is None:
-            continue
-        cleaned_value = _clean_text(str(value))
-        if cleaned_value:
-            target[cleaned_key] = cleaned_value
-    return attributes, extras
-
-
-def _clean_attributes(raw_attributes: dict[str, object] | None) -> dict[str, object]:
-    if not raw_attributes:
-        return {}
-    attributes: dict[str, object] = {}
-    for key, value in raw_attributes.items():
-        cleaned_key = _clean_text(str(key))
-        if not cleaned_key:
-            continue
-        if isinstance(value, str):
-            cleaned_value = _clean_text(value)
-            if not cleaned_value:
+def _merge_attributes(*attribute_sets: dict[str, object]) -> dict[str, object]:
+    merged: dict[str, object] = {}
+    for raw_attributes in attribute_sets:
+        for key, value in dict(raw_attributes or {}).items():
+            cleaned_key = clean_graph_text(key)
+            if not cleaned_key or value is None:
                 continue
-            attributes[cleaned_key] = cleaned_value
+            if isinstance(value, str):
+                cleaned_value = clean_graph_text(value)
+                if cleaned_value:
+                    merged[cleaned_key] = cleaned_value
+                continue
+            merged[cleaned_key] = value
+    return merged
+
+
+def _merge_entities(
+    *,
+    chunk: GraphChunkRecord,
+    entities: list[GraphEntityRecord],
+) -> list[GraphEntityRecord]:
+    deduped: dict[tuple[str, str], GraphEntityRecord] = {}
+    for entity in entities:
+        name = clean_graph_text(entity.name)
+        entity_type = clean_graph_text(entity.entity_type).upper() or "OTHER"
+        if _is_noise_entity(name):
             continue
-        if isinstance(value, (int, float, bool)):
-            attributes[cleaned_key] = value
+        key = _entity_key(entity_type, name)
+        aliases = tuple(
+            alias
+            for alias in (clean_graph_text(item) for item in entity.aliases)
+            if alias and alias != name
+        )
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = GraphEntityRecord(
+                id=build_entity_id(
+                    team_id=chunk.team_id,
+                    knowledge_base_id=chunk.knowledge_base_id,
+                    entity_type=entity_type,
+                    name=name,
+                ),
+                team_id=chunk.team_id,
+                knowledge_base_id=chunk.knowledge_base_id,
+                name=name,
+                entity_type=entity_type,
+                aliases=aliases,
+                description=clean_graph_text(entity.description) or None,
+                attributes=_merge_attributes(entity.attributes),
+                tags=tuple(clean_graph_text(tag) for tag in entity.tags if clean_graph_text(tag)),
+            )
             continue
-        if value is None:
+        merged_aliases = tuple(
+            dict.fromkeys([*existing.aliases, *aliases]).keys()
+        )
+        merged_tags = tuple(
+            dict.fromkeys([*existing.tags, *entity.tags]).keys()
+        )
+        description = existing.description or (clean_graph_text(entity.description) or None)
+        deduped[key] = GraphEntityRecord(
+            id=existing.id,
+            team_id=existing.team_id,
+            knowledge_base_id=existing.knowledge_base_id,
+            name=existing.name,
+            entity_type=existing.entity_type,
+            aliases=merged_aliases,
+            description=description,
+            attributes=_merge_attributes(existing.attributes, entity.attributes),
+            tags=merged_tags,
+        )
+    return list(deduped.values())
+
+
+def _resolve_relation_endpoint(
+    *,
+    name: str,
+    entity_type: str | None,
+    entities_by_key: dict[tuple[str, str], GraphEntityRecord],
+) -> GraphEntityRecord | None:
+    cleaned_name = clean_graph_text(name)
+    if not cleaned_name:
+        return None
+    if entity_type:
+        direct = entities_by_key.get(_entity_key(entity_type, cleaned_name))
+        if direct is not None:
+            return direct
+    candidates = [
+        entity
+        for entity in entities_by_key.values()
+        if entity.name == cleaned_name
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _normalize_relation_candidates(
+    *,
+    entities: list[GraphEntityRecord],
+    relation_candidates: list[GraphRelationCandidate],
+) -> list[GraphRelationCandidate]:
+    entities_by_key = {
+        _entity_key(entity.entity_type, entity.name): entity
+        for entity in entities
+    }
+    deduped: dict[tuple[str, str, str], GraphRelationCandidate] = {}
+    for relation in relation_candidates:
+        relation_type = clean_graph_text(relation.relation_type).upper() or "RELATED_TO"
+        if relation_type not in _ALLOWED_RELATION_TYPES:
+            relation_type = "RELATED_TO"
+        source_entity = _resolve_relation_endpoint(
+            name=relation.source_name,
+            entity_type=relation.source_entity_type,
+            entities_by_key=entities_by_key,
+        )
+        target_entity = _resolve_relation_endpoint(
+            name=relation.target_name,
+            entity_type=relation.target_entity_type,
+            entities_by_key=entities_by_key,
+        )
+        if source_entity is None or target_entity is None:
             continue
-        cleaned_value = _clean_text(str(value))
-        if cleaned_value:
-            attributes[cleaned_key] = cleaned_value
-    return attributes
+        if source_entity.id == target_entity.id:
+            continue
+        key = (source_entity.id, relation_type, target_entity.id)
+        if key in deduped:
+            continue
+        deduped[key] = GraphRelationCandidate(
+            source_name=source_entity.name,
+            target_name=target_entity.name,
+            relation_type=relation_type,
+            source_entity_type=source_entity.entity_type,
+            target_entity_type=target_entity.entity_type,
+            evidence_text=clean_graph_text(relation.evidence_text) or None,
+            confidence=relation.confidence,
+            attributes=_merge_attributes(relation.attributes),
+        )
+    return list(deduped.values())
 
 
 def normalize_chunk_graph(
     *,
     chunk: GraphChunkRecord,
     entities: list[GraphEntityRecord],
-    relations: list[GraphRelationRecord],
+    relation_candidates: list[GraphRelationCandidate],
 ) -> ChunkGraphExtraction:
-    deduped_entities: dict[str, GraphEntityRecord] = {}
-
-    for entity in entities:
-        display_name = _clean_text(entity.display_name)
-        normalized_name = _normalize_name(entity.normalized_name or display_name)
-        if _is_noise_entity(display_name) or _is_noise_entity(normalized_name):
-            continue
-        canonical_name = _clean_text(entity.canonical_name or display_name) or display_name
-        cleaned_aliases = tuple(
-            alias
-            for alias in (_clean_text(item) for item in entity.aliases)
-            if alias and alias.casefold() != normalized_name
-        )
-        alias_keys = _build_alias_keys(
-            normalized_name,
-            display_name,
-            canonical_name,
-            aliases=(*cleaned_aliases, *entity.alias_keys),
-        )
-        deduped_entities.setdefault(
-            normalized_name,
-            # Keep raw entity attributes for summary generation, but only
-            # persist the filtered subset as node properties.
-            GraphEntityRecord(
-                team_id=chunk.team_id,
-                knowledge_base_id=chunk.knowledge_base_id,
-                document_id=chunk.document_id,
-                document_chunk_id=chunk.document_chunk_id,
-                normalized_name=normalized_name,
-                display_name=display_name,
-                entity_type=_clean_text(entity.entity_type or "OTHER") or "OTHER",
-                aliases=cleaned_aliases,
-                attributes=_clean_entity_attributes(entity.attributes, entity_type=entity.entity_type)[0],
-                evidence=_clean_text(entity.evidence),
-                canonical_name=canonical_name,
-                alias_keys=alias_keys,
-                raw_attributes=dict(entity.attributes or {}),
-            ),
-        )
-
-    allowed_names = set(deduped_entities.keys())
-    deduped_relations: dict[tuple[str, str, str], GraphRelationRecord] = {}
-
-    for relation in relations:
-        source_name = _normalize_name(relation.source_normalized_name)
-        target_name = _normalize_name(relation.target_normalized_name)
-        if not source_name or not target_name or source_name == target_name:
-            continue
-        if source_name not in allowed_names or target_name not in allowed_names:
-            continue
-        relation_type = _clean_text(relation.relation_type or "RELATED_TO").upper()
-        if relation_type not in _ALLOWED_RELATION_TYPES:
-            relation_type = "RELATED_TO"
-        dedupe_key = (source_name, relation_type, target_name)
-        deduped_relations.setdefault(
-            dedupe_key,
-            GraphRelationRecord(
-                team_id=chunk.team_id,
-                knowledge_base_id=chunk.knowledge_base_id,
-                document_id=chunk.document_id,
-                document_chunk_id=chunk.document_chunk_id,
-                source_normalized_name=source_name,
-                target_normalized_name=target_name,
-                relation_type=relation_type,
-                attributes=_clean_attributes(relation.attributes),
-                evidence=_clean_text(relation.evidence),
-            ),
-        )
-
+    normalized_entities = _merge_entities(chunk=chunk, entities=entities)
+    normalized_relations = _normalize_relation_candidates(
+        entities=normalized_entities,
+        relation_candidates=relation_candidates,
+    )
     return ChunkGraphExtraction(
         chunk=chunk,
-        entities=list(deduped_entities.values()),
-        relations=list(deduped_relations.values()),
+        entities=normalized_entities,
+        relation_candidates=normalized_relations,
     )

@@ -7,6 +7,8 @@ from typing import Any
 from app.services.graph_models import (
     GraphChunkRecord,
     GraphEntityRecord,
+    GraphMentionRecord,
+    GraphRelationEvidenceRecord,
     GraphRelationRecord,
 )
 from app.services.graph_store import GraphStore
@@ -15,7 +17,7 @@ DEFAULT_GRAPH_BATCH_SIZE = 300
 
 
 class GraphIndexer:
-    """Persist one chunk's graph records through the configured graph store."""
+    """Persist graph records through the configured graph store."""
 
     def __init__(self, store: GraphStore) -> None:
         self._store = store
@@ -30,8 +32,9 @@ class GraphIndexer:
         *,
         chunks: list[GraphChunkRecord],
         entities: list[GraphEntityRecord],
-        mentions: list[dict[str, Any]],
+        mentions: list[GraphMentionRecord],
         relations: list[GraphRelationRecord],
+        relation_evidences: list[GraphRelationEvidenceRecord],
         batch_size: int = DEFAULT_GRAPH_BATCH_SIZE,
     ) -> dict[str, int]:
         for batch in self._chunked(chunks, batch_size):
@@ -39,51 +42,17 @@ class GraphIndexer:
         for batch in self._chunked(entities, batch_size):
             await self._store.upsert_entities(batch)
         for batch in self._chunked(mentions, batch_size):
-            await self._store.link_entities_to_chunks(batch)
+            await self._store.upsert_mentions(batch)
         for batch in self._chunked(relations, batch_size):
             await self._store.upsert_relations(batch)
+        for batch in self._chunked(relation_evidences, batch_size):
+            await self._store.upsert_relation_evidences(batch)
 
+        await self._store.refresh_related_evidence_counts()
         return {
             "chunks": len(chunks),
             "entities": len(entities),
             "mentions": len(mentions),
             "relations": len(relations),
-        }
-
-    async def index_chunk_graph(
-        self,
-        *,
-        chunk: GraphChunkRecord,
-        entities: list[GraphEntityRecord],
-        relations: list[GraphRelationRecord],
-    ) -> dict[str, int]:
-        await self._store.upsert_chunk(chunk)
-
-        known_entities: set[str] = set()
-        mention_count = 0
-        relation_count = 0
-
-        for entity in entities:
-            await self._store.upsert_entity(entity)
-            await self._store.link_entity_to_chunk(
-                normalized_name=entity.normalized_name,
-                chunk=chunk,
-            )
-            known_entities.add(entity.normalized_name)
-            mention_count += 1
-
-        for relation in relations:
-            if (
-                relation.source_normalized_name not in known_entities
-                or relation.target_normalized_name not in known_entities
-            ):
-                continue
-            await self._store.upsert_relation(relation)
-            relation_count += 1
-
-        return {
-            "chunks": 1,
-            "entities": len(entities),
-            "mentions": mention_count,
-            "relations": relation_count,
+            "relation_evidences": len(relation_evidences),
         }

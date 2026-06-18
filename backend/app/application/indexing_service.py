@@ -13,7 +13,6 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.registry import config_registry
-from app.core.llm import get_llm_for_analysis
 from app.db.models import Document, KnowledgeBase
 from app.db.session import AsyncSessionLocal
 from app.repositories.document_repository import DocumentRepository
@@ -46,14 +45,12 @@ from app.services.index_job_state import (
     INDEX_JOB_DOCUMENT_STATUS_INDEXED,
     INDEX_JOB_DOCUMENT_STATUS_PROCESSING,
 )
-from app.services.graph_summary import refresh_entity_summaries
 from app.services.vector_store import delete_by_document_id
 from app.services.graph_store import get_graph_store
 from app.utils.time import utc_now
 
 MAX_INDEX_ERROR_LENGTH = 1000
 MAX_INDEX_MESSAGE_DOCUMENTS = 20
-GRAPH_EXTRACTION_CHUNK_BATCH_SIZE = 12
 
 
 class IndexingService:
@@ -89,9 +86,12 @@ class IndexingService:
     def _chunk_graph_chunk_ids(
         document_chunk_ids: Sequence[int],
         *,
-        size: int = GRAPH_EXTRACTION_CHUNK_BATCH_SIZE,
+        size: int | None = None,
     ) -> list[list[int]]:
-        chunk_size = max(1, size)
+        chunk_size = max(
+            1,
+            int(size or config_registry.get_graph_config().extraction_batch_max_chunks),
+        )
         normalized_ids = [int(chunk_id) for chunk_id in document_chunk_ids]
         return [
             normalized_ids[start : start + chunk_size]
@@ -709,29 +709,6 @@ class IndexingService:
             title=title,
         )
 
-    def enqueue_entity_summary_refresh(
-        self,
-        *,
-        team_id: int,
-        knowledge_base_id: int,
-        normalized_names: Sequence[str],
-    ) -> None:
-        deduped_names = list(dict.fromkeys(str(name).strip() for name in normalized_names if str(name).strip()))
-        if not deduped_names:
-            return
-        actor_module = self._actor_module()
-        actor_module.refresh_entity_summaries_actor.send(
-            team_id=int(team_id),
-            knowledge_base_id=int(knowledge_base_id),
-            normalized_names=deduped_names,
-        )
-        logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱摘要刷新任务已调度 team_id={} knowledge_base_id={} entities={}",
-            team_id,
-            knowledge_base_id,
-            len(deduped_names),
-        )
-
     async def _set_job_document_status(
         self,
         db: AsyncSession,
@@ -923,32 +900,6 @@ class IndexingService:
             title=title,
             commit=False,
         )
-
-    def _enqueue_entity_summary_refresh_from_graph_result(self, result: dict[str, Any]) -> None:
-        team_id = result.get("team_id")
-        knowledge_base_id = result.get("knowledge_base_id")
-        normalized_names = result.get("summary_entity_names") or []
-        if team_id is None or knowledge_base_id is None or not isinstance(normalized_names, Sequence):
-            return
-        try:
-            self.enqueue_entity_summary_refresh(
-                team_id=int(team_id),
-                knowledge_base_id=int(knowledge_base_id),
-                normalized_names=[str(name) for name in normalized_names],
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to enqueue graph entity summary refresh team_id={} knowledge_base_id={}: {}",
-                team_id,
-                knowledge_base_id,
-                exc,
-            )
-            logger.bind(document_pipeline_log=True).info(
-                "[文档管线] 图谱摘要刷新任务调度失败 team_id={} knowledge_base_id={} error={}",
-                team_id,
-                knowledge_base_id,
-                exc,
-            )
 
     async def _run_document_index(
         self,
@@ -1627,7 +1578,6 @@ class IndexingService:
                 result.get("entities", 0),
                 result.get("relations", 0),
             )
-            self._enqueue_entity_summary_refresh_from_graph_result(result)
             return result
         except Exception as exc:
             await db.rollback()
@@ -1752,8 +1702,12 @@ class IndexingService:
             await chunk_repo.update_metadata(int(row.id), metadata)
 
         store = get_graph_store()
+        logger.bind(document_pipeline_log=True).info(
+            "[文档管线] 图谱旧图清理开始 doc_id={} child_chunks={}",
+            document_id,
+            len(child_rows),
+        )
         await store.delete_document_graph(document_id=document_id)
-        await store.prune_orphan_entities()
 
         chunk_id_batches = self._chunk_graph_chunk_ids([int(row.id) for row in child_rows])
         for chunk_id_batch in chunk_id_batches:
@@ -1770,7 +1724,7 @@ class IndexingService:
             document_id,
             len(child_rows),
             len(chunk_id_batches),
-            GRAPH_EXTRACTION_CHUNK_BATCH_SIZE,
+            config_registry.get_graph_config().extraction_batch_max_chunks,
         )
         return len(child_rows)
 
@@ -1870,14 +1824,29 @@ class IndexingService:
                 return
             doc = await self._get_document(db, document_id)
             if not doc or doc.content_hash != expected_content_hash:
+                logger.bind(document_pipeline_log=True).info(
+                    "[文档管线] 图谱最终合并跳过 doc_id={} job_id={} reason=stale_or_missing",
+                    document_id,
+                    job_id,
+                )
                 return
             if not await self._all_graph_chunks_completed(db, document_id=document_id):
+                logger.bind(document_pipeline_log=True).info(
+                    "[文档管线] 图谱最终合并等待 doc_id={} job_id={} reason=chunks_incomplete",
+                    document_id,
+                    job_id,
+                )
                 return
             if not await self._claim_graph_finalization(
                 db,
                 document_id=document_id,
                 expected_content_hash=expected_content_hash,
             ):
+                logger.bind(document_pipeline_log=True).info(
+                    "[文档管线] 图谱最终合并跳过 doc_id={} job_id={} reason=already_claimed",
+                    document_id,
+                    job_id,
+                )
                 return
             try:
                 result = await finalize_document_graph(
@@ -1885,6 +1854,15 @@ class IndexingService:
                     document_id=document_id,
                     title=title or doc.title,
                     commit=False,
+                )
+                logger.bind(document_pipeline_log=True).info(
+                    "[文档管线] 图谱最终合并完成 doc_id={} job_id={} chunks={} entities={} relations={} evidences={}",
+                    document_id,
+                    job_id,
+                    result.get("chunks", 0),
+                    result.get("entities", 0),
+                    result.get("relations", 0),
+                    result.get("relation_evidences", 0),
                 )
                 await self._mark_graph_indexed(
                     db,
@@ -1900,7 +1878,6 @@ class IndexingService:
                     indexed_at=utc_now(),
                 )
                 await db.commit()
-                self._enqueue_entity_summary_refresh_from_graph_result(result)
             except Exception as exc:
                 await db.rollback()
                 error_message = self._truncate_error(exc)
@@ -1922,33 +1899,6 @@ class IndexingService:
                     document_id,
                     exc,
                 )
-
-    async def refresh_entity_summaries_task(
-        self,
-        *,
-        team_id: int,
-        knowledge_base_id: int,
-        normalized_names: Sequence[str],
-    ) -> None:
-        deduped_names = list(dict.fromkeys(str(name).strip() for name in normalized_names if str(name).strip()))
-        if not deduped_names:
-            return
-        store = get_graph_store()
-        summary_llm = get_llm_for_analysis()
-        count = await refresh_entity_summaries(
-            store=store,
-            knowledge_base_id=int(knowledge_base_id),
-            team_id=int(team_id),
-            normalized_names=deduped_names,
-            llm=summary_llm,
-        )
-        logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱摘要刷新完成 team_id={} knowledge_base_id={} requested={} refreshed={}",
-            team_id,
-            knowledge_base_id,
-            len(deduped_names),
-            count,
-        )
 
     async def index_document_task(
         self,
@@ -2135,7 +2085,6 @@ class IndexingService:
                     if previous and not getattr(previous, "is_live", False):
                         graph_store = get_graph_store()
                         await graph_store.delete_document_graph(document_id=previous_document_id)
-                        await graph_store.prune_orphan_entities()
                         await db.commit()
                 doc = await self._get_document(db, target_document_id)
                 await self._schedule_document_graph_chunks(

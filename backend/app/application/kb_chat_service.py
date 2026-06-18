@@ -494,7 +494,7 @@ class KbChatService(BaseAgentService):
             source = str(metadata.get("source") or "").strip().lower()
             if source in {"hybrid", "text_graph"}:
                 return "hybrid"
-            if source in {"graph", "graph_summary", "graph_relation_summary"}:
+            if source in {"graph", "graph_entity", "graph_relation", "graph_relation_evidence", "graph_path"}:
                 return "graph"
             if source == "lexical":
                 return "lexical"

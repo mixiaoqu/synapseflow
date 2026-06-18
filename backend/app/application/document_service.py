@@ -80,7 +80,6 @@ class DocumentService:
                 continue
             seen_ids.add(document_id)
             await store.delete_document_graph(document_id=document_id)
-        await store.prune_orphan_entities()
 
     @staticmethod
     def _is_current_document(doc: Document) -> bool:

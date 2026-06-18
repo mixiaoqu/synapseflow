@@ -1,170 +1,50 @@
-import asyncio
-
-from app.services.graph_extraction import extract_chunk_graph, extract_chunk_graphs_batch
+from app.services.graph_extraction import _parse_graph_extraction_payload
 from app.services.graph_models import GraphChunkRecord
 
 
-def test_extract_chunk_graph_parses_llm_json_into_records():
-    class FakeResponse:
-        content = """
-        {
-          "entities": [
-            {
-              "name": "ProjectApp",
-              "type": "COMPONENT",
-              "aliases": ["project app"],
-              "attributes": {"owner": "平台组"},
-              "evidence": "ProjectApp 默认绑定 AssistantProfile"
-            },
-            {
-              "name": "AssistantProfile",
-              "type": "COMPONENT",
-              "aliases": [],
-              "attributes": {"scope": "default"},
-              "evidence": "ProjectApp 默认绑定 AssistantProfile"
-            }
-          ],
-          "relations": [
-            {
-              "source": "ProjectApp",
-              "target": "AssistantProfile",
-              "type": "TRIGGERS",
-              "attributes": {"mode": "auto"},
-              "evidence": "ProjectApp 默认绑定 AssistantProfile"
-            }
-          ]
-        }
-        """
-
-    seen_prompts = []
-
-    class FakeLLM:
-        async def ainvoke(self, prompt: str):
-            seen_prompts.append(prompt)
-            assert "ProjectApp 默认绑定 AssistantProfile" in prompt
-            return FakeResponse()
-
+def test_parse_graph_extraction_payload_returns_entities_and_relation_candidates():
     chunk = GraphChunkRecord(
         team_id=1,
         knowledge_base_id=2,
-        document_id=1,
-        document_chunk_id=10,
+        document_id=3,
+        document_chunk_id=4,
+        chunk_index=0,
         document_title="系统说明",
-        section_path="绑定关系",
+        section_path="关系",
+        content_hash="chunk-hash",
     )
 
-    result = asyncio.run(
-        extract_chunk_graph(
-            chunk=chunk,
-            chunk_text="ProjectApp 默认绑定 AssistantProfile",
-            llm_factory=lambda: FakeLLM(),
-        )
+    result = _parse_graph_extraction_payload(
+        chunk=chunk,
+        payload={
+            "entities": [
+                {
+                    "name": "ProjectApp",
+                    "type": "component",
+                    "aliases": ["项目应用"],
+                    "description": "项目应用入口",
+                    "attributes": {"route": "/projects"},
+                }
+            ],
+            "relations": [
+                {
+                    "source": "ProjectApp",
+                    "source_type": "component",
+                    "target": "AssistantProfile",
+                    "target_type": "component",
+                    "type": "calls",
+                    "evidence_text": "ProjectApp 调用 AssistantProfile",
+                    "confidence": 0.8,
+                    "attributes": {"mode": "default"},
+                }
+            ],
+        },
     )
 
-    assert [entity.display_name for entity in result.entities] == [
-        "ProjectApp",
-        "AssistantProfile",
-    ]
-    assert "PAGE" in seen_prompts[0]
-    assert "BUTTON" in seen_prompts[0]
-    assert "WORKFLOW" in seen_prompts[0]
-    assert result.entities[0].attributes == {"owner": "平台组"}
-    assert result.relations[0].source_normalized_name == "projectapp"
-    assert result.relations[0].target_normalized_name == "assistantprofile"
-    assert result.relations[0].attributes == {"mode": "auto"}
-
-
-def test_extract_chunk_graph_returns_empty_result_on_invalid_json():
-    class FakeResponse:
-        content = "not-json"
-
-    class FakeLLM:
-        async def ainvoke(self, prompt: str):
-            return FakeResponse()
-
-    chunk = GraphChunkRecord(
-        team_id=1,
-        knowledge_base_id=2,
-        document_id=2,
-        document_chunk_id=20,
-        document_title="空结果",
-        section_path=None,
-    )
-
-    result = asyncio.run(
-        extract_chunk_graph(
-            chunk=chunk,
-            chunk_text="Neo4j 作为图数据库",
-            llm_factory=lambda: FakeLLM(),
-        )
-    )
-
-    assert result.entities == []
-    assert result.relations == []
-
-
-def test_extract_chunk_graphs_batch_parses_multiple_chunks_with_one_llm_call():
-    calls = []
-
-    class FakeResponse:
-        content = """
-        {
-          "chunks": [
-            {
-              "document_chunk_id": 10,
-              "entities": [
-                {"name": "ProjectApp", "type": "COMPONENT", "aliases": [], "attributes": {}, "evidence": "ProjectApp 默认绑定 AssistantProfile"}
-              ],
-              "relations": []
-            },
-            {
-              "document_chunk_id": 20,
-              "entities": [
-                {"name": "AssistantProfile", "type": "COMPONENT", "aliases": [], "attributes": {}, "evidence": "AssistantProfile 提供助手配置"}
-              ],
-              "relations": []
-            }
-          ]
-        }
-        """
-
-    class FakeLLM:
-        async def ainvoke(self, prompt: str):
-            calls.append(prompt)
-            assert "document_chunk_id" in prompt
-            assert "ProjectApp 默认绑定 AssistantProfile" in prompt
-            assert "AssistantProfile 提供助手配置" in prompt
-            return FakeResponse()
-
-    chunks = [
-        GraphChunkRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=1,
-            document_chunk_id=10,
-            document_title="系统说明",
-            section_path="绑定关系",
-        ),
-        GraphChunkRecord(
-            team_id=1,
-            knowledge_base_id=2,
-            document_id=1,
-            document_chunk_id=20,
-            document_title="系统说明",
-            section_path="助手配置",
-        ),
-    ]
-
-    results = asyncio.run(
-        extract_chunk_graphs_batch(
-            [(chunks[0], "ProjectApp 默认绑定 AssistantProfile"), (chunks[1], "AssistantProfile 提供助手配置")],
-            llm_factory=lambda: FakeLLM(),
-        )
-    )
-
-    assert len(calls) == 1
-    assert [result.chunk.document_chunk_id for result in results] == [10, 20]
-    assert [result.entities[0].display_name for result in results] == [
-        "ProjectApp",
-        "AssistantProfile",
-    ]
+    assert result.entities[0].name == "ProjectApp"
+    assert result.entities[0].entity_type == "COMPONENT"
+    assert result.entities[0].description == "项目应用入口"
+    assert result.relation_candidates[0].source_name == "ProjectApp"
+    assert result.relation_candidates[0].target_name == "AssistantProfile"
+    assert result.relation_candidates[0].relation_type == "CALLS"
+    assert result.relation_candidates[0].confidence == 0.8

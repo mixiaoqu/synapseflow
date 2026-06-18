@@ -1,4 +1,4 @@
-"""Document chunk persistence and embedding index services."""
+"""Document chunk persistence, embedding index, and graph index services."""
 
 from __future__ import annotations
 
@@ -17,7 +17,19 @@ from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.services.embedding import embed_documents
 from app.services.graph_extraction import extract_chunk_graphs_batch
 from app.services.graph_indexer import DEFAULT_GRAPH_BATCH_SIZE, GraphIndexer
-from app.services.graph_models import ChunkGraphExtraction, GraphChunkRecord, GraphEntityRecord, GraphRelationRecord
+from app.services.graph_models import (
+    ChunkGraphExtraction,
+    GraphChunkRecord,
+    GraphEntityRecord,
+    GraphMentionRecord,
+    GraphRelationCandidate,
+    GraphRelationEvidenceRecord,
+    GraphRelationRecord,
+    build_chunk_content_hash,
+    build_relation_evidence_hash,
+    build_relation_evidence_id,
+    clean_graph_text,
+)
 from app.services.graph_normalizer import normalize_chunk_graph
 from app.services.graph_store import get_graph_store
 from app.services.semantic_chunk import (
@@ -43,7 +55,8 @@ def prepare_document_chunk_plan(
             if str(line).strip()
         ]
         return plan_jsonl_line_chunks(
-            lines or [
+            lines
+            or [
                 line.strip()
                 for line in render_parsed_document(parsed).splitlines()
                 if line.strip()
@@ -134,176 +147,6 @@ async def _load_indexable_chunks(
     return document_chunk_ids, vector_chunks
 
 
-def _contains_cjk(text: str) -> bool:
-    return any("\u4e00" <= char <= "\u9fff" for char in text)
-
-
-def _choose_preferred_display_name(existing_name: str, incoming_name: str, normalized_name: str) -> str:
-    existing_clean = str(existing_name or "").strip()
-    incoming_clean = str(incoming_name or "").strip()
-    normalized_clean = str(normalized_name or "").strip()
-    candidates = [name for name in [existing_clean, incoming_clean] if name]
-    if not candidates:
-        return normalized_clean
-
-    def _score(name: str) -> tuple[int, int, int]:
-        exact_penalty = 0 if name.casefold() != normalized_clean.casefold() else 1
-        cjk_bonus = 1 if _contains_cjk(name) else 0
-        return (exact_penalty, -cjk_bonus, len(name))
-
-    return min(candidates, key=_score)
-
-
-def _merge_entity_records(
-    existing: GraphEntityRecord,
-    incoming: GraphEntityRecord,
-) -> GraphEntityRecord:
-    attributes = dict(existing.attributes)
-    for key, value in incoming.attributes.items():
-        if value is None:
-            continue
-        if isinstance(value, str):
-            cleaned = value.strip()
-            if not cleaned:
-                continue
-            attributes[key] = cleaned
-            continue
-        attributes[key] = value
-
-    aliases: list[str] = []
-    seen: set[str] = set()
-    for alias in (*existing.aliases, *incoming.aliases):
-        cleaned = str(alias or "").strip()
-        if not cleaned or cleaned in seen:
-            continue
-        aliases.append(cleaned)
-        seen.add(cleaned)
-
-    alias_keys: list[str] = []
-    seen_alias_keys: set[str] = set()
-    for alias_key in (*existing.alias_keys, *incoming.alias_keys):
-        cleaned = str(alias_key or "").strip()
-        if not cleaned or cleaned in seen_alias_keys:
-            continue
-        alias_keys.append(cleaned)
-        seen_alias_keys.add(cleaned)
-
-    evidence = existing.evidence.strip()
-    incoming_evidence = incoming.evidence.strip()
-    if incoming_evidence and incoming_evidence not in evidence:
-        evidence = f"{evidence}\n{incoming_evidence}".strip() if evidence else incoming_evidence
-
-    entity_type = existing.entity_type
-    if entity_type == "OTHER" and incoming.entity_type != "OTHER":
-        entity_type = incoming.entity_type
-
-    display_name = _choose_preferred_display_name(
-        existing.display_name,
-        incoming.display_name,
-        existing.normalized_name,
-    )
-
-    return GraphEntityRecord(
-        team_id=existing.team_id,
-        knowledge_base_id=existing.knowledge_base_id,
-        document_id=existing.document_id,
-        document_chunk_id=existing.document_chunk_id,
-        normalized_name=existing.normalized_name,
-        display_name=display_name,
-        entity_type=entity_type,
-        aliases=tuple(aliases),
-        attributes=attributes,
-        evidence=evidence,
-        canonical_name=existing.canonical_name or incoming.canonical_name or display_name,
-        alias_keys=tuple(alias_keys),
-    )
-
-
-def _merge_relation_records(
-    existing: GraphRelationRecord,
-    incoming: GraphRelationRecord,
-) -> GraphRelationRecord:
-    attributes = dict(existing.attributes)
-    for key, value in incoming.attributes.items():
-        if value is None:
-            continue
-        if isinstance(value, str):
-            cleaned = value.strip()
-            if not cleaned:
-                continue
-            attributes[key] = cleaned
-            continue
-        attributes[key] = value
-
-    evidence = existing.evidence.strip()
-    incoming_evidence = incoming.evidence.strip()
-    if incoming_evidence and incoming_evidence not in evidence:
-        evidence = f"{evidence}\n{incoming_evidence}".strip() if evidence else incoming_evidence
-
-    return GraphRelationRecord(
-        team_id=existing.team_id,
-        knowledge_base_id=existing.knowledge_base_id,
-        document_id=existing.document_id,
-        document_chunk_id=existing.document_chunk_id,
-        source_normalized_name=existing.source_normalized_name,
-        target_normalized_name=existing.target_normalized_name,
-        relation_type=existing.relation_type,
-        attributes=attributes,
-        evidence=evidence,
-    )
-
-
-def _graph_extraction_metadata(extraction: ChunkGraphExtraction) -> dict[str, Any]:
-    return {
-        "status": "indexed",
-        "entities": [
-            {
-                "normalized_name": entity.normalized_name,
-                "display_name": entity.display_name,
-                "entity_type": entity.entity_type,
-                "aliases": list(entity.aliases),
-                "canonical_name": entity.canonical_name,
-                "alias_keys": list(entity.alias_keys),
-                "attributes": entity.attributes,
-                "evidence": entity.evidence,
-            }
-            for entity in extraction.entities
-        ],
-        "relations": [
-            {
-                "source_normalized_name": relation.source_normalized_name,
-                "target_normalized_name": relation.target_normalized_name,
-                "relation_type": relation.relation_type,
-                "attributes": relation.attributes,
-                "evidence": relation.evidence,
-            }
-            for relation in extraction.relations
-        ],
-    }
-
-
-def _build_graph_write_preview(
-    entities: Sequence[GraphEntityRecord],
-    *,
-    limit: int = 5,
-) -> list[dict[str, Any]]:
-    preview: list[dict[str, Any]] = []
-    for entity in entities[: max(0, limit)]:
-        preview.append(
-            {
-                "normalized_name": entity.normalized_name,
-                "display_name": entity.display_name,
-                "canonical_name": entity.canonical_name,
-                "alias_keys": list(entity.alias_keys),
-                "team_id": entity.team_id,
-                "knowledge_base_id": entity.knowledge_base_id,
-                "document_id": entity.document_id,
-                "document_chunk_id": entity.document_chunk_id,
-            }
-        )
-    return preview
-
-
 async def index_document(
     db: AsyncSession,
     doc_id: int,
@@ -328,15 +171,8 @@ async def index_documents_batch(
 ) -> dict[int, int]:
     if not documents:
         return {}
-
-    prepared_docs = []
-    for document_id, content, title in documents:
-        prepared_docs.append((document_id, content, title))
-    return await index_prepared_documents_batch(
-        db,
-        prepared_docs,
-        commit=commit,
-    )
+    prepared_docs = [(document_id, content, title) for document_id, content, title in documents]
+    return await index_prepared_documents_batch(db, prepared_docs, commit=commit)
 
 
 async def index_prepared_documents_batch(
@@ -352,11 +188,7 @@ async def index_prepared_documents_batch(
     embeddings_input: list[str] = []
     vector_payloads: list[tuple[int, list[int], list[VectorIndexChunk]]] = []
 
-    logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 向量索引开始 docs={}",
-        len(prepared_docs),
-    )
-
+    logger.bind(document_pipeline_log=True).info("[文档管线] 向量索引开始 docs={}", len(prepared_docs))
     for document_id, content, title in prepared_docs:
         document_chunk_ids, chunks = await _load_indexable_chunks(
             db,
@@ -366,23 +198,8 @@ async def index_prepared_documents_batch(
         )
         vector_payloads.append((document_id, document_chunk_ids, chunks))
         embeddings_input.extend(chunk.embedding_text for chunk in chunks)
-        logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 向量索引加载切片 doc_id={} title={} child_chunks={}",
-            document_id,
-            title or "-",
-            len(chunks),
-        )
 
-    logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 向量 embedding 开始 docs={} chunks={}",
-        len(vector_payloads),
-        len(embeddings_input),
-    )
     all_vectors = await asyncio.to_thread(embed_documents, embeddings_input) if embeddings_input else []
-    logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 向量 embedding 完成 vectors={}",
-        len(all_vectors),
-    )
 
     offset = 0
     for document_id, document_chunk_ids, chunks in vector_payloads:
@@ -401,39 +218,421 @@ async def index_prepared_documents_batch(
             document_chunk_ids=document_chunk_ids,
             commit=False,
         )
-        logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 向量索引写入完成 doc_id={} chunks={}",
-            document_id,
-            counts[document_id],
-        )
 
     if commit:
         await db.commit()
-    logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 向量索引完成 docs={} chunks={}",
-        len(counts),
-        sum(counts.values()),
-    )
     return counts
 
 
-async def index_document_graph(
-    db: AsyncSession,
-    document_id: int,
-    title: str | None = None,
+def _build_chunk_record(
     *,
-    commit: bool = True,
-) -> dict[str, Any]:
-    graph_cfg = config_registry.get_graph_config()
-    if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
-        logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱索引跳过 doc_id={} reason=disabled",
-            document_id,
-        )
-        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+    team_id: int,
+    knowledge_base_id: int,
+    document_id: int,
+    title: str | None,
+    row: Any,
+) -> tuple[GraphChunkRecord, str]:
+    chunk_text = row.content or ""
+    return (
+        GraphChunkRecord(
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            document_id=document_id,
+            document_chunk_id=int(row.id),
+            chunk_index=int(row.chunk_index),
+            document_title=title,
+            section_path=row.section_path,
+            content_hash=build_chunk_content_hash(chunk_text),
+        ),
+        chunk_text,
+    )
 
-    repository = DocumentChunkRepository(db)
-    child_rows = await repository.get_child_chunks_for_document(document_id)
+
+def _serialize_graph_extraction(extraction: ChunkGraphExtraction) -> dict[str, Any]:
+    return {
+        "status": "indexed",
+        "content_hash": extraction.chunk.content_hash,
+        "entities": [
+            {
+                "id": entity.id,
+                "team_id": entity.team_id,
+                "knowledge_base_id": entity.knowledge_base_id,
+                "name": entity.name,
+                "entity_type": entity.entity_type,
+                "aliases": list(entity.aliases),
+                "description": entity.description,
+                "attributes": entity.attributes,
+                "tags": list(entity.tags),
+            }
+            for entity in extraction.entities
+        ],
+        "relation_candidates": [
+            {
+                "source_name": relation.source_name,
+                "target_name": relation.target_name,
+                "relation_type": relation.relation_type,
+                "source_entity_type": relation.source_entity_type,
+                "target_entity_type": relation.target_entity_type,
+                "evidence_text": relation.evidence_text,
+                "confidence": relation.confidence,
+                "attributes": relation.attributes,
+            }
+            for relation in extraction.relation_candidates
+        ],
+    }
+
+
+def _deserialize_graph_extraction(
+    *,
+    chunk: GraphChunkRecord,
+    payload: dict[str, Any],
+) -> ChunkGraphExtraction | None:
+    if str(payload.get("status") or "").strip() != "indexed":
+        return None
+    entities: list[GraphEntityRecord] = []
+    for item in list(payload.get("entities") or []):
+        if not isinstance(item, dict):
+            continue
+        name = clean_graph_text(item.get("name"))
+        entity_id = clean_graph_text(item.get("id"))
+        entity_type = clean_graph_text(item.get("entity_type")).upper() or "OTHER"
+        if not entity_id or not name:
+            continue
+        entities.append(
+            GraphEntityRecord(
+                id=entity_id,
+                team_id=chunk.team_id,
+                knowledge_base_id=chunk.knowledge_base_id,
+                name=name,
+                entity_type=entity_type,
+                aliases=tuple(
+                    alias
+                    for alias in (clean_graph_text(value) for value in list(item.get("aliases") or []))
+                    if alias
+                ),
+                description=clean_graph_text(item.get("description")) or None,
+                attributes=dict(item.get("attributes") or {}),
+                tags=tuple(
+                    tag
+                    for tag in (clean_graph_text(value) for value in list(item.get("tags") or []))
+                    if tag
+                ),
+            )
+        )
+
+    relation_candidates: list[GraphRelationCandidate] = []
+    for item in list(payload.get("relation_candidates") or []):
+        if not isinstance(item, dict):
+            continue
+        source_name = clean_graph_text(item.get("source_name"))
+        target_name = clean_graph_text(item.get("target_name"))
+        if not source_name or not target_name:
+            continue
+        relation_candidates.append(
+            GraphRelationCandidate(
+                source_name=source_name,
+                target_name=target_name,
+                relation_type=clean_graph_text(item.get("relation_type")).upper() or "RELATED_TO",
+                source_entity_type=clean_graph_text(item.get("source_entity_type")).upper() or None,
+                target_entity_type=clean_graph_text(item.get("target_entity_type")).upper() or None,
+                evidence_text=clean_graph_text(item.get("evidence_text")) or None,
+                confidence=float(item["confidence"]) if item.get("confidence") is not None else None,
+                attributes=dict(item.get("attributes") or {}),
+            )
+        )
+
+    return ChunkGraphExtraction(
+        chunk=chunk,
+        entities=entities,
+        relation_candidates=relation_candidates,
+    )
+
+
+def _build_graph_extraction_metadata(extraction: ChunkGraphExtraction) -> dict[str, Any]:
+    return _serialize_graph_extraction(extraction)
+
+
+def _chunk_extraction_cache_valid(metadata: dict[str, Any], *, content_hash: str | None) -> bool:
+    graph_extraction = dict(metadata.get("graph_extraction") or {})
+    if str(graph_extraction.get("status") or "").strip() != "indexed":
+        return False
+    return clean_graph_text(graph_extraction.get("content_hash")) == clean_graph_text(content_hash)
+
+
+def _chunk_batches(
+    items: Sequence[tuple[GraphChunkRecord, str]],
+    *,
+    max_chunks: int,
+    max_chars: int,
+) -> list[list[tuple[GraphChunkRecord, str]]]:
+    batches: list[list[tuple[GraphChunkRecord, str]]] = []
+    current: list[tuple[GraphChunkRecord, str]] = []
+    current_chars = 0
+    for item in items:
+        chunk_text = item[1]
+        chunk_chars = len(chunk_text)
+        should_flush = bool(current) and (
+            len(current) >= max(1, max_chunks) or current_chars + chunk_chars > max(1, max_chars)
+        )
+        if should_flush:
+            batches.append(current)
+            current = []
+            current_chars = 0
+        current.append(item)
+        current_chars += chunk_chars
+    if current:
+        batches.append(current)
+    return batches
+
+
+async def _extract_batches(
+    *,
+    items: list[tuple[GraphChunkRecord, str]],
+) -> list[ChunkGraphExtraction]:
+    if not items:
+        return []
+    graph_cfg = config_registry.get_graph_config()
+    batches = _chunk_batches(
+        items,
+        max_chunks=graph_cfg.extraction_batch_max_chunks,
+        max_chars=graph_cfg.extraction_batch_max_chars,
+    )
+    semaphore = asyncio.Semaphore(max(1, graph_cfg.extraction_concurrency))
+
+    async def _run_batch(batch: list[tuple[GraphChunkRecord, str]]) -> list[ChunkGraphExtraction]:
+        async with semaphore:
+            return await extract_chunk_graphs_batch(batch)
+
+    results = await asyncio.gather(*[_run_batch(batch) for batch in batches])
+    return [item for batch in results for item in batch]
+
+
+async def _prepare_chunk_extractions(
+    *,
+    repository: DocumentChunkRepository,
+    rows: Sequence[Any],
+    team_id: int,
+    knowledge_base_id: int,
+    document_id: int,
+    title: str | None,
+) -> list[ChunkGraphExtraction]:
+    ordered_results: dict[int, ChunkGraphExtraction] = {}
+    pending_items: list[tuple[GraphChunkRecord, str]] = []
+    metadata_updates: list[tuple[int, dict[str, Any]]] = []
+
+    for row in rows:
+        chunk, chunk_text = _build_chunk_record(
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            document_id=document_id,
+            title=title,
+            row=row,
+        )
+        metadata = dict(row.metadata_ or {})
+        if _chunk_extraction_cache_valid(metadata, content_hash=chunk.content_hash):
+            cached = _deserialize_graph_extraction(
+                chunk=chunk,
+                payload=dict(metadata.get("graph_extraction") or {}),
+            )
+            if cached is not None:
+                ordered_results[chunk.document_chunk_id] = cached
+                continue
+        pending_items.append((chunk, chunk_text))
+
+    extracted = await _extract_batches(items=pending_items)
+    for extraction in extracted:
+        normalized = normalize_chunk_graph(
+            chunk=extraction.chunk,
+            entities=extraction.entities,
+            relation_candidates=extraction.relation_candidates,
+        )
+        ordered_results[normalized.chunk.document_chunk_id] = normalized
+        metadata_updates.append(
+            (
+                normalized.chunk.document_chunk_id,
+                _build_graph_extraction_metadata(normalized),
+            )
+        )
+
+    for document_chunk_id, graph_metadata in metadata_updates:
+        row = next((item for item in rows if int(item.id) == int(document_chunk_id)), None)
+        if row is None:
+            continue
+        metadata = dict(row.metadata_ or {})
+        metadata["graph_extraction"] = graph_metadata
+        await repository.update_metadata(int(document_chunk_id), metadata)
+
+    return [ordered_results[int(row.id)] for row in rows if int(row.id) in ordered_results]
+
+
+def _merge_entity_records(existing: GraphEntityRecord, incoming: GraphEntityRecord) -> GraphEntityRecord:
+    aliases = tuple(dict.fromkeys([*existing.aliases, *incoming.aliases]).keys())
+    tags = tuple(dict.fromkeys([*existing.tags, *incoming.tags]).keys())
+    description = existing.description or incoming.description
+    attributes = dict(existing.attributes)
+    attributes.update({key: value for key, value in incoming.attributes.items() if value is not None})
+    return GraphEntityRecord(
+        id=existing.id,
+        team_id=existing.team_id,
+        knowledge_base_id=existing.knowledge_base_id,
+        name=existing.name,
+        entity_type=existing.entity_type,
+        aliases=aliases,
+        description=description,
+        attributes=attributes,
+        tags=tags,
+    )
+
+
+def _resolve_entity_for_relation(
+    entities: Sequence[GraphEntityRecord],
+    *,
+    name: str,
+    entity_type: str | None,
+) -> GraphEntityRecord | None:
+    cleaned_name = clean_graph_text(name)
+    cleaned_type = clean_graph_text(entity_type).upper()
+    typed_candidates = [
+        entity
+        for entity in entities
+        if entity.name == cleaned_name and (not cleaned_type or entity.entity_type == cleaned_type)
+    ]
+    if len(typed_candidates) == 1:
+        return typed_candidates[0]
+    untyped_candidates = [entity for entity in entities if entity.name == cleaned_name]
+    if len(untyped_candidates) == 1:
+        return untyped_candidates[0]
+    return None
+
+
+def _aggregate_graph_records(
+    extractions: Sequence[ChunkGraphExtraction],
+) -> tuple[
+    list[GraphChunkRecord],
+    list[GraphEntityRecord],
+    list[GraphMentionRecord],
+    list[GraphRelationRecord],
+    list[GraphRelationEvidenceRecord],
+]:
+    chunk_records: list[GraphChunkRecord] = []
+    entity_records: dict[str, GraphEntityRecord] = {}
+    mention_records: dict[tuple[str, int], GraphMentionRecord] = {}
+    relation_records: dict[tuple[str, str, str], GraphRelationRecord] = {}
+    relation_evidence_records: dict[str, GraphRelationEvidenceRecord] = {}
+
+    for extraction in extractions:
+        chunk = extraction.chunk
+        chunk_records.append(chunk)
+        chunk_entities = list(extraction.entities)
+        for entity in chunk_entities:
+            existing = entity_records.get(entity.id)
+            entity_records[entity.id] = entity if existing is None else _merge_entity_records(existing, entity)
+            mention_key = (entity.id, chunk.document_chunk_id)
+            mention_records.setdefault(
+                mention_key,
+                GraphMentionRecord(
+                    team_id=chunk.team_id,
+                    knowledge_base_id=chunk.knowledge_base_id,
+                    entity_id=entity.id,
+                    document_id=chunk.document_id,
+                    document_chunk_id=chunk.document_chunk_id,
+                    mention_text=entity.name,
+                ),
+            )
+
+        for relation_candidate in extraction.relation_candidates:
+            source_entity = _resolve_entity_for_relation(
+                chunk_entities,
+                name=relation_candidate.source_name,
+                entity_type=relation_candidate.source_entity_type,
+            )
+            target_entity = _resolve_entity_for_relation(
+                chunk_entities,
+                name=relation_candidate.target_name,
+                entity_type=relation_candidate.target_entity_type,
+            )
+            if source_entity is None or target_entity is None:
+                continue
+            relation_key = (
+                source_entity.id,
+                relation_candidate.relation_type,
+                target_entity.id,
+            )
+            relation_records.setdefault(
+                relation_key,
+                GraphRelationRecord(
+                    team_id=chunk.team_id,
+                    knowledge_base_id=chunk.knowledge_base_id,
+                    source_entity_id=source_entity.id,
+                    target_entity_id=target_entity.id,
+                    relation_type=relation_candidate.relation_type,
+                ),
+            )
+            evidence_text = clean_graph_text(relation_candidate.evidence_text)
+            if not evidence_text:
+                continue
+            evidence_hash = build_relation_evidence_hash(
+                source_entity_id=source_entity.id,
+                target_entity_id=target_entity.id,
+                relation_type=relation_candidate.relation_type,
+                document_chunk_id=chunk.document_chunk_id,
+                evidence_text=evidence_text,
+            )
+            relation_evidence_records.setdefault(
+                evidence_hash,
+                GraphRelationEvidenceRecord(
+                    id=build_relation_evidence_id(evidence_hash),
+                    team_id=chunk.team_id,
+                    knowledge_base_id=chunk.knowledge_base_id,
+                    source_entity_id=source_entity.id,
+                    target_entity_id=target_entity.id,
+                    document_id=chunk.document_id,
+                    document_chunk_id=chunk.document_chunk_id,
+                    relation_type=relation_candidate.relation_type,
+                    evidence_text=evidence_text,
+                    evidence_hash=evidence_hash,
+                    confidence=relation_candidate.confidence,
+                    attributes=dict(relation_candidate.attributes or {}),
+                ),
+            )
+
+    evidence_count_by_relation: dict[tuple[str, str, str], int] = {}
+    for evidence in relation_evidence_records.values():
+        relation_key = (
+            evidence.source_entity_id,
+            evidence.relation_type,
+            evidence.target_entity_id,
+        )
+        evidence_count_by_relation[relation_key] = evidence_count_by_relation.get(relation_key, 0) + 1
+
+    finalized_relations = [
+        GraphRelationRecord(
+            team_id=relation.team_id,
+            knowledge_base_id=relation.knowledge_base_id,
+            source_entity_id=relation.source_entity_id,
+            target_entity_id=relation.target_entity_id,
+            relation_type=relation.relation_type,
+            evidence_count=evidence_count_by_relation.get(
+                (relation.source_entity_id, relation.relation_type, relation.target_entity_id),
+                0,
+            ),
+        )
+        for relation in relation_records.values()
+    ]
+    return (
+        chunk_records,
+        list(entity_records.values()),
+        list(mention_records.values()),
+        finalized_relations,
+        list(relation_evidence_records.values()),
+    )
+
+
+async def _load_document_scope(
+    db: AsyncSession,
+    *,
+    document_id: int,
+) -> tuple[int, int]:
     document_scope_result = await db.execute(
         select(
             KnowledgeBase.team_id.label("team_id"),
@@ -445,116 +644,60 @@ async def index_document_graph(
     document_scope = document_scope_result.one_or_none()
     if document_scope is None:
         raise ValueError(f"Document {document_id} must belong to a team and knowledge base")
-    store = get_graph_store()
+    return int(document_scope.team_id), int(document_scope.knowledge_base_id)
+
+
+async def _write_document_graph(
+    *,
+    store: Any,
+    extractions: Sequence[ChunkGraphExtraction],
+    document_id: int,
+) -> dict[str, Any]:
+    chunk_records, entity_records, mention_records, relation_records, relation_evidence_records = (
+        _aggregate_graph_records(extractions)
+    )
     indexer = GraphIndexer(store)
     await store.delete_document_graph(document_id=document_id)
-    logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 图谱索引开始 doc_id={} title={} child_chunks={}",
-        document_id,
-        title or "-",
-        len(child_rows),
-    )
-
-    chunk_records: list[GraphChunkRecord] = []
-    entity_records: dict[str, Any] = {}
-    mention_rows: list[dict[str, Any]] = []
-    relation_records: dict[tuple[str, str, str], Any] = {}
-
-    extraction_items: list[tuple[GraphChunkRecord, str]] = []
-    for row in child_rows:
-        chunk = GraphChunkRecord(
-            team_id=int(document_scope.team_id),
-            knowledge_base_id=int(document_scope.knowledge_base_id),
-            document_id=document_id,
-            document_chunk_id=int(row.id),
-            document_title=title,
-            section_path=row.section_path,
-        )
-        extraction_items.append((chunk, row.content or ""))
-    extracted_chunks = await extract_chunk_graphs_batch(extraction_items)
-
-    for extracted in extracted_chunks:
-        chunk = extracted.chunk
-        normalized = normalize_chunk_graph(
-            chunk=chunk,
-            entities=extracted.entities,
-            relations=extracted.relations,
-        )
-        chunk_records.append(chunk)
-        for entity in normalized.entities:
-            existing = entity_records.get(entity.normalized_name)
-            if existing is None:
-                entity_records[entity.normalized_name] = entity
-            else:
-                entity_records[entity.normalized_name] = _merge_entity_records(existing, entity)
-            mention_rows.append(
-                {
-                    "normalized_name": entity.normalized_name,
-                    "team_id": chunk.team_id,
-                    "knowledge_base_id": chunk.knowledge_base_id,
-                    "document_id": chunk.document_id,
-                    "document_chunk_id": chunk.document_chunk_id,
-                    "evidence": entity.evidence,
-                    "attributes": entity.attributes,
-                }
-            )
-        for relation in normalized.relations:
-            relation_key = (
-                relation.source_normalized_name,
-                relation.relation_type,
-                relation.target_normalized_name,
-            )
-            existing = relation_records.get(relation_key)
-            if existing is None:
-                relation_records[relation_key] = relation
-            else:
-                relation_records[relation_key] = _merge_relation_records(existing, relation)
-
-    logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 图谱抽取完成 doc_id={} chunks={} entities={} mentions={} relations={}",
-        document_id,
-        len(chunk_records),
-        len(entity_records),
-        len(mention_rows),
-        len(relation_records),
-    )
-    logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 图谱写入前 doc_id={} team_id={} knowledge_base_id={} chunks={} entities={} mentions={} relations={}",
-        document_id,
-        int(document_scope.team_id),
-        int(document_scope.knowledge_base_id),
-        len(chunk_records),
-        len(entity_records),
-        len(mention_rows),
-        len(relation_records),
-    )
-    logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 图谱写入前实体样本 doc_id={} sample={}",
-        document_id,
-        _build_graph_write_preview(list(entity_records.values())),
-    )
     summary = await indexer.index_batch_graph(
         chunks=chunk_records,
-        entities=list(entity_records.values()),
-        mentions=mention_rows,
-        relations=list(relation_records.values()),
+        entities=entity_records,
+        mentions=mention_records,
+        relations=relation_records,
+        relation_evidences=relation_evidence_records,
         batch_size=DEFAULT_GRAPH_BATCH_SIZE,
     )
-
     await store.prune_orphan_entities()
-    summary["team_id"] = int(document_scope.team_id)
-    summary["knowledge_base_id"] = int(document_scope.knowledge_base_id)
-    summary["summary_entity_names"] = list(entity_records.keys())
+    return summary
+
+
+async def index_document_graph(
+    db: AsyncSession,
+    document_id: int,
+    title: str | None = None,
+    *,
+    commit: bool = True,
+) -> dict[str, Any]:
+    graph_cfg = config_registry.get_graph_config()
+    if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
+        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0, "relation_evidences": 0}
+
+    repository = DocumentChunkRepository(db)
+    child_rows = await repository.get_child_chunks_for_document(document_id)
+    team_id, knowledge_base_id = await _load_document_scope(db, document_id=document_id)
+    extractions = await _prepare_chunk_extractions(
+        repository=repository,
+        rows=child_rows,
+        team_id=team_id,
+        knowledge_base_id=knowledge_base_id,
+        document_id=document_id,
+        title=title,
+    )
+    store = get_graph_store()
+    summary = await _write_document_graph(store=store, extractions=extractions, document_id=document_id)
+    summary["team_id"] = team_id
+    summary["knowledge_base_id"] = knowledge_base_id
     if commit:
         await db.commit()
-    logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 图谱索引完成 doc_id={} chunks={} entities={} mentions={} relations={}",
-        document_id,
-        summary.get("chunks", 0),
-        summary.get("entities", 0),
-        summary.get("mentions", 0),
-        summary.get("relations", 0),
-    )
     return summary
 
 
@@ -588,14 +731,9 @@ async def index_document_graph_chunks(
 ) -> dict[str, Any]:
     graph_cfg = config_registry.get_graph_config()
     if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
-        logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱 chunk 索引跳过 doc_id={} chunks={} reason=disabled",
-            document_id,
-            len(document_chunk_ids),
-        )
-        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0, "relation_evidences": 0}
     if not document_chunk_ids:
-        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0, "relation_evidences": 0}
 
     repository = DocumentChunkRepository(db)
     child_rows = []
@@ -609,111 +747,27 @@ async def index_document_graph_chunks(
     if document_row is None or getattr(document_row, "content_hash", None) != expected_content_hash:
         raise ValueError(f"Document {document_id} content changed before graph chunk processing")
 
-    document_scope_result = await db.execute(
-        select(
-            KnowledgeBase.team_id.label("team_id"),
-            Document.knowledge_base_id.label("knowledge_base_id"),
-        )
-        .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
-        .where(Document.id == document_id)
+    team_id, knowledge_base_id = await _load_document_scope(db, document_id=document_id)
+    extractions = await _prepare_chunk_extractions(
+        repository=repository,
+        rows=child_rows,
+        team_id=team_id,
+        knowledge_base_id=knowledge_base_id,
+        document_id=document_id,
+        title=title,
     )
-    document_scope = document_scope_result.one_or_none()
-    if document_scope is None:
-        raise ValueError(f"Document {document_id} must belong to a team and knowledge base")
-
-    store = get_graph_store()
-    indexer = GraphIndexer(store)
-    extraction_items = [
-        (
-            GraphChunkRecord(
-                team_id=int(document_scope.team_id),
-                knowledge_base_id=int(document_scope.knowledge_base_id),
-                document_id=document_id,
-                document_chunk_id=int(child_row.id),
-                document_title=title,
-                section_path=child_row.section_path,
-            ),
-            child_row.content or "",
-        )
-        for child_row in child_rows
-    ]
-    extracted_chunks = await extract_chunk_graphs_batch(extraction_items)
-
-    chunk_records: list[GraphChunkRecord] = []
-    entity_records: dict[str, GraphEntityRecord] = {}
-    mention_rows: list[dict[str, Any]] = []
-    relation_records: dict[tuple[str, str, str], GraphRelationRecord] = {}
-    rows_by_id = {int(row.id): row for row in child_rows}
-    for extracted in extracted_chunks:
-        chunk = extracted.chunk
-        normalized = normalize_chunk_graph(
-            chunk=chunk,
-            entities=extracted.entities,
-            relations=extracted.relations,
-        )
-        logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱 chunk 写入前 doc_id={} chunk_id={} team_id={} knowledge_base_id={} entities={} relations={} entity_sample={}",
-            document_id,
-            chunk.document_chunk_id,
-            int(chunk.team_id),
-            int(chunk.knowledge_base_id),
-            len(normalized.entities),
-            len(normalized.relations),
-            _build_graph_write_preview(list(normalized.entities)),
-        )
-        chunk_records.append(chunk)
-        for entity in normalized.entities:
-            existing = entity_records.get(entity.normalized_name)
-            if existing is None:
-                entity_records[entity.normalized_name] = entity
-            else:
-                entity_records[entity.normalized_name] = _merge_entity_records(existing, entity)
-            mention_rows.append(
-                {
-                    "normalized_name": entity.normalized_name,
-                    "team_id": chunk.team_id,
-                    "knowledge_base_id": chunk.knowledge_base_id,
-                    "document_id": chunk.document_id,
-                    "document_chunk_id": chunk.document_chunk_id,
-                    "evidence": entity.evidence,
-                    "attributes": entity.attributes,
-                }
-            )
-        for relation in normalized.relations:
-            relation_key = (
-                relation.source_normalized_name,
-                relation.relation_type,
-                relation.target_normalized_name,
-            )
-            existing = relation_records.get(relation_key)
-            if existing is None:
-                relation_records[relation_key] = relation
-            else:
-                relation_records[relation_key] = _merge_relation_records(existing, relation)
-
-        child_row = rows_by_id[chunk.document_chunk_id]
-        metadata = dict(child_row.metadata_ or {})
-        metadata["graph_extraction"] = _graph_extraction_metadata(normalized)
-        await repository.update_metadata(int(child_row.id), metadata)
-
-    summary = await indexer.index_batch_graph(
-        chunks=chunk_records,
-        entities=list(entity_records.values()),
-        mentions=mention_rows,
-        relations=list(relation_records.values()),
-        batch_size=DEFAULT_GRAPH_BATCH_SIZE,
-    )
-
+    _, entity_records, mention_records, relation_records, relation_evidence_records = _aggregate_graph_records(extractions)
     if commit:
         await db.commit()
-    logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 图谱 chunk 批量完成 doc_id={} chunks={} entities={} relations={}",
-        document_id,
-        len(document_chunk_ids),
-        summary.get("entities", 0),
-        summary.get("relations", 0),
-    )
-    return summary
+    return {
+        "chunks": len(extractions),
+        "entities": len(entity_records),
+        "mentions": len(mention_records),
+        "relations": len(relation_records),
+        "relation_evidences": len(relation_evidence_records),
+        "team_id": team_id,
+        "knowledge_base_id": knowledge_base_id,
+    }
 
 
 async def finalize_document_graph(
@@ -725,70 +779,39 @@ async def finalize_document_graph(
 ) -> dict[str, Any]:
     graph_cfg = config_registry.get_graph_config()
     if not (graph_cfg.enabled and graph_cfg.indexing_enabled):
-        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0, "relation_evidences": 0}
 
     repository = DocumentChunkRepository(db)
     child_rows = await repository.get_child_chunks_for_document(document_id)
-    document_scope_result = await db.execute(
-        select(
-            KnowledgeBase.team_id.label("team_id"),
-            Document.knowledge_base_id.label("knowledge_base_id"),
-        )
-        .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
-        .where(Document.id == document_id)
-    )
-    document_scope = document_scope_result.one_or_none()
-    if document_scope is None:
-        raise ValueError(f"Document {document_id} must belong to a team and knowledge base")
+    team_id, knowledge_base_id = await _load_document_scope(db, document_id=document_id)
 
-    completed_rows: list[tuple[Any, dict[str, Any]]] = []
-    entity_names: set[str] = set()
-    relation_keys: set[tuple[str, str, str]] = set()
+    extractions: list[ChunkGraphExtraction] = []
     for row in child_rows:
+        chunk, _chunk_text = _build_chunk_record(
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            document_id=document_id,
+            title=title,
+            row=row,
+        )
         metadata = dict(row.metadata_ or {})
-        extraction = metadata.get("graph_extraction") or {}
-        if extraction.get("status") != "indexed":
+        graph_payload = dict(metadata.get("graph_extraction") or {})
+        extraction = _deserialize_graph_extraction(chunk=chunk, payload=graph_payload)
+        if extraction is None or clean_graph_text(graph_payload.get("content_hash")) != clean_graph_text(chunk.content_hash):
             logger.bind(document_pipeline_log=True).info(
                 "[文档管线] 图谱最终合并等待中 doc_id={} missing_chunk_id={}",
                 document_id,
                 row.id,
             )
-            return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
-        completed_rows.append((row, extraction))
-        for item in extraction.get("entities") or []:
-            name = str(item.get("normalized_name") or "").strip()
-            if name:
-                entity_names.add(name)
-        for item in extraction.get("relations") or []:
-            source_name = str(item.get("source_normalized_name") or "").strip()
-            relation_type = str(item.get("relation_type") or "").strip()
-            target_name = str(item.get("target_normalized_name") or "").strip()
-            if source_name and relation_type and target_name:
-                relation_keys.add((source_name, relation_type, target_name))
-
-    if not completed_rows:
-        return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0}
+            return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0, "relation_evidences": 0}
+        extractions.append(extraction)
 
     store = get_graph_store()
-    await store.prune_orphan_entities()
-    summary = {
-        "chunks": len(completed_rows),
-        "entities": len(entity_names),
-        "mentions": len(entity_names),
-        "relations": len(relation_keys),
-        "team_id": int(document_scope.team_id),
-        "knowledge_base_id": int(document_scope.knowledge_base_id),
-        "summary_entity_names": sorted(entity_names),
-    }
-
+    summary = await _write_document_graph(store=store, extractions=extractions, document_id=document_id)
+    summary["team_id"] = team_id
+    summary["knowledge_base_id"] = knowledge_base_id
     if commit:
         await db.commit()
-    logger.bind(document_pipeline_log=True).info(
-        "[文档管线] 图谱最终合并完成 doc_id={} chunks={} entities={}",
-        document_id,
-        len(completed_rows),
-        len(entity_names),
-    )
     return summary
 
 

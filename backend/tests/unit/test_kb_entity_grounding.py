@@ -1,6 +1,6 @@
 import asyncio
 
-from app.services.kb_entity_grounding import ground_graph_entities
+from app.services.graph_entity_candidate_service import resolve_graph_candidate_entities
 
 
 class FakeEntityLookupStore:
@@ -13,19 +13,19 @@ class FakeEntityLookupStore:
         return list(self.rows_by_candidate.get(candidate, []))
 
 
-def test_ground_entities_prefers_normalized_name_over_alias():
+def test_resolve_graph_candidates_prefers_name_over_alias():
     store = FakeEntityLookupStore(
         rows_by_candidate={
             "payment": [
                 {
-                    "normalized_name": "payment",
-                    "display_name": "Payment",
+                    "entity_id": "entity-payment",
+                    "name": "Payment",
                     "entity_type": "MODULE",
                     "aliases": ["支付模块"],
                 },
                 {
-                    "normalized_name": "payment_status",
-                    "display_name": "PaymentStatus",
+                    "entity_id": "entity-payment-status",
+                    "name": "PaymentStatus",
                     "entity_type": "STATUS",
                     "aliases": ["payment"],
                 },
@@ -34,14 +34,15 @@ def test_ground_entities_prefers_normalized_name_over_alias():
     )
 
     result = asyncio.run(
-        ground_graph_entities(
+        resolve_graph_candidate_entities(
             candidate_entities=["payment"],
+            query="payment",
             knowledge_base_id=1,
             team_id=1,
             store=store,
         )
     )
 
-    assert result["grounded_entities"][0]["normalized_name"] == "payment"
-    assert result["grounded_entities"][0]["match_type"] == "normalized_name_exact"
-
+    assert result["candidate_entities"][0] == "Payment"
+    assert result["matched_entities"][0]["entity_id"] == "entity-payment"
+    assert result["matched_entities"][0]["match_type"] == "name_exact"

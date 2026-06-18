@@ -2,121 +2,55 @@
 
 from __future__ import annotations
 
-import hashlib
+import asyncio
 import json
-import re
 from typing import Any, Protocol
+
+from loguru import logger
 
 from app.core.config.registry import config_registry
 from app.services.graph_models import (
     GraphChunkRecord,
     GraphEntityRecord,
+    GraphMentionRecord,
+    GraphRelationEvidenceRecord,
     GraphRelationRecord,
+    clean_graph_text,
 )
 
 _GRAPH_STORE_CACHE: dict[tuple[bool, bool, str, str, str, str, bool], GraphStore] = {}
+_GRAPH_STORE_MAX_RETRIES = 3
+_GRAPH_STORE_RETRY_DELAY_SECONDS = 1.0
 
 
-def _normalize_attribute_key(key: str) -> str:
-    cleaned = re.sub(r"[^0-9a-zA-Z_]+", "_", (key or "").strip()).strip("_")
-    return cleaned.lower()
-
-
-def _prepare_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
-    prepared: dict[str, Any] = {}
-    for key, value in attributes.items():
-        normalized_key = _normalize_attribute_key(str(key))
-        if not normalized_key:
-            continue
-        if value is None:
-            continue
-        if isinstance(value, str):
-            cleaned_value = value.strip()
-            if not cleaned_value:
-                continue
-            prepared[f"attr_{normalized_key}"] = cleaned_value
-            continue
-        if isinstance(value, (int, float, bool)):
-            prepared[f"attr_{normalized_key}"] = value
-            continue
-        cleaned_value = str(value).strip()
-        if cleaned_value:
-            prepared[f"attr_{normalized_key}"] = cleaned_value
-    return prepared
-
-
-def _serialize_raw_attributes(attributes: dict[str, Any] | None) -> str | None:
-    if not attributes:
+def _serialize_json(value: Any) -> str | None:
+    if value in (None, {}, [], ()):
         return None
-    cleaned: dict[str, Any] = {}
-    for key, value in attributes.items():
-        normalized_key = _normalize_attribute_key(str(key))
-        if not normalized_key or value is None:
-            continue
-        if isinstance(value, str):
-            cleaned_value = value.strip()
-            if not cleaned_value:
-                continue
-            cleaned[normalized_key] = cleaned_value
-            continue
-        if isinstance(value, (int, float, bool)):
-            cleaned[normalized_key] = value
-            continue
-        cleaned_value = str(value).strip()
-        if cleaned_value:
-            cleaned[normalized_key] = cleaned_value
-    if not cleaned:
-        return None
-    return json.dumps(cleaned, ensure_ascii=False)
+    return json.dumps(value, ensure_ascii=False)
 
 
-def _hash_relation_evidence(
-    *,
-    source_normalized_name: str,
-    target_normalized_name: str,
-    relation_type: str,
-    document_chunk_id: int,
-    evidence: str,
-) -> str:
-    payload = "|".join(
-        [
-            source_normalized_name.strip().casefold(),
-            relation_type.strip().upper(),
-            target_normalized_name.strip().casefold(),
-            str(int(document_chunk_id)),
-            " ".join((evidence or "").split()).strip(),
-        ]
-    )
-    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+def _normalize_lookup_value(value: Any) -> str:
+    return clean_graph_text(value).casefold()
 
 
 class GraphStore(Protocol):
-    """Minimal async graph-store contract for indexing services."""
+    """Minimal async graph-store contract for indexing and retrieval."""
 
     async def delete_document_graph(self, *, document_id: int) -> None: ...
 
     async def delete_knowledge_base_graph(self, *, knowledge_base_id: int, team_id: int) -> None: ...
 
-    async def upsert_chunk(self, chunk: GraphChunkRecord) -> None: ...
-
     async def upsert_chunks(self, chunks: list[GraphChunkRecord]) -> None: ...
-
-    async def upsert_entity(self, entity: GraphEntityRecord) -> None: ...
 
     async def upsert_entities(self, entities: list[GraphEntityRecord]) -> None: ...
 
-    async def link_entity_to_chunk(
-        self,
-        *,
-        normalized_name: str,
-        chunk: GraphChunkRecord,
-    ) -> None: ...
-
-    async def link_entities_to_chunks(self, rows: list[dict[str, Any]]) -> None: ...
-
-    async def upsert_relation(self, relation: GraphRelationRecord) -> None: ...
+    async def upsert_mentions(self, mentions: list[GraphMentionRecord]) -> None: ...
 
     async def upsert_relations(self, relations: list[GraphRelationRecord]) -> None: ...
+
+    async def upsert_relation_evidences(self, evidences: list[GraphRelationEvidenceRecord]) -> None: ...
+
+    async def refresh_related_evidence_counts(self) -> None: ...
 
     async def prune_orphan_entities(self) -> None: ...
 
@@ -127,27 +61,6 @@ class GraphStore(Protocol):
         team_id: int,
         candidate: str,
     ) -> list[dict[str, Any]]: ...
-
-    async def list_entity_summary_contexts(
-        self,
-        *,
-        knowledge_base_id: int,
-        team_id: int,
-        normalized_names: list[str],
-    ) -> list[dict[str, Any]]: ...
-
-    async def upsert_entity_summaries(self, rows: list[dict[str, Any]]) -> None: ...
-
-    async def list_relation_summary_contexts(
-        self,
-        *,
-        knowledge_base_id: int,
-        team_id: int,
-        normalized_names: list[str],
-        document_id: int | None = None,
-    ) -> list[dict[str, Any]]: ...
-
-    async def upsert_relation_summaries(self, rows: list[dict[str, Any]]) -> None: ...
 
     async def search_related_evidence(
         self,
@@ -190,41 +103,28 @@ class GraphStore(Protocol):
 
 
 class NullGraphStore:
-    """No-op graph store used before a real Neo4j driver is wired in."""
-
     async def delete_document_graph(self, *, document_id: int) -> None:
         return None
 
     async def delete_knowledge_base_graph(self, *, knowledge_base_id: int, team_id: int) -> None:
         return None
 
-    async def upsert_chunk(self, chunk: GraphChunkRecord) -> None:
-        return None
-
     async def upsert_chunks(self, chunks: list[GraphChunkRecord]) -> None:
-        return None
-
-    async def upsert_entity(self, entity: GraphEntityRecord) -> None:
         return None
 
     async def upsert_entities(self, entities: list[GraphEntityRecord]) -> None:
         return None
 
-    async def link_entity_to_chunk(
-        self,
-        *,
-        normalized_name: str,
-        chunk: GraphChunkRecord,
-    ) -> None:
-        return None
-
-    async def link_entities_to_chunks(self, rows: list[dict[str, Any]]) -> None:
-        return None
-
-    async def upsert_relation(self, relation: GraphRelationRecord) -> None:
+    async def upsert_mentions(self, mentions: list[GraphMentionRecord]) -> None:
         return None
 
     async def upsert_relations(self, relations: list[GraphRelationRecord]) -> None:
+        return None
+
+    async def upsert_relation_evidences(self, evidences: list[GraphRelationEvidenceRecord]) -> None:
+        return None
+
+    async def refresh_related_evidence_counts(self) -> None:
         return None
 
     async def prune_orphan_entities(self) -> None:
@@ -238,31 +138,6 @@ class NullGraphStore:
         candidate: str,
     ) -> list[dict[str, Any]]:
         return []
-
-    async def list_entity_summary_contexts(
-        self,
-        *,
-        knowledge_base_id: int,
-        team_id: int,
-        normalized_names: list[str],
-    ) -> list[dict[str, Any]]:
-        return []
-
-    async def upsert_entity_summaries(self, rows: list[dict[str, Any]]) -> None:
-        return None
-
-    async def list_relation_summary_contexts(
-        self,
-        *,
-        knowledge_base_id: int,
-        team_id: int,
-        normalized_names: list[str],
-        document_id: int | None = None,
-    ) -> list[dict[str, Any]]:
-        return []
-
-    async def upsert_relation_summaries(self, rows: list[dict[str, Any]]) -> None:
-        return None
 
     async def search_related_evidence(
         self,
@@ -321,7 +196,7 @@ class Neo4jGraphStore:
     ) -> None:
         try:
             from neo4j import AsyncGraphDatabase
-        except ModuleNotFoundError as exc:  # pragma: no cover - depends on installed extras
+        except ModuleNotFoundError as exc:  # pragma: no cover
             raise RuntimeError("Neo4j driver is not installed") from exc
 
         self._database = database
@@ -330,9 +205,9 @@ class Neo4jGraphStore:
     async def delete_document_graph(self, *, document_id: int) -> None:
         await self._run(
             """
-            MATCH (re:RelationEvidence)
-            WHERE re.document_id = $document_id
-            DETACH DELETE re
+            MATCH (ev:RelationEvidence)
+            WHERE ev.document_id = $document_id
+            DETACH DELETE ev
             """,
             document_id=document_id,
         )
@@ -344,21 +219,10 @@ class Neo4jGraphStore:
             """,
             document_id=document_id,
         )
-        await self._run(
-            """
-            MATCH (source:Entity)-[r:RELATED]->(target:Entity)
-            WHERE NOT EXISTS {
-              MATCH (source)-[:HAS_RELATION_EVIDENCE]->(re:RelationEvidence)-[:EVIDENCE_TARGET]->(target)
-              WHERE re.team_id = r.team_id
-                AND re.knowledge_base_id = r.knowledge_base_id
-                AND re.relation_type = r.relation_type
-            }
-            DELETE r
-            """
-        )
+        await self.refresh_related_evidence_counts()
+        await self.prune_orphan_entities()
 
     async def delete_knowledge_base_graph(self, *, knowledge_base_id: int, team_id: int) -> None:
-        params = {"knowledge_base_id": knowledge_base_id, "team_id": team_id}
         await self._run(
             """
             MATCH (s:EntitySummary)
@@ -366,25 +230,18 @@ class Neo4jGraphStore:
               AND s.knowledge_base_id = $knowledge_base_id
             DETACH DELETE s
             """,
-            **params,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
         )
         await self._run(
             """
-            MATCH (re:RelationEvidence)
-            WHERE re.team_id = $team_id
-              AND re.knowledge_base_id = $knowledge_base_id
-            DETACH DELETE re
+            MATCH (ev:RelationEvidence)
+            WHERE ev.team_id = $team_id
+              AND ev.knowledge_base_id = $knowledge_base_id
+            DETACH DELETE ev
             """,
-            **params,
-        )
-        await self._run(
-            """
-            MATCH (e:Entity)
-            WHERE e.team_id = $team_id
-              AND e.knowledge_base_id = $knowledge_base_id
-            DETACH DELETE e
-            """,
-            **params,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
         )
         await self._run(
             """
@@ -393,23 +250,43 @@ class Neo4jGraphStore:
               AND c.knowledge_base_id = $knowledge_base_id
             DETACH DELETE c
             """,
-            **params,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
         )
-
-    async def upsert_chunk(self, chunk: GraphChunkRecord) -> None:
-        await self.upsert_chunks([chunk])
+        await self._run(
+            """
+            MATCH (e:Entity)
+            WHERE e.team_id = $team_id
+              AND e.knowledge_base_id = $knowledge_base_id
+            DETACH DELETE e
+            """,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+        )
+        await self._run(
+            """
+            MATCH ()-[r:RELATED]->()
+            WHERE r.team_id = $team_id
+              AND r.knowledge_base_id = $knowledge_base_id
+            DELETE r
+            """,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+        )
 
     async def upsert_chunks(self, chunks: list[GraphChunkRecord]) -> None:
         if not chunks:
             return None
         rows = [
             {
+                "document_chunk_id": chunk.document_chunk_id,
                 "team_id": chunk.team_id,
                 "knowledge_base_id": chunk.knowledge_base_id,
                 "document_id": chunk.document_id,
-                "document_chunk_id": chunk.document_chunk_id,
+                "chunk_index": chunk.chunk_index,
                 "document_title": chunk.document_title,
                 "section_path": chunk.section_path,
+                "content_hash": chunk.content_hash,
             }
             for chunk in chunks
         ]
@@ -417,105 +294,85 @@ class Neo4jGraphStore:
             """
             UNWIND $rows AS row
             MERGE (c:Chunk {document_chunk_id: row.document_chunk_id})
+            ON CREATE SET c.created_at = datetime()
             SET c.team_id = row.team_id,
                 c.knowledge_base_id = row.knowledge_base_id,
                 c.document_id = row.document_id,
+                c.chunk_index = row.chunk_index,
                 c.document_title = row.document_title,
-                c.section_path = row.section_path
+                c.section_path = row.section_path,
+                c.content_hash = row.content_hash,
+                c.updated_at = datetime()
             """,
             rows=rows,
         )
-
-    async def upsert_entity(self, entity: GraphEntityRecord) -> None:
-        await self.upsert_entities([entity])
 
     async def upsert_entities(self, entities: list[GraphEntityRecord]) -> None:
         if not entities:
             return None
         rows = [
             {
+                "id": entity.id,
                 "team_id": entity.team_id,
                 "knowledge_base_id": entity.knowledge_base_id,
-                "normalized_name": entity.normalized_name,
-                "display_name": entity.display_name,
+                "name": entity.name,
                 "entity_type": entity.entity_type,
                 "aliases": list(entity.aliases),
-                "canonical_name": entity.canonical_name or entity.display_name,
-                "alias_keys": list(entity.alias_keys),
-                "attributes": _prepare_attributes(entity.attributes),
-                "raw_attributes_json": _serialize_raw_attributes(entity.raw_attributes),
+                "description": entity.description,
+                "attributes_json": _serialize_json(entity.attributes),
+                "tags": list(entity.tags),
             }
             for entity in entities
         ]
         await self._run(
             """
             UNWIND $rows AS row
-            MERGE (e:Entity {
-                team_id: row.team_id,
-                knowledge_base_id: row.knowledge_base_id,
-                normalized_name: row.normalized_name
-            })
-            SET e.display_name = row.display_name,
-                e.canonical_name = row.canonical_name,
+            MERGE (e:Entity {id: row.id})
+            ON CREATE SET e.created_at = datetime()
+            SET e.team_id = row.team_id,
+                e.knowledge_base_id = row.knowledge_base_id,
+                e.name = row.name,
                 e.entity_type = row.entity_type,
                 e.aliases = row.aliases,
-                e.alias_keys = row.alias_keys,
-                e.raw_attributes_json = row.raw_attributes_json
-            SET e += row.attributes
+                e.description = row.description,
+                e.attributes_json = row.attributes_json,
+                e.tags = row.tags,
+                e.updated_at = datetime()
             """,
             rows=rows,
         )
 
-    async def link_entity_to_chunk(
-        self,
-        *,
-        normalized_name: str,
-        chunk: GraphChunkRecord,
-    ) -> None:
-        await self.link_entities_to_chunks(
-            [
-                {
-                    "normalized_name": normalized_name,
-                    "team_id": chunk.team_id,
-                    "knowledge_base_id": chunk.knowledge_base_id,
-                    "document_id": chunk.document_id,
-                    "document_chunk_id": chunk.document_chunk_id,
-                    "evidence": "",
-                    "attributes": {},
-                }
-            ]
-        )
-
-    async def link_entities_to_chunks(self, rows: list[dict[str, Any]]) -> None:
-        if not rows:
+    async def upsert_mentions(self, mentions: list[GraphMentionRecord]) -> None:
+        if not mentions:
             return None
+        rows = [
+            {
+                "team_id": mention.team_id,
+                "knowledge_base_id": mention.knowledge_base_id,
+                "entity_id": mention.entity_id,
+                "document_id": mention.document_id,
+                "document_chunk_id": mention.document_chunk_id,
+                "mention_text": mention.mention_text,
+                "confidence": mention.confidence,
+            }
+            for mention in mentions
+        ]
         await self._run(
             """
             UNWIND $rows AS row
-            MATCH (e:Entity {
-                team_id: row.team_id,
-                knowledge_base_id: row.knowledge_base_id,
-                normalized_name: row.normalized_name
-            })
+            MATCH (e:Entity {id: row.entity_id})
             MATCH (c:Chunk {document_chunk_id: row.document_chunk_id})
-            MERGE (e)-[r:MENTIONED_IN {document_chunk_id: row.document_chunk_id}]->(c)
-            SET r.team_id = row.team_id,
-                r.knowledge_base_id = row.knowledge_base_id,
-                r.document_id = row.document_id,
-                r.evidence = row.evidence
-            SET r += row.attributes
+            MERGE (e)-[m:MENTIONED_IN]->(c)
+            ON CREATE SET m.created_at = datetime()
+            SET m.team_id = row.team_id,
+                m.knowledge_base_id = row.knowledge_base_id,
+                m.document_id = row.document_id,
+                m.mention_text = row.mention_text,
+                m.confidence = row.confidence,
+                m.updated_at = datetime()
             """,
-            rows=[
-                {
-                    **row,
-                    "attributes": _prepare_attributes(row.get("attributes") or {}),
-                }
-                for row in rows
-            ],
+            rows=rows,
         )
-
-    async def upsert_relation(self, relation: GraphRelationRecord) -> None:
-        await self.upsert_relations([relation])
 
     async def upsert_relations(self, relations: list[GraphRelationRecord]) -> None:
         if not relations:
@@ -524,75 +381,101 @@ class Neo4jGraphStore:
             {
                 "team_id": relation.team_id,
                 "knowledge_base_id": relation.knowledge_base_id,
-                "document_id": relation.document_id,
-                "document_chunk_id": relation.document_chunk_id,
-                "source_normalized_name": relation.source_normalized_name,
-                "target_normalized_name": relation.target_normalized_name,
+                "source_entity_id": relation.source_entity_id,
+                "target_entity_id": relation.target_entity_id,
                 "relation_type": relation.relation_type,
-                "evidence": relation.evidence,
-                "attributes": _prepare_attributes(relation.attributes),
-                "evidence_hash": _hash_relation_evidence(
-                    source_normalized_name=relation.source_normalized_name,
-                    target_normalized_name=relation.target_normalized_name,
-                    relation_type=relation.relation_type,
-                    document_chunk_id=relation.document_chunk_id,
-                    evidence=relation.evidence,
-                ),
+                "evidence_count": relation.evidence_count,
             }
             for relation in relations
         ]
         await self._run(
             """
             UNWIND $rows AS row
-            MATCH (source:Entity {
-                team_id: row.team_id,
-                knowledge_base_id: row.knowledge_base_id,
-                normalized_name: row.source_normalized_name
-            })
-            MATCH (target:Entity {
-                team_id: row.team_id,
-                knowledge_base_id: row.knowledge_base_id,
-                normalized_name: row.target_normalized_name
-            })
-            MERGE (source)-[r:RELATED {
-                team_id: row.team_id,
-                knowledge_base_id: row.knowledge_base_id,
-                source_normalized_name: row.source_normalized_name,
-                target_normalized_name: row.target_normalized_name,
-                relation_type: row.relation_type
-            }]->(target)
+            MATCH (source:Entity {id: row.source_entity_id})
+            MATCH (target:Entity {id: row.target_entity_id})
+            MERGE (source)-[r:RELATED {relation_type: row.relation_type}]->(target)
+            ON CREATE SET r.created_at = datetime()
             SET r.team_id = row.team_id,
                 r.knowledge_base_id = row.knowledge_base_id,
-                r.document_id = row.document_id,
-                r.document_chunk_id = row.document_chunk_id,
-                r.evidence = row.evidence
-            SET r += row.attributes
-            MERGE (evidence:RelationEvidence {
-                team_id: row.team_id,
-                knowledge_base_id: row.knowledge_base_id,
-                source_normalized_name: row.source_normalized_name,
-                target_normalized_name: row.target_normalized_name,
-                relation_type: row.relation_type,
-                document_chunk_id: row.document_chunk_id,
-                evidence_hash: row.evidence_hash
-            })
-            SET evidence.document_id = row.document_id,
-                evidence.evidence = row.evidence
-            SET evidence += row.attributes
-            MERGE (source)-[:HAS_RELATION_EVIDENCE]->(evidence)
-            MERGE (evidence)-[:EVIDENCE_TARGET]->(target)
-            WITH row, evidence
-            MATCH (chunk:Chunk {document_chunk_id: row.document_chunk_id})
-            MERGE (evidence)-[:FROM_CHUNK]->(chunk)
+                r.evidence_count = row.evidence_count,
+                r.updated_at = datetime()
             """,
             rows=rows,
+        )
+
+    async def upsert_relation_evidences(self, evidences: list[GraphRelationEvidenceRecord]) -> None:
+        if not evidences:
+            return None
+        rows = [
+            {
+                "id": evidence.id,
+                "team_id": evidence.team_id,
+                "knowledge_base_id": evidence.knowledge_base_id,
+                "source_entity_id": evidence.source_entity_id,
+                "target_entity_id": evidence.target_entity_id,
+                "document_id": evidence.document_id,
+                "document_chunk_id": evidence.document_chunk_id,
+                "relation_type": evidence.relation_type,
+                "evidence_text": evidence.evidence_text,
+                "evidence_hash": evidence.evidence_hash,
+                "confidence": evidence.confidence,
+                "attributes_json": _serialize_json(evidence.attributes),
+            }
+            for evidence in evidences
+        ]
+        await self._run(
+            """
+            UNWIND $rows AS row
+            MATCH (source:Entity {id: row.source_entity_id})
+            MATCH (target:Entity {id: row.target_entity_id})
+            MATCH (chunk:Chunk {document_chunk_id: row.document_chunk_id})
+            MERGE (ev:RelationEvidence {evidence_hash: row.evidence_hash})
+            ON CREATE SET ev.id = row.id, ev.created_at = datetime()
+            SET ev.team_id = row.team_id,
+                ev.knowledge_base_id = row.knowledge_base_id,
+                ev.source_entity_id = row.source_entity_id,
+                ev.target_entity_id = row.target_entity_id,
+                ev.document_id = row.document_id,
+                ev.document_chunk_id = row.document_chunk_id,
+                ev.relation_type = row.relation_type,
+                ev.evidence_text = row.evidence_text,
+                ev.confidence = row.confidence,
+                ev.attributes_json = row.attributes_json,
+                ev.updated_at = datetime()
+            MERGE (source)-[:HAS_RELATION_EVIDENCE]->(ev)
+            MERGE (ev)-[:EVIDENCE_TARGET]->(target)
+            MERGE (ev)-[:FROM_CHUNK]->(chunk)
+            """,
+            rows=rows,
+        )
+
+    async def refresh_related_evidence_counts(self) -> None:
+        await self._run(
+            """
+            MATCH (source:Entity)-[r:RELATED]->(target:Entity)
+            OPTIONAL MATCH (source)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(target)
+            WHERE ev.relation_type = r.relation_type
+            WITH r, count(ev) AS evidence_count
+            SET r.evidence_count = evidence_count,
+                r.updated_at = datetime()
+            """,
+        )
+        await self._run(
+            """
+            MATCH ()-[r:RELATED]->()
+            WHERE coalesce(r.evidence_count, 0) <= 0
+            DELETE r
+            """,
         )
 
     async def prune_orphan_entities(self) -> None:
         await self._run(
             """
             MATCH (e:Entity)
-            WHERE NOT (e)--()
+            WHERE NOT (e)-[:MENTIONED_IN]->(:Chunk)
+              AND NOT (e)-[:HAS_RELATION_EVIDENCE]->(:RelationEvidence)
+              AND NOT (:RelationEvidence)-[:EVIDENCE_TARGET]->(e)
+              AND NOT (e)-[:RELATED]-()
             DELETE e
             """
         )
@@ -604,7 +487,7 @@ class Neo4jGraphStore:
         team_id: int,
         candidate: str,
     ) -> list[dict[str, Any]]:
-        normalized_candidate = " ".join(str(candidate or "").split()).strip().casefold()
+        normalized_candidate = _normalize_lookup_value(candidate)
         if not normalized_candidate:
             return []
         query = """
@@ -612,212 +495,24 @@ class Neo4jGraphStore:
         WHERE e.team_id = $team_id
           AND e.knowledge_base_id = $knowledge_base_id
           AND (
-            toLower(e.normalized_name) = $candidate
-            OR toLower(e.display_name) = $candidate
-            OR toLower(coalesce(e.canonical_name, "")) = $candidate
+            toLower(e.name) = $candidate
             OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) = $candidate)
-            OR any(alias_key IN coalesce(e.alias_keys, []) WHERE alias_key = $candidate)
+            OR toLower(coalesce(e.description, "")) CONTAINS $candidate
           )
         RETURN
-            e.normalized_name AS normalized_name,
-            e.canonical_name AS canonical_name,
-            e.display_name AS display_name,
+            e.id AS entity_id,
+            e.name AS name,
             e.entity_type AS entity_type,
             coalesce(e.aliases, []) AS aliases,
-            coalesce(e.alias_keys, []) AS alias_keys
+            coalesce(e.description, "") AS description,
+            coalesce(e.tags, []) AS tags
+        LIMIT 12
         """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(
-                query,
-                knowledge_base_id=knowledge_base_id,
-                team_id=team_id,
-                candidate=normalized_candidate,
-            )
-            rows: list[dict[str, Any]] = []
-            async for record in result:
-                rows.append(dict(record))
-            return rows
-
-    async def list_entity_summary_contexts(
-        self,
-        *,
-        knowledge_base_id: int,
-        team_id: int,
-        normalized_names: list[str],
-    ) -> list[dict[str, Any]]:
-        lookup_names = [" ".join(item.split()).strip().casefold() for item in normalized_names]
-        lookup_names = [item for item in lookup_names if item]
-        if not lookup_names:
-            return []
-        query = """
-        MATCH (e:Entity)
-        WHERE e.team_id = $team_id
-          AND e.knowledge_base_id = $knowledge_base_id
-          AND (
-            e.normalized_name IN $normalized_names
-            OR toLower(e.normalized_name) IN $lookup_names
-            OR toLower(coalesce(e.canonical_name, "")) IN $lookup_names
-            OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) IN $lookup_names)
-            OR any(alias_key IN coalesce(e.alias_keys, []) WHERE alias_key IN $lookup_names)
-          )
-        OPTIONAL MATCH (e)-[:HAS_SUMMARY]->(s:EntitySummary)
-        OPTIONAL MATCH (e)-[m:MENTIONED_IN]->(c:Chunk)
-        WHERE c.knowledge_base_id = $knowledge_base_id
-          AND c.team_id = $team_id
-        OPTIONAL MATCH (e)-[rel:RELATED]-(other:Entity)
-        WHERE rel.knowledge_base_id = $knowledge_base_id
-          AND rel.team_id = $team_id
-        RETURN
-            e.normalized_name AS normalized_name,
-            e.canonical_name AS canonical_name,
-            e.display_name AS display_name,
-            e.entity_type AS entity_type,
-            coalesce(e.aliases, []) AS aliases,
-            coalesce(e.alias_keys, []) AS alias_keys,
-            s.summary AS summary,
-            properties(e) AS entity_props,
-            e.raw_attributes_json AS raw_attributes_json,
-            collect(DISTINCT {
-                document_title: c.document_title,
-                section_path: c.section_path,
-                evidence: m.evidence,
-                mention_props: properties(m)
-            }) AS mentions,
-            collect(DISTINCT {
-                other: other.display_name,
-                relation_type: rel.relation_type,
-                evidence: rel.evidence,
-                relation_props: properties(rel)
-            }) AS relations
-        """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(
-                query,
-                normalized_names=normalized_names,
-                lookup_names=lookup_names,
-                knowledge_base_id=knowledge_base_id,
-                team_id=team_id,
-            )
-            rows: list[dict[str, Any]] = []
-            async for record in result:
-                rows.append(dict(record))
-            return rows
-
-    async def upsert_entity_summaries(self, rows: list[dict[str, Any]]) -> None:
-        if not rows:
-            return None
-        await self._run(
-            """
-            UNWIND $rows AS row
-            MATCH (e:Entity {
-                team_id: row.team_id,
-                knowledge_base_id: row.knowledge_base_id,
-                normalized_name: row.normalized_name
-            })
-            MERGE (s:EntitySummary {
-                normalized_name: row.normalized_name,
-                team_id: row.team_id,
-                knowledge_base_id: row.knowledge_base_id
-            })
-            SET s.display_name = row.display_name,
-                s.canonical_name = coalesce(row.canonical_name, row.display_name),
-                s.entity_type = row.entity_type,
-                s.summary = row.summary
-            MERGE (e)-[:HAS_SUMMARY]->(s)
-            """,
-            rows=rows,
-        )
-
-    async def list_relation_summary_contexts(
-        self,
-        *,
-        knowledge_base_id: int,
-        team_id: int,
-        normalized_names: list[str],
-        document_id: int | None = None,
-    ) -> list[dict[str, Any]]:
-        lookup_names = [" ".join(item.split()).strip().casefold() for item in normalized_names]
-        lookup_names = [item for item in lookup_names if item]
-        if not lookup_names:
-            return []
-        query = """
-        MATCH (source:Entity)-[r:RELATED]->(target:Entity)
-        WHERE r.knowledge_base_id = $knowledge_base_id
-          AND r.team_id = $team_id
-          AND ($document_id IS NULL OR r.document_id = $document_id)
-          AND (
-            toLower(source.normalized_name) IN $lookup_names
-            OR toLower(target.normalized_name) IN $lookup_names
-            OR toLower(coalesce(source.canonical_name, "")) IN $lookup_names
-            OR toLower(coalesce(target.canonical_name, "")) IN $lookup_names
-            OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) IN $lookup_names)
-            OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) IN $lookup_names)
-            OR any(alias_key IN coalesce(source.alias_keys, []) WHERE alias_key IN $lookup_names)
-            OR any(alias_key IN coalesce(target.alias_keys, []) WHERE alias_key IN $lookup_names)
-          )
-        OPTIONAL MATCH (source)-[:HAS_SUMMARY]->(source_summary:EntitySummary)
-        OPTIONAL MATCH (target)-[:HAS_SUMMARY]->(target_summary:EntitySummary)
-        RETURN
-            source.normalized_name AS source_normalized_name,
-            source.canonical_name AS source_canonical_name,
-            source.display_name AS source_display_name,
-            source.entity_type AS source_entity_type,
-            coalesce(source.aliases, []) AS source_aliases,
-            coalesce(source.alias_keys, []) AS source_alias_keys,
-            source_summary.summary AS source_summary,
-            properties(source) AS source_props,
-            target.normalized_name AS target_normalized_name,
-            target.canonical_name AS target_canonical_name,
-            target.display_name AS target_display_name,
-            target.entity_type AS target_entity_type,
-            coalesce(target.aliases, []) AS target_aliases,
-            coalesce(target.alias_keys, []) AS target_alias_keys,
-            target_summary.summary AS target_summary,
-            properties(target) AS target_props,
-            r.relation_type AS relation_type,
-            r.evidence AS evidence,
-            r.summary AS summary,
-            properties(r) AS relation_props
-        """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(
-                query,
-                knowledge_base_id=knowledge_base_id,
-                team_id=team_id,
-                lookup_names=lookup_names,
-                document_id=document_id,
-            )
-            rows: list[dict[str, Any]] = []
-            async for record in result:
-                rows.append(dict(record))
-            return rows
-
-    async def upsert_relation_summaries(self, rows: list[dict[str, Any]]) -> None:
-        if not rows:
-            return None
-        await self._run(
-            """
-            UNWIND $rows AS row
-            MATCH (source:Entity {
-                team_id: row.team_id,
-                knowledge_base_id: row.knowledge_base_id,
-                normalized_name: row.source_normalized_name
-            })
-            MATCH (target:Entity {
-                team_id: row.team_id,
-                knowledge_base_id: row.knowledge_base_id,
-                normalized_name: row.target_normalized_name
-            })
-            MATCH (source)-[r:RELATED {
-                team_id: row.team_id,
-                knowledge_base_id: row.knowledge_base_id,
-                source_normalized_name: row.source_normalized_name,
-                target_normalized_name: row.target_normalized_name,
-                relation_type: row.relation_type
-            }]->(target)
-            SET r.summary = row.summary
-            """,
-            rows=rows,
+        return await self._fetch_all(
+            query,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            candidate=normalized_candidate,
         )
 
     async def search_related_evidence(
@@ -828,61 +523,51 @@ class Neo4jGraphStore:
         team_id: int,
         limit: int,
     ) -> list[dict[str, Any]]:
-        normalized_names = [" ".join(item.split()).strip().casefold() for item in entity_names]
-        normalized_names = [item for item in normalized_names if item]
+        normalized_names = [_normalize_lookup_value(item) for item in entity_names if _normalize_lookup_value(item)]
         if not normalized_names:
             return []
         query = """
-        MATCH (e:Entity)
-        WHERE e.team_id = $team_id
-          AND e.knowledge_base_id = $knowledge_base_id
+        MATCH (anchor:Entity)
+        WHERE anchor.team_id = $team_id
+          AND anchor.knowledge_base_id = $knowledge_base_id
           AND (
-            e.normalized_name IN $entity_names
-            OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) IN $entity_names)
-            OR any(alias_key IN coalesce(e.alias_keys, []) WHERE alias_key IN $entity_names)
+            toLower(anchor.name) IN $entity_names
+            OR any(alias IN coalesce(anchor.aliases, []) WHERE toLower(alias) IN $entity_names)
           )
         CALL {
-          WITH e
-          MATCH (e)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(other:Entity)
+          WITH anchor
+          MATCH (anchor)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(other:Entity)
           OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
-          RETURN ev, other, chunk, null AS mention
+          RETURN ev, anchor AS source_entity, other AS target_entity, chunk
           UNION
-          WITH e
-          MATCH (other:Entity)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(e)
+          WITH anchor
+          MATCH (other:Entity)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(anchor)
           OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
-          RETURN ev, other, chunk, null AS mention
-          UNION
-          WITH e
-          MATCH (e)-[mention:MENTIONED_IN]->(chunk:Chunk)
-          RETURN null AS ev, null AS other, chunk, mention
+          RETURN ev, other AS source_entity, anchor AS target_entity, chunk
         }
-        WHERE chunk IS NOT NULL
-          AND chunk.knowledge_base_id = $knowledge_base_id
-          AND chunk.team_id = $team_id
         RETURN DISTINCT
-             chunk.knowledge_base_id AS knowledge_base_id,
-             chunk.team_id AS team_id,
-             coalesce(chunk.document_id, ev.document_id) AS document_id,
-             coalesce(chunk.document_chunk_id, ev.document_chunk_id) AS document_chunk_id,
-             chunk.document_title AS document_title,
-             chunk.section_path AS section_path,
-             ev.relation_type AS relation_type,
-             coalesce(ev.evidence, mention.evidence) AS evidence,
-             [name IN [e.display_name, other.display_name] WHERE name IS NOT NULL] AS matched_entities
+            ev.document_id AS document_id,
+            ev.document_chunk_id AS document_chunk_id,
+            coalesce(chunk.document_title, "Graph relation evidence") AS document_title,
+            chunk.section_path AS section_path,
+            ev.relation_type AS relation_type,
+            ev.evidence_text AS evidence,
+            source_entity.id AS source_entity_id,
+            source_entity.name AS source_name,
+            source_entity.entity_type AS source_entity_type,
+            target_entity.id AS target_entity_id,
+            target_entity.name AS target_name,
+            target_entity.entity_type AS target_entity_type,
+            [source_entity.name, target_entity.name] AS matched_entities
         LIMIT $limit
         """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(
-                query,
-                entity_names=normalized_names,
-                knowledge_base_id=knowledge_base_id,
-                team_id=team_id,
-                limit=max(1, limit),
-            )
-            rows: list[dict[str, Any]] = []
-            async for record in result:
-                rows.append(dict(record))
-            return rows
+        return await self._fetch_all(
+            query,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            entity_names=normalized_names,
+            limit=max(1, limit),
+        )
 
     async def search_relation_evidence_for_pairs(
         self,
@@ -894,46 +579,45 @@ class Neo4jGraphStore:
     ) -> list[dict[str, Any]]:
         rows = [
             {
-                "source": " ".join(str(item.get("source") or "").split()).strip().casefold(),
-                "target": " ".join(str(item.get("target") or "").split()).strip().casefold(),
+                "source": _normalize_lookup_value(item.get("source")),
+                "target": _normalize_lookup_value(item.get("target")),
             }
             for item in relation_pairs
-            if str(item.get("source") or "").strip() and str(item.get("target") or "").strip()
+            if _normalize_lookup_value(item.get("source")) and _normalize_lookup_value(item.get("target"))
         ]
         if not rows:
             return []
         query = """
         UNWIND $rows AS row
-        MATCH (source:Entity)-[:HAS_RELATION_EVIDENCE]->(evidence:RelationEvidence)-[:EVIDENCE_TARGET]->(target:Entity)
-        WHERE evidence.knowledge_base_id = $knowledge_base_id
-          AND evidence.team_id = $team_id
-          AND toLower(source.normalized_name) = row.source
-          AND toLower(target.normalized_name) = row.target
-        OPTIONAL MATCH (evidence)-[:FROM_CHUNK]->(chunk:Chunk)
+        MATCH (source:Entity)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(target:Entity)
+        WHERE ev.team_id = $team_id
+          AND ev.knowledge_base_id = $knowledge_base_id
+          AND (toLower(source.name) = row.source OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) = row.source))
+          AND (toLower(target.name) = row.target OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) = row.target))
+        OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
         RETURN DISTINCT
-             coalesce(chunk.knowledge_base_id, evidence.knowledge_base_id) AS knowledge_base_id,
-             coalesce(chunk.team_id, evidence.team_id) AS team_id,
-             coalesce(chunk.document_id, evidence.document_id) AS document_id,
-             coalesce(chunk.document_chunk_id, evidence.document_chunk_id) AS document_chunk_id,
-             coalesce(chunk.document_title, "Graph relation evidence") AS document_title,
-             chunk.section_path AS section_path,
-             evidence.relation_type AS relation_type,
-             evidence.evidence AS evidence,
-             [name IN [source.display_name, target.display_name] WHERE name IS NOT NULL] AS matched_entities
+            ev.document_id AS document_id,
+            ev.document_chunk_id AS document_chunk_id,
+            coalesce(chunk.document_title, "Graph relation evidence") AS document_title,
+            chunk.section_path AS section_path,
+            ev.relation_type AS relation_type,
+            ev.evidence_text AS evidence,
+            source.id AS source_entity_id,
+            source.name AS source_name,
+            source.entity_type AS source_entity_type,
+            target.id AS target_entity_id,
+            target.name AS target_name,
+            target.entity_type AS target_entity_type,
+            [source.name, target.name] AS matched_entities
         LIMIT $limit
         """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(
-                query,
-                rows=rows,
-                knowledge_base_id=knowledge_base_id,
-                team_id=team_id,
-                limit=max(1, limit),
-            )
-            output: list[dict[str, Any]] = []
-            async for record in result:
-                output.append(dict(record))
-            return output
+        return await self._fetch_all(
+            query,
+            rows=rows,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            limit=max(1, limit),
+        )
 
     async def search_relation_evidence_for_queries(
         self,
@@ -945,11 +629,12 @@ class Neo4jGraphStore:
     ) -> list[dict[str, Any]]:
         rows = [
             {
-                "anchor_entity": " ".join(str(item.get("anchor_entity") or "").split()).strip().casefold(),
-                "direction": str(item.get("direction") or "outgoing").strip().lower() or "outgoing",
+                "anchor_entity": _normalize_lookup_value(item.get("anchor_entity")),
+                "target_entity": _normalize_lookup_value(item.get("target_entity")),
+                "direction": clean_graph_text(item.get("direction")).lower() or "outgoing",
             }
             for item in relation_queries
-            if str(item.get("anchor_entity") or "").strip()
+            if _normalize_lookup_value(item.get("anchor_entity"))
         ]
         if not rows:
             return []
@@ -958,43 +643,44 @@ class Neo4jGraphStore:
         MATCH (anchor:Entity)
         WHERE anchor.team_id = $team_id
           AND anchor.knowledge_base_id = $knowledge_base_id
-          AND toLower(anchor.normalized_name) = row.anchor_entity
+          AND (toLower(anchor.name) = row.anchor_entity OR any(alias IN coalesce(anchor.aliases, []) WHERE toLower(alias) = row.anchor_entity))
         CALL {
           WITH anchor, row
-          MATCH (anchor)-[:HAS_RELATION_EVIDENCE]->(evidence:RelationEvidence)-[:EVIDENCE_TARGET]->(other:Entity)
+          MATCH (anchor)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(other:Entity)
           WHERE row.direction <> 'incoming'
-          RETURN evidence, other
+            AND (row.target_entity = '' OR toLower(other.name) = row.target_entity OR any(alias IN coalesce(other.aliases, []) WHERE toLower(alias) = row.target_entity))
+          RETURN anchor AS source_entity, other AS target_entity, ev
           UNION
           WITH anchor, row
-          MATCH (other:Entity)-[:HAS_RELATION_EVIDENCE]->(evidence:RelationEvidence)-[:EVIDENCE_TARGET]->(anchor)
+          MATCH (other:Entity)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(anchor)
           WHERE row.direction = 'incoming'
-          RETURN evidence, other
+            AND (row.target_entity = '' OR toLower(other.name) = row.target_entity OR any(alias IN coalesce(other.aliases, []) WHERE toLower(alias) = row.target_entity))
+          RETURN other AS source_entity, anchor AS target_entity, ev
         }
-        OPTIONAL MATCH (evidence)-[:FROM_CHUNK]->(chunk:Chunk)
+        OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
         RETURN DISTINCT
-             coalesce(chunk.knowledge_base_id, evidence.knowledge_base_id) AS knowledge_base_id,
-             coalesce(chunk.team_id, evidence.team_id) AS team_id,
-             coalesce(chunk.document_id, evidence.document_id) AS document_id,
-             coalesce(chunk.document_chunk_id, evidence.document_chunk_id) AS document_chunk_id,
-             coalesce(chunk.document_title, "Graph relation evidence") AS document_title,
-             chunk.section_path AS section_path,
-             evidence.relation_type AS relation_type,
-             evidence.evidence AS evidence,
-             [name IN [anchor.display_name, other.display_name] WHERE name IS NOT NULL] AS matched_entities
+            ev.document_id AS document_id,
+            ev.document_chunk_id AS document_chunk_id,
+            coalesce(chunk.document_title, "Graph relation evidence") AS document_title,
+            chunk.section_path AS section_path,
+            ev.relation_type AS relation_type,
+            ev.evidence_text AS evidence,
+            source_entity.id AS source_entity_id,
+            source_entity.name AS source_name,
+            source_entity.entity_type AS source_entity_type,
+            target_entity.id AS target_entity_id,
+            target_entity.name AS target_name,
+            target_entity.entity_type AS target_entity_type,
+            [source_entity.name, target_entity.name] AS matched_entities
         LIMIT $limit
         """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(
-                query,
-                rows=rows,
-                knowledge_base_id=knowledge_base_id,
-                team_id=team_id,
-                limit=max(1, limit),
-            )
-            output: list[dict[str, Any]] = []
-            async for record in result:
-                output.append(dict(record))
-            return output
+        return await self._fetch_all(
+            query,
+            rows=rows,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            limit=max(1, limit),
+        )
 
     async def search_relation_paths(
         self,
@@ -1007,212 +693,56 @@ class Neo4jGraphStore:
         max_hops: int,
         limit: int,
     ) -> list[dict[str, Any]]:
-        resolved_limit = max(1, limit)
-        resolved_max_hops = max(2, min(int(max_hops), 4))
+        resolved_limit = max(1, int(limit))
+        resolved_max_hops = max(2, min(int(max_hops or 2), 4))
         hop_pattern = f"*1..{resolved_max_hops}"
         rows: list[dict[str, Any]] = []
 
         async def _collect(query: str, **params: Any) -> None:
-            async with self._driver.session(database=self._database) as session:
-                result = await session.run(query, **params)
-                async for record in result:
-                    rows.append(dict(record))
+            rows.extend(await self._fetch_all(query, **params))
 
         def _apply_hop_pattern(query: str) -> str:
             return query.replace("__HOP_PATTERN__", hop_pattern)
 
         pair_rows = [
             {
-                "source": " ".join(str(item.get("source") or "").split()).strip().casefold(),
-                "target": " ".join(str(item.get("target") or "").split()).strip().casefold(),
+                "source": _normalize_lookup_value(item.get("source")),
+                "target": _normalize_lookup_value(item.get("target")),
             }
             for item in relation_pairs
-            if str(item.get("source") or "").strip() and str(item.get("target") or "").strip()
+            if _normalize_lookup_value(item.get("source")) and _normalize_lookup_value(item.get("target"))
         ]
         if pair_rows:
             await _collect(
                 _apply_hop_pattern(
                     """
-                UNWIND $rows AS row
-                MATCH (source:Entity), (target:Entity)
-                WHERE source.team_id = $team_id
-                  AND source.knowledge_base_id = $knowledge_base_id
-                  AND target.team_id = $team_id
-                  AND target.knowledge_base_id = $knowledge_base_id
-                  AND toLower(source.normalized_name) = row.source
-                  AND toLower(target.normalized_name) = row.target
-                MATCH p = shortestPath((source)-[:RELATED__HOP_PATTERN__]->(target))
-                WITH p, nodes(p) AS path_nodes, relationships(p) AS rels
-                UNWIND range(0, size(rels) - 1) AS idx
-                WITH
-                    p,
-                    path_nodes,
-                    idx,
-                    rels[idx] AS rel,
-                    path_nodes[idx] AS source_node,
-                    path_nodes[idx + 1] AS target_node
-                OPTIONAL MATCH (source_node)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(target_node)
-                WHERE ev.team_id = $team_id
-                  AND ev.knowledge_base_id = $knowledge_base_id
-                  AND ev.relation_type = rel.relation_type
-                OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
-                WITH
-                    p,
-                    path_nodes,
-                    idx,
-                    rel,
-                    collect({
-                        relation_type: ev.relation_type,
-                        evidence: ev.evidence,
-                        document_id: coalesce(chunk.document_id, ev.document_id),
-                        document_chunk_id: coalesce(chunk.document_chunk_id, ev.document_chunk_id),
-                        document_title: coalesce(chunk.document_title, 'Graph relation evidence'),
-                        section_path: chunk.section_path
-                    }) AS evidence_rows
-                ORDER BY idx ASC
-                RETURN
-                    [node IN path_nodes | {
-                        normalized_name: node.normalized_name,
-                        display_name: node.display_name,
-                        entity_type: node.entity_type
-                    }] AS path_entities,
-                    collect({
-                        source_normalized_name: rel.source_normalized_name,
-                        target_normalized_name: rel.target_normalized_name,
-                        relation_type: rel.relation_type,
-                        evidence: rel.evidence,
-                        document_id: rel.document_id,
-                        document_chunk_id: rel.document_chunk_id,
-                        evidence_rows: evidence_rows
-                    }) AS path_relations,
-                    length(p) AS hop_count
-                LIMIT $limit
-                """
+                    UNWIND $rows AS row
+                    MATCH (source:Entity), (target:Entity)
+                    WHERE source.team_id = $team_id
+                      AND source.knowledge_base_id = $knowledge_base_id
+                      AND target.team_id = $team_id
+                      AND target.knowledge_base_id = $knowledge_base_id
+                      AND (toLower(source.name) = row.source OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) = row.source))
+                      AND (toLower(target.name) = row.target OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) = row.target))
+                    MATCH p = shortestPath((source)-[:RELATED__HOP_PATTERN__]->(target))
+                    WITH p, nodes(p) AS path_nodes, relationships(p) AS path_relationships
+                    RETURN
+                      [node IN path_nodes | {entity_id: node.id, name: node.name, entity_type: node.entity_type}] AS path_entities,
+                      [rel IN path_relationships | {relation_type: rel.relation_type}] AS path_relations
+                    LIMIT $limit
+                    """
                 ),
                 rows=pair_rows,
-                knowledge_base_id=knowledge_base_id,
                 team_id=team_id,
+                knowledge_base_id=knowledge_base_id,
                 limit=resolved_limit,
             )
 
-        query_rows = [
-            {
-                "anchor_entity": " ".join(str(item.get("anchor_entity") or "").split()).strip().casefold(),
-                "target_entity": " ".join(str(item.get("target_entity") or "").split()).strip().casefold(),
-                "direction": str(item.get("direction") or "outgoing").strip().lower() or "outgoing",
-            }
-            for item in relation_queries
-            if str(item.get("anchor_entity") or "").strip()
-        ]
-        if query_rows:
+        if not pair_rows and len(entity_names) >= 2:
+            normalized_names = [_normalize_lookup_value(item) for item in entity_names if _normalize_lookup_value(item)]
             await _collect(
                 _apply_hop_pattern(
                     """
-                UNWIND $rows AS row
-                MATCH (anchor:Entity)
-                WHERE anchor.team_id = $team_id
-                  AND anchor.knowledge_base_id = $knowledge_base_id
-                  AND toLower(anchor.normalized_name) = row.anchor_entity
-                CALL {
-                  WITH anchor, row
-                  MATCH (target:Entity)
-                  WHERE target.team_id = $team_id
-                    AND target.knowledge_base_id = $knowledge_base_id
-                    AND row.target_entity <> ''
-                    AND toLower(target.normalized_name) = row.target_entity
-                  MATCH p = shortestPath((anchor)-[:RELATED__HOP_PATTERN__]->(target))
-                  WHERE row.direction <> 'incoming'
-                  RETURN p
-                  UNION
-                  WITH anchor, row
-                  MATCH (target:Entity)
-                  WHERE target.team_id = $team_id
-                    AND target.knowledge_base_id = $knowledge_base_id
-                    AND row.target_entity <> ''
-                    AND toLower(target.normalized_name) = row.target_entity
-                  MATCH p = shortestPath((target)-[:RELATED__HOP_PATTERN__]->(anchor))
-                  WHERE row.direction = 'incoming'
-                  RETURN p
-                  UNION
-                  WITH anchor, row
-                  MATCH p = (anchor)-[:RELATED__HOP_PATTERN__]->(target:Entity)
-                  WHERE row.target_entity = ''
-                    AND row.direction <> 'incoming'
-                  RETURN p
-                  ORDER BY length(p) ASC
-                  LIMIT $limit
-                  UNION
-                  WITH anchor, row
-                  MATCH p = (target:Entity)-[:RELATED__HOP_PATTERN__]->(anchor)
-                  WHERE row.target_entity = ''
-                    AND row.direction = 'incoming'
-                  RETURN p
-                  ORDER BY length(p) ASC
-                  LIMIT $limit
-                }
-                WITH p, nodes(p) AS path_nodes, relationships(p) AS rels
-                UNWIND range(0, size(rels) - 1) AS idx
-                WITH
-                    p,
-                    path_nodes,
-                    idx,
-                    rels[idx] AS rel,
-                    path_nodes[idx] AS source_node,
-                    path_nodes[idx + 1] AS target_node
-                OPTIONAL MATCH (source_node)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(target_node)
-                WHERE ev.team_id = $team_id
-                  AND ev.knowledge_base_id = $knowledge_base_id
-                  AND ev.relation_type = rel.relation_type
-                OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
-                WITH
-                    p,
-                    path_nodes,
-                    idx,
-                    rel,
-                    collect({
-                        relation_type: ev.relation_type,
-                        evidence: ev.evidence,
-                        document_id: coalesce(chunk.document_id, ev.document_id),
-                        document_chunk_id: coalesce(chunk.document_chunk_id, ev.document_chunk_id),
-                        document_title: coalesce(chunk.document_title, 'Graph relation evidence'),
-                        section_path: chunk.section_path
-                    }) AS evidence_rows
-                ORDER BY idx ASC
-                RETURN
-                    [node IN path_nodes | {
-                        normalized_name: node.normalized_name,
-                        display_name: node.display_name,
-                        entity_type: node.entity_type
-                    }] AS path_entities,
-                    collect({
-                        source_normalized_name: rel.source_normalized_name,
-                        target_normalized_name: rel.target_normalized_name,
-                        relation_type: rel.relation_type,
-                        evidence: rel.evidence,
-                        document_id: rel.document_id,
-                        document_chunk_id: rel.document_chunk_id,
-                        evidence_rows: evidence_rows
-                    }) AS path_relations,
-                    length(p) AS hop_count
-                LIMIT $limit
-                """
-                ),
-                rows=query_rows,
-                knowledge_base_id=knowledge_base_id,
-                team_id=team_id,
-                limit=resolved_limit,
-            )
-
-        if not pair_rows and not query_rows:
-            normalized_names = [
-                " ".join(str(item or "").split()).strip().casefold()
-                for item in entity_names
-                if " ".join(str(item or "").split()).strip()
-            ]
-            if len(normalized_names) >= 2:
-                await _collect(
-                    _apply_hop_pattern(
-                        """
                     UNWIND $entity_names AS source_name
                     UNWIND $entity_names AS target_name
                     WITH source_name, target_name
@@ -1222,153 +752,147 @@ class Neo4jGraphStore:
                       AND source.knowledge_base_id = $knowledge_base_id
                       AND target.team_id = $team_id
                       AND target.knowledge_base_id = $knowledge_base_id
-                      AND toLower(source.normalized_name) = source_name
-                      AND toLower(target.normalized_name) = target_name
+                      AND (toLower(source.name) = source_name OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) = source_name))
+                      AND (toLower(target.name) = target_name OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) = target_name))
                     MATCH p = shortestPath((source)-[:RELATED__HOP_PATTERN__]-(target))
-                    WITH p, nodes(p) AS path_nodes, relationships(p) AS rels
-                    UNWIND range(0, size(rels) - 1) AS idx
-                    WITH
-                        p,
-                        path_nodes,
-                        idx,
-                        rels[idx] AS rel,
-                        path_nodes[idx] AS source_node,
-                        path_nodes[idx + 1] AS target_node
-                    OPTIONAL MATCH (source_node)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(target_node)
-                    WHERE ev.team_id = $team_id
-                      AND ev.knowledge_base_id = $knowledge_base_id
-                      AND ev.relation_type = rel.relation_type
-                    OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
-                    WITH
-                        p,
-                        path_nodes,
-                        idx,
-                        rel,
-                        collect({
-                            relation_type: ev.relation_type,
-                            evidence: ev.evidence,
-                            document_id: coalesce(chunk.document_id, ev.document_id),
-                            document_chunk_id: coalesce(chunk.document_chunk_id, ev.document_chunk_id),
-                            document_title: coalesce(chunk.document_title, 'Graph relation evidence'),
-                            section_path: chunk.section_path
-                        }) AS evidence_rows
-                    ORDER BY idx ASC
+                    WITH p, nodes(p) AS path_nodes, relationships(p) AS path_relationships
                     RETURN
-                        [node IN path_nodes | {
-                            normalized_name: node.normalized_name,
-                            display_name: node.display_name,
-                            entity_type: node.entity_type
-                        }] AS path_entities,
-                        collect({
-                            source_normalized_name: rel.source_normalized_name,
-                            target_normalized_name: rel.target_normalized_name,
-                            relation_type: rel.relation_type,
-                            evidence: rel.evidence,
-                            document_id: rel.document_id,
-                            document_chunk_id: rel.document_chunk_id,
-                            evidence_rows: evidence_rows
-                        }) AS path_relations,
-                        length(p) AS hop_count
-                    ORDER BY hop_count ASC
+                      [node IN path_nodes | {entity_id: node.id, name: node.name, entity_type: node.entity_type}] AS path_entities,
+                      [rel IN path_relationships | {relation_type: rel.relation_type}] AS path_relations
                     LIMIT $limit
                     """
-                    ),
-                    entity_names=normalized_names[:4],
-                    knowledge_base_id=knowledge_base_id,
-                    team_id=team_id,
-                    limit=resolved_limit,
-                )
+                ),
+                entity_names=normalized_names[:4],
+                team_id=team_id,
+                knowledge_base_id=knowledge_base_id,
+                limit=resolved_limit,
+            )
 
         normalized_rows: list[dict[str, Any]] = []
-        for row in rows:
+        for row in rows[:resolved_limit]:
             path_entities = [dict(item) for item in list(row.get("path_entities") or []) if isinstance(item, dict)]
             path_relations = [dict(item) for item in list(row.get("path_relations") or []) if isinstance(item, dict)]
             if len(path_entities) < 2 or not path_relations:
                 continue
+            matched_entities = [clean_graph_text(item.get("name")) for item in path_entities if clean_graph_text(item.get("name"))]
             signature_parts: list[str] = []
-            matched_entities: list[str] = []
             for index, entity in enumerate(path_entities):
-                display_name = " ".join(str(entity.get("display_name") or entity.get("normalized_name") or "").split()).strip()
-                if not display_name:
+                entity_name = clean_graph_text(entity.get("name"))
+                if not entity_name:
                     continue
-                matched_entities.append(display_name)
-                signature_parts.append(display_name)
+                signature_parts.append(entity_name)
                 if index < len(path_relations):
-                    relation_type = " ".join(str(path_relations[index].get("relation_type") or "RELATED_TO").split()).strip()
-                    signature_parts.append(f"-[{relation_type}]->")
+                    signature_parts.append(f"-[{clean_graph_text(path_relations[index].get('relation_type')) or 'RELATED_TO'}]->")
             signature = " ".join(signature_parts).strip()
-            evidence_rows = []
-            for relation in path_relations:
-                relation_evidence_rows = [
-                    dict(item)
-                    for item in list(relation.get("evidence_rows") or [])
-                    if isinstance(item, dict)
-                ]
-                normalized_relation_evidence = [
-                    {
-                        "relation_type": " ".join(
-                            str(item.get("relation_type") or relation.get("relation_type") or "").split()
-                        ).strip()
-                        or None,
-                        "evidence": " ".join(str(item.get("evidence") or "").split()).strip() or None,
-                        "document_id": item.get("document_id"),
-                        "document_chunk_id": item.get("document_chunk_id"),
-                        "document_title": " ".join(str(item.get("document_title") or "").split()).strip()
-                        or None,
-                        "section_path": " ".join(str(item.get("section_path") or "").split()).strip()
-                        or None,
-                    }
-                    for item in relation_evidence_rows
-                    if " ".join(str(item.get("evidence") or "").split()).strip()
-                ]
-                if normalized_relation_evidence:
-                    evidence_rows.extend(normalized_relation_evidence)
-                    continue
-                evidence_text = " ".join(str(relation.get("evidence") or "").split()).strip()
-                if not evidence_text:
-                    continue
-                evidence_rows.append(
-                    {
-                        "relation_type": relation.get("relation_type"),
-                        "evidence": evidence_text,
-                        "document_id": relation.get("document_id"),
-                        "document_chunk_id": relation.get("document_chunk_id"),
-                        "document_title": None,
-                        "section_path": None,
-                    }
+            evidence_rows: list[dict[str, Any]] = []
+            for source_entity, target_entity, relation in zip(path_entities, path_entities[1:], path_relations):
+                evidence_query = """
+                MATCH (source:Entity {id: $source_entity_id})-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(target:Entity {id: $target_entity_id})
+                WHERE ev.team_id = $team_id
+                  AND ev.knowledge_base_id = $knowledge_base_id
+                  AND ev.relation_type = $relation_type
+                OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
+                RETURN
+                    ev.evidence_text AS evidence,
+                    ev.relation_type AS relation_type,
+                    ev.document_id AS document_id,
+                    ev.document_chunk_id AS document_chunk_id,
+                    chunk.document_title AS document_title,
+                    chunk.section_path AS section_path
+                LIMIT 1
+                """
+                evidence_rows.extend(
+                    await self._fetch_all(
+                        evidence_query,
+                        source_entity_id=source_entity.get("entity_id"),
+                        target_entity_id=target_entity.get("entity_id"),
+                        relation_type=clean_graph_text(relation.get("relation_type")) or "RELATED_TO",
+                        team_id=team_id,
+                        knowledge_base_id=knowledge_base_id,
+                    )
                 )
-            content = " -> ".join(matched_entities)
-            if evidence_rows:
-                content = "；".join(
-                    [
-                        signature,
-                        *[
-                            f"{row['relation_type']}: {row['evidence']}"
-                            for row in evidence_rows[: max(1, min(2, len(evidence_rows)))]
-                        ],
-                    ]
-                )
-            path_id = hashlib.sha1(signature.encode("utf-8")).hexdigest() if signature else ""
             normalized_rows.append(
                 {
-                    "path_id": path_id,
+                    "path_id": signature,
                     "signature": signature,
-                    "hop_count": int(row.get("hop_count") or len(path_relations)),
-                    "content": content,
-                    "relation_types": [
-                        " ".join(str(relation.get("relation_type") or "").split()).strip()
-                        for relation in path_relations
-                        if " ".join(str(relation.get("relation_type") or "").split()).strip()
-                    ],
+                    "hop_count": len(path_relations),
+                    "content": signature,
                     "matched_entities": matched_entities,
+                    "relation_types": [
+                        clean_graph_text(item.get("relation_type")) or "RELATED_TO"
+                        for item in path_relations
+                    ],
                     "evidence": evidence_rows,
                 }
             )
         return normalized_rows[:resolved_limit]
 
-    async def _run(self, query: str, **params) -> None:
-        async with self._driver.session(database=self._database) as session:
-            await session.run(query, params)
+    async def _fetch_all(self, query: str, **params: Any) -> list[dict[str, Any]]:
+        for attempt in range(1, _GRAPH_STORE_MAX_RETRIES + 1):
+            try:
+                async with self._driver.session(database=self._database) as session:
+                    result = await session.run(query, **params)
+                    rows: list[dict[str, Any]] = []
+                    async for record in result:
+                        rows.append(dict(record))
+                    await result.consume()
+                    return rows
+            except Exception as exc:
+                if not _is_retryable_graph_store_error(exc) or attempt >= _GRAPH_STORE_MAX_RETRIES:
+                    raise
+                await _sleep_before_graph_store_retry(
+                    action="fetch",
+                    attempt=attempt,
+                    database=self._database,
+                    error=exc,
+                )
+        return []
+
+    async def _run(self, query: str, **params: Any) -> None:
+        for attempt in range(1, _GRAPH_STORE_MAX_RETRIES + 1):
+            try:
+                async with self._driver.session(database=self._database) as session:
+                    result = await session.run(query, **params)
+                    await result.consume()
+                    return None
+            except Exception as exc:
+                if not _is_retryable_graph_store_error(exc) or attempt >= _GRAPH_STORE_MAX_RETRIES:
+                    raise
+                await _sleep_before_graph_store_retry(
+                    action="run",
+                    attempt=attempt,
+                    database=self._database,
+                    error=exc,
+                )
+
+
+def _is_retryable_graph_store_error(error: Exception) -> bool:
+    try:
+        from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
+    except ModuleNotFoundError:  # pragma: no cover
+        return isinstance(error, OSError)
+
+    return isinstance(error, (OSError, ServiceUnavailable, SessionExpired, TransientError))
+
+
+async def _sleep_before_graph_store_retry(
+    *,
+    action: str,
+    attempt: int,
+    database: str,
+    error: Exception,
+) -> None:
+    delay_seconds = _GRAPH_STORE_RETRY_DELAY_SECONDS * attempt
+    logger.warning(
+        "Neo4j graph store {} failed attempt={}/{} database={} retry_in={}s error={}",
+        action,
+        attempt,
+        _GRAPH_STORE_MAX_RETRIES,
+        database,
+        delay_seconds,
+        error,
+    )
+    await asyncio.sleep(delay_seconds)
 
 
 def get_graph_store(*, require_indexing: bool = True) -> GraphStore:
