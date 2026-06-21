@@ -259,22 +259,13 @@ class DocumentService:
         return str(PurePosixPath(*parts))
 
     @classmethod
-    def _infer_category_parts(cls, source_path: str | None) -> tuple[str | None, str | None]:
-        """Extract (parent_name, child_name) from source_path segments.
-
-        "FolderA/SubFolder/file.txt" -> ("FolderA", "SubFolder")
-        "FolderA/file.txt"           -> ("FolderA", None)
-        "file.txt"                   -> (None, None)
-        """
+    def _extract_folder_segments(cls, source_path: str | None) -> list[str]:
+        """Extract all folder segments from a file source path."""
         normalized = cls._normalize_source_path(source_path)
         if not normalized or "/" not in normalized:
-            return None, None
+            return []
         parts = normalized.split("/")
-        # parts[0..n-2] are folder segments, parts[-1] is the filename
-        folder_parts = parts[:-1]
-        parent_name = folder_parts[0].strip() or None if len(folder_parts) >= 1 else None
-        child_name = folder_parts[1].strip() or None if len(folder_parts) >= 2 else None
-        return parent_name, child_name
+        return [part.strip() for part in parts[:-1] if part.strip()]
 
     async def _resolve_document_location(
         self,
@@ -303,22 +294,14 @@ class DocumentService:
                     status_code=400,
                     detail="Category does not belong to the selected knowledge base",
                 )
-        else:
-            parent_name, child_name = self._infer_category_parts(normalized_path)
-            if parent_name:
-                parent_cat = await category_repo.get_or_create(
-                    knowledge_base_id=knowledge_base_id,
-                    name=parent_name,
-                    parent_id=None,
-                )
-                if child_name:
-                    category = await category_repo.get_or_create(
-                        knowledge_base_id=knowledge_base_id,
-                        name=child_name,
-                        parent_id=parent_cat.id,
-                    )
-                else:
-                    category = parent_cat
+        parent_category_id = category.id if category is not None else None
+        for folder_name in self._extract_folder_segments(normalized_path):
+            category = await category_repo.get_or_create(
+                knowledge_base_id=knowledge_base_id,
+                name=folder_name,
+                parent_id=parent_category_id,
+            )
+            parent_category_id = category.id
         return knowledge_base_id, category.id if category else None, normalized_path
 
     def _to_response(

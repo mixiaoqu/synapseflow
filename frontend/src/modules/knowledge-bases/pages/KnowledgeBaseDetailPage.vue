@@ -54,7 +54,6 @@ import { useAdminBreadcrumbStore } from "@/stores/admin-breadcrumb";
 import { useTeamScopeStore } from "@/stores/team-scope";
 import { isForbiddenError } from "@/shared/utils/error";
 import type {
-  DocumentCategorySummary,
   DocumentCategoryTreeNode,
 } from "@/shared/types/document-category";
 import type {
@@ -65,11 +64,19 @@ import type { KnowledgeBaseSummary } from "@/shared/types/knowledge-base";
 
 type CategoryFilterKey = "all" | number;
 
-interface CategoryNavItem {
-  key: CategoryFilterKey;
+interface CategoryTreeListItem {
+  node: DocumentCategoryTreeNode;
+  depth: number;
+  path: string;
+  hasChildren: boolean;
+}
+
+interface CategorySelectOption {
+  id: number;
+  depth: number;
   label: string;
-  count: number | null;
-  categoryId: number | null;
+  path: string;
+  node: DocumentCategoryTreeNode;
 }
 
 interface DocumentStatusTabItem {
@@ -91,7 +98,6 @@ interface UploadQueueItem {
 
 interface UploadInputFile extends File {
   customPath?: string;
-  webkitRelativePath?: string;
 }
 
 interface FileSystemEntryLike {
@@ -153,37 +159,55 @@ function findCategoryById(id: number): DocumentCategoryTreeNode | undefined {
   return flattenCategoryTree(categories.value).find((c) => c.id === id);
 }
 
-const categoryNavItems = computed<CategoryNavItem[]>(() => {
-  const items: CategoryNavItem[] = [
-    {
-      key: "all",
-      label: "全部文档",
-      count: knowledgeBase.value?.document_count ?? null,
-      categoryId: null,
-    },
-  ];
-
-  for (const category of categories.value) {
-    items.push({
-      key: category.id,
-      label: category.name,
-      count: category.document_count,
-      categoryId: category.id,
+function collectCategorySelectOptions(
+  nodes: DocumentCategoryTreeNode[],
+  depth = 0,
+  parentPath = "",
+): CategorySelectOption[] {
+  const options: CategorySelectOption[] = [];
+  for (const node of nodes) {
+    const path = parentPath ? `${parentPath}/${node.name}` : node.name;
+    options.push({
+      id: node.id,
+      depth,
+      label: node.name,
+      path,
+      node,
     });
-    if (category.children.length > 0) {
-      for (const child of category.children) {
-        items.push({
-          key: child.id,
-          label: child.name,
-          count: child.document_count,
-          categoryId: child.id,
-        });
-      }
+    if (node.children.length > 0) {
+      options.push(...collectCategorySelectOptions(node.children, depth + 1, path));
     }
   }
+  return options;
+}
 
+function collectVisibleCategoryItems(
+  nodes: DocumentCategoryTreeNode[],
+  expandedIds: Set<number>,
+  depth = 0,
+  parentPath = "",
+): CategoryTreeListItem[] {
+  const items: CategoryTreeListItem[] = [];
+  for (const node of nodes) {
+    const path = parentPath ? `${parentPath}/${node.name}` : node.name;
+    const hasChildren = node.children.length > 0;
+    items.push({
+      node,
+      depth,
+      path,
+      hasChildren,
+    });
+    if (hasChildren && expandedIds.has(node.id)) {
+      items.push(...collectVisibleCategoryItems(node.children, expandedIds, depth + 1, path));
+    }
+  }
   return items;
-});
+}
+
+const categorySelectOptions = computed(() => collectCategorySelectOptions(categories.value));
+const visibleCategoryItems = computed(() =>
+  collectVisibleCategoryItems(categories.value, expandedCategoryIds.value),
+);
 
 const isForbidden = computed(() => Boolean(loadError.value) && isForbiddenError(loadError.value));
 const selectedCategory = computed(() =>
@@ -191,10 +215,15 @@ const selectedCategory = computed(() =>
     ? findCategoryById(selectedCategoryKey.value) ?? null
     : null,
 );
-const currentCategoryLabel = computed(() => selectedCategory.value?.name ?? "全部文档");
+const currentCategoryLabel = computed(() => {
+  if (typeof selectedCategoryKey.value !== "number") {
+    return "全部文档";
+  }
+  return getUploadCategoryPath(selectedCategoryKey.value) ?? "全部文档";
+});
 const selectedDocumentIds = computed(() => selectedDocuments.value.map((item) => item.id));
 const hasDocumentSelection = computed(() => selectedDocuments.value.length > 0);
-const existingCategoryNames = computed(() => new Set(flattenCategoryTree(categories.value).map((item) => item.name)));
+const existingCategoryPaths = computed(() => new Set(categorySelectOptions.value.map((item) => item.path)));
 const selectedDocumentStatus = computed(() => {
   if (selectedDocuments.value.length === 0) {
     return null;
@@ -686,81 +715,56 @@ function triggerFolderSelect() {
 }
 
 function getUploadCategoryPath(categoryId: number): string | null {
-  for (const root of categories.value) {
-    if (root.id === categoryId) {
-      return root.name;
-    }
-    for (const child of root.children) {
-      if (child.id === categoryId) {
-        return `${root.name}/${child.name}`;
-      }
-    }
-  }
-  return null;
+  return categorySelectOptions.value.find((item) => item.id === categoryId)?.path ?? null;
 }
 
-function getRootUploadCategory() {
+function getCategoryOptionLabel(option: CategorySelectOption) {
+  return option.depth > 0 ? `${"|  ".repeat(option.depth)}${option.label}` : option.label;
+}
+
+function getUploadTargetRootPath() {
   if (uploadTargetCategory.value === "uncategorized") {
-    return {
-      label: "未分类",
-      sourcePrefix: null,
-      isNewCategory: false,
-    };
+    return null;
   }
 
-  const category = findCategoryById(uploadTargetCategory.value as number);
-  const sourcePrefix = category ? getUploadCategoryPath(category.id) : null;
-  return {
-    label: category?.name ?? "未分类",
-    sourcePrefix,
-    isNewCategory: false,
-  };
+  return getUploadCategoryPath(uploadTargetCategory.value as number);
+}
+
+function buildMountedCategoryPath(sourcePath: string): string | null {
+  const segments = sourcePath.replace(/\\/g, "/").split("/").filter(Boolean);
+  const folderSegments = segments.length > 1 ? segments.slice(0, -1) : [];
+  const rootPath = getUploadTargetRootPath();
+  const mountedSegments = [
+    ...(rootPath ? rootPath.split("/").filter(Boolean) : []),
+    ...folderSegments,
+  ];
+  if (mountedSegments.length === 0) {
+    return null;
+  }
+  return mountedSegments.join("/");
 }
 
 function buildUploadQueueItem(file: UploadInputFile): UploadQueueItem {
   const path = (file.customPath || file.webkitRelativePath || file.name).replace(/\\/g, "/").trim();
   const normalizedPath = path || file.name;
-  const segments = normalizedPath.split("/").filter(Boolean);
-
-  if (segments.length > 1) {
-    const categoryName = segments[0] || "未分类";
-    return {
-      raw: file,
-      name: file.name,
-      path: normalizedPath,
-      category: categoryName,
-      isNewCategory: !existingCategoryNames.value.has(categoryName),
-      size: file.size,
-    };
-  }
-
-  const rootCategory = getRootUploadCategory();
+  const mountedCategoryPath = buildMountedCategoryPath(normalizedPath);
   return {
     raw: file,
     name: file.name,
-    path: file.name,
-    category: rootCategory.label,
-    isNewCategory: false,
+    path: normalizedPath,
+    category: mountedCategoryPath ?? "未分类",
+    isNewCategory: mountedCategoryPath ? !existingCategoryPaths.value.has(mountedCategoryPath) : false,
     size: file.size,
   };
 }
 
 function syncUploadQueueWithTargetCategory() {
-  const rootCategory = getRootUploadCategory();
   uploadQueue.value = uploadQueue.value.map((item) => {
-    if (item.path.includes("/")) {
-      const categoryName = item.path.split("/", 1)[0] || "未分类";
-      return {
-        ...item,
-        category: categoryName,
-        isNewCategory: !existingCategoryNames.value.has(categoryName),
-      };
-    }
-
+    const mountedCategoryPath = buildMountedCategoryPath(item.path);
     return {
       ...item,
-      category: rootCategory.label,
-      isNewCategory: false,
+      category: mountedCategoryPath ?? "未分类",
+      isNewCategory: mountedCategoryPath ? !existingCategoryPaths.value.has(mountedCategoryPath) : false,
     };
   });
 }
@@ -886,12 +890,7 @@ function clearUploadQueue() {
 }
 
 function buildUploadSourcePath(item: UploadQueueItem) {
-  if (item.path.includes("/")) {
-    return item.path;
-  }
-
-  const rootCategory = getRootUploadCategory();
-  return rootCategory.sourcePrefix ? `${rootCategory.sourcePrefix}/${item.name}` : item.name;
+  return item.path;
 }
 
 async function submitUploadQueue() {
@@ -904,6 +903,7 @@ async function submitUploadQueue() {
     await uploadDocumentsBatch({
       files: uploadQueue.value.map((item) => item.raw),
       knowledgeBaseId: knowledgeBase.value.id,
+      categoryId: uploadTargetCategory.value === "uncategorized" ? null : uploadTargetCategory.value,
       sourcePaths: uploadQueue.value.map((item) => buildUploadSourcePath(item)),
     });
     ElMessage.success(`已提交 ${uploadQueue.value.length} 个文档的上传任务。`);
@@ -922,8 +922,8 @@ async function submitUploadQueue() {
   }
 }
 
-function handleDocumentSelectionChange(items: DocumentSummary[]) {
-  selectedDocuments.value = items;
+function handleDocumentSelectionChange(items: unknown[]) {
+  selectedDocuments.value = items as DocumentSummary[];
 }
 
 async function runBatchDocumentAction(
@@ -1229,10 +1229,10 @@ async function handleOneClickPublish() {
     return;
   }
 
-  const actionText = getPublishActionText(documentQuery.status);
+  const actionText = getPublishActionText(documentQuery.status || null);
   await runOneClickDocumentAction(
     `一键${actionText}`,
-    getOneClickPublishHint(documentQuery.status),
+    getOneClickPublishHint(documentQuery.status || null),
     async () =>
       publishDocumentsByFilter({
         keyword: documentQuery.keyword.trim() || undefined,
@@ -1390,46 +1390,47 @@ watch(
               <span v-if="knowledgeBase?.document_count != null" class="kb-sidebar__item-count">{{ knowledgeBase.document_count }}</span>
             </div>
 
-            <template v-for="rootCat in categories" :key="rootCat.id">
+            <template v-for="item in visibleCategoryItems" :key="item.node.id">
               <div
                 :class="[
                   'kb-sidebar__item',
-                  selectedCategoryKey === rootCat.id ? 'kb-sidebar__item--active' : '',
+                  selectedCategoryKey === item.node.id ? 'kb-sidebar__item--active' : '',
                 ]"
+                :style="{ paddingLeft: `${14 + item.depth * 26}px` }"
                 role="button"
                 tabindex="0"
-                @click="handleSelectCategory(rootCat.id)"
-                @keyup.enter="handleSelectCategory(rootCat.id)"
+                @click="handleSelectCategory(item.node.id)"
+                @keyup.enter="handleSelectCategory(item.node.id)"
               >
                 <span class="kb-sidebar__item-main">
                   <button
-                    v-if="rootCat.children.length > 0"
+                    v-if="item.hasChildren"
                     type="button"
                     class="kb-sidebar__toggle"
-                    @click.stop="expandedCategoryIds.has(rootCat.id) ? expandedCategoryIds.delete(rootCat.id) : expandedCategoryIds.add(rootCat.id)"
+                    @click.stop="expandedCategoryIds.has(item.node.id) ? expandedCategoryIds.delete(item.node.id) : expandedCategoryIds.add(item.node.id)"
                   >
-                    <el-icon :class="{ 'is-rotated': expandedCategoryIds.has(rootCat.id) }"><ArrowRight /></el-icon>
+                    <el-icon :class="{ 'is-rotated': expandedCategoryIds.has(item.node.id) }"><ArrowRight /></el-icon>
                   </button>
                   <el-icon v-else><Folder /></el-icon>
-                  <span class="kb-sidebar__item-label">{{ rootCat.name }}</span>
+                  <span class="kb-sidebar__item-label">{{ item.node.name }}</span>
                 </span>
 
                 <span class="kb-sidebar__item-side">
-                  <span class="kb-sidebar__item-count">{{ rootCat.document_count }}</span>
+                  <span class="kb-sidebar__item-count">{{ item.node.document_count }}</span>
                   <el-dropdown
                     trigger="click"
                     placement="bottom-end"
                     @command="(command: string) => {
                       if (command === 'rename') {
-                        void handleRenameCategory(rootCat);
+                        void handleRenameCategory(item.node);
                         return;
                       }
                       if (command === 'create-sub') {
-                        void handleCreateSubcategory(rootCat);
+                        void handleCreateSubcategory(item.node);
                         return;
                       }
                       if (command === 'delete') {
-                        void handleDeleteCategory(rootCat);
+                        void handleDeleteCategory(item.node);
                       }
                     }"
                   >
@@ -1455,60 +1456,6 @@ watch(
                   </el-dropdown>
                 </span>
               </div>
-
-              <template v-if="expandedCategoryIds.has(rootCat.id)">
-                <div
-                  v-for="childCat in rootCat.children"
-                  :key="childCat.id"
-                  :class="[
-                    'kb-sidebar__item',
-                    'kb-sidebar__item--child',
-                    selectedCategoryKey === childCat.id ? 'kb-sidebar__item--active' : '',
-                  ]"
-                  role="button"
-                  tabindex="0"
-                  @click="handleSelectCategory(childCat.id)"
-                  @keyup.enter="handleSelectCategory(childCat.id)"
-                >
-                  <span class="kb-sidebar__item-main">
-                    <el-icon><Folder /></el-icon>
-                    <span class="kb-sidebar__item-label">{{ childCat.name }}</span>
-                  </span>
-
-                  <span class="kb-sidebar__item-side">
-                    <span class="kb-sidebar__item-count">{{ childCat.document_count }}</span>
-                    <el-dropdown
-                      trigger="click"
-                      placement="bottom-end"
-                      @command="(command: string) => {
-                        if (command === 'rename') {
-                          void handleRenameCategory(childCat);
-                          return;
-                        }
-                        if (command === 'delete') {
-                          void handleDeleteCategory(childCat);
-                        }
-                      }"
-                    >
-                      <button type="button" class="kb-sidebar__item-more" @click.stop>
-                        <el-icon><MoreFilled /></el-icon>
-                      </button>
-                      <template #dropdown>
-                        <el-dropdown-menu>
-                          <el-dropdown-item command="rename">
-                            <el-icon><EditPen /></el-icon>
-                            <span>重命名</span>
-                          </el-dropdown-item>
-                          <el-dropdown-item command="delete">
-                            <el-icon><Delete /></el-icon>
-                            <span>删除</span>
-                          </el-dropdown-item>
-                        </el-dropdown-menu>
-                      </template>
-                    </el-dropdown>
-                  </span>
-                </div>
-              </template>
             </template>
           </div>
         </aside>
@@ -1539,7 +1486,7 @@ watch(
                   v-model="documentQuery.status"
                   class="kb-documents__status-filter"
                   placeholder="业务状态"
-                  @change="(value) => handleSelectDocumentStatus(value as '' | DocumentLifecycleStatus)"
+                  @change="(value: '' | DocumentLifecycleStatus) => handleSelectDocumentStatus(value)"
                 >
                   <template #prefix>
                     <span class="kb-documents__filter-prefix">业务状态</span>
@@ -1611,7 +1558,7 @@ watch(
                   :disabled="documentActionLoading"
                   @click="handleOneClickPublish"
                 >
-                  {{ `一键${getPublishActionText(documentQuery.status)}` }}
+                  {{ `一键${getPublishActionText(documentQuery.status || null)}` }}
                 </el-button>
                 <el-button @click="detailDrawerVisible = true">
                   <el-icon class="mr-2"><InfoFilled /></el-icon>
@@ -1806,15 +1753,12 @@ watch(
               <span class="kb-upload-dialog__target-label">上传至</span>
               <el-select v-model="uploadTargetCategory" class="kb-upload-dialog__target-select">
                 <el-option :value="'uncategorized'" label="未分类（默认）" />
-                <template v-for="rootCat in categories" :key="rootCat.id">
-                  <el-option :value="rootCat.id" :label="rootCat.name" />
-                  <el-option
-                    v-for="childCat in rootCat.children"
-                    :key="childCat.id"
-                    :value="childCat.id"
-                    :label="`　　${childCat.name}`"
-                  />
-                </template>
+                <el-option
+                  v-for="option in categorySelectOptions"
+                  :key="option.id"
+                  :value="option.id"
+                  :label="getCategoryOptionLabel(option)"
+                />
               </el-select>
             </div>
           </div>
