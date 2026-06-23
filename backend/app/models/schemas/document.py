@@ -8,8 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.utils.time import serialize_utc_datetime
 
 DocumentIndexStatus = Literal["queued", "processing", "indexed", "failed"]
-GraphIndexStatus = Literal["queued", "processing", "finalizing", "indexed", "failed"]
+GraphIndexStatus = Literal["skipped", "queued", "processing", "finalizing", "indexed", "failed"]
 DocumentParseStatus = Literal["queued", "processing", "parsed", "failed"]
+DocumentUploadStatus = Literal["initialized", "completed", "aborted", "expired"]
 DocumentLifecycleStatus = Literal[
     "draft",
     "pending_review",
@@ -33,6 +34,60 @@ class DocumentCreate(BaseModel):
     source_path: str | None = Field(None, description="Original relative source path")
 
 
+class DocumentUploadInitRequest(BaseModel):
+    """Initialize one direct-to-OSS upload session."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    filename: str = Field(..., min_length=1, description="Original file name")
+    file_size: int = Field(..., gt=0, description="File size in bytes")
+    content_type: str | None = Field(None, description="Browser detected content type")
+    knowledge_base_id: int = Field(..., description="Owning knowledge base id")
+    category_id: int | None = Field(None, description="Owning category id")
+    source_path: str | None = Field(None, description="Original relative source path")
+
+
+class DocumentUploadInitResponse(BaseModel):
+    """Signed upload payload returned to the browser."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    upload_session_id: int
+    provider: str
+    method: str = "POST"
+    bucket_name: str
+    object_key: str
+    upload_url: str
+    expires_at: datetime
+    form_fields: dict[str, str] = Field(default_factory=dict)
+
+
+class DocumentUploadCompleteRequest(BaseModel):
+    """Confirm that the browser upload finished."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    upload_session_id: int = Field(..., description="Upload session id")
+
+
+class DocumentUploadAbortRequest(BaseModel):
+    """Abort one direct-to-OSS upload session."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    upload_session_id: int = Field(..., description="Upload session id")
+
+
+class DocumentUploadActionResponse(BaseModel):
+    """Current upload session state after one action."""
+
+    model_config = UTC_MODEL_CONFIG
+
+    upload_session_id: int
+    status: DocumentUploadStatus
+    message: str
+
+
 class DocumentResponse(BaseModel):
     """Document detail response."""
 
@@ -51,6 +106,13 @@ class DocumentResponse(BaseModel):
     category_id: int | None = Field(None, description="Owning category id")
     category_name: str | None = Field(None, description="Owning category name")
     source_path: str | None = Field(None, description="Original relative source path")
+    source_storage_provider: str | None = None
+    source_bucket_name: str | None = None
+    source_object_key: str | None = None
+    source_file_name: str | None = None
+    source_file_size: int | None = None
+    source_content_type: str | None = None
+    source_etag: str | None = None
     status: DocumentLifecycleStatus = "draft"
     published_at: datetime | None = None
     published_by: int | None = None
@@ -62,7 +124,7 @@ class DocumentResponse(BaseModel):
     index_status: DocumentIndexStatus = "queued"
     index_error: str | None = None
     indexed_at: datetime | None = None
-    graph_index_status: GraphIndexStatus = "queued"
+    graph_index_status: GraphIndexStatus = "skipped"
     graph_index_error: str | None = None
     graph_indexed_at: datetime | None = None
     created_at: datetime
@@ -89,7 +151,7 @@ class DocumentListItem(BaseModel):
     index_status: DocumentIndexStatus = "queued"
     index_error: str | None = None
     indexed_at: datetime | None = None
-    graph_index_status: GraphIndexStatus = "queued"
+    graph_index_status: GraphIndexStatus = "skipped"
     graph_index_error: str | None = None
     graph_indexed_at: datetime | None = None
     knowledge_base_id: int | None = None
@@ -97,6 +159,13 @@ class DocumentListItem(BaseModel):
     category_id: int | None = None
     category_name: str | None = None
     source_path: str | None = None
+    source_storage_provider: str | None = None
+    source_bucket_name: str | None = None
+    source_object_key: str | None = None
+    source_file_name: str | None = None
+    source_file_size: int | None = None
+    source_content_type: str | None = None
+    source_etag: str | None = None
     status: DocumentLifecycleStatus = "draft"
     published_at: datetime | None = None
     published_by: int | None = None

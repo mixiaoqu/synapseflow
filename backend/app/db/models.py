@@ -304,6 +304,45 @@ class DocumentCategory(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class DocumentUploadSession(Base):
+    """Temporary upload session used by direct-to-OSS document uploads."""
+
+    __tablename__ = "document_upload_sessions"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    category_id = Column(
+        Integer,
+        ForeignKey("document_categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    document_id = Column(
+        Integer,
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    original_filename = Column(String(255), nullable=False)
+    source_path = Column(String(1024), nullable=True)
+    bucket_name = Column(String(255), nullable=False)
+    object_key = Column(String(1024), nullable=False)
+    file_size = Column(Integer, nullable=False, default=0)
+    content_type = Column(String(255), nullable=True)
+    status = Column(String(20), nullable=False, default="initialized", index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class Document(Base):
     """Document rows belonging to a knowledge base."""
 
@@ -347,9 +386,16 @@ class Document(Base):
     staged_file_name = Column(String(255), nullable=True)
     staged_file_size = Column(Integer, nullable=True)
     staged_file_hash = Column(String(64), nullable=True)
+    source_storage_provider = Column(String(50), nullable=True)
+    source_bucket_name = Column(String(255), nullable=True)
+    source_object_key = Column(String(1024), nullable=True)
+    source_file_name = Column(String(255), nullable=True)
+    source_file_size = Column(Integer, nullable=True)
+    source_content_type = Column(String(255), nullable=True)
+    source_etag = Column(String(255), nullable=True)
     index_status = Column(String(20), nullable=False, default="queued", index=True)
     index_error = Column(Text, nullable=True)
-    graph_index_status = Column(String(20), nullable=False, default="queued", index=True)
+    graph_index_status = Column(String(20), nullable=False, default="skipped", index=True)
     graph_index_error = Column(Text, nullable=True)
     graph_indexed_at = Column(DateTime(timezone=True), nullable=True)
     content_hash = Column(String(32), nullable=False, default="")

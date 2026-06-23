@@ -682,11 +682,11 @@ async def index_document_graph(
         return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0, "relation_evidences": 0}
 
     repository = DocumentChunkRepository(db)
-    child_rows = await repository.get_child_chunks_for_document(document_id)
+    graph_rows = await repository.get_parent_chunks_for_document(document_id)
     team_id, knowledge_base_id = await _load_document_scope(db, document_id=document_id)
     extractions = await _prepare_chunk_extractions(
         repository=repository,
-        rows=child_rows,
+        rows=graph_rows,
         team_id=team_id,
         knowledge_base_id=knowledge_base_id,
         document_id=document_id,
@@ -736,12 +736,14 @@ async def index_document_graph_chunks(
         return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0, "relation_evidences": 0}
 
     repository = DocumentChunkRepository(db)
-    child_rows = []
+    graph_rows = []
     for document_chunk_id in document_chunk_ids:
-        child_row = await repository.get_by_id(int(document_chunk_id))
-        if child_row is None or int(child_row.document_id) != int(document_id):
+        graph_row = await repository.get_by_id(int(document_chunk_id))
+        if graph_row is None or int(graph_row.document_id) != int(document_id):
             raise ValueError(f"Chunk {document_chunk_id} not found for document {document_id}")
-        child_rows.append(child_row)
+        if str(graph_row.chunk_kind) != "parent":
+            raise ValueError(f"Chunk {document_chunk_id} is not a graph extraction parent chunk")
+        graph_rows.append(graph_row)
 
     document_row = await db.get(Document, document_id)
     if document_row is None or getattr(document_row, "content_hash", None) != expected_content_hash:
@@ -750,7 +752,7 @@ async def index_document_graph_chunks(
     team_id, knowledge_base_id = await _load_document_scope(db, document_id=document_id)
     extractions = await _prepare_chunk_extractions(
         repository=repository,
-        rows=child_rows,
+        rows=graph_rows,
         team_id=team_id,
         knowledge_base_id=knowledge_base_id,
         document_id=document_id,
@@ -782,11 +784,11 @@ async def finalize_document_graph(
         return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0, "relation_evidences": 0}
 
     repository = DocumentChunkRepository(db)
-    child_rows = await repository.get_child_chunks_for_document(document_id)
+    graph_rows = await repository.get_parent_chunks_for_document(document_id)
     team_id, knowledge_base_id = await _load_document_scope(db, document_id=document_id)
 
     extractions: list[ChunkGraphExtraction] = []
-    for row in child_rows:
+    for row in graph_rows:
         chunk, _chunk_text = _build_chunk_record(
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,

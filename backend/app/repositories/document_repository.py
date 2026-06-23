@@ -22,7 +22,8 @@ from app.services.document_index_state import (
     compute_content_hash,
 )
 from app.services.document_lifecycle import DOC_STATUS_DRAFT, DOC_STATUS_PENDING_REVIEW
-from app.services.document_parse_state import PARSE_STATUS_PARSED
+from app.services.document_parse_state import PARSE_STATUS_PARSED, PARSE_STATUS_QUEUED
+from app.services.object_storage_service import object_storage_service
 from app.utils.time import utc_now
 
 
@@ -105,6 +106,73 @@ class DocumentRepository:
             category_id=category_id,
             source_path=source_path,
             status=status,
+        )
+        self.db.add(doc)
+        await self.db.flush()
+        doc.root_id = doc.id
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(doc)
+        return doc
+
+    async def create_uploaded_source_document(
+        self,
+        *,
+        title: str,
+        document_type: str | None,
+        knowledge_base_id: int,
+        category_id: int | None,
+        source_path: str | None,
+        source_storage_provider: str,
+        source_bucket_name: str,
+        source_object_key: str,
+        source_file_name: str,
+        source_file_size: int,
+        source_content_type: str | None,
+        source_etag: str | None,
+        commit: bool = True,
+    ) -> Document:
+        """Create one uploaded-source document waiting for the parse pipeline migration."""
+        source_parse_token = object_storage_service.build_object_change_token(
+            bucket_name=source_bucket_name,
+            object_key=source_object_key,
+            file_size=source_file_size,
+            etag=source_etag,
+        )
+        doc = Document(
+            user_id=self.user_id,
+            title=title,
+            content="",
+            document_type=document_type,
+            size=0,
+            content_hash=compute_content_hash(""),
+            parse_status=PARSE_STATUS_QUEUED,
+            parse_error=None,
+            parse_started_at=None,
+            parsed_at=None,
+            staged_file_path=None,
+            staged_file_name=None,
+            staged_file_size=None,
+            staged_file_hash=source_parse_token,
+            source_storage_provider=source_storage_provider,
+            source_bucket_name=source_bucket_name,
+            source_object_key=source_object_key,
+            source_file_name=source_file_name,
+            source_file_size=source_file_size,
+            source_content_type=source_content_type,
+            source_etag=source_etag,
+            index_status=INDEX_STATUS_QUEUED,
+            index_error=None,
+            indexed_at=None,
+            version=1,
+            parent_id=None,
+            is_latest=True,
+            is_current=True,
+            is_live=False,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            source_path=source_path,
+            status=DOC_STATUS_DRAFT,
         )
         self.db.add(doc)
         await self.db.flush()
@@ -365,6 +433,13 @@ class DocumentRepository:
         doc.staged_file_name = None
         doc.staged_file_size = None
         doc.staged_file_hash = None
+        doc.source_storage_provider = None
+        doc.source_bucket_name = None
+        doc.source_object_key = None
+        doc.source_file_name = None
+        doc.source_file_size = None
+        doc.source_content_type = None
+        doc.source_etag = None
         doc.index_status = INDEX_STATUS_QUEUED
         doc.index_error = None
         doc.indexed_at = None
@@ -481,6 +556,13 @@ class DocumentRepository:
             staged_file_name=None,
             staged_file_size=None,
             staged_file_hash=None,
+            source_storage_provider=None,
+            source_bucket_name=None,
+            source_object_key=None,
+            source_file_name=None,
+            source_file_size=None,
+            source_content_type=None,
+            source_etag=None,
             index_status=INDEX_STATUS_QUEUED,
             index_error=None,
             indexed_at=None,

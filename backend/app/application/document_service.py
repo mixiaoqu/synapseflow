@@ -51,7 +51,7 @@ from app.services.document_parse_state import (
     PARSE_STATUS_PARSED,
     PARSE_STATUS_QUEUED,
 )
-from app.services.graph_index_state import GRAPH_INDEX_STATUS_FAILED
+from app.services.graph_index_state import GRAPH_INDEX_STATUS_FAILED, GRAPH_INDEX_STATUS_SKIPPED
 from app.services.graph_store import get_graph_store
 from app.services.vector_store import delete_by_document_id
 from app.utils.document_parse import (
@@ -324,6 +324,13 @@ class DocumentService:
             category_id=getattr(doc, "category_id", None),
             category_name=category_name,
             source_path=getattr(doc, "source_path", None),
+            source_storage_provider=getattr(doc, "source_storage_provider", None),
+            source_bucket_name=getattr(doc, "source_bucket_name", None),
+            source_object_key=getattr(doc, "source_object_key", None),
+            source_file_name=getattr(doc, "source_file_name", None),
+            source_file_size=getattr(doc, "source_file_size", None),
+            source_content_type=getattr(doc, "source_content_type", None),
+            source_etag=getattr(doc, "source_etag", None),
             status=getattr(doc, "status", DOC_STATUS_DRAFT),
             published_at=getattr(doc, "published_at", None),
             published_by=getattr(doc, "published_by", None),
@@ -335,12 +342,37 @@ class DocumentService:
             index_status=getattr(doc, "index_status", INDEX_STATUS_QUEUED),
             index_error=getattr(doc, "index_error", None),
             indexed_at=getattr(doc, "indexed_at", None),
-            graph_index_status=getattr(doc, "graph_index_status", INDEX_STATUS_QUEUED),
+            graph_index_status=getattr(doc, "graph_index_status", GRAPH_INDEX_STATUS_SKIPPED),
             graph_index_error=getattr(doc, "graph_index_error", None),
             graph_indexed_at=getattr(doc, "graph_indexed_at", None),
             created_at=doc.created_at,
             updated_at=doc.updated_at,
         )
+
+    async def resolve_document_location(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        knowledge_base_id: int | None,
+        category_id: int | None,
+        source_path: str | None,
+    ) -> tuple[int, int | None, str | None]:
+        return await self._resolve_document_location(
+            db=db,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            source_path=source_path,
+        )
+
+    def to_response(
+        self,
+        doc: Document,
+        *,
+        category_name: str | None = None,
+    ) -> DocumentResponse:
+        return self._to_response(doc, category_name=category_name)
 
     async def upload_document(
         self,
@@ -559,6 +591,7 @@ class DocumentService:
             knowledge_base_id=knowledge_base_id,
             title=f"索引《{doc.title}》",
         )
+        await db.refresh(doc)
         logger.bind(document_pipeline_log=True).info(
             "[文档管线] 索引任务已入队 doc_id={} title={} text_job_id={} graph_job_id={}",
             doc.id,
@@ -620,7 +653,7 @@ class DocumentService:
                 index_status=getattr(doc, "index_status", INDEX_STATUS_QUEUED),
                 index_error=getattr(doc, "index_error", None),
                 indexed_at=getattr(doc, "indexed_at", None),
-                graph_index_status=getattr(doc, "graph_index_status", INDEX_STATUS_QUEUED),
+                graph_index_status=getattr(doc, "graph_index_status", GRAPH_INDEX_STATUS_SKIPPED),
                 graph_index_error=getattr(doc, "graph_index_error", None),
                 graph_indexed_at=getattr(doc, "graph_indexed_at", None),
                 knowledge_base_id=getattr(doc, "knowledge_base_id", None),
@@ -628,6 +661,13 @@ class DocumentService:
                 knowledge_base_name=knowledge_base_name,
                 category_name=category_name,
                 source_path=getattr(doc, "source_path", None),
+                source_storage_provider=getattr(doc, "source_storage_provider", None),
+                source_bucket_name=getattr(doc, "source_bucket_name", None),
+                source_object_key=getattr(doc, "source_object_key", None),
+                source_file_name=getattr(doc, "source_file_name", None),
+                source_file_size=getattr(doc, "source_file_size", None),
+                source_content_type=getattr(doc, "source_content_type", None),
+                source_etag=getattr(doc, "source_etag", None),
                 status=getattr(doc, "status", DOC_STATUS_DRAFT),
                 published_at=getattr(doc, "published_at", None),
                 published_by=getattr(doc, "published_by", None),
@@ -858,6 +898,7 @@ class DocumentService:
             knowledge_base_id=getattr(doc, "knowledge_base_id", None),
             title=f"重新索引《{doc.title}》",
         )
+        await db.refresh(doc)
         logger.bind(document_pipeline_log=True).info(
             "[文档管线] 内容替换后索引任务已入队 doc_id={} title={} text_job_id={} graph_job_id={}",
             doc.id,
@@ -911,6 +952,7 @@ class DocumentService:
                 current_doc.id if current_doc and current_doc.id != new_doc.id else None
             ),
         )
+        await db.refresh(new_doc)
         logger.bind(document_pipeline_log=True).info(
             "[文档管线] 新版本索引任务已入队 doc_id={} title={} text_job_id={} graph_job_id={}",
             new_doc.id,
@@ -946,6 +988,7 @@ class DocumentService:
                 else None
             ),
         )
+        await db.refresh(target)
         logger.bind(document_pipeline_log=True).info(
             "[文档管线] 当前版本切换索引任务已入队 doc_id={} title={} text_job_id={} graph_job_id={}",
             target.id,
@@ -1264,6 +1307,14 @@ class DocumentService:
             await db.commit()
             await db.refresh(doc)
             logger.warning("Document parse dispatch failed doc_id={}: {}", doc.id, exc)
+
+    async def enqueue_document_parse_task(
+        self,
+        *,
+        db: AsyncSession,
+        doc: Document,
+    ) -> None:
+        await self._enqueue_document_parse_task(db=db, doc=doc)
 
     @staticmethod
     def _delete_staged_files_for_documents(docs: Sequence[Document]) -> None:

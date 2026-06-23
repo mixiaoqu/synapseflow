@@ -31,6 +31,7 @@ from app.services.graph_index_state import (
     GRAPH_INDEX_STATUS_INDEXED,
     GRAPH_INDEX_STATUS_PROCESSING,
     GRAPH_INDEX_STATUS_QUEUED,
+    GRAPH_INDEX_STATUS_SKIPPED,
 )
 from app.services.document_indexer import (
     index_document,
@@ -106,6 +107,10 @@ class IndexingService:
     def _graph_indexing_enabled() -> bool:
         graph_cfg = config_registry.get_graph_config()
         return bool(graph_cfg.enabled and graph_cfg.indexing_enabled)
+
+    @classmethod
+    def resolve_graph_index_status_for_queue(cls) -> str:
+        return GRAPH_INDEX_STATUS_QUEUED if cls._graph_indexing_enabled() else GRAPH_INDEX_STATUS_SKIPPED
 
     @staticmethod
     async def _get_document(db: AsyncSession, document_id: int) -> Document | None:
@@ -208,6 +213,48 @@ class IndexingService:
             )
         await db.commit()
 
+    @staticmethod
+    async def _mark_graph_documents_skipped(
+        db: AsyncSession,
+        *,
+        documents: Sequence[tuple[int, str]],
+    ) -> None:
+        for document_id, expected_content_hash in documents:
+            await db.execute(
+                update(Document)
+                .where(
+                    Document.id == int(document_id),
+                    Document.content_hash == str(expected_content_hash),
+                )
+                .values(
+                    graph_index_status=GRAPH_INDEX_STATUS_SKIPPED,
+                    graph_index_error=None,
+                    graph_indexed_at=None,
+                )
+            )
+        await db.commit()
+
+    @staticmethod
+    async def _mark_graph_documents_queued(
+        db: AsyncSession,
+        *,
+        documents: Sequence[tuple[int, str]],
+    ) -> None:
+        for document_id, expected_content_hash in documents:
+            await db.execute(
+                update(Document)
+                .where(
+                    Document.id == int(document_id),
+                    Document.content_hash == str(expected_content_hash),
+                )
+                .values(
+                    graph_index_status=GRAPH_INDEX_STATUS_QUEUED,
+                    graph_index_error=None,
+                    graph_indexed_at=None,
+                )
+            )
+        await db.commit()
+
     async def enqueue_document_job(
         self,
         db: AsyncSession,
@@ -293,17 +340,44 @@ class IndexingService:
         knowledge_base_id: int | None,
         title: str,
     ) -> dict[str, int]:
-        text_job_id = await self.enqueue_document_job(
-            db=db,
-            user_id=user_id,
-            document_id=document_id,
-            expected_content_hash=expected_content_hash,
-            knowledge_base_id=knowledge_base_id,
-            title=title,
-        )
+        try:
+            text_job_id = await self.enqueue_document_job(
+                db=db,
+                user_id=user_id,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+                knowledge_base_id=knowledge_base_id,
+                title=title,
+            )
+        except Exception as exc:
+            if self._graph_indexing_enabled():
+                await self._mark_graph_failed(
+                    db,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                    error_message=self._truncate_error(exc),
+                )
+            else:
+                await self._mark_graph_skipped(
+                    db,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                )
+            raise
         graph_job_id = 0
-        if self._graph_indexing_enabled():
+        if not self._graph_indexing_enabled():
+            await self._mark_graph_skipped(
+                db,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+            )
+        else:
             try:
+                await self._mark_graph_queued(
+                    db,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                )
                 graph_job_id = await self.enqueue_document_graph_job(
                     db=db,
                     user_id=user_id,
@@ -313,6 +387,13 @@ class IndexingService:
                     title=title,
                 )
             except Exception as exc:
+                error_message = self._truncate_error(exc)
+                await self._mark_graph_failed(
+                    db,
+                    document_id=document_id,
+                    expected_content_hash=expected_content_hash,
+                    error_message=error_message,
+                )
                 logger.warning("Graph indexing dispatch failed doc_id={}: {}", document_id, exc)
         logger.bind(document_pipeline_log=True).info(
             "[文档管线] 索引任务调度完成 doc_id={} text_job_id={} graph_job_id={}",
@@ -331,16 +412,30 @@ class IndexingService:
         knowledge_base_id: int | None,
         title: str,
     ) -> dict[str, int]:
-        text_job_id = await self.enqueue_documents_batch_job(
-            db=db,
-            user_id=user_id,
-            documents=documents,
-            knowledge_base_id=knowledge_base_id,
-            title=title,
-        )
+        try:
+            text_job_id = await self.enqueue_documents_batch_job(
+                db=db,
+                user_id=user_id,
+                documents=documents,
+                knowledge_base_id=knowledge_base_id,
+                title=title,
+            )
+        except Exception as exc:
+            if self._graph_indexing_enabled():
+                await self._mark_graph_documents_dispatch_failed(
+                    db,
+                    documents=documents,
+                    error_message=self._truncate_error(exc),
+                )
+            else:
+                await self._mark_graph_documents_skipped(db, documents=documents)
+            raise
         graph_job_id = 0
-        if self._graph_indexing_enabled():
+        if not self._graph_indexing_enabled():
+            await self._mark_graph_documents_skipped(db, documents=documents)
+        else:
             try:
+                await self._mark_graph_documents_queued(db, documents=documents)
                 graph_job_id = await self.enqueue_documents_graph_batch_job(
                     db=db,
                     user_id=user_id,
@@ -349,6 +444,12 @@ class IndexingService:
                     title=title,
                 )
             except Exception as exc:
+                error_message = self._truncate_error(exc)
+                await self._mark_graph_documents_dispatch_failed(
+                    db,
+                    documents=documents,
+                    error_message=error_message,
+                )
                 logger.warning("Graph batch dispatch failed documents={} error={}", len(documents), exc)
         logger.bind(document_pipeline_log=True).info(
             "[文档管线] 批量索引任务调度完成 docs={} text_job_id={} graph_job_id={}",
@@ -369,18 +470,45 @@ class IndexingService:
         title: str,
         previous_document_id: int | None = None,
     ) -> dict[str, int]:
-        text_job_id = await self.enqueue_current_document_reindex_job(
-            db=db,
-            user_id=user_id,
-            target_document_id=target_document_id,
-            target_content_hash=target_content_hash,
-            knowledge_base_id=knowledge_base_id,
-            title=title,
-            previous_document_id=previous_document_id,
-        )
+        try:
+            text_job_id = await self.enqueue_current_document_reindex_job(
+                db=db,
+                user_id=user_id,
+                target_document_id=target_document_id,
+                target_content_hash=target_content_hash,
+                knowledge_base_id=knowledge_base_id,
+                title=title,
+                previous_document_id=previous_document_id,
+            )
+        except Exception as exc:
+            if self._graph_indexing_enabled():
+                await self._mark_graph_failed(
+                    db,
+                    document_id=target_document_id,
+                    expected_content_hash=target_content_hash,
+                    error_message=self._truncate_error(exc),
+                )
+            else:
+                await self._mark_graph_skipped(
+                    db,
+                    document_id=target_document_id,
+                    expected_content_hash=target_content_hash,
+                )
+            raise
         graph_job_id = 0
-        if self._graph_indexing_enabled():
+        if not self._graph_indexing_enabled():
+            await self._mark_graph_skipped(
+                db,
+                document_id=target_document_id,
+                expected_content_hash=target_content_hash,
+            )
+        else:
             try:
+                await self._mark_graph_queued(
+                    db,
+                    document_id=target_document_id,
+                    expected_content_hash=target_content_hash,
+                )
                 graph_job_id = await self.enqueue_current_document_graph_reindex_job(
                     db=db,
                     user_id=user_id,
@@ -391,6 +519,13 @@ class IndexingService:
                     previous_document_id=previous_document_id,
                 )
             except Exception as exc:
+                error_message = self._truncate_error(exc)
+                await self._mark_graph_failed(
+                    db,
+                    document_id=target_document_id,
+                    expected_content_hash=target_content_hash,
+                    error_message=error_message,
+                )
                 logger.warning(
                     "Graph current-version dispatch failed target_doc_id={}: {}",
                     target_document_id,
@@ -837,6 +972,48 @@ class IndexingService:
             .values(
                 graph_index_status=GRAPH_INDEX_STATUS_FAILED,
                 graph_index_error=error_message,
+                graph_indexed_at=None,
+            )
+        )
+        await db.commit()
+
+    async def _mark_graph_queued(
+        self,
+        db: AsyncSession,
+        *,
+        document_id: int,
+        expected_content_hash: str,
+    ) -> None:
+        await db.execute(
+            update(Document)
+            .where(
+                Document.id == document_id,
+                Document.content_hash == expected_content_hash,
+            )
+            .values(
+                graph_index_status=GRAPH_INDEX_STATUS_QUEUED,
+                graph_index_error=None,
+                graph_indexed_at=None,
+            )
+        )
+        await db.commit()
+
+    async def _mark_graph_skipped(
+        self,
+        db: AsyncSession,
+        *,
+        document_id: int,
+        expected_content_hash: str,
+    ) -> None:
+        await db.execute(
+            update(Document)
+            .where(
+                Document.id == document_id,
+                Document.content_hash == expected_content_hash,
+            )
+            .values(
+                graph_index_status=GRAPH_INDEX_STATUS_SKIPPED,
+                graph_index_error=None,
                 graph_indexed_at=None,
             )
         )
@@ -1444,14 +1621,14 @@ class IndexingService:
                 )
                 continue
 
-            chunk_count = await chunk_repo.count_child_chunks_for_document(refreshed.id)
+            chunk_count = await chunk_repo.count_parent_chunks_for_document(refreshed.id)
             if chunk_count <= 0:
                 await self._mark_job_document_failed(
                     db,
                     job_id=job_id,
                     document_id=document_id,
                     expected_content_hash=expected_content_hash,
-                    error_message="文档缺少新的 child chunks，请删除后重新上传",
+                    error_message="文档缺少图谱抽取 parent chunks，请删除后重新上传",
                 )
                 continue
 
@@ -1476,6 +1653,27 @@ class IndexingService:
         title: str | None = None,
         job_id: int | None = None,
     ) -> dict[str, Any] | None:
+        if not self._graph_indexing_enabled():
+            await self._mark_graph_skipped(
+                db,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+            )
+            await self._set_job_document_status(
+                db,
+                job_id=job_id,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+                status=INDEX_JOB_DOCUMENT_STATUS_INDEXED,
+                indexed_at=utc_now(),
+            )
+            logger.bind(document_pipeline_log=True).info(
+                "[文档管线] 图谱索引跳过 doc_id={} job_id={} reason=disabled",
+                document_id,
+                job_id or "-",
+            )
+            return {"chunks": 0, "entities": 0, "mentions": 0, "relations": 0, "relation_evidences": 0}
+
         doc = await self._get_document(db, document_id)
         if not doc:
             await self._mark_job_document_failed(
@@ -1635,6 +1833,27 @@ class IndexingService:
         job_id: int,
         title: str | None = None,
     ) -> int:
+        if not self._graph_indexing_enabled():
+            await self._mark_graph_skipped(
+                db,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+            )
+            await self._set_job_document_status(
+                db,
+                job_id=job_id,
+                document_id=document_id,
+                expected_content_hash=expected_content_hash,
+                status=INDEX_JOB_DOCUMENT_STATUS_INDEXED,
+                indexed_at=utc_now(),
+            )
+            logger.bind(document_pipeline_log=True).info(
+                "[文档管线] 图谱任务调度跳过 doc_id={} job_id={} reason=disabled",
+                document_id,
+                job_id,
+            )
+            return 0
+
         doc = await self._get_document(db, document_id)
         if not doc:
             await self._mark_job_document_failed(
@@ -1678,38 +1897,38 @@ class IndexingService:
             status=INDEX_JOB_DOCUMENT_STATUS_PROCESSING,
         )
 
-        child_rows = await DocumentChunkRepository(db).get_child_chunks_for_document(document_id)
-        if not child_rows:
+        graph_rows = await DocumentChunkRepository(db).get_parent_chunks_for_document(document_id)
+        if not graph_rows:
             await self._mark_graph_failed(
                 db,
                 document_id=document_id,
                 expected_content_hash=expected_content_hash,
-                error_message="文档缺少新的 child chunks，请删除后重新上传",
+                error_message="文档缺少图谱抽取 parent chunks，请删除后重新上传",
             )
             await self._mark_job_document_failed(
                 db,
                 job_id=job_id,
                 document_id=document_id,
                 expected_content_hash=expected_content_hash,
-                error_message="文档缺少新的 child chunks，请删除后重新上传",
+                error_message="文档缺少图谱抽取 parent chunks，请删除后重新上传",
             )
             return 0
 
         chunk_repo = DocumentChunkRepository(db)
-        for row in child_rows:
+        for row in graph_rows:
             metadata = dict(row.metadata_ or {})
             metadata.pop("graph_extraction", None)
             await chunk_repo.update_metadata(int(row.id), metadata)
 
         store = get_graph_store()
         logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱旧图清理开始 doc_id={} child_chunks={}",
+            "[文档管线] 图谱旧图清理开始 doc_id={} parent_chunks={}",
             document_id,
-            len(child_rows),
+            len(graph_rows),
         )
         await store.delete_document_graph(document_id=document_id)
 
-        chunk_id_batches = self._chunk_graph_chunk_ids([int(row.id) for row in child_rows])
+        chunk_id_batches = self._chunk_graph_chunk_ids([int(row.id) for row in graph_rows])
         for chunk_id_batch in chunk_id_batches:
             self.enqueue_document_graph_chunks(
                 document_id=document_id,
@@ -1720,13 +1939,13 @@ class IndexingService:
             )
 
         logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱任务已调度 doc_id={} child_chunks={} batches={} batch_size={}",
+            "[文档管线] 图谱任务已调度 doc_id={} parent_chunks={} batches={} batch_size={}",
             document_id,
-            len(child_rows),
+            len(graph_rows),
             len(chunk_id_batches),
             config_registry.get_graph_config().extraction_batch_max_chunks,
         )
-        return len(child_rows)
+        return len(graph_rows)
 
     async def _all_graph_chunks_completed(
         self,
@@ -1734,7 +1953,7 @@ class IndexingService:
         *,
         document_id: int,
     ) -> bool:
-        rows = await DocumentChunkRepository(db).get_child_chunks_for_document(document_id)
+        rows = await DocumentChunkRepository(db).get_parent_chunks_for_document(document_id)
         if not rows:
             return False
         for row in rows:
@@ -2150,7 +2369,7 @@ class IndexingService:
             doc.index_status = INDEX_STATUS_QUEUED
             doc.index_error = None
             doc.indexed_at = None
-            doc.graph_index_status = GRAPH_INDEX_STATUS_QUEUED
+            doc.graph_index_status = self.resolve_graph_index_status_for_queue()
             doc.graph_index_error = None
             doc.graph_indexed_at = None
         await db.commit()
@@ -2195,7 +2414,7 @@ class IndexingService:
         doc.index_status = INDEX_STATUS_QUEUED
         doc.index_error = None
         doc.indexed_at = None
-        doc.graph_index_status = GRAPH_INDEX_STATUS_QUEUED
+        doc.graph_index_status = self.resolve_graph_index_status_for_queue()
         doc.graph_index_error = None
         doc.graph_indexed_at = None
         await db.commit()

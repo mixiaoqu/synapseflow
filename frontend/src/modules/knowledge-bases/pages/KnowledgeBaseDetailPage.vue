@@ -370,6 +370,7 @@ function getDocumentTypeLabel(documentType: string | null) {
 
 function getIndexStatusMeta(status: DocumentSummary["index_status"] | DocumentSummary["graph_index_status"]) {
   const metaMap = {
+    skipped: { label: "已跳过", type: "info" as const },
     queued: { label: "排队中", type: "warning" as const },
     processing: { label: "处理中", type: "primary" as const },
     finalizing: { label: "收尾中", type: "primary" as const },
@@ -898,24 +899,34 @@ async function submitUploadQueue() {
     return;
   }
 
+  const knowledgeBaseId = knowledgeBase.value.id;
   uploadLoading.value = true;
   try {
-    await uploadDocumentsBatch({
+    const createdDocuments = await uploadDocumentsBatch({
       files: uploadQueue.value.map((item) => item.raw),
-      knowledgeBaseId: knowledgeBase.value.id,
+      knowledgeBaseId,
       categoryId: uploadTargetCategory.value === "uncategorized" ? null : uploadTargetCategory.value,
       sourcePaths: uploadQueue.value.map((item) => buildUploadSourcePath(item)),
     });
-    ElMessage.success(`已提交 ${uploadQueue.value.length} 个文档的上传任务。`);
+    ElMessage.success(`已提交 ${createdDocuments.length} 个文档的上传与解析任务。`);
     documentQuery.page = 1;
     uploadDialogVisible.value = false;
     await Promise.all([
-      loadKnowledgeBaseSummary(knowledgeBase.value.id),
-      loadCategories(knowledgeBase.value.id),
+      loadKnowledgeBaseSummary(knowledgeBaseId),
+      loadCategories(knowledgeBaseId),
       loadDocuments(),
     ]);
   } catch (error) {
     const message = error instanceof Error ? error.message : "上传文档失败，请稍后重试。";
+    try {
+      await Promise.all([
+        loadKnowledgeBaseSummary(knowledgeBaseId),
+        loadCategories(knowledgeBaseId),
+        loadDocuments(),
+      ]);
+    } catch {
+      // 刷新失败时保留原始上传错误提示，避免二次错误覆盖。
+    }
     ElMessage.error(message);
   } finally {
     uploadLoading.value = false;

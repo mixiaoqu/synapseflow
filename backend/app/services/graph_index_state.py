@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-GraphIndexStatus = Literal["queued", "processing", "finalizing", "indexed", "failed"]
+GraphIndexStatus = Literal["skipped", "queued", "processing", "finalizing", "indexed", "failed"]
 
+GRAPH_INDEX_STATUS_SKIPPED: GraphIndexStatus = "skipped"
 GRAPH_INDEX_STATUS_QUEUED: GraphIndexStatus = "queued"
 GRAPH_INDEX_STATUS_PROCESSING: GraphIndexStatus = "processing"
 GRAPH_INDEX_STATUS_FINALIZING: GraphIndexStatus = "finalizing"

@@ -104,12 +104,33 @@ class DocumentChunkRepository:
         )
         return list(result.scalars().all())
 
+    async def get_parent_chunks_for_document(self, document_id: int) -> list[DocumentChunk]:
+        result = await self.db.execute(
+            select(DocumentChunk)
+            .where(
+                DocumentChunk.document_id == document_id,
+                DocumentChunk.chunk_kind == "parent",
+            )
+            .order_by(DocumentChunk.chunk_index.asc())
+        )
+        return list(result.scalars().all())
+
     async def count_child_chunks_for_document(self, document_id: int) -> int:
         result = await self.db.execute(
             select(DocumentChunk.id)
             .where(
                 DocumentChunk.document_id == document_id,
                 DocumentChunk.chunk_kind == "child",
+            )
+        )
+        return len(result.scalars().all())
+
+    async def count_parent_chunks_for_document(self, document_id: int) -> int:
+        result = await self.db.execute(
+            select(DocumentChunk.id)
+            .where(
+                DocumentChunk.document_id == document_id,
+                DocumentChunk.chunk_kind == "parent",
             )
         )
         return len(result.scalars().all())

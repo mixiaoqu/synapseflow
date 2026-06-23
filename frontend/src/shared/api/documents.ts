@@ -3,6 +3,8 @@ import type {
   BatchDocumentActionResponse,
   DocumentChunksResponse,
   DocumentDetail,
+  DocumentUploadInitRequest,
+  DocumentUploadInitResponse,
   DocumentLifecycleStatus,
   DocumentListResponse,
   DocumentQueueResponse,
@@ -38,30 +40,97 @@ export function getDocumentChunks(docId: number) {
   });
 }
 
+export function initDocumentUpload(payload: DocumentUploadInitRequest) {
+  return request<DocumentUploadInitResponse, DocumentUploadInitRequest>({
+    url: "/documents/uploads/init",
+    method: "POST",
+    data: payload,
+  });
+}
+
+export function completeDocumentUpload(uploadSessionId: number) {
+  return request<DocumentDetail, { upload_session_id: number }>({
+    url: "/documents/uploads/complete",
+    method: "POST",
+    data: {
+      upload_session_id: uploadSessionId,
+    },
+  });
+}
+
+export function abortDocumentUpload(uploadSessionId: number) {
+  return request<{ upload_session_id: number; status: string; message: string }, { upload_session_id: number }>({
+    url: "/documents/uploads/abort",
+    method: "POST",
+    data: {
+      upload_session_id: uploadSessionId,
+    },
+  });
+}
+
+async function uploadFileToObjectStorage(policy: DocumentUploadInitResponse, file: File) {
+  const form = new FormData();
+  Object.entries(policy.form_fields).forEach(([key, value]) => {
+    form.append(key, value);
+  });
+  form.append("file", file);
+
+  const response = await fetch(policy.upload_url, {
+    method: policy.method || "POST",
+    body: form,
+    mode: "cors",
+  });
+  if (response.status === 204 || response.ok) {
+    return;
+  }
+
+  const errorText = (await response.text()).trim();
+  throw new Error(errorText || `OSS 上传失败（HTTP ${response.status}）`);
+}
+
 export function uploadDocumentsBatch(payload: {
   files: File[];
   knowledgeBaseId: number;
   categoryId?: number | null;
   sourcePaths?: string[];
 }) {
-  const form = new FormData();
-  payload.files.forEach((file, index) => {
-    form.append("files", file);
-    const sourcePath = payload.sourcePaths?.[index];
-    if (sourcePath) {
-      form.append("source_paths", sourcePath);
-    }
-  });
-  form.append("knowledge_base_id", String(payload.knowledgeBaseId));
-  if (payload.categoryId) {
-    form.append("category_id", String(payload.categoryId));
-  }
+  return (async () => {
+    const createdDocuments: DocumentDetail[] = [];
 
-  return request<DocumentDetail[], FormData>({
-    url: "/documents/batch",
-    method: "POST",
-    data: form,
-  });
+    for (const [index, file] of payload.files.entries()) {
+      const sourcePath = payload.sourcePaths?.[index] ?? null;
+      const uploadSession = await initDocumentUpload({
+        filename: file.name,
+        file_size: file.size,
+        content_type: file.type || null,
+        knowledge_base_id: payload.knowledgeBaseId,
+        category_id: payload.categoryId ?? null,
+        source_path: sourcePath,
+      });
+
+      try {
+        await uploadFileToObjectStorage(uploadSession, file);
+      } catch (error) {
+        try {
+          await abortDocumentUpload(uploadSession.upload_session_id);
+        } catch {
+          // 中止会话失败不覆盖原始上传错误。
+        }
+        const message = error instanceof Error ? error.message : "上传文档失败，请稍后重试。";
+        throw new Error(`文件“${file.name}”上传失败：${message}`);
+      }
+
+      try {
+        const document = await completeDocumentUpload(uploadSession.upload_session_id);
+        createdDocuments.push(document);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "确认上传失败，请稍后重试。";
+        throw new Error(`文件“${file.name}”确认上传失败：${message}`);
+      }
+    }
+
+    return createdDocuments;
+  })();
 }
 
 export function deleteDocument(docId: number) {

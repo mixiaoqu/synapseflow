@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from importlib import import_module
 
 from loguru import logger
@@ -11,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.indexing_service import indexing_service
 from app.db.models import Document
 from app.db.session import AsyncSessionLocal
-from app.services.document_file_storage import document_file_storage
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
     INDEX_STATUS_QUEUED,
@@ -24,11 +24,19 @@ from app.services.document_parse_state import (
     PARSE_STATUS_PARSED,
     PARSE_STATUS_PROCESSING,
 )
-from app.services.graph_index_state import GRAPH_INDEX_STATUS_FAILED, GRAPH_INDEX_STATUS_QUEUED
+from app.services.graph_index_state import GRAPH_INDEX_STATUS_FAILED
+from app.services.object_storage_service import object_storage_service
 from app.utils.document_parse import parse_uploaded_document_structured, render_parsed_document
 from app.utils.time import utc_now
 
 MAX_PARSE_ERROR_LENGTH = 1000
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentParseSource:
+    bucket_name: str
+    object_key: str
+    filename: str
 
 
 class DocumentParseService:
@@ -59,21 +67,21 @@ class DocumentParseService:
         document_id: int,
         expected_staged_file_hash: str,
     ) -> None:
-        staged_file_path, staged_file_name = await self._claim_document_parse(
+        source = await self._claim_document_parse(
             document_id=document_id,
             expected_staged_file_hash=expected_staged_file_hash,
         )
-        if not staged_file_path:
+        if source is None:
             return
 
         try:
-            content = await asyncio.to_thread(
-                document_file_storage.open_staged_file,
-                staged_file_path,
+            content = await object_storage_service.get_object_bytes(
+                bucket_name=source.bucket_name,
+                object_key=source.object_key,
             )
             parsed_document, error = await asyncio.to_thread(
                 parse_uploaded_document_structured,
-                staged_file_name,
+                source.filename,
                 content,
             )
             if error or parsed_document is None:
@@ -81,7 +89,7 @@ class DocumentParseService:
 
             rendered_content = render_parsed_document(parsed_document)
             if not rendered_content.strip():
-                raise ValueError(f"File '{staged_file_name}' is empty")
+                raise ValueError(f"File '{source.filename}' is empty")
 
             title = await self._get_document_title(document_id)
             chunk_plan = await asyncio.to_thread(
@@ -108,40 +116,40 @@ class DocumentParseService:
             document_id=document_id,
             expected_content_hash=content_hash,
         )
-        if document_file_storage.delete_staged_file(staged_file_path):
-            await self._clear_staged_file_path(
-                document_id=document_id,
-                expected_staged_file_hash=expected_staged_file_hash,
-            )
 
     async def _claim_document_parse(
         self,
         *,
         document_id: int,
         expected_staged_file_hash: str,
-    ) -> tuple[str | None, str]:
+    ) -> DocumentParseSource | None:
         async with AsyncSessionLocal() as db:
             doc = await db.get(Document, document_id)
             if doc is None:
-                return None, ""
+                return None
             if getattr(doc, "staged_file_hash", None) != expected_staged_file_hash:
                 logger.info(
                     "Skip stale document parse task doc_id={} expected_hash={}",
                     document_id,
                     expected_staged_file_hash,
                 )
-                return None, ""
-            staged_file_path = str(getattr(doc, "staged_file_path", "") or "")
-            if not staged_file_path:
-                await self._mark_loaded_document_failed(db, doc, "Missing staged document file path")
+                return None
+            bucket_name = str(getattr(doc, "source_bucket_name", "") or "").strip()
+            object_key = str(getattr(doc, "source_object_key", "") or "").strip()
+            if not bucket_name or not object_key:
+                await self._mark_loaded_document_failed(db, doc, "Missing source object metadata")
                 await db.commit()
-                return None, ""
+                return None
 
             doc.parse_status = PARSE_STATUS_PROCESSING
             doc.parse_error = None
             doc.parse_started_at = utc_now()
             await db.commit()
-            return staged_file_path, str(getattr(doc, "staged_file_name", None) or doc.title)
+            return DocumentParseSource(
+                bucket_name=bucket_name,
+                object_key=object_key,
+                filename=str(getattr(doc, "source_file_name", None) or doc.title),
+            )
 
     async def _get_document_title(self, document_id: int) -> str | None:
         async with AsyncSessionLocal() as db:
@@ -172,7 +180,7 @@ class DocumentParseService:
             doc.index_status = INDEX_STATUS_QUEUED
             doc.index_error = None
             doc.indexed_at = None
-            doc.graph_index_status = GRAPH_INDEX_STATUS_QUEUED
+            doc.graph_index_status = indexing_service.resolve_graph_index_status_for_queue()
             doc.graph_index_error = None
             doc.graph_indexed_at = None
             if getattr(doc, "status", DOC_STATUS_DRAFT) == DOC_STATUS_DRAFT:
@@ -236,19 +244,6 @@ class DocumentParseService:
             await self._mark_loaded_document_failed(db, doc, error_message)
             await db.commit()
 
-    async def _clear_staged_file_path(
-        self,
-        *,
-        document_id: int,
-        expected_staged_file_hash: str,
-    ) -> None:
-        async with AsyncSessionLocal() as db:
-            doc = await db.get(Document, document_id)
-            if doc is None or getattr(doc, "staged_file_hash", None) != expected_staged_file_hash:
-                return
-            doc.staged_file_path = None
-            await db.commit()
-
     async def _mark_loaded_document_failed(
         self,
         db: AsyncSession,
@@ -266,6 +261,5 @@ class DocumentParseService:
         if not getattr(doc, "parse_started_at", None):
             doc.parse_started_at = utc_now()
         await db.flush()
-
 
 document_parse_service = DocumentParseService()

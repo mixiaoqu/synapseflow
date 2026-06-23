@@ -1,5 +1,5 @@
 export type DocumentIndexStatus = "queued" | "processing" | "indexed" | "failed";
-export type GraphIndexStatus = "queued" | "processing" | "finalizing" | "indexed" | "failed";
+export type GraphIndexStatus = "skipped" | "queued" | "processing" | "finalizing" | "indexed" | "failed";
 export type DocumentParseStatus = "queued" | "processing" | "parsed" | "failed";
 export type DocumentLifecycleStatus = "draft" | "pending_review" | "published" | "archived";
 
@@ -27,6 +27,13 @@ export interface DocumentSummary {
   category_id: number | null;
   category_name: string | null;
   source_path: string | null;
+  source_storage_provider: string | null;
+  source_bucket_name: string | null;
+  source_object_key: string | null;
+  source_file_name: string | null;
+  source_file_size: number | null;
+  source_content_type: string | null;
+  source_etag: string | null;
   status: DocumentLifecycleStatus;
   published_at: string | null;
   published_by: number | null;
@@ -88,4 +95,24 @@ export interface BatchDocumentActionResponse {
   failed_count: number;
   succeeded_ids: number[];
   failures: BatchDocumentActionFailure[];
+}
+
+export interface DocumentUploadInitRequest {
+  filename: string;
+  file_size: number;
+  content_type?: string | null;
+  knowledge_base_id: number;
+  category_id?: number | null;
+  source_path?: string | null;
+}
+
+export interface DocumentUploadInitResponse {
+  upload_session_id: number;
+  provider: string;
+  method: string;
+  bucket_name: string;
+  object_key: string;
+  upload_url: string;
+  expires_at: string;
+  form_fields: Record<string, string>;
 }

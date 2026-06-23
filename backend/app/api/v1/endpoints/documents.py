@@ -1,10 +1,11 @@
 """Document management API."""
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import require_content_roles, require_review_roles
 from app.application.document_service import document_service
+from app.application.document_upload_service import document_upload_service
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.document import (
@@ -16,6 +17,11 @@ from app.models.schemas.document import (
     DocumentCreate,
     DocumentListResponse,
     DocumentResponse,
+    DocumentUploadAbortRequest,
+    DocumentUploadActionResponse,
+    DocumentUploadCompleteRequest,
+    DocumentUploadInitRequest,
+    DocumentUploadInitResponse,
     DocumentVersionsResponse,
     IndexingPanelSummaryResponse,
 )
@@ -25,42 +31,62 @@ router = APIRouter()
 
 @router.post("", response_model=DocumentResponse)
 async def upload_document(
-    file: UploadFile = File(..., description="Document file"),
-    knowledge_base_id: int | None = Form(None, description="Owning knowledge base id"),
-    category_id: int | None = Form(None, description="Owning category id"),
-    source_path: str | None = Form(None, description="Original relative source path"),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_content_roles),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001
+    current_user: User = Depends(require_content_roles),  # noqa: ARG001
 ):
-    return await document_service.upload_document(
-        db=db,
-        user_id=current_user.id,
-        file=file,
-        knowledge_base_id=knowledge_base_id,
-        category_id=category_id,
-        source_path=source_path,
+    raise HTTPException(
+        status_code=410,
+        detail="Local multipart upload has been removed. Use /documents/uploads/init and /documents/uploads/complete.",
     )
 
 
 @router.post("/batch", response_model=list[DocumentResponse])
 async def upload_documents_batch(
-    files: list[UploadFile] = File(..., description="Document files"),
-    knowledge_base_id: int | None = Form(None, description="Owning knowledge base id"),
-    category_id: int | None = Form(None, description="Owning category id"),
-    source_paths: list[str] | None = Form(
-        None,
-        description="Relative source paths aligned with files order",
-    ),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001
+    current_user: User = Depends(require_content_roles),  # noqa: ARG001
+):
+    raise HTTPException(
+        status_code=410,
+        detail="Local multipart upload has been removed. Use /documents/uploads/init and /documents/uploads/complete.",
+    )
+
+
+@router.post("/uploads/init", response_model=DocumentUploadInitResponse)
+async def init_document_upload(
+    body: DocumentUploadInitRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await document_service.upload_documents_batch(
+    return await document_upload_service.init_upload(
         db=db,
         user_id=current_user.id,
-        files=files,
-        knowledge_base_id=knowledge_base_id,
-        category_id=category_id,
-        source_paths=source_paths,
+        body=body,
+    )
+
+
+@router.post("/uploads/complete", response_model=DocumentResponse)
+async def complete_document_upload(
+    body: DocumentUploadCompleteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await document_upload_service.complete_upload(
+        db=db,
+        user_id=current_user.id,
+        body=body,
+    )
+
+
+@router.post("/uploads/abort", response_model=DocumentUploadActionResponse)
+async def abort_document_upload(
+    body: DocumentUploadAbortRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await document_upload_service.abort_upload(
+        db=db,
+        user_id=current_user.id,
+        body=body,
     )
 
 

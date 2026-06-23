@@ -63,6 +63,14 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
     DOCUMENT_STAGING_DIR: str = "./uploaded_documents/staging"
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024
+    OSS_ENABLED: bool = False
+    OSS_PROVIDER: str = "aliyun_oss"
+    OSS_BUCKET: str = ""
+    OSS_ENDPOINT: str = ""
+    OSS_PUBLIC_ENDPOINT: str = ""
+    OSS_ACCESS_KEY_ID: str = ""
+    OSS_ACCESS_KEY_SECRET: str = ""
+    OSS_UPLOAD_EXPIRE_SECONDS: int = 900
 
     LANGSMITH_TRACING: bool = False
     LANGSMITH_API_KEY: str = ""
