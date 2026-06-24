@@ -49,6 +49,22 @@ def _entity_key(entity_type: str, name: str) -> tuple[str, str]:
     return (clean_graph_text(entity_type).upper() or "OTHER", clean_graph_text(name))
 
 
+def _entity_identity_name(entity: GraphEntityRecord) -> str:
+    return clean_graph_text(entity.canonical_name) or clean_graph_text(entity.name)
+
+
+def _lookup_values(entity: GraphEntityRecord) -> set[str]:
+    return {
+        value.casefold()
+        for value in [
+            clean_graph_text(entity.name),
+            clean_graph_text(entity.canonical_name),
+            *[clean_graph_text(alias) for alias in entity.aliases],
+        ]
+        if value
+    }
+
+
 def _is_noise_entity(name: str) -> bool:
     cleaned = clean_graph_text(name)
     if len(cleaned) < 2:
@@ -84,14 +100,20 @@ def _merge_entities(
     deduped: dict[tuple[str, str], GraphEntityRecord] = {}
     for entity in entities:
         name = clean_graph_text(entity.name)
+        canonical_name = clean_graph_text(entity.canonical_name) or None
         entity_type = clean_graph_text(entity.entity_type).upper() or "OTHER"
         if _is_noise_entity(name):
             continue
-        key = _entity_key(entity_type, name)
+        key = _entity_key(entity_type, canonical_name or name)
         aliases = tuple(
-            alias
-            for alias in (clean_graph_text(item) for item in entity.aliases)
-            if alias and alias != name
+            dict.fromkeys(
+                alias
+                for alias in [
+                    *[clean_graph_text(item) for item in entity.aliases],
+                    canonical_name or "",
+                ]
+                if alias and alias != name
+            )
         )
         existing = deduped.get(key)
         if existing is None:
@@ -101,11 +123,13 @@ def _merge_entities(
                     knowledge_base_id=chunk.knowledge_base_id,
                     entity_type=entity_type,
                     name=name,
+                    canonical_name=canonical_name,
                 ),
                 team_id=chunk.team_id,
                 knowledge_base_id=chunk.knowledge_base_id,
                 name=name,
                 entity_type=entity_type,
+                canonical_name=canonical_name,
                 aliases=aliases,
                 description=clean_graph_text(entity.description) or None,
                 attributes=_merge_attributes(entity.attributes),
@@ -125,6 +149,7 @@ def _merge_entities(
             knowledge_base_id=existing.knowledge_base_id,
             name=existing.name,
             entity_type=existing.entity_type,
+            canonical_name=existing.canonical_name or canonical_name,
             aliases=merged_aliases,
             description=description,
             attributes=_merge_attributes(existing.attributes, entity.attributes),
@@ -137,20 +162,39 @@ def _resolve_relation_endpoint(
     *,
     name: str,
     entity_type: str | None,
+    canonical_name: str | None,
     entities_by_key: dict[tuple[str, str], GraphEntityRecord],
 ) -> GraphEntityRecord | None:
     cleaned_name = clean_graph_text(name)
+    cleaned_canonical_name = clean_graph_text(canonical_name)
     if not cleaned_name:
         return None
+    if cleaned_canonical_name:
+        direct = entities_by_key.get(_entity_key(entity_type or "", cleaned_canonical_name))
+        if direct is not None:
+            return direct
+        canonical_candidates = [
+            entity
+            for entity in entities_by_key.values()
+            if _entity_identity_name(entity) == cleaned_canonical_name
+        ]
+        if len(canonical_candidates) == 1:
+            return canonical_candidates[0]
     if entity_type:
         direct = entities_by_key.get(_entity_key(entity_type, cleaned_name))
         if direct is not None:
             return direct
+    lookup_name = cleaned_name.casefold()
     candidates = [
         entity
         for entity in entities_by_key.values()
-        if entity.name == cleaned_name
+        if lookup_name in _lookup_values(entity)
     ]
+    cleaned_type = clean_graph_text(entity_type).upper()
+    if cleaned_type:
+        typed_candidates = [entity for entity in candidates if entity.entity_type == cleaned_type]
+        if len(typed_candidates) == 1:
+            return typed_candidates[0]
     if len(candidates) == 1:
         return candidates[0]
     return None
@@ -162,7 +206,7 @@ def _normalize_relation_candidates(
     relation_candidates: list[GraphRelationCandidate],
 ) -> list[GraphRelationCandidate]:
     entities_by_key = {
-        _entity_key(entity.entity_type, entity.name): entity
+        _entity_key(entity.entity_type, _entity_identity_name(entity)): entity
         for entity in entities
     }
     deduped: dict[tuple[str, str, str], GraphRelationCandidate] = {}
@@ -173,11 +217,13 @@ def _normalize_relation_candidates(
         source_entity = _resolve_relation_endpoint(
             name=relation.source_name,
             entity_type=relation.source_entity_type,
+            canonical_name=relation.source_canonical_name,
             entities_by_key=entities_by_key,
         )
         target_entity = _resolve_relation_endpoint(
             name=relation.target_name,
             entity_type=relation.target_entity_type,
+            canonical_name=relation.target_canonical_name,
             entities_by_key=entities_by_key,
         )
         if source_entity is None or target_entity is None:
@@ -193,6 +239,8 @@ def _normalize_relation_candidates(
             relation_type=relation_type,
             source_entity_type=source_entity.entity_type,
             target_entity_type=target_entity.entity_type,
+            source_canonical_name=source_entity.canonical_name,
+            target_canonical_name=target_entity.canonical_name,
             evidence_text=clean_graph_text(relation.evidence_text) or None,
             confidence=relation.confidence,
             attributes=_merge_attributes(relation.attributes),

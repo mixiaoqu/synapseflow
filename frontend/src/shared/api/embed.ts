@@ -3,7 +3,7 @@ import {
   DEFAULT_HTTP_ERROR_MESSAGE,
   DEFAULT_NETWORK_ERROR_MESSAGE,
 } from "@/shared/api/config";
-import { AppRequestError } from "@/shared/utils/error";
+import { AppRequestError, resolveHttpErrorMessage } from "@/shared/utils/error";
 
 export interface EmbedPageConfig {
   page_type: string;
@@ -93,35 +93,6 @@ function buildEmbedHeaders(token: string, hasBody: boolean) {
   return headers;
 }
 
-function extractMessage(input: unknown): string | null {
-  if (typeof input === "string") {
-    const value = input.trim();
-    return value || null;
-  }
-
-  if (Array.isArray(input)) {
-    for (const item of input) {
-      const message = extractMessage(item);
-      if (message) {
-        return message;
-      }
-    }
-    return null;
-  }
-
-  if (input && typeof input === "object") {
-    const payload = input as Record<string, unknown>;
-    return (
-      extractMessage(payload.detail) ??
-      extractMessage(payload.message) ??
-      extractMessage(payload.error) ??
-      null
-    );
-  }
-
-  return null;
-}
-
 async function parseResponsePayload(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) {
@@ -138,7 +109,7 @@ async function parseResponsePayload(response: Response): Promise<unknown> {
 async function handleFailure(response: Response): Promise<never> {
   const payload = await parseResponsePayload(response);
   throw new AppRequestError(
-    extractMessage(payload) ?? response.statusText ?? DEFAULT_HTTP_ERROR_MESSAGE,
+    resolveHttpErrorMessage(response.status, payload, DEFAULT_HTTP_ERROR_MESSAGE),
     {
       status: response.status,
       details: payload,

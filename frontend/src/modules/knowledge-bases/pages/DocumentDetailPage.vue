@@ -205,7 +205,9 @@ watch(
   () => documentDetail.value,
   (detail) => {
     adminBreadcrumbStore.setDynamicTitle("knowledge-base-detail", detail?.knowledge_base_name);
+    adminBreadcrumbStore.setDynamicTitle("evaluation-knowledge-base-detail", detail?.knowledge_base_name);
     adminBreadcrumbStore.setDynamicTitle("knowledge-base-document-detail", detail?.title);
+    adminBreadcrumbStore.setDynamicTitle("evaluation-knowledge-base-document-detail", detail?.title);
   },
   { immediate: true },
 );

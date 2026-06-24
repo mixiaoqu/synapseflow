@@ -11,7 +11,7 @@ import {
   type EmbedSessionSummary,
 } from "@/shared/api/embed";
 import { consumeSseStream } from "@/shared/lib/stream/sse";
-import { AppRequestError } from "@/shared/utils/error";
+import { AppRequestError, resolveDisplayErrorMessage } from "@/shared/utils/error";
 
 interface RetrievedDoc {
   content?: string;
@@ -395,10 +395,11 @@ export function useEmbeddedAssistant() {
             break;
           }
           case "error": {
-            const message =
+            const rawMessage =
               typeof event.data.message === "string" && event.data.message.trim()
                 ? event.data.message.trim()
                 : "请求失败";
+            const message = resolveDisplayErrorMessage(rawMessage, "请求失败，请稍后重试。");
             error.value = message;
             streamStatus.value = null;
             streamPhase.value = { nodeId: null, status: null };

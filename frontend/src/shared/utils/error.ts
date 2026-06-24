@@ -12,6 +12,16 @@ interface ErrorPayload {
   error?: unknown;
 }
 
+const STATUS_ERROR_MESSAGES: Record<number, string> = {
+  400: "提交内容有误，请检查后重试。",
+  401: "登录已失效，请重新登录。",
+  403: "当前账号没有权限执行此操作。",
+  404: "请求的内容不存在，可能已被删除。",
+  409: "当前操作与已有数据冲突，请检查后重试。",
+  422: "填写内容有误，请检查后重试。",
+  429: "操作过于频繁，请稍后再试。",
+};
+
 export class AppRequestError extends Error {
   status?: number;
   code?: string;
@@ -39,7 +49,7 @@ export class AppRequestError extends Error {
   }
 }
 
-function extractMessage(input: unknown): string | null {
+export function extractRawErrorMessage(input: unknown): string | null {
   if (typeof input === "string") {
     const value = input.trim();
     return value || null;
@@ -47,7 +57,7 @@ function extractMessage(input: unknown): string | null {
 
   if (Array.isArray(input)) {
     for (const item of input) {
-      const message = extractMessage(item);
+      const message = extractRawErrorMessage(item);
       if (message) {
         return message;
       }
@@ -60,9 +70,9 @@ function extractMessage(input: unknown): string | null {
     const payload = input as ErrorPayload;
 
     return (
-      extractMessage(payload.detail) ??
-      extractMessage(payload.message) ??
-      extractMessage(payload.error) ??
+      extractRawErrorMessage(payload.detail) ??
+      extractRawErrorMessage(payload.message) ??
+      extractRawErrorMessage(payload.error) ??
       null
     );
   }
@@ -70,13 +80,76 @@ function extractMessage(input: unknown): string | null {
   return null;
 }
 
+function isChineseUserMessage(message: string) {
+  return /[\u4e00-\u9fa5]/.test(message);
+}
+
+function isTechnicalMessage(message: string) {
+  return (
+    /(^|\s)(traceback|exception|stack|sql|select|insert|update|delete|constraint|undefined|null|nan|timeout|http|axios|fetch|pydantic|validation|field|required|invalid|denied|not found|cannot|failed|error)(\s|:|$)/i.test(
+      message,
+    ) ||
+    /[A-Za-z_]+Error\b/.test(message) ||
+    /\b[A-Za-z_]+(\.[A-Za-z_]+)+\b/.test(message) ||
+    /\b[A-Za-z_]+_[A-Za-z0-9_]+\b/.test(message)
+  );
+}
+
+function isSafeBackendMessage(message: string) {
+  const value = message.trim();
+  return Boolean(value) && isChineseUserMessage(value) && !isTechnicalMessage(value);
+}
+
+export function resolveHttpErrorMessage(
+  status: number | undefined,
+  details: unknown,
+  fallbackMessage = DEFAULT_HTTP_ERROR_MESSAGE,
+) {
+  const rawMessage = extractRawErrorMessage(details);
+
+  if (rawMessage && isSafeBackendMessage(rawMessage)) {
+    return rawMessage;
+  }
+
+  if (status) {
+    if (status === 401 && rawMessage && /username|password|账号|密码/i.test(rawMessage)) {
+      return "账号或密码不正确，请重新输入。";
+    }
+
+    if (status >= 500) {
+      return "服务暂时不可用，请稍后重试。";
+    }
+
+    return STATUS_ERROR_MESSAGES[status] ?? fallbackMessage;
+  }
+
+  return fallbackMessage;
+}
+
+export function resolveDisplayErrorMessage(message: string | null | undefined, fallbackMessage: string) {
+  if (!message) {
+    return fallbackMessage;
+  }
+
+  return isSafeBackendMessage(message) ? message.trim() : fallbackMessage;
+}
+
 function extractCode(input: unknown) {
   if (!input || typeof input !== "object") {
     return undefined;
   }
 
-  const code = (input as ErrorPayload).code;
-  return typeof code === "string" && code.trim() ? code : undefined;
+  const payload = input as ErrorPayload;
+  const code = payload.code;
+  if (typeof code === "string" && code.trim()) {
+    return code;
+  }
+
+  if (payload.detail && typeof payload.detail === "object") {
+    return extractCode(payload.detail);
+  }
+
+  return undefined;
 }
 
 export function normalizeError(error: unknown, fallbackMessage = DEFAULT_HTTP_ERROR_MESSAGE) {
@@ -89,10 +162,9 @@ export function normalizeError(error: unknown, fallbackMessage = DEFAULT_HTTP_ER
     const details = error.response?.data;
     const isNetworkError = !error.response;
     const message =
-      extractMessage(details) ??
-      (isNetworkError ? DEFAULT_NETWORK_ERROR_MESSAGE : null) ??
-      error.message ??
-      fallbackMessage;
+      isNetworkError
+        ? DEFAULT_NETWORK_ERROR_MESSAGE
+        : resolveHttpErrorMessage(status, details, fallbackMessage);
 
     return new AppRequestError(message, {
       status,

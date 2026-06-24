@@ -392,23 +392,22 @@ function getParseStatusMeta(status: DocumentSummary["parse_status"]) {
   return metaMap[status];
 }
 
-function getParseErrorText(status: DocumentSummary["parse_status"], error: string | null) {
+function getParseErrorText(status: DocumentSummary["parse_status"]) {
   if (status !== "failed") {
     return "";
   }
 
-  return error?.trim() || "解析失败，请检查原文件后重传。";
+  return "解析失败，请检查原文件后重传。";
 }
 
 function getIndexErrorText(
   status: DocumentSummary["index_status"] | DocumentSummary["graph_index_status"],
-  error: string | null,
 ) {
   if (status !== "failed") {
     return "";
   }
 
-  return error?.trim() || "索引失败，请稍后重试。";
+  return "索引失败，请稍后重试。";
 }
 
 function getLifecycleStatusMeta(status: DocumentLifecycleStatus) {
@@ -973,9 +972,7 @@ async function runBatchDocumentAction(
       ElMessage.success(`已${successPrefix}${succeeded}个文档。`);
     }
     if (failed > 0) {
-      const firstFailure = result.failures[0];
-      const detail = firstFailure?.detail ? `：${firstFailure.detail}` : "。";
-      ElMessage.warning(`${failed} 个文档处理失败${detail}`);
+      ElMessage.warning(`${failed} 个文档处理失败，请检查文档状态后重试。`);
     }
 
     await refreshKnowledgeBaseData();
@@ -1024,9 +1021,7 @@ async function runOneClickDocumentAction(
       ElMessage.info("当前筛选下没有可处理的文档。");
     }
     if (failed > 0) {
-      const firstFailure = result.failures[0];
-      const detail = firstFailure?.detail ? `：${firstFailure.detail}` : "。";
-      ElMessage.warning(`${failed} 个文档处理失败${detail}`);
+      ElMessage.warning(`${failed} 个文档处理失败，请检查文档状态后重试。`);
     }
 
     await refreshKnowledgeBaseData();
@@ -1292,6 +1287,16 @@ function handleOpenDocumentDetail(document: DocumentSummary) {
     return;
   }
 
+  const routeName = typeof route.name === "string" ? route.name : "";
+  const isEvaluationKnowledgeBaseRoute =
+    routeName === "evaluation-knowledge-base-detail" ||
+    routeName === "evaluation-knowledge-base-document-detail";
+
+  if (isEvaluationKnowledgeBaseRoute) {
+    void router.push(`/evaluations/knowledge-bases/${knowledgeBase.value.id}/documents/${document.id}`);
+    return;
+  }
+
   void router.push(`/knowledge-bases/${knowledgeBase.value.id}/documents/${document.id}`);
 }
 
@@ -1308,6 +1313,7 @@ watch(
   () => knowledgeBase.value?.name,
   (name) => {
     adminBreadcrumbStore.setDynamicTitle("knowledge-base-detail", name);
+    adminBreadcrumbStore.setDynamicTitle("evaluation-knowledge-base-detail", name);
   },
   { immediate: true },
 );
@@ -1642,9 +1648,9 @@ watch(
                     <span
                       v-if="row.parse_status === 'failed'"
                       class="kb-documents__index-error"
-                      :title="getParseErrorText(row.parse_status, row.parse_error)"
+                      :title="getParseErrorText(row.parse_status)"
                     >
-                      {{ getParseErrorText(row.parse_status, row.parse_error) }}
+                      {{ getParseErrorText(row.parse_status) }}
                     </span>
                   </div>
                 </template>
@@ -1659,9 +1665,9 @@ watch(
                     <span
                       v-if="row.index_status === 'failed'"
                       class="kb-documents__index-error"
-                      :title="getIndexErrorText(row.index_status, row.index_error)"
+                      :title="getIndexErrorText(row.index_status)"
                     >
-                      {{ getIndexErrorText(row.index_status, row.index_error) }}
+                      {{ getIndexErrorText(row.index_status) }}
                     </span>
                   </div>
                 </template>
@@ -1676,9 +1682,9 @@ watch(
                     <span
                       v-if="row.graph_index_status === 'failed'"
                       class="kb-documents__index-error"
-                      :title="getIndexErrorText(row.graph_index_status, row.graph_index_error)"
+                      :title="getIndexErrorText(row.graph_index_status)"
                     >
-                      {{ getIndexErrorText(row.graph_index_status, row.graph_index_error) }}
+                      {{ getIndexErrorText(row.graph_index_status) }}
                     </span>
                   </div>
                 </template>

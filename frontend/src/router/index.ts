@@ -145,6 +145,26 @@ const router = createRouter({
           },
         },
         {
+          path: "evaluations/knowledge-bases/:knowledgeBaseId",
+          name: "evaluation-knowledge-base-detail",
+          component: KnowledgeBaseDetailPage,
+          meta: {
+            parent: "evaluation-knowledge-bases",
+            title: "评测基准库详情",
+            description: "评测基准库分类侧栏与文档管理工作台。",
+          },
+        },
+        {
+          path: "evaluations/knowledge-bases/:knowledgeBaseId/documents/:documentId",
+          name: "evaluation-knowledge-base-document-detail",
+          component: DocumentDetailPage,
+          meta: {
+            parent: "evaluation-knowledge-base-detail",
+            title: "文档详情",
+            description: "评测基准库文档正文与真实分块查看页面。",
+          },
+        },
+        {
           path: "assistants",
           name: "assistants",
           component: AssistantListPage,

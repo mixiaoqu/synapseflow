@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { Plus, RefreshRight, Search, VideoPlay } from "@element-plus/icons-vue";
+import { Plus, RefreshRight, Search } from "@element-plus/icons-vue";
 
 import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
 import AdminDialog from "@/app/components/admin/AdminDialog.vue";
@@ -10,7 +10,6 @@ import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
 import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
-  bulkRunEvalDatasets,
   createEvalDataset,
   listEvalDatasets,
   listEvaluationKnowledgeBases,
@@ -51,7 +50,6 @@ const dialogLoading = ref(false);
 const dialogMode = ref<"create" | "edit">("create");
 const editingDatasetId = ref<number | null>(null);
 const selectedDatasetIds = ref<Set<number>>(new Set());
-const bulkRunning = ref(false);
 const datasetTableRef = ref<{ clearSelection: () => void } | null>(null);
 let loadRequestSeq = 0;
 
@@ -90,7 +88,6 @@ const rows = computed<EvalDatasetRow[]>(() =>
 const isSearchActive = computed(() => searchKeyword.value.trim().length > 0);
 const dialogTitle = computed(() => (dialogMode.value === "create" ? "创建评测集" : "编辑评测集信息"));
 const dialogActionText = computed(() => (dialogMode.value === "create" ? "创建" : "保存"));
-const selectedDatasetCount = computed(() => selectedDatasetIds.value.size);
 
 function formatDateTime(value: string | null) {
   if (!value) {
@@ -266,22 +263,6 @@ function handleDatasetSelectionChange(selection: EvalDatasetRow[]) {
   selectedDatasetIds.value = new Set(selection.map((item) => item.id));
 }
 
-async function handleBulkRunDatasets() {
-  if (selectedDatasetIds.value.size === 0) {
-    return;
-  }
-  const datasetIds = Array.from(selectedDatasetIds.value);
-  bulkRunning.value = true;
-  try {
-    const result = await bulkRunEvalDatasets(datasetIds);
-    selectedDatasetIds.value = new Set();
-    datasetTableRef.value?.clearSelection();
-    ElMessage.success(`已提交 ${result.total} 个评测集到后台运行。`);
-  } finally {
-    bulkRunning.value = false;
-  }
-}
-
 function handlePageChange(page: number) {
   pagination.page = page;
   void loadDatasets();
@@ -325,14 +306,6 @@ onMounted(() => {
           <span class="evaluation-list-page__toolbar-note">
             共 {{ pagination.total }} 个评测集
           </span>
-          <el-button
-            :icon="VideoPlay"
-            :disabled="selectedDatasetCount === 0"
-            :loading="bulkRunning"
-            @click="handleBulkRunDatasets"
-          >
-            批量运行{{ selectedDatasetCount ? ` (${selectedDatasetCount})` : "" }}
-          </el-button>
           <el-button
             type="primary"
             :icon="Plus"

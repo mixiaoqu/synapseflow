@@ -228,7 +228,7 @@ async function submitKnowledgeBaseForm() {
 }
 
 function openKnowledgeBaseDetail(knowledgeBaseId: number) {
-  void router.push(`/knowledge-bases/${knowledgeBaseId}`);
+  void router.push(`/evaluations/knowledge-bases/${knowledgeBaseId}`);
 }
 
 function handleKnowledgeBaseSelectionChange(selection: EvaluationKnowledgeBaseRow[]) {

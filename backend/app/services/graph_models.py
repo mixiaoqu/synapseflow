@@ -18,13 +18,15 @@ def build_entity_id(
     knowledge_base_id: int,
     entity_type: str,
     name: str,
+    canonical_name: str | None = None,
 ) -> str:
+    identity_name = clean_graph_text(canonical_name) or clean_graph_text(name)
     payload = "|".join(
         [
             str(int(team_id)),
             str(int(knowledge_base_id)),
             clean_graph_text(entity_type).upper() or "OTHER",
-            clean_graph_text(name),
+            identity_name,
         ]
     )
     return str(uuid5(NAMESPACE_URL, f"synapseflow:entity:{payload}"))
@@ -77,6 +79,7 @@ class GraphEntityRecord:
     knowledge_base_id: int
     name: str
     entity_type: str
+    canonical_name: str | None = None
     aliases: tuple[str, ...] = ()
     description: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
@@ -127,6 +130,8 @@ class GraphRelationCandidate:
     relation_type: str
     source_entity_type: str | None = None
     target_entity_type: str | None = None
+    source_canonical_name: str | None = None
+    target_canonical_name: str | None = None
     evidence_text: str | None = None
     confidence: float | None = None
     attributes: dict[str, Any] = field(default_factory=dict)

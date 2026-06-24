@@ -43,6 +43,8 @@ from app.services.semantic_chunk import (
 from app.services.vector_store import add_document_chunks, delete_by_document_id
 from app.utils.document_parse import ParsedDocument, render_parsed_document
 
+GRAPH_EXTRACTION_SCHEMA_VERSION = "graph_alias_identity_v2"
+
 
 def prepare_document_chunk_plan(
     parsed: ParsedDocument,
@@ -251,6 +253,7 @@ def _build_chunk_record(
 def _serialize_graph_extraction(extraction: ChunkGraphExtraction) -> dict[str, Any]:
     return {
         "status": "indexed",
+        "schema_version": GRAPH_EXTRACTION_SCHEMA_VERSION,
         "content_hash": extraction.chunk.content_hash,
         "entities": [
             {
@@ -259,6 +262,7 @@ def _serialize_graph_extraction(extraction: ChunkGraphExtraction) -> dict[str, A
                 "knowledge_base_id": entity.knowledge_base_id,
                 "name": entity.name,
                 "entity_type": entity.entity_type,
+                "canonical_name": entity.canonical_name,
                 "aliases": list(entity.aliases),
                 "description": entity.description,
                 "attributes": entity.attributes,
@@ -273,6 +277,8 @@ def _serialize_graph_extraction(extraction: ChunkGraphExtraction) -> dict[str, A
                 "relation_type": relation.relation_type,
                 "source_entity_type": relation.source_entity_type,
                 "target_entity_type": relation.target_entity_type,
+                "source_canonical_name": relation.source_canonical_name,
+                "target_canonical_name": relation.target_canonical_name,
                 "evidence_text": relation.evidence_text,
                 "confidence": relation.confidence,
                 "attributes": relation.attributes,
@@ -298,6 +304,14 @@ def _deserialize_graph_extraction(
         entity_type = clean_graph_text(item.get("entity_type")).upper() or "OTHER"
         if not entity_id or not name:
             continue
+        attributes = dict(item.get("attributes") or {})
+        canonical_name = (
+            clean_graph_text(item.get("canonical_name"))
+            or clean_graph_text(item.get("qualified_name"))
+            or clean_graph_text(attributes.get("canonical_name"))
+            or clean_graph_text(attributes.get("qualified_name"))
+            or None
+        )
         entities.append(
             GraphEntityRecord(
                 id=entity_id,
@@ -305,13 +319,14 @@ def _deserialize_graph_extraction(
                 knowledge_base_id=chunk.knowledge_base_id,
                 name=name,
                 entity_type=entity_type,
+                canonical_name=canonical_name,
                 aliases=tuple(
                     alias
                     for alias in (clean_graph_text(value) for value in list(item.get("aliases") or []))
                     if alias
                 ),
                 description=clean_graph_text(item.get("description")) or None,
-                attributes=dict(item.get("attributes") or {}),
+                attributes=attributes,
                 tags=tuple(
                     tag
                     for tag in (clean_graph_text(value) for value in list(item.get("tags") or []))
@@ -335,6 +350,8 @@ def _deserialize_graph_extraction(
                 relation_type=clean_graph_text(item.get("relation_type")).upper() or "RELATED_TO",
                 source_entity_type=clean_graph_text(item.get("source_entity_type")).upper() or None,
                 target_entity_type=clean_graph_text(item.get("target_entity_type")).upper() or None,
+                source_canonical_name=clean_graph_text(item.get("source_canonical_name")) or None,
+                target_canonical_name=clean_graph_text(item.get("target_canonical_name")) or None,
                 evidence_text=clean_graph_text(item.get("evidence_text")) or None,
                 confidence=float(item["confidence"]) if item.get("confidence") is not None else None,
                 attributes=dict(item.get("attributes") or {}),
@@ -355,6 +372,8 @@ def _build_graph_extraction_metadata(extraction: ChunkGraphExtraction) -> dict[s
 def _chunk_extraction_cache_valid(metadata: dict[str, Any], *, content_hash: str | None) -> bool:
     graph_extraction = dict(metadata.get("graph_extraction") or {})
     if str(graph_extraction.get("status") or "").strip() != "indexed":
+        return False
+    if clean_graph_text(graph_extraction.get("schema_version")) != GRAPH_EXTRACTION_SCHEMA_VERSION:
         return False
     return clean_graph_text(graph_extraction.get("content_hash")) == clean_graph_text(content_hash)
 
@@ -477,6 +496,7 @@ def _merge_entity_records(existing: GraphEntityRecord, incoming: GraphEntityReco
         knowledge_base_id=existing.knowledge_base_id,
         name=existing.name,
         entity_type=existing.entity_type,
+        canonical_name=existing.canonical_name or incoming.canonical_name,
         aliases=aliases,
         description=description,
         attributes=attributes,
@@ -484,22 +504,56 @@ def _merge_entity_records(existing: GraphEntityRecord, incoming: GraphEntityReco
     )
 
 
+def _entity_lookup_values(entity: GraphEntityRecord) -> set[str]:
+    return {
+        value.casefold()
+        for value in [
+            clean_graph_text(entity.name),
+            clean_graph_text(entity.canonical_name),
+            *[clean_graph_text(alias) for alias in entity.aliases],
+        ]
+        if value
+    }
+
+
 def _resolve_entity_for_relation(
     entities: Sequence[GraphEntityRecord],
     *,
     name: str,
     entity_type: str | None,
+    canonical_name: str | None,
 ) -> GraphEntityRecord | None:
     cleaned_name = clean_graph_text(name)
     cleaned_type = clean_graph_text(entity_type).upper()
+    cleaned_canonical_name = clean_graph_text(canonical_name)
+    if cleaned_canonical_name:
+        canonical_candidates = [
+            entity
+            for entity in entities
+            if clean_graph_text(entity.canonical_name or entity.name) == cleaned_canonical_name
+        ]
+        if cleaned_type:
+            typed_canonical_candidates = [
+                entity for entity in canonical_candidates if entity.entity_type == cleaned_type
+            ]
+            if len(typed_canonical_candidates) == 1:
+                return typed_canonical_candidates[0]
+        if len(canonical_candidates) == 1:
+            return canonical_candidates[0]
+    lookup_name = cleaned_name.casefold()
     typed_candidates = [
         entity
         for entity in entities
-        if entity.name == cleaned_name and (not cleaned_type or entity.entity_type == cleaned_type)
+        if lookup_name in _entity_lookup_values(entity)
+        and (not cleaned_type or entity.entity_type == cleaned_type)
     ]
     if len(typed_candidates) == 1:
         return typed_candidates[0]
-    untyped_candidates = [entity for entity in entities if entity.name == cleaned_name]
+    untyped_candidates = [
+        entity
+        for entity in entities
+        if lookup_name in _entity_lookup_values(entity)
+    ]
     if len(untyped_candidates) == 1:
         return untyped_candidates[0]
     return None
@@ -545,11 +599,13 @@ def _aggregate_graph_records(
                 chunk_entities,
                 name=relation_candidate.source_name,
                 entity_type=relation_candidate.source_entity_type,
+                canonical_name=relation_candidate.source_canonical_name,
             )
             target_entity = _resolve_entity_for_relation(
                 chunk_entities,
                 name=relation_candidate.target_name,
                 entity_type=relation_candidate.target_entity_type,
+                canonical_name=relation_candidate.target_canonical_name,
             )
             if source_entity is None or target_entity is None:
                 continue

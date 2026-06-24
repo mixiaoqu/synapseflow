@@ -317,6 +317,7 @@ class Neo4jGraphStore:
                 "knowledge_base_id": entity.knowledge_base_id,
                 "name": entity.name,
                 "entity_type": entity.entity_type,
+                "canonical_name": entity.canonical_name,
                 "aliases": list(entity.aliases),
                 "description": entity.description,
                 "attributes_json": _serialize_json(entity.attributes),
@@ -333,6 +334,7 @@ class Neo4jGraphStore:
                 e.knowledge_base_id = row.knowledge_base_id,
                 e.name = row.name,
                 e.entity_type = row.entity_type,
+                e.canonical_name = row.canonical_name,
                 e.aliases = row.aliases,
                 e.description = row.description,
                 e.attributes_json = row.attributes_json,
@@ -496,6 +498,7 @@ class Neo4jGraphStore:
           AND e.knowledge_base_id = $knowledge_base_id
           AND (
             toLower(e.name) = $candidate
+            OR toLower(e.canonical_name) = $candidate
             OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) = $candidate)
             OR toLower(coalesce(e.description, "")) CONTAINS $candidate
           )
@@ -503,6 +506,7 @@ class Neo4jGraphStore:
             e.id AS entity_id,
             e.name AS name,
             e.entity_type AS entity_type,
+            e.canonical_name AS canonical_name,
             coalesce(e.aliases, []) AS aliases,
             coalesce(e.description, "") AS description,
             coalesce(e.tags, []) AS tags
@@ -532,6 +536,7 @@ class Neo4jGraphStore:
           AND anchor.knowledge_base_id = $knowledge_base_id
           AND (
             toLower(anchor.name) IN $entity_names
+            OR toLower(anchor.canonical_name) IN $entity_names
             OR any(alias IN coalesce(anchor.aliases, []) WHERE toLower(alias) IN $entity_names)
           )
         CALL {
@@ -592,8 +597,16 @@ class Neo4jGraphStore:
         MATCH (source:Entity)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(target:Entity)
         WHERE ev.team_id = $team_id
           AND ev.knowledge_base_id = $knowledge_base_id
-          AND (toLower(source.name) = row.source OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) = row.source))
-          AND (toLower(target.name) = row.target OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) = row.target))
+          AND (
+            toLower(source.name) = row.source
+            OR toLower(source.canonical_name) = row.source
+            OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) = row.source)
+          )
+          AND (
+            toLower(target.name) = row.target
+            OR toLower(target.canonical_name) = row.target
+            OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) = row.target)
+          )
         OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
         RETURN DISTINCT
             ev.document_id AS document_id,
@@ -643,18 +656,32 @@ class Neo4jGraphStore:
         MATCH (anchor:Entity)
         WHERE anchor.team_id = $team_id
           AND anchor.knowledge_base_id = $knowledge_base_id
-          AND (toLower(anchor.name) = row.anchor_entity OR any(alias IN coalesce(anchor.aliases, []) WHERE toLower(alias) = row.anchor_entity))
+          AND (
+            toLower(anchor.name) = row.anchor_entity
+            OR toLower(anchor.canonical_name) = row.anchor_entity
+            OR any(alias IN coalesce(anchor.aliases, []) WHERE toLower(alias) = row.anchor_entity)
+          )
         CALL {
           WITH anchor, row
           MATCH (anchor)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(other:Entity)
           WHERE row.direction <> 'incoming'
-            AND (row.target_entity = '' OR toLower(other.name) = row.target_entity OR any(alias IN coalesce(other.aliases, []) WHERE toLower(alias) = row.target_entity))
+            AND (
+              row.target_entity = ''
+              OR toLower(other.name) = row.target_entity
+              OR toLower(other.canonical_name) = row.target_entity
+              OR any(alias IN coalesce(other.aliases, []) WHERE toLower(alias) = row.target_entity)
+            )
           RETURN anchor AS source_entity, other AS target_entity, ev
           UNION
           WITH anchor, row
           MATCH (other:Entity)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(anchor)
           WHERE row.direction = 'incoming'
-            AND (row.target_entity = '' OR toLower(other.name) = row.target_entity OR any(alias IN coalesce(other.aliases, []) WHERE toLower(alias) = row.target_entity))
+            AND (
+              row.target_entity = ''
+              OR toLower(other.name) = row.target_entity
+              OR toLower(other.canonical_name) = row.target_entity
+              OR any(alias IN coalesce(other.aliases, []) WHERE toLower(alias) = row.target_entity)
+            )
           RETURN other AS source_entity, anchor AS target_entity, ev
         }
         OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
@@ -722,8 +749,16 @@ class Neo4jGraphStore:
                       AND source.knowledge_base_id = $knowledge_base_id
                       AND target.team_id = $team_id
                       AND target.knowledge_base_id = $knowledge_base_id
-                      AND (toLower(source.name) = row.source OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) = row.source))
-                      AND (toLower(target.name) = row.target OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) = row.target))
+                      AND (
+                        toLower(source.name) = row.source
+                        OR toLower(source.canonical_name) = row.source
+                        OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) = row.source)
+                      )
+                      AND (
+                        toLower(target.name) = row.target
+                        OR toLower(target.canonical_name) = row.target
+                        OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) = row.target)
+                      )
                     MATCH p = shortestPath((source)-[:RELATED__HOP_PATTERN__]->(target))
                     WITH p, nodes(p) AS path_nodes, relationships(p) AS path_relationships
                     RETURN
@@ -752,8 +787,16 @@ class Neo4jGraphStore:
                       AND source.knowledge_base_id = $knowledge_base_id
                       AND target.team_id = $team_id
                       AND target.knowledge_base_id = $knowledge_base_id
-                      AND (toLower(source.name) = source_name OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) = source_name))
-                      AND (toLower(target.name) = target_name OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) = target_name))
+                      AND (
+                        toLower(source.name) = source_name
+                        OR toLower(source.canonical_name) = source_name
+                        OR any(alias IN coalesce(source.aliases, []) WHERE toLower(alias) = source_name)
+                      )
+                      AND (
+                        toLower(target.name) = target_name
+                        OR toLower(target.canonical_name) = target_name
+                        OR any(alias IN coalesce(target.aliases, []) WHERE toLower(alias) = target_name)
+                      )
                     MATCH p = shortestPath((source)-[:RELATED__HOP_PATTERN__]-(target))
                     WITH p, nodes(p) AS path_nodes, relationships(p) AS path_relationships
                     RETURN

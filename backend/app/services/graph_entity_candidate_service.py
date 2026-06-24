@@ -76,6 +76,7 @@ def _build_lookup_terms(
 def _score_match(row: dict[str, Any], term: str, source: str) -> tuple[int, str]:
     normalized_term = _normalize_lookup_key(term)
     normalized_name = _normalize_lookup_key(row.get("name"))
+    normalized_canonical_name = _normalize_lookup_key(row.get("canonical_name"))
     aliases = {_normalize_lookup_key(item) for item in list(row.get("aliases") or [])}
 
     match_type = "fuzzy"
@@ -83,6 +84,9 @@ def _score_match(row: dict[str, Any], term: str, source: str) -> tuple[int, str]
     if normalized_name == normalized_term:
         score = 100
         match_type = "name_exact"
+    elif normalized_canonical_name == normalized_term:
+        score = 98
+        match_type = "canonical_exact"
     elif normalized_term in aliases:
         score = 92
         match_type = "alias_exact"
@@ -158,6 +162,7 @@ async def resolve_graph_candidate_entities(
                 "entity_id": entity_id,
                 "name": name,
                 "entity_type": _normalize_text(row.get("entity_type")) or "OTHER",
+                "canonical_name": _normalize_text(row.get("canonical_name")),
                 "aliases": [_normalize_text(item) for item in list(row.get("aliases") or []) if _normalize_text(item)],
                 "score": score,
                 "match_type": match_type,
