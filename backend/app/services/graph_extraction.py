@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 
 from loguru import logger
@@ -74,13 +75,26 @@ _ALLOWED_RELATION_TYPES = {
     "MENTIONED_WITH",
 }
 
+_CODE_SPLIT_PATTERN = re.compile(
+    r"[A-Z]+(?=[A-Z][a-z]|\d|\b)|[A-Z]?[a-z]+|\d+"
+)
+
 _ENTITY_ATTRIBUTE_GUIDANCE = """实体 attributes 只存该实体自身的稳定结构化事实。
 如果没有明确、可直接确认的稳定属性，可以返回空对象。
 不要把关系事实、长证据原文、摘要、推断内容写进 attributes。"""
 
-_ALIAS_GUIDANCE = """aliases 应包含原文中明确出现的别名、简称、代码名，以及用户可能使用的其他自然语言别名。
-尽量补充中文、英文、业务叫法；如果 name 是短代码名，应把 qualified_name/canonical_name 也放入 aliases。
-不要写过宽泛、无法明确指向该实体的词，也不要写其他独立实体名。"""
+_ALIAS_GUIDANCE = """aliases 用于用户问题和图谱实体匹配，不要只输出一个别名。
+必须基于 name 生成用户可能使用的其他实体名称，尽量同时包含中文和英文；qualified_name/canonical_name 继续放在对应字段，不要作为 aliases 输出。
+对于 camelCase、PascalCase、snake_case、kebab-case 等技术名，必须补充英文拆词形式和高置信中文意译。
+对于函数、方法、组件、模块、配置、页面、接口等技术实体，应补充用户可能在问题中使用的口语化实体名称。
+每个明确实体优先输出 3-8 个 aliases；如果无法高置信生成中文，也至少输出多个基于 name 的英文拆词形式。
+例如：
+- UserProfile 可补充 aliases: ["user profile", "用户资料"]
+- PaymentConfig 可补充 aliases: ["payment config", "支付配置"]
+- OrderService 可补充 aliases: ["order service", "订单服务"]
+- batchUpdateUserData 可补充 aliases: ["batch update user data", "update user data", "批量更新用户数据", "更新用户数据"]
+- parseAddress.js::batchUpdateUserData 可补充 aliases: ["parseAddress.js batchUpdateUserData", "parse address batch update user data", "地址解析批量更新用户数据"]
+优先输出高置信、单义、可直接指向该实体的别名；不要写过宽泛、无法明确指向该实体的词，也不要写其他独立实体名。"""
 
 
 def _coerce_text(content: Any) -> str:
@@ -154,6 +168,55 @@ def _qualified_symbol_short_name(value: str) -> str:
     return clean_graph_text(cleaned.rsplit("::", 1)[-1]) or cleaned
 
 
+def _split_code_words(value: str) -> tuple[str, ...]:
+    cleaned = clean_graph_text(value)
+    if not cleaned:
+        return ()
+    normalized = re.sub(r"[^0-9A-Za-z]+", " ", cleaned)
+    words: list[str] = []
+    for part in normalized.split():
+        matches = _CODE_SPLIT_PATTERN.findall(part)
+        if matches:
+            words.extend(matches)
+        else:
+            words.append(part)
+    return tuple(word.lower() for word in words if word)
+
+
+def _build_code_search_aliases(
+    *,
+    name: str,
+    canonical_name: str | None,
+) -> tuple[str, ...]:
+    aliases: list[str] = []
+    action_words = {"get", "set", "add", "update", "delete", "remove", "create"}
+
+    def add(value: str) -> None:
+        cleaned = clean_graph_text(value)
+        if cleaned and cleaned != name and cleaned not in aliases:
+            aliases.append(cleaned)
+
+    name_words = _split_code_words(name)
+    if len(name_words) >= 2:
+        add(" ".join(name_words))
+    for index, word in enumerate(name_words):
+        if len(name_words) - index >= 2 and word in action_words:
+            add(" ".join(name_words[index:]))
+            break
+
+    cleaned_canonical = clean_graph_text(canonical_name)
+    if cleaned_canonical and "::" in cleaned_canonical:
+        owner, symbol = cleaned_canonical.rsplit("::", 1)
+        owner_name = clean_graph_text(owner.rsplit("/", 1)[-1])
+        if owner_name:
+            add(f"{owner_name} {symbol}")
+            owner_stem = re.sub(r"\.[^.]+$", "", owner_name)
+            owner_words = _split_code_words(owner_stem)
+            if owner_words and name_words:
+                add(" ".join([*owner_words, *name_words]))
+    return tuple(aliases)
+
+
 def _entity_canonical_name(item: dict[str, Any], attributes: dict[str, Any]) -> str | None:
     candidates = (
         item.get("canonical_name"),
@@ -201,6 +264,7 @@ def _build_graph_extraction_prompt(
 4. 代码符号、路由、模块等可唯一定位对象应尽量输出 qualified_name 或 canonical_name，用于唯一归一。
 5. aliases 按以下规则输出：
 {_ALIAS_GUIDANCE}
+   如果技术名本身更偏实现命名，但上下文能明确其产品/业务含义，请补一个用户更可能提问时使用的中文别名。
 6. description 只写一句简短介绍，可为空。
 7. attributes 只写实体自身稳定属性，不要写关系或长证据。
 8. relation 中请尽量补充 source_type / target_type；如果关系端点有 qualified_name/canonical_name，也补充 source_qualified_name / target_qualified_name。
@@ -277,6 +341,7 @@ def _build_graph_extraction_batch_prompt(
 5. 代码符号、路由、模块等可唯一定位对象应尽量输出 qualified_name 或 canonical_name，用于唯一归一。
 6. aliases 按以下规则输出：
 {_ALIAS_GUIDANCE}
+   如果技术名本身更偏实现命名，但上下文能明确其产品/业务含义，请补一个用户更可能提问时使用的中文别名。
 7. source_type / target_type 尽量填写；如果关系端点有 qualified_name/canonical_name，也补充 source_qualified_name / target_qualified_name。
 8. 输出必须是 JSON。
 
@@ -357,7 +422,7 @@ def _parse_graph_extraction_payload(
                     *_parse_text_list(item.get("aliases")),
                     *_parse_text_list(item.get("zh_aliases")),
                     clean_graph_text(item.get("symbol_name")),
-                    canonical_name or "",
+                    *_build_code_search_aliases(name=name, canonical_name=canonical_name),
                 ]
             )
             if alias and alias != name

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from time import perf_counter
 from typing import Any
 
@@ -38,11 +39,17 @@ def _resolve_graph_mode(question_type: str | None, graph_mode: str | None) -> st
     if explicit:
         return explicit
     normalized = _clean_text(question_type).lower()
-    if normalized in {"relation_lookup", "comparison_lookup", "workflow_lookup"}:
+    if normalized in {
+        "summary_lookup",
+        "relationship_lookup",
+        "relation_lookup",
+        "dependency_lookup",
+        "call_chain_lookup",
+        "comparison_lookup",
+        "workflow_lookup",
+    }:
         return "relation_evidence"
-    if normalized in {"definition_lookup", "attribute_lookup", "summary_lookup"}:
-        return "disabled"
-    return "relation_evidence"
+    return "disabled"
 
 
 def _build_relation_fact_ref(
@@ -170,6 +177,43 @@ def _build_supporting_entities(relation_facts: list[dict[str, Any]], *, limit: i
         if len(entities) >= limit:
             break
     return list(entities.values())[:limit]
+
+
+def _clip_log_text(value: Any, *, limit: int = 220) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
+def _build_relation_evidence_log_items(
+    relation_facts: list[dict[str, Any]],
+    *,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for relation in relation_facts[:limit]:
+        source = dict(relation.get("source") or {})
+        target = dict(relation.get("target") or {})
+        items.append(
+            {
+                "来源实体": _clean_text(source.get("name")) or None,
+                "关系类型": _clean_text(relation.get("relation_type")) or None,
+                "目标实体": _clean_text(target.get("name")) or None,
+                "证据": _clip_log_text(relation.get("evidence")),
+                "文档标题": _clean_text(relation.get("document_title")) or None,
+                "分块ID": relation.get("document_chunk_id"),
+            }
+        )
+    return items
+
+
+def _write_retrieval_log(payload: dict[str, Any]) -> None:
+    logger.bind(kb_retrieval_log=True).info(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    )
 
 
 class GraphRetriever:
@@ -345,8 +389,6 @@ class GraphRetriever:
                 continue
             deduped_relations.append(relation)
             seen_relation_keys.add(key)
-            if len(deduped_relations) >= max(4, limit * 2):
-                break
 
         text_facts = [
             _build_text_fact_from_relation(relation, rank=index)
@@ -355,8 +397,11 @@ class GraphRetriever:
 
         graph_facts = {
             "text": text_facts,
-            "entities": _build_supporting_entities(deduped_relations, limit=max(4, limit)),
-            "relations": deduped_relations[: max(4, limit * 2)],
+            "entities": _build_supporting_entities(
+                deduped_relations,
+                limit=max(max(4, limit), len(deduped_relations) * 2),
+            ),
+            "relations": deduped_relations,
             "paths": path_facts[: max(2, limit)],
             "evidence": [
                 {
@@ -375,23 +420,45 @@ class GraphRetriever:
                         target_entity_id=dict(relation.get("target") or {}).get("entity_id"),
                     ),
                 }
-                for relation in deduped_relations[: max(4, limit * 2)]
+                for relation in deduped_relations
                 if relation.get("evidence")
             ],
         }
         all_fact_count = sum(len(items) for items in graph_facts.values())
-        logger.info(
-            "[KB Graph Retrieval] done | graph_mode={} relation_count={} path_count={} evidence_count={} graph_hits={} empty_reason={} entities={} relation_pairs={} relation_queries={} latency_ms={}",
-            resolved_graph_mode,
-            len(graph_facts["relations"]),
-            len(graph_facts["paths"]),
-            len(graph_facts["evidence"]),
-            all_fact_count,
-            None if all_fact_count else ("error" if had_errors else "no_hits"),
-            entities,
-            resolved_relation_pairs,
-            resolved_relation_queries,
-            int((perf_counter() - started_at) * 1000),
+        relation_evidence_log_items = _build_relation_evidence_log_items(deduped_relations)
+        _write_retrieval_log(
+            {
+                "日志类型": "知识库图谱检索",
+                "阶段": "图谱检索完成",
+                "范围": {
+                    "团队ID": team_id,
+                    "知识库ID": knowledge_base_id,
+                },
+                "检索输入": {
+                    "图谱模式": resolved_graph_mode,
+                    "匹配实体": entities,
+                    "关系对条件": resolved_relation_pairs,
+                    "关系查询条件": resolved_relation_queries,
+                    "最大跳数": int(max_hops or 1),
+                    "数量限制": int(limit or 0),
+                },
+                "检索结果": {
+                    "关系数量": len(graph_facts["relations"]),
+                    "路径数量": len(graph_facts["paths"]),
+                    "证据数量": len(graph_facts["evidence"]),
+                    "图谱命中总数": all_fact_count,
+                    "空结果原因": None if all_fact_count else ("error" if had_errors else "no_hits"),
+                    "错误": first_error,
+                },
+                "关系证据": {
+                    "样例数量": len(relation_evidence_log_items),
+                    "总数": len(deduped_relations),
+                    "样例": relation_evidence_log_items,
+                },
+                "性能": {
+                    "耗时毫秒": int((perf_counter() - started_at) * 1000),
+                },
+            }
         )
         return {
             "retrieved_docs": graph_facts["text"],

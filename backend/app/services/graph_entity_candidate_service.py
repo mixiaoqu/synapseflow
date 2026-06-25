@@ -61,8 +61,9 @@ def _build_lookup_terms(
 
     for item in list(candidate_entities or []):
         add(item, "rewrite_candidate")
-    for item in list(lexical_terms or []):
-        add(item, "lexical_term")
+    if not terms:
+        for item in list(lexical_terms or []):
+            add(item, "lexical_term")
     for token in _extract_protected_tokens(query):
         add(token, "protected_token")
 

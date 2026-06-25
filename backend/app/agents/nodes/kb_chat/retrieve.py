@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from time import perf_counter
 from typing import Any
 
@@ -502,6 +503,41 @@ def _extract_seed_terms_from_docs(docs: list[dict[str, Any]], *, limit: int) -> 
     return terms
 
 
+def _clip_log_text(value: Any, *, limit: int = 220) -> str | None:
+    text = " ".join(str(value or "").split()).strip()
+    if not text:
+        return None
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
+def _build_graph_evidence_log_items(graph_facts: dict[str, Any], *, limit: int = 20) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for relation in list(graph_facts.get("relations") or [])[:limit]:
+        if not isinstance(relation, dict):
+            continue
+        source = dict(relation.get("source") or {})
+        target = dict(relation.get("target") or {})
+        items.append(
+            {
+                "来源实体": _clip_log_text(source.get("name"), limit=120),
+                "关系类型": _clip_log_text(relation.get("relation_type"), limit=120),
+                "目标实体": _clip_log_text(target.get("name"), limit=120),
+                "证据": _clip_log_text(relation.get("evidence")),
+                "文档标题": _clip_log_text(relation.get("document_title"), limit=160),
+                "分块ID": relation.get("document_chunk_id"),
+            }
+        )
+    return items
+
+
+def _write_retrieval_log(payload: dict[str, Any]) -> None:
+    logger.bind(kb_retrieval_log=True).info(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    )
+
+
 async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
     stream_writer = get_optional_stream_writer()
     if str(state.get("retrieval_strategy") or "").strip().lower() == "skip":
@@ -679,15 +715,14 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
         text_result = _empty_text_result()
     elif retrieval_strategy == "text_then_graph":
         text_result = await _run_text_retrieval()
-        text_seed_entities = _dedupe_queries(
-            [
-                *candidate_entities,
-                *_extract_seed_terms_from_docs(
+        text_seed_entities = list(candidate_entities)
+        if not text_seed_entities:
+            text_seed_entities = _dedupe_queries(
+                _extract_seed_terms_from_docs(
                     list(text_result.get("retrieved_docs") or []),
                     limit=graph_limit,
-                ),
-            ]
-        )
+                )
+            )
         graph_candidate_entities, resolved_graph_candidates = await _resolve_graph_candidates(text_seed_entities)
         graph_result = await _run_graph_retrieval(graph_candidate_entities)
     elif retrieval_strategy == "graph_then_text":
@@ -799,25 +834,71 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
         ),
         "final_context_docs": len(reranked_primary_docs),
     }
-    logger.info(
-        "[KB Retrieve] done | strategy={} question_type={} semantic_queries={} lexical_terms={} candidate_entities={} graph_candidate_entities={} relation_pairs={} relation_queries={} text_hits={} graph_hits={} graph_primary_count={} graph_supporting_count={} graph_empty_reason={} primary_count={} supporting_count={} final_hits={} graph_evidence_count={}",
-        retrieval_strategy,
-        question_type,
-        semantic_queries,
-        lexical_terms,
-        candidate_entities,
-        graph_candidate_entities,
-        list(state.get("relation_pairs") or []),
-        list(state.get("relation_queries") or []),
-        len(text_docs),
-        graph_trace.get("graph_hits"),
-        len(graph_text_docs),
-        len(supporting_docs),
-        graph_trace.get("empty_reason"),
-        len(reranked_primary_docs),
-        len(supporting_docs),
-        final_hits,
-        trace["graph_evidence_count"],
+    graph_evidence_log_items = _build_graph_evidence_log_items(graph_facts)
+    _write_retrieval_log(
+        {
+            "日志类型": "知识库检索",
+            "阶段": "检索完成",
+            "范围": {
+                "团队ID": state.get("team_id"),
+                "知识库ID": state.get("knowledge_base_id"),
+                "分类ID": state.get("category_id"),
+                "用户ID": state.get("user_id"),
+            },
+            "问题": {
+                "原始问题": query,
+                "问题类型": question_type,
+                "检索复杂度": state.get("retrieval_complexity"),
+                "检索策略": retrieval_strategy,
+            },
+            "检索输入": {
+                "语义查询": semantic_queries,
+                "关键词": lexical_terms,
+                "原始候选实体": candidate_entities,
+                "图谱候选实体": graph_candidate_entities,
+                "关系对条件": list(state.get("relation_pairs") or []),
+                "关系查询条件": list(state.get("relation_queries") or []),
+            },
+            "图谱实体解析": dict(resolved_graph_candidates.get("trace") or {}),
+            "文本检索": {
+                "是否跳过": not text_enabled,
+                "命中数": len(text_docs),
+                "空结果原因": None if text_docs else text_result.get("kb_retrieval_status") or "no_hits",
+                "向量召回数": recall_k,
+                "关键词召回数": lexical_k,
+                "原始候选数": text_trace.get("raw_candidate_count"),
+                "合并候选数": text_trace.get("merged_candidate_count"),
+                "耗时毫秒": text_trace.get("text_retrieval_latency_ms"),
+            },
+            "图谱检索": {
+                "是否启用": graph_enabled,
+                "图谱模式": graph_trace.get("graph_mode"),
+                "图谱命中总数": graph_trace.get("graph_hits"),
+                "图谱主证据数": len(graph_text_docs),
+                "图谱辅助证据数": len(supporting_docs),
+                "空结果原因": graph_trace.get("empty_reason"),
+                "错误": graph_trace.get("error"),
+                "耗时毫秒": graph_trace.get("latency_ms"),
+            },
+            "证据融合": {
+                "最终主证据数": len(reranked_primary_docs),
+                "最终辅助证据数": len(supporting_docs),
+                "最终返回数": final_hits,
+                "文本证据数": trace["text_evidence_count"],
+                "图谱证据数": trace["graph_evidence_count"],
+                "折叠重复数": duplicates_folded,
+                "辅助证据分组": trace["supporting_sections"],
+            },
+            "图谱关系证据": {
+                "样例数量": len(graph_evidence_log_items),
+                "总数": len(list(graph_facts.get("relations") or [])),
+                "样例": graph_evidence_log_items,
+            },
+            "性能": {
+                "合并耗时毫秒": merge_latency_ms,
+                "文本总耗时毫秒": text_trace.get("total_latency_ms"),
+            },
+        }
     )
     return {
         "retrieved_docs": reranked_primary_docs,

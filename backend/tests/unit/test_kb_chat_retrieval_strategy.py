@@ -21,15 +21,17 @@ def test_kb_chat_execution_plan_selects_strategy_from_question_type():
         retrieval_complexity="standard",
     )
 
-    assert definition_plan["retrieval_strategy"] == "text_then_graph"
+    assert definition_plan["retrieval_strategy"] == "text_only"
     assert definition_plan["text_enabled"] is True
-    assert definition_plan["graph_enabled"] is True
+    assert definition_plan["graph_enabled"] is False
     assert relationship_plan["retrieval_strategy"] == "graph_then_text"
     assert relationship_plan["text_enabled"] is True
     assert relationship_plan["graph_enabled"] is True
     assert summary_plan["retrieval_strategy"] == "parallel_fusion"
     assert summary_plan["text_enabled"] is True
     assert summary_plan["graph_enabled"] is True
+    assert summary_plan["channels"]["graph"]["intent"] == "neighborhood_lookup"
+    assert summary_plan["channels"]["graph"]["graph_mode"] == "relation_evidence"
 
 
 def test_kb_chat_execution_plan_uses_multi_hop_graph_for_dependency_queries():

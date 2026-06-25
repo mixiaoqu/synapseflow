@@ -48,3 +48,42 @@ def test_parse_graph_extraction_payload_returns_entities_and_relation_candidates
     assert result.relation_candidates[0].target_name == "AssistantProfile"
     assert result.relation_candidates[0].relation_type == "CALLS"
     assert result.relation_candidates[0].confidence == 0.8
+
+
+def test_parse_graph_extraction_payload_adds_search_aliases_for_code_symbol():
+    chunk = GraphChunkRecord(
+        team_id=1,
+        knowledge_base_id=67,
+        document_id=3,
+        document_chunk_id=4,
+        chunk_index=0,
+        document_title="bin.parseAddress.js",
+        section_path="",
+        content_hash="chunk-hash",
+    )
+
+    result = _parse_graph_extraction_payload(
+        chunk=chunk,
+        payload={
+            "entities": [
+                {
+                    "name": "batchUpdateUserData",
+                    "type": "operation",
+                    "qualified_name": "bin/parseAddress.js::batchUpdateUserData",
+                    "aliases": [],
+                    "description": "函数操作 bin/parseAddress.js::batchUpdateUserData",
+                    "attributes": {},
+                }
+            ],
+            "relations": [],
+        },
+    )
+
+    aliases = set(result.entities[0].aliases)
+    assert "batch update user data" in aliases
+    assert "update user data" in aliases
+    assert "parseAddress.js batchUpdateUserData" in aliases
+    assert "parse address batch update user data" in aliases
+    assert "bin/parseAddress.js::batchUpdateUserData" not in aliases
+    assert result.entities[0].canonical_name == "bin/parseAddress.js::batchUpdateUserData"
+    assert result.entities[0].attributes["qualified_name"] == "bin/parseAddress.js::batchUpdateUserData"

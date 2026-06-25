@@ -43,7 +43,7 @@ from app.services.semantic_chunk import (
 from app.services.vector_store import add_document_chunks, delete_by_document_id
 from app.utils.document_parse import ParsedDocument, render_parsed_document
 
-GRAPH_EXTRACTION_SCHEMA_VERSION = "graph_alias_identity_v2"
+GRAPH_EXTRACTION_SCHEMA_VERSION = "graph_alias_identity_v4"
 
 
 def prepare_document_chunk_plan(

@@ -564,14 +564,12 @@ class Neo4jGraphStore:
             target_entity.name AS target_name,
             target_entity.entity_type AS target_entity_type,
             [source_entity.name, target_entity.name] AS matched_entities
-        LIMIT $limit
         """
         return await self._fetch_all(
             query,
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
             entity_names=normalized_names,
-            limit=max(1, limit),
         )
 
     async def search_relation_evidence_for_pairs(
@@ -622,14 +620,12 @@ class Neo4jGraphStore:
             target.name AS target_name,
             target.entity_type AS target_entity_type,
             [source.name, target.name] AS matched_entities
-        LIMIT $limit
         """
         return await self._fetch_all(
             query,
             rows=rows,
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
-            limit=max(1, limit),
         )
 
     async def search_relation_evidence_for_queries(
@@ -699,14 +695,12 @@ class Neo4jGraphStore:
             target_entity.name AS target_name,
             target_entity.entity_type AS target_entity_type,
             [source_entity.name, target_entity.name] AS matched_entities
-        LIMIT $limit
         """
         return await self._fetch_all(
             query,
             rows=rows,
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
-            limit=max(1, limit),
         )
 
     async def search_relation_paths(

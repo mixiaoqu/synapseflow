@@ -34,6 +34,7 @@ def setup_logging() -> None:
         return bool(
             record["extra"].get("kb_review_log")
             or record["extra"].get("document_pipeline_log")
+            or record["extra"].get("kb_retrieval_log")
         )
 
     def _is_normal_log(record: dict[str, Any]) -> bool:
@@ -44,6 +45,9 @@ def setup_logging() -> None:
 
     def _is_document_pipeline_log(record: dict[str, Any]) -> bool:
         return bool(record["extra"].get("document_pipeline_log"))
+
+    def _is_retrieval_log(record: dict[str, Any]) -> bool:
+        return bool(record["extra"].get("kb_retrieval_log"))
 
     logger.add(
         sys.stderr,
@@ -66,6 +70,7 @@ def setup_logging() -> None:
         retention = file_cfg.retention
         review_log_file = log_file.with_name("kb_chat_review.log")
         document_pipeline_log_file = log_file.with_name("document_pipeline.log")
+        retrieval_log_file = log_file.with_name("retrieval.log")
 
         logger.add(
             str(log_file),
@@ -90,6 +95,15 @@ def setup_logging() -> None:
             format=fmt,
             level=level,
             filter=_is_document_pipeline_log,
+            rotation=rotation,
+            retention=retention,
+            encoding="utf-8",
+        )
+        logger.add(
+            str(retrieval_log_file),
+            format=fmt,
+            level=level,
+            filter=_is_retrieval_log,
             rotation=rotation,
             retention=retention,
             encoding="utf-8",

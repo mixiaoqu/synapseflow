@@ -46,3 +46,45 @@ def test_resolve_graph_candidates_prefers_name_over_alias():
     assert result["candidate_entities"][0] == "Payment"
     assert result["matched_entities"][0]["entity_id"] == "entity-payment"
     assert result["matched_entities"][0]["match_type"] == "name_exact"
+
+
+def test_resolve_graph_candidates_does_not_use_lexical_terms_when_candidate_exists():
+    store = FakeEntityLookupStore(
+        rows_by_candidate={
+            "函数": [
+                {
+                    "entity_id": "entity-unrelated-function",
+                    "name": "getGoodNum",
+                    "entity_type": "FUNCTION",
+                    "canonical_name": "bin/orderPay.js::getGoodNum",
+                    "aliases": [],
+                    "description": "函数定义",
+                }
+            ],
+            "文件": [
+                {
+                    "entity_id": "entity-unrelated-file",
+                    "name": "addAppVersion.js",
+                    "entity_type": "FILE",
+                    "canonical_name": "bin/addAppVersion.js",
+                    "aliases": [],
+                    "description": "文件声明",
+                }
+            ],
+        }
+    )
+
+    result = asyncio.run(
+        resolve_graph_candidate_entities(
+            candidate_entities=["yunzhonghe"],
+            lexical_terms=["yunzhonghe", "函数", "方法", "文件"],
+            query="yunzhonghe 文件中包含哪些函数和方法",
+            knowledge_base_id=1,
+            team_id=1,
+            store=store,
+        )
+    )
+
+    assert result["candidate_entities"] == ["yunzhonghe"]
+    assert result["matched_entities"] == []
+    assert result["trace"]["fallback_used"] is True

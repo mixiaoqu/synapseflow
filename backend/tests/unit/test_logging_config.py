@@ -33,19 +33,22 @@ def test_setup_logging_routes_review_logs_to_dedicated_file(monkeypatch):
 
     logging_config.setup_logging()
 
-    assert len(calls) == 4
+    assert len(calls) == 5
 
     normal_sink = calls[0]
     main_file_sink = calls[1]
     review_sink = calls[2]
     document_pipeline_sink = calls[3]
+    retrieval_sink = calls[4]
 
     assert normal_sink["kwargs"]["filter"]({"extra": {}}) is True
     assert normal_sink["kwargs"]["filter"]({"extra": {"kb_review_log": True}}) is False
     assert normal_sink["kwargs"]["filter"]({"extra": {"document_pipeline_log": True}}) is False
+    assert normal_sink["kwargs"]["filter"]({"extra": {"kb_retrieval_log": True}}) is False
     assert Path(str(main_file_sink["args"][0])).name == "synapseflow.log"
     assert Path(str(review_sink["args"][0])).name == "kb_chat_review.log"
     assert main_file_sink["kwargs"]["filter"]({"extra": {"document_pipeline_log": True}}) is False
+    assert main_file_sink["kwargs"]["filter"]({"extra": {"kb_retrieval_log": True}}) is False
     assert review_sink["kwargs"]["filter"]({"extra": {}}) is False
     assert review_sink["kwargs"]["filter"]({"extra": {"kb_review_log": True}}) is True
     assert Path(str(document_pipeline_sink["args"][0])).name == "document_pipeline.log"
@@ -54,3 +57,6 @@ def test_setup_logging_routes_review_logs_to_dedicated_file(monkeypatch):
         document_pipeline_sink["kwargs"]["filter"]({"extra": {"document_pipeline_log": True}})
         is True
     )
+    assert Path(str(retrieval_sink["args"][0])).name == "retrieval.log"
+    assert retrieval_sink["kwargs"]["filter"]({"extra": {}}) is False
+    assert retrieval_sink["kwargs"]["filter"]({"extra": {"kb_retrieval_log": True}}) is True

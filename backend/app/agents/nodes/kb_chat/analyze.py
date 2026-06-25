@@ -17,11 +17,6 @@ RETRIEVAL_STRATEGIES = {
     "graph_then_text",
     "parallel_fusion",
 }
-TEXT_FIRST_QUESTION_TYPES = {
-    "definition_lookup",
-    "attribute_lookup",
-    "location_lookup",
-}
 GRAPH_FIRST_QUESTION_TYPES = {
     "relationship_lookup",
     "dependency_lookup",
@@ -30,6 +25,11 @@ GRAPH_FIRST_QUESTION_TYPES = {
 PARALLEL_QUESTION_TYPES = {
     "summary_lookup",
     "flow_lookup",
+    "location_lookup",
+    "attribute_lookup",
+}
+TEXT_ONLY_QUESTION_TYPES = {
+    "definition_lookup",
 }
 
 
@@ -49,13 +49,13 @@ def _select_retrieval_strategy(question_type: str, requested_strategy: str) -> s
         return normalized_requested
 
     normalized_question_type = str(question_type or "").strip().lower()
-    if normalized_question_type in TEXT_FIRST_QUESTION_TYPES:
-        return "text_then_graph"
     if normalized_question_type in GRAPH_FIRST_QUESTION_TYPES:
         return "graph_then_text"
     if normalized_question_type in PARALLEL_QUESTION_TYPES:
         return "parallel_fusion"
-    return "parallel_fusion"
+    if normalized_question_type in TEXT_ONLY_QUESTION_TYPES:
+        return "text_only"
+    return "text_only"
 
 
 def _strategy_channels(strategy: str) -> tuple[bool, bool]:
@@ -110,28 +110,28 @@ def _build_graph_plan(
             "enabled": True,
             "limit": graph_limit,
             "intent": "neighborhood_lookup",
-            "graph_mode": "neighborhood_summary",
+            "graph_mode": "relation_evidence",
             "max_hops": 1,
             "boost": "medium",
         }
 
-    if question_type in {"attribute_lookup", "definition_lookup"}:
+    if question_type in {"flow_lookup", "location_lookup", "attribute_lookup"}:
         return {
             "enabled": True,
             "limit": graph_limit,
-            "intent": "entity_summary",
-            "graph_mode": "entity_summary",
-            "max_hops": 0,
-            "boost": "low",
+            "intent": "relation_lookup",
+            "graph_mode": "relation_evidence",
+            "max_hops": 1,
+            "boost": "medium",
         }
 
     return {
-        "enabled": True,
-        "limit": graph_limit,
-        "intent": "relation_lookup",
-        "graph_mode": "relation_evidence",
-        "max_hops": 1,
-        "boost": "medium",
+        "enabled": False,
+        "limit": 0,
+        "intent": None,
+        "graph_mode": None,
+        "max_hops": 0,
+        "boost": "none",
     }
 
 
@@ -162,12 +162,13 @@ def _build_retrieval_plan(
     context_budget: int,
     rerank_enabled: bool,
 ) -> dict[str, Any]:
-    text_enabled, graph_enabled = _strategy_channels(retrieval_strategy)
+    text_enabled, strategy_graph_enabled = _strategy_channels(retrieval_strategy)
     graph_plan = _build_graph_plan(
         question_type=question_type,
         retrieval_strategy=retrieval_strategy,
         graph_limit=graph_limit,
     )
+    graph_enabled = bool(graph_plan.get("enabled")) and bool(strategy_graph_enabled)
     fusion_plan = _build_fusion_plan(
         question_type=question_type,
         retrieval_strategy=retrieval_strategy,

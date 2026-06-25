@@ -111,6 +111,23 @@ def test_graph_retriever_skips_definition_lookup():
     assert result["trace"]["empty_reason"] == "skipped_for_question_type"
 
 
+def test_graph_retriever_uses_graph_for_summary_lookup():
+    result = asyncio.run(
+        GraphRetriever(store=FakeGraphStore(), enabled=True).retrieve(
+            candidate_entities=["Prescription Flow", "Payment"],
+            relation_pairs=[],
+            relation_queries=[],
+            knowledge_base_id=7,
+            team_id=3,
+            question_type="summary_lookup",
+        )
+    )
+
+    assert result["graph_facts"]["relations"]
+    assert result["trace"]["graph_mode"] == "relation_evidence"
+    assert result["trace"]["empty_reason"] is None
+
+
 def test_graph_retriever_degrades_on_store_error():
     result = asyncio.run(
         GraphRetriever(store=FailingGraphStore(), enabled=True).retrieve(
