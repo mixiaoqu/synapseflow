@@ -21,4 +21,4 @@ graph:
   # 单次批量抽取允许的最大总字符数。
   extraction_batch_max_chars: 18000
   # 图谱抽取并发数。
-  extraction_concurrency: 2
+  extraction_concurrency: 4
