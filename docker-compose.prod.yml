@@ -235,7 +235,7 @@ services:
     command:
       - sh
       - -c
-      - uv run dramatiq --queues ${SF_DRAMATIQ_GRAPH_INDEXING_QUEUE:-graph_indexing} --processes ${SF_DRAMATIQ_GRAPH_PROCESSES:-1} --threads ${SF_DRAMATIQ_GRAPH_THREADS:-1} app.workers.indexing_tasks
+      - uv run dramatiq --queues ${SF_DRAMATIQ_GRAPH_INDEXING_QUEUE:-graph_indexing} --processes ${SF_DRAMATIQ_GRAPH_PROCESSES:-4} --threads ${SF_DRAMATIQ_GRAPH_THREADS:-4} app.workers.indexing_tasks
     logging: *default-logging
 
   backend-worker-evaluation:
@@ -257,7 +257,7 @@ services:
     command:
       - sh
       - -c
-      - uv run dramatiq --queues ${SF_DRAMATIQ_EVALUATION_QUEUE:-evaluation} --processes ${SF_DRAMATIQ_EVALUATION_PROCESSES:-1} --threads ${SF_DRAMATIQ_EVALUATION_THREADS:-1} app.workers.evaluation_tasks
+      - uv run dramatiq --queues ${SF_DRAMATIQ_EVALUATION_QUEUE:-evaluation} --processes ${SF_DRAMATIQ_EVALUATION_PROCESSES:-2} --threads ${SF_DRAMATIQ_EVALUATION_THREADS:-4} app.workers.evaluation_tasks
     logging: *default-logging
 
   frontend:

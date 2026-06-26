@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from app.services.graph_store import GraphStore, get_graph_store
@@ -117,6 +118,7 @@ async def resolve_graph_candidate_entities(
     page_context: dict[str, Any] | None = None,
     store: GraphStore | None = None,
     limit: int = 8,
+    allowed_document_ids: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     lookup_terms = _build_lookup_terms(
         query=query,
@@ -148,6 +150,7 @@ async def resolve_graph_candidate_entities(
             knowledge_base_id=knowledge_base_id,
             team_id=team_id,
             candidate=_normalize_lookup_key(term["text"]),
+            allowed_document_ids=allowed_document_ids,
         )
         if not rows:
             unmatched_terms.append(term["text"])

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 from loguru import logger
@@ -33,6 +34,23 @@ def _normalize_lookup_value(value: Any) -> str:
     return clean_graph_text(value).casefold()
 
 
+def _normalize_document_ids(document_ids: Sequence[int] | None) -> list[int] | None:
+    if document_ids is None:
+        return None
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for item in document_ids:
+        try:
+            value = int(item)
+        except (TypeError, ValueError):
+            continue
+        if value <= 0 or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized
+
+
 class GraphStore(Protocol):
     """Minimal async graph-store contract for indexing and retrieval."""
 
@@ -60,6 +78,7 @@ class GraphStore(Protocol):
         knowledge_base_id: int,
         team_id: int,
         candidate: str,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]: ...
 
     async def search_related_evidence(
@@ -69,6 +88,7 @@ class GraphStore(Protocol):
         knowledge_base_id: int,
         team_id: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]: ...
 
     async def search_relation_evidence_for_pairs(
@@ -78,6 +98,7 @@ class GraphStore(Protocol):
         knowledge_base_id: int,
         team_id: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]: ...
 
     async def search_relation_evidence_for_queries(
@@ -87,6 +108,7 @@ class GraphStore(Protocol):
         knowledge_base_id: int,
         team_id: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]: ...
 
     async def search_relation_paths(
@@ -99,6 +121,7 @@ class GraphStore(Protocol):
         team_id: int,
         max_hops: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]: ...
 
 
@@ -136,6 +159,7 @@ class NullGraphStore:
         knowledge_base_id: int,
         team_id: int,
         candidate: str,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]:
         return []
 
@@ -146,6 +170,7 @@ class NullGraphStore:
         knowledge_base_id: int,
         team_id: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]:
         return []
 
@@ -156,6 +181,7 @@ class NullGraphStore:
         knowledge_base_id: int,
         team_id: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]:
         return []
 
@@ -166,6 +192,7 @@ class NullGraphStore:
         knowledge_base_id: int,
         team_id: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]:
         return []
 
@@ -179,6 +206,7 @@ class NullGraphStore:
         team_id: int,
         max_hops: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]:
         return []
 
@@ -488,9 +516,13 @@ class Neo4jGraphStore:
         knowledge_base_id: int,
         team_id: int,
         candidate: str,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]:
         normalized_candidate = _normalize_lookup_value(candidate)
         if not normalized_candidate:
+            return []
+        normalized_document_ids = _normalize_document_ids(allowed_document_ids)
+        if normalized_document_ids == []:
             return []
         query = """
         MATCH (e:Entity)
@@ -501,6 +533,21 @@ class Neo4jGraphStore:
             OR toLower(e.canonical_name) = $candidate
             OR any(alias IN coalesce(e.aliases, []) WHERE toLower(alias) = $candidate)
             OR toLower(coalesce(e.description, "")) CONTAINS $candidate
+          )
+          AND (
+            $allowed_document_ids IS NULL
+            OR EXISTS {
+              MATCH (e)-[:MENTIONED_IN]->(chunk:Chunk)
+              WHERE chunk.document_id IN $allowed_document_ids
+            }
+            OR EXISTS {
+              MATCH (e)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)
+              WHERE ev.document_id IN $allowed_document_ids
+            }
+            OR EXISTS {
+              MATCH (:Entity)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(e)
+              WHERE ev.document_id IN $allowed_document_ids
+            }
           )
         RETURN
             e.id AS entity_id,
@@ -517,6 +564,7 @@ class Neo4jGraphStore:
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
             candidate=normalized_candidate,
+            allowed_document_ids=normalized_document_ids,
         )
 
     async def search_related_evidence(
@@ -526,9 +574,13 @@ class Neo4jGraphStore:
         knowledge_base_id: int,
         team_id: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]:
         normalized_names = [_normalize_lookup_value(item) for item in entity_names if _normalize_lookup_value(item)]
         if not normalized_names:
+            return []
+        normalized_document_ids = _normalize_document_ids(allowed_document_ids)
+        if normalized_document_ids == []:
             return []
         query = """
         MATCH (anchor:Entity)
@@ -542,11 +594,13 @@ class Neo4jGraphStore:
         CALL {
           WITH anchor
           MATCH (anchor)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(other:Entity)
+          WHERE $allowed_document_ids IS NULL OR ev.document_id IN $allowed_document_ids
           OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
           RETURN ev, anchor AS source_entity, other AS target_entity, chunk
           UNION
           WITH anchor
           MATCH (other:Entity)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(anchor)
+          WHERE $allowed_document_ids IS NULL OR ev.document_id IN $allowed_document_ids
           OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
           RETURN ev, other AS source_entity, anchor AS target_entity, chunk
         }
@@ -564,12 +618,15 @@ class Neo4jGraphStore:
             target_entity.name AS target_name,
             target_entity.entity_type AS target_entity_type,
             [source_entity.name, target_entity.name] AS matched_entities
+        LIMIT $limit
         """
         return await self._fetch_all(
             query,
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
             entity_names=normalized_names,
+            allowed_document_ids=normalized_document_ids,
+            limit=max(1, int(limit)),
         )
 
     async def search_relation_evidence_for_pairs(
@@ -579,6 +636,7 @@ class Neo4jGraphStore:
         knowledge_base_id: int,
         team_id: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]:
         rows = [
             {
@@ -590,11 +648,15 @@ class Neo4jGraphStore:
         ]
         if not rows:
             return []
+        normalized_document_ids = _normalize_document_ids(allowed_document_ids)
+        if normalized_document_ids == []:
+            return []
         query = """
         UNWIND $rows AS row
         MATCH (source:Entity)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(target:Entity)
         WHERE ev.team_id = $team_id
           AND ev.knowledge_base_id = $knowledge_base_id
+          AND ($allowed_document_ids IS NULL OR ev.document_id IN $allowed_document_ids)
           AND (
             toLower(source.name) = row.source
             OR toLower(source.canonical_name) = row.source
@@ -620,12 +682,15 @@ class Neo4jGraphStore:
             target.name AS target_name,
             target.entity_type AS target_entity_type,
             [source.name, target.name] AS matched_entities
+        LIMIT $limit
         """
         return await self._fetch_all(
             query,
             rows=rows,
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
+            allowed_document_ids=normalized_document_ids,
+            limit=max(1, int(limit)),
         )
 
     async def search_relation_evidence_for_queries(
@@ -635,6 +700,7 @@ class Neo4jGraphStore:
         knowledge_base_id: int,
         team_id: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]:
         rows = [
             {
@@ -646,6 +712,9 @@ class Neo4jGraphStore:
             if _normalize_lookup_value(item.get("anchor_entity"))
         ]
         if not rows:
+            return []
+        normalized_document_ids = _normalize_document_ids(allowed_document_ids)
+        if normalized_document_ids == []:
             return []
         query = """
         UNWIND $rows AS row
@@ -661,6 +730,7 @@ class Neo4jGraphStore:
           WITH anchor, row
           MATCH (anchor)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(other:Entity)
           WHERE row.direction <> 'incoming'
+            AND ($allowed_document_ids IS NULL OR ev.document_id IN $allowed_document_ids)
             AND (
               row.target_entity = ''
               OR toLower(other.name) = row.target_entity
@@ -672,6 +742,7 @@ class Neo4jGraphStore:
           WITH anchor, row
           MATCH (other:Entity)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(anchor)
           WHERE row.direction = 'incoming'
+            AND ($allowed_document_ids IS NULL OR ev.document_id IN $allowed_document_ids)
             AND (
               row.target_entity = ''
               OR toLower(other.name) = row.target_entity
@@ -695,12 +766,15 @@ class Neo4jGraphStore:
             target_entity.name AS target_name,
             target_entity.entity_type AS target_entity_type,
             [source_entity.name, target_entity.name] AS matched_entities
+        LIMIT $limit
         """
         return await self._fetch_all(
             query,
             rows=rows,
             team_id=team_id,
             knowledge_base_id=knowledge_base_id,
+            allowed_document_ids=normalized_document_ids,
+            limit=max(1, int(limit)),
         )
 
     async def search_relation_paths(
@@ -713,11 +787,15 @@ class Neo4jGraphStore:
         team_id: int,
         max_hops: int,
         limit: int,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]:
         resolved_limit = max(1, int(limit))
         resolved_max_hops = max(2, min(int(max_hops or 2), 4))
         hop_pattern = f"*1..{resolved_max_hops}"
         rows: list[dict[str, Any]] = []
+        normalized_document_ids = _normalize_document_ids(allowed_document_ids)
+        if normalized_document_ids == []:
+            return []
 
         async def _collect(query: str, **params: Any) -> None:
             rows.extend(await self._fetch_all(query, **params))
@@ -755,6 +833,13 @@ class Neo4jGraphStore:
                       )
                     MATCH p = shortestPath((source)-[:RELATED__HOP_PATTERN__]->(target))
                     WITH p, nodes(p) AS path_nodes, relationships(p) AS path_relationships
+                    WHERE $allowed_document_ids IS NULL OR all(index IN range(0, size(path_relationships) - 1) WHERE EXISTS {
+                      MATCH (path_nodes[index])-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(path_nodes[index + 1])
+                      WHERE ev.team_id = $team_id
+                        AND ev.knowledge_base_id = $knowledge_base_id
+                        AND ev.relation_type = path_relationships[index].relation_type
+                        AND ev.document_id IN $allowed_document_ids
+                    })
                     RETURN
                       [node IN path_nodes | {entity_id: node.id, name: node.name, entity_type: node.entity_type}] AS path_entities,
                       [rel IN path_relationships | {relation_type: rel.relation_type}] AS path_relations
@@ -764,6 +849,7 @@ class Neo4jGraphStore:
                 rows=pair_rows,
                 team_id=team_id,
                 knowledge_base_id=knowledge_base_id,
+                allowed_document_ids=normalized_document_ids,
                 limit=resolved_limit,
             )
 
@@ -793,6 +879,23 @@ class Neo4jGraphStore:
                       )
                     MATCH p = shortestPath((source)-[:RELATED__HOP_PATTERN__]-(target))
                     WITH p, nodes(p) AS path_nodes, relationships(p) AS path_relationships
+                    WHERE $allowed_document_ids IS NULL OR all(index IN range(0, size(path_relationships) - 1) WHERE (
+                      EXISTS {
+                        MATCH (path_nodes[index])-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(path_nodes[index + 1])
+                        WHERE ev.team_id = $team_id
+                          AND ev.knowledge_base_id = $knowledge_base_id
+                          AND ev.relation_type = path_relationships[index].relation_type
+                          AND ev.document_id IN $allowed_document_ids
+                      }
+                    ) OR (
+                      EXISTS {
+                        MATCH (path_nodes[index + 1])-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(path_nodes[index])
+                        WHERE ev.team_id = $team_id
+                          AND ev.knowledge_base_id = $knowledge_base_id
+                          AND ev.relation_type = path_relationships[index].relation_type
+                          AND ev.document_id IN $allowed_document_ids
+                      }
+                    ))
                     RETURN
                       [node IN path_nodes | {entity_id: node.id, name: node.name, entity_type: node.entity_type}] AS path_entities,
                       [rel IN path_relationships | {relation_type: rel.relation_type}] AS path_relations
@@ -802,6 +905,7 @@ class Neo4jGraphStore:
                 entity_names=normalized_names[:4],
                 team_id=team_id,
                 knowledge_base_id=knowledge_base_id,
+                allowed_document_ids=normalized_document_ids,
                 limit=resolved_limit,
             )
 
@@ -828,6 +932,7 @@ class Neo4jGraphStore:
                 WHERE ev.team_id = $team_id
                   AND ev.knowledge_base_id = $knowledge_base_id
                   AND ev.relation_type = $relation_type
+                  AND ($allowed_document_ids IS NULL OR ev.document_id IN $allowed_document_ids)
                 OPTIONAL MATCH (ev)-[:FROM_CHUNK]->(chunk:Chunk)
                 RETURN
                     ev.evidence_text AS evidence,
@@ -846,6 +951,7 @@ class Neo4jGraphStore:
                         relation_type=clean_graph_text(relation.get("relation_type")) or "RELATED_TO",
                         team_id=team_id,
                         knowledge_base_id=knowledge_base_id,
+                        allowed_document_ids=normalized_document_ids,
                     )
                 )
             normalized_rows.append(

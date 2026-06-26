@@ -14,6 +14,7 @@ from app.agents.states import KbChatState
 from app.core.config.settings import settings
 from app.services.chat_memory import format_chat_history
 from app.services.graph_entity_candidate_service import resolve_graph_candidate_entities
+from app.services.graph_document_scope import resolve_graph_category_document_ids
 from app.services.kb_graph_retrieval import GraphRetriever
 from app.services.kb_text_retrieval import run_kb_channel_text_retrieval
 from app.services.reranker import rerank
@@ -632,6 +633,18 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
         },
     }
     graph_candidate_entities = list(candidate_entities[:graph_limit])
+    graph_allowed_document_ids = (
+        await resolve_graph_category_document_ids(
+            team_id=int(state.get("team_id")) if state.get("team_id") is not None else None,
+            knowledge_base_id=int(state.get("knowledge_base_id") or 0),
+            category_id=int(state.get("category_id")) if state.get("category_id") is not None else None,
+            user_id=int(state.get("user_id")) if state.get("user_id") is not None else None,
+            document_statuses=state.get("allowed_document_statuses"),
+        )
+        if graph_enabled and int(state.get("knowledge_base_id") or 0) > 0 and state.get("category_id") is not None
+        else None
+    )
+
     async def _resolve_graph_candidates(seed_entities: list[str]) -> tuple[list[str], dict[str, Any]]:
         fallback = {
             "candidate_entities": list(seed_entities[:graph_limit]),
@@ -655,6 +668,7 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
             lexical_terms=lexical_terms,
             page_context=dict(state.get("page_context") or {}),
             limit=graph_limit,
+            allowed_document_ids=graph_allowed_document_ids,
         )
         return list(resolved.get("candidate_entities") or []), resolved
 
@@ -703,6 +717,7 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
             graph_mode=graph_mode,
             max_hops=graph_max_hops,
             limit=graph_limit,
+            allowed_document_ids=graph_allowed_document_ids,
         )
 
     text_result: dict[str, Any]

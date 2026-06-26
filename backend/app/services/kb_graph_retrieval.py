@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from time import perf_counter
+from collections.abc import Sequence
 from typing import Any
 
 from loguru import logger
@@ -240,6 +241,7 @@ class GraphRetriever:
         graph_mode: str | None = None,
         max_hops: int = 1,
         limit: int = 8,
+        allowed_document_ids: Sequence[int] | None = None,
     ) -> dict[str, Any]:
         started_at = perf_counter()
         graph_cfg = config_registry.get_graph_config()
@@ -257,6 +259,11 @@ class GraphRetriever:
             "graph_hits": 0,
             "graph_primary_hits": 0,
             "graph_supporting_hits": 0,
+            "allowed_document_count": (
+                len(list(allowed_document_ids))
+                if allowed_document_ids is not None
+                else None
+            ),
             "max_hops": int(max_hops or 1),
             "empty_reason": None,
             "error": None,
@@ -279,6 +286,12 @@ class GraphRetriever:
                 "graph_facts": {"text": [], "entities": [], "relations": [], "paths": [], "evidence": []},
                 "trace": {**base_trace, "empty_reason": "no_entities", "latency_ms": 0},
             }
+        if allowed_document_ids is not None and not list(allowed_document_ids):
+            return {
+                "retrieved_docs": [],
+                "graph_facts": {"text": [], "entities": [], "relations": [], "paths": [], "evidence": []},
+                "trace": {**base_trace, "empty_reason": "category_scope_empty", "latency_ms": 0},
+            }
 
         try:
             resolved_store = self._store or get_graph_store(require_indexing=False)
@@ -292,6 +305,7 @@ class GraphRetriever:
                             knowledge_base_id=knowledge_base_id,
                             team_id=team_id,
                             limit=limit,
+                            allowed_document_ids=allowed_document_ids,
                         ),
                     )
                 )
@@ -304,6 +318,7 @@ class GraphRetriever:
                             knowledge_base_id=knowledge_base_id,
                             team_id=team_id,
                             limit=limit,
+                            allowed_document_ids=allowed_document_ids,
                         ),
                     )
                 )
@@ -316,6 +331,7 @@ class GraphRetriever:
                             knowledge_base_id=knowledge_base_id,
                             team_id=team_id,
                             limit=limit,
+                            allowed_document_ids=allowed_document_ids,
                         ),
                     )
                 )
@@ -331,6 +347,7 @@ class GraphRetriever:
                             team_id=team_id,
                             max_hops=int(max_hops or 1),
                             limit=limit,
+                            allowed_document_ids=allowed_document_ids,
                         ),
                     )
                 )
@@ -488,6 +505,7 @@ async def run_kb_graph_retrieval(
     question_type: str | None = None,
     graph_mode: str | None = None,
     max_hops: int = 1,
+    allowed_document_ids: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     return await GraphRetriever(store=store, enabled=enabled).retrieve(
         candidate_entities=candidate_entities,
@@ -499,4 +517,5 @@ async def run_kb_graph_retrieval(
         graph_mode=graph_mode,
         max_hops=max_hops,
         limit=limit,
+        allowed_document_ids=allowed_document_ids,
     )
