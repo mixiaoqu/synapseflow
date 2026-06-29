@@ -26,7 +26,6 @@ def test_graph_config_reads_app_yaml_with_env_overrides(monkeypatch):
             "app": {},
             "graph": {
                 "provider": "neo4j",
-                "llm_model_role": "graph_extract",
                 "extraction_max_chars": 3200,
             },
         },
@@ -48,7 +47,6 @@ def test_graph_config_reads_app_yaml_with_env_overrides(monkeypatch):
         assert config.username == "graph-user"
         assert config.password == "graph-pass"
         assert config.database == "synapseflow"
-        assert config.llm_model_role == "graph_extract"
         assert config.extraction_max_chars == 3200
     finally:
         config_registry.get_graph_config.cache_clear()

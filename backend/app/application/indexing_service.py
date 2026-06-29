@@ -118,6 +118,25 @@ class IndexingService:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def _load_document_graph_scope(
+        db: AsyncSession,
+        *,
+        document_id: int,
+    ) -> tuple[int, int]:
+        result = await db.execute(
+            select(
+                KnowledgeBase.team_id.label("team_id"),
+                Document.knowledge_base_id.label("knowledge_base_id"),
+            )
+            .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
+            .where(Document.id == document_id)
+        )
+        row = result.one_or_none()
+        if row is None:
+            raise ValueError(f"Document {document_id} must belong to a team and knowledge base")
+        return int(row.team_id), int(row.knowledge_base_id)
+
+    @staticmethod
     async def _get_document_hash(
         db: AsyncSession,
         document_id: int,
@@ -1920,14 +1939,6 @@ class IndexingService:
             metadata.pop("graph_extraction", None)
             await chunk_repo.update_metadata(int(row.id), metadata)
 
-        store = get_graph_store()
-        logger.bind(document_pipeline_log=True).info(
-            "[文档管线] 图谱旧图清理开始 doc_id={} parent_chunks={}",
-            document_id,
-            len(graph_rows),
-        )
-        await store.delete_document_graph(document_id=document_id)
-
         chunk_id_batches = self._chunk_graph_chunk_ids([int(row.id) for row in graph_rows])
         for chunk_id_batch in chunk_id_batches:
             self.enqueue_document_graph_chunks(
@@ -2302,8 +2313,16 @@ class IndexingService:
                 if previous_document_id and previous_document_id != target_document_id:
                     previous = await self._get_document(db, previous_document_id)
                     if previous and not getattr(previous, "is_live", False):
+                        team_id, knowledge_base_id = await self._load_document_graph_scope(
+                            db,
+                            document_id=previous_document_id,
+                        )
                         graph_store = get_graph_store()
-                        await graph_store.delete_document_graph(document_id=previous_document_id)
+                        await graph_store.delete_document_graph(
+                            document_id=previous_document_id,
+                            team_id=team_id,
+                            knowledge_base_id=knowledge_base_id,
+                        )
                         await db.commit()
                 doc = await self._get_document(db, target_document_id)
                 await self._schedule_document_graph_chunks(

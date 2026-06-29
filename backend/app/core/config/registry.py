@@ -146,7 +146,6 @@ class ConfigRegistry:
             username=settings.GRAPH_USERNAME,
             password=settings.GRAPH_PASSWORD,
             database=settings.GRAPH_DATABASE,
-            llm_model_role=str(graph.get("llm_model_role", "graph_extract")),
             extraction_max_chars=max(1, int(graph.get("extraction_max_chars", 3200))),
             extraction_batch_max_chunks=max(1, int(graph.get("extraction_batch_max_chunks", 12))),
             extraction_batch_max_chars=max(1, int(graph.get("extraction_batch_max_chars", 18000))),

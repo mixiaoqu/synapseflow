@@ -35,6 +35,8 @@ class GraphIndexer:
         mentions: list[GraphMentionRecord],
         relations: list[GraphRelationRecord],
         relation_evidences: list[GraphRelationEvidenceRecord],
+        team_id: int,
+        knowledge_base_id: int,
         batch_size: int = DEFAULT_GRAPH_BATCH_SIZE,
     ) -> dict[str, int]:
         for batch in self._chunked(chunks, batch_size):
@@ -48,7 +50,10 @@ class GraphIndexer:
         for batch in self._chunked(relation_evidences, batch_size):
             await self._store.upsert_relation_evidences(batch)
 
-        await self._store.refresh_related_evidence_counts()
+        await self._store.refresh_related_evidence_counts(
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+        )
         return {
             "chunks": len(chunks),
             "entities": len(entities),

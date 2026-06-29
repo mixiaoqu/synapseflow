@@ -639,7 +639,6 @@ def test_schedule_document_graph_chunks_enqueues_child_chunks_after_claim(monkey
     status_updates = []
     failures = []
     metadata_updates = []
-    graph_events = []
 
     async def fake_get_document(db, document_id):
         assert document_id == 42
@@ -655,7 +654,7 @@ def test_schedule_document_graph_chunks_enqueues_child_chunks_after_claim(monkey
         def __init__(self, db):
             pass
 
-        async def get_child_chunks_for_document(self, document_id):
+        async def get_parent_chunks_for_document(self, document_id):
             assert document_id == 42
             return [
                 SimpleNamespace(id=101, metadata_={"graph_extraction": {"status": "indexed"}, "keep": "a"}),
@@ -664,13 +663,6 @@ def test_schedule_document_graph_chunks_enqueues_child_chunks_after_claim(monkey
 
         async def update_metadata(self, chunk_id, metadata):
             metadata_updates.append((chunk_id, metadata))
-
-    class FakeGraphStore:
-        async def delete_document_graph(self, *, document_id):
-            graph_events.append(("delete", document_id))
-
-        async def prune_orphan_entities(self):
-            graph_events.append(("prune",))
 
     def fake_enqueue_document_graph_chunks(
         *,
@@ -702,10 +694,6 @@ def test_schedule_document_graph_chunks_enqueues_child_chunks_after_claim(monkey
         FakeChunkRepository,
     )
     monkeypatch.setattr(
-        "app.application.indexing_service.get_graph_store",
-        lambda: FakeGraphStore(),
-    )
-    monkeypatch.setattr(
         indexing_service,
         "enqueue_document_graph_chunks",
         fake_enqueue_document_graph_chunks,
@@ -727,7 +715,6 @@ def test_schedule_document_graph_chunks_enqueues_child_chunks_after_claim(monkey
         (101, {"keep": "a"}),
         (102, {"keep": "b"}),
     ]
-    assert graph_events == [("delete", 42), ("prune",)]
     assert status_updates == [
         {
             "job_id": 9,
@@ -759,7 +746,7 @@ def test_schedule_document_graph_chunks_splits_large_chunk_lists_into_parallel_b
         def __init__(self, db):
             pass
 
-        async def get_child_chunks_for_document(self, document_id):
+        async def get_parent_chunks_for_document(self, document_id):
             assert document_id == 42
             return [
                 SimpleNamespace(id=100 + index, metadata_={"graph_extraction": {"status": "indexed"}})
@@ -767,13 +754,6 @@ def test_schedule_document_graph_chunks_splits_large_chunk_lists_into_parallel_b
             ]
 
         async def update_metadata(self, chunk_id, metadata):
-            return None
-
-    class FakeGraphStore:
-        async def delete_document_graph(self, *, document_id):
-            return None
-
-        async def prune_orphan_entities(self):
             return None
 
     def fake_enqueue_document_graph_chunks(
@@ -802,10 +782,6 @@ def test_schedule_document_graph_chunks_splits_large_chunk_lists_into_parallel_b
     monkeypatch.setattr(
         "app.application.indexing_service.DocumentChunkRepository",
         FakeChunkRepository,
-    )
-    monkeypatch.setattr(
-        "app.application.indexing_service.get_graph_store",
-        lambda: FakeGraphStore(),
     )
     monkeypatch.setattr(
         indexing_service,

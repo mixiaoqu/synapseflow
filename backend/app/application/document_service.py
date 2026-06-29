@@ -68,8 +68,14 @@ MAX_BATCH_UPLOAD_FILES = 500
 class DocumentService:
     """Coordinates document CRUD and delegates indexing orchestration."""
 
-    @staticmethod
-    async def _delete_graph_for_documents(docs: Sequence[Document]) -> None:
+    @classmethod
+    async def _delete_graph_for_documents(
+        cls,
+        *,
+        db: AsyncSession,
+        user_id: int,
+        docs: Sequence[Document],
+    ) -> None:
         if not docs:
             return
         store = get_graph_store()
@@ -79,7 +85,15 @@ class DocumentService:
             if document_id in seen_ids:
                 continue
             seen_ids.add(document_id)
-            await store.delete_document_graph(document_id=document_id)
+            knowledge_base_id = getattr(doc, "knowledge_base_id", None)
+            team_id = await cls._resolve_document_team_id(db=db, user_id=user_id, doc=doc)
+            if knowledge_base_id is None or team_id is None:
+                raise ValueError(f"Document {document_id} must belong to a team and knowledge base")
+            await store.delete_document_graph(
+                document_id=document_id,
+                team_id=int(team_id),
+                knowledge_base_id=int(knowledge_base_id),
+            )
 
     @staticmethod
     def _is_current_document(doc: Document) -> bool:
@@ -1521,7 +1535,7 @@ class DocumentService:
         docs = await repo.get_by_ids(ids)
         root_ids = {getattr(doc, "root_id", None) or doc.id for doc in docs}
         chain_docs = await repo.get_chain_by_root_ids(root_ids)
-        await self._delete_graph_for_documents(chain_docs)
+        await self._delete_graph_for_documents(db=db, user_id=user_id, docs=chain_docs)
         self._delete_staged_files_for_documents(chain_docs)
         deleted = await repo.delete_chain(chain_docs)
         logger.info("Batch deleted documents ids={} deleted={}", ids, deleted)
@@ -1545,7 +1559,7 @@ class DocumentService:
 
         root_id = getattr(doc, "root_id", None) or doc.id
         chain_docs = await repo.get_chain_by_root_ids({root_id})
-        await self._delete_graph_for_documents(chain_docs)
+        await self._delete_graph_for_documents(db=db, user_id=user_id, docs=chain_docs)
         self._delete_staged_files_for_documents(chain_docs)
         await repo.delete_chain(chain_docs)
         logger.info("Deleted document id={} chain_size={}", doc_id, len(chain_docs))

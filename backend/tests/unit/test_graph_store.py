@@ -61,7 +61,7 @@ def test_null_graph_store_accepts_new_graph_objects():
     asyncio.run(store.upsert_mentions([mention]))
     asyncio.run(store.upsert_relations([relation]))
     asyncio.run(store.upsert_relation_evidences([evidence]))
-    asyncio.run(store.refresh_related_evidence_counts())
+    asyncio.run(store.refresh_related_evidence_counts(team_id=1, knowledge_base_id=2))
 
     assert asyncio.run(store.lookup_entities_for_grounding(knowledge_base_id=2, team_id=1, candidate="payment")) == []
 

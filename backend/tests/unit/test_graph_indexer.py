@@ -30,8 +30,8 @@ def test_graph_indexer_batches_new_graph_objects():
         async def upsert_relation_evidences(self, evidences):
             calls.append(("relation_evidences", len(evidences)))
 
-        async def refresh_related_evidence_counts(self):
-            calls.append(("refresh",))
+        async def refresh_related_evidence_counts(self, *, team_id, knowledge_base_id):
+            calls.append(("refresh", team_id, knowledge_base_id))
 
     entity_id = build_entity_id(team_id=1, knowledge_base_id=2, entity_type="MODULE", name="Payment")
     entities = [
@@ -93,6 +93,8 @@ def test_graph_indexer_batches_new_graph_objects():
                 )
                 for index in range(DEFAULT_GRAPH_BATCH_SIZE + 1)
             ],
+            team_id=1,
+            knowledge_base_id=2,
         )
     )
 
@@ -106,4 +108,4 @@ def test_graph_indexer_batches_new_graph_objects():
         ("relation_evidences", DEFAULT_GRAPH_BATCH_SIZE),
         ("relation_evidences", 1),
     ]
-    assert ("refresh",) in calls
+    assert ("refresh", 1, 2) in calls

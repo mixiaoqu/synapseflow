@@ -30,12 +30,12 @@ def test_index_document_graph_writes_new_graph_records(monkeypatch):
         def __init__(self, db):
             pass
 
-        async def get_child_chunks_for_document(self, document_id):
+        async def get_parent_chunks_for_document(self, document_id):
             return [SimpleNamespace(id=101, content="chunk", chunk_index=0, section_path="绑定关系", metadata_={})]
 
     class FakeStore:
-        async def delete_document_graph(self, *, document_id):
-            events.append(("delete", document_id))
+        async def delete_document_graph(self, *, document_id, team_id, knowledge_base_id):
+            events.append(("delete", document_id, team_id, knowledge_base_id))
 
         async def upsert_chunks(self, chunks):
             events.append(("chunks", [chunk.document_chunk_id for chunk in chunks]))
@@ -52,11 +52,11 @@ def test_index_document_graph_writes_new_graph_records(monkeypatch):
         async def upsert_relation_evidences(self, evidences):
             events.append(("relation_evidences", [evidence.evidence_hash for evidence in evidences]))
 
-        async def refresh_related_evidence_counts(self):
-            events.append(("refresh",))
+        async def refresh_related_evidence_counts(self, *, team_id, knowledge_base_id):
+            events.append(("refresh", team_id, knowledge_base_id))
 
-        async def prune_orphan_entities(self):
-            events.append(("prune",))
+        async def prune_orphan_entities(self, *, team_id, knowledge_base_id):
+            events.append(("prune", team_id, knowledge_base_id))
 
     class DummyGraphConfig:
         enabled = True
@@ -109,7 +109,9 @@ def test_index_document_graph_writes_new_graph_records(monkeypatch):
     assert summary["entities"] == 2
     assert summary["relations"] == 1
     assert summary["relation_evidences"] == 1
-    assert ("delete", 1) in events
+    assert ("delete", 1, 2, 9) in events
+    assert ("refresh", 2, 9) in events
+    assert ("prune", 2, 9) in events
     assert ("chunks", [101]) in events
     assert ("entities", ["ProjectApp", "AssistantProfile"]) in events
     assert any(item[0] == "mentions" for item in events)
@@ -122,7 +124,7 @@ def test_index_document_graph_requires_document_team_and_knowledge_base(monkeypa
         def __init__(self, db):
             pass
 
-        async def get_child_chunks_for_document(self, document_id):
+        async def get_parent_chunks_for_document(self, document_id):
             return []
 
     class DummyGraphConfig:
@@ -151,7 +153,7 @@ def test_finalize_document_graph_waits_for_missing_chunk_extraction(monkeypatch)
         def __init__(self, db):
             pass
 
-        async def get_child_chunks_for_document(self, document_id):
+        async def get_parent_chunks_for_document(self, document_id):
             return [SimpleNamespace(id=101, content="chunk", chunk_index=0, section_path=None, metadata_={})]
 
     class DummyGraphConfig:

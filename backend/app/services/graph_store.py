@@ -54,7 +54,13 @@ def _normalize_document_ids(document_ids: Sequence[int] | None) -> list[int] | N
 class GraphStore(Protocol):
     """Minimal async graph-store contract for indexing and retrieval."""
 
-    async def delete_document_graph(self, *, document_id: int) -> None: ...
+    async def delete_document_graph(
+        self,
+        *,
+        document_id: int,
+        team_id: int,
+        knowledge_base_id: int,
+    ) -> None: ...
 
     async def delete_knowledge_base_graph(self, *, knowledge_base_id: int, team_id: int) -> None: ...
 
@@ -68,9 +74,9 @@ class GraphStore(Protocol):
 
     async def upsert_relation_evidences(self, evidences: list[GraphRelationEvidenceRecord]) -> None: ...
 
-    async def refresh_related_evidence_counts(self) -> None: ...
+    async def refresh_related_evidence_counts(self, *, team_id: int, knowledge_base_id: int) -> None: ...
 
-    async def prune_orphan_entities(self) -> None: ...
+    async def prune_orphan_entities(self, *, team_id: int, knowledge_base_id: int) -> None: ...
 
     async def lookup_entities_for_grounding(
         self,
@@ -126,7 +132,13 @@ class GraphStore(Protocol):
 
 
 class NullGraphStore:
-    async def delete_document_graph(self, *, document_id: int) -> None:
+    async def delete_document_graph(
+        self,
+        *,
+        document_id: int,
+        team_id: int,
+        knowledge_base_id: int,
+    ) -> None:
         return None
 
     async def delete_knowledge_base_graph(self, *, knowledge_base_id: int, team_id: int) -> None:
@@ -147,10 +159,10 @@ class NullGraphStore:
     async def upsert_relation_evidences(self, evidences: list[GraphRelationEvidenceRecord]) -> None:
         return None
 
-    async def refresh_related_evidence_counts(self) -> None:
+    async def refresh_related_evidence_counts(self, *, team_id: int, knowledge_base_id: int) -> None:
         return None
 
-    async def prune_orphan_entities(self) -> None:
+    async def prune_orphan_entities(self, *, team_id: int, knowledge_base_id: int) -> None:
         return None
 
     async def lookup_entities_for_grounding(
@@ -230,25 +242,45 @@ class Neo4jGraphStore:
         self._database = database
         self._driver = AsyncGraphDatabase.driver(uri, auth=(username, password))
 
-    async def delete_document_graph(self, *, document_id: int) -> None:
+    async def delete_document_graph(
+        self,
+        *,
+        document_id: int,
+        team_id: int,
+        knowledge_base_id: int,
+    ) -> None:
         await self._run(
             """
             MATCH (ev:RelationEvidence)
             WHERE ev.document_id = $document_id
+              AND ev.team_id = $team_id
+              AND ev.knowledge_base_id = $knowledge_base_id
             DETACH DELETE ev
             """,
             document_id=document_id,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
         )
         await self._run(
             """
             MATCH (c:Chunk)
             WHERE c.document_id = $document_id
+              AND c.team_id = $team_id
+              AND c.knowledge_base_id = $knowledge_base_id
             DETACH DELETE c
             """,
             document_id=document_id,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
         )
-        await self.refresh_related_evidence_counts()
-        await self.prune_orphan_entities()
+        await self.refresh_related_evidence_counts(
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+        )
+        await self.prune_orphan_entities(
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+        )
 
     async def delete_knowledge_base_graph(self, *, knowledge_base_id: int, team_id: int) -> None:
         await self._run(
@@ -479,35 +511,70 @@ class Neo4jGraphStore:
             rows=rows,
         )
 
-    async def refresh_related_evidence_counts(self) -> None:
+    async def refresh_related_evidence_counts(self, *, team_id: int, knowledge_base_id: int) -> None:
         await self._run(
             """
             MATCH (source:Entity)-[r:RELATED]->(target:Entity)
+            WHERE r.team_id = $team_id
+              AND r.knowledge_base_id = $knowledge_base_id
             OPTIONAL MATCH (source)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(target)
-            WHERE ev.relation_type = r.relation_type
-            WITH r, count(ev) AS evidence_count
+            WITH r, sum(
+                CASE
+                    WHEN ev.team_id = $team_id
+                     AND ev.knowledge_base_id = $knowledge_base_id
+                     AND ev.relation_type = r.relation_type
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS evidence_count
             SET r.evidence_count = evidence_count,
                 r.updated_at = datetime()
             """,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
         )
         await self._run(
             """
             MATCH ()-[r:RELATED]->()
-            WHERE coalesce(r.evidence_count, 0) <= 0
+            WHERE r.team_id = $team_id
+              AND r.knowledge_base_id = $knowledge_base_id
+              AND coalesce(r.evidence_count, 0) <= 0
             DELETE r
             """,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
         )
 
-    async def prune_orphan_entities(self) -> None:
+    async def prune_orphan_entities(self, *, team_id: int, knowledge_base_id: int) -> None:
         await self._run(
             """
             MATCH (e:Entity)
-            WHERE NOT (e)-[:MENTIONED_IN]->(:Chunk)
-              AND NOT (e)-[:HAS_RELATION_EVIDENCE]->(:RelationEvidence)
-              AND NOT (:RelationEvidence)-[:EVIDENCE_TARGET]->(e)
-              AND NOT (e)-[:RELATED]-()
+            WHERE e.team_id = $team_id
+              AND e.knowledge_base_id = $knowledge_base_id
+              AND NOT EXISTS {
+                MATCH (e)-[:MENTIONED_IN]->(chunk:Chunk)
+                WHERE chunk.team_id = $team_id
+                  AND chunk.knowledge_base_id = $knowledge_base_id
+              }
+              AND NOT EXISTS {
+                MATCH (e)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)
+                WHERE ev.team_id = $team_id
+                  AND ev.knowledge_base_id = $knowledge_base_id
+              }
+              AND NOT EXISTS {
+                MATCH (:Entity)-[:HAS_RELATION_EVIDENCE]->(ev:RelationEvidence)-[:EVIDENCE_TARGET]->(e)
+                WHERE ev.team_id = $team_id
+                  AND ev.knowledge_base_id = $knowledge_base_id
+              }
+              AND NOT EXISTS {
+                MATCH (e)-[r:RELATED]-(:Entity)
+                WHERE r.team_id = $team_id
+                  AND r.knowledge_base_id = $knowledge_base_id
+              }
             DELETE e
-            """
+            """,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
         )
 
     async def lookup_entities_for_grounding(

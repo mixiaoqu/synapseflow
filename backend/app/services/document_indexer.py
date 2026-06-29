@@ -708,21 +708,32 @@ async def _write_document_graph(
     store: Any,
     extractions: Sequence[ChunkGraphExtraction],
     document_id: int,
+    team_id: int,
+    knowledge_base_id: int,
 ) -> dict[str, Any]:
     chunk_records, entity_records, mention_records, relation_records, relation_evidence_records = (
         _aggregate_graph_records(extractions)
     )
     indexer = GraphIndexer(store)
-    await store.delete_document_graph(document_id=document_id)
+    await store.delete_document_graph(
+        document_id=document_id,
+        team_id=team_id,
+        knowledge_base_id=knowledge_base_id,
+    )
     summary = await indexer.index_batch_graph(
         chunks=chunk_records,
         entities=entity_records,
         mentions=mention_records,
         relations=relation_records,
         relation_evidences=relation_evidence_records,
+        team_id=team_id,
+        knowledge_base_id=knowledge_base_id,
         batch_size=DEFAULT_GRAPH_BATCH_SIZE,
     )
-    await store.prune_orphan_entities()
+    await store.prune_orphan_entities(
+        team_id=team_id,
+        knowledge_base_id=knowledge_base_id,
+    )
     return summary
 
 
@@ -749,7 +760,13 @@ async def index_document_graph(
         title=title,
     )
     store = get_graph_store()
-    summary = await _write_document_graph(store=store, extractions=extractions, document_id=document_id)
+    summary = await _write_document_graph(
+        store=store,
+        extractions=extractions,
+        document_id=document_id,
+        team_id=team_id,
+        knowledge_base_id=knowledge_base_id,
+    )
     summary["team_id"] = team_id
     summary["knowledge_base_id"] = knowledge_base_id
     if commit:
@@ -865,7 +882,13 @@ async def finalize_document_graph(
         extractions.append(extraction)
 
     store = get_graph_store()
-    summary = await _write_document_graph(store=store, extractions=extractions, document_id=document_id)
+    summary = await _write_document_graph(
+        store=store,
+        extractions=extractions,
+        document_id=document_id,
+        team_id=team_id,
+        knowledge_base_id=knowledge_base_id,
+    )
     summary["team_id"] = team_id
     summary["knowledge_base_id"] = knowledge_base_id
     if commit:
