@@ -10,7 +10,7 @@ from typing import Any
 from loguru import logger
 
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
-from app.agents.states import KbChatState
+from app.agents.states import KnowledgeQaState
 from app.core.config.settings import settings
 from app.services.chat_memory import format_chat_history
 from app.services.graph_entity_candidate_service import resolve_graph_candidate_entities
@@ -18,6 +18,12 @@ from app.services.graph_document_scope import resolve_graph_category_document_id
 from app.services.kb_graph_retrieval import GraphRetriever
 from app.services.kb_text_retrieval import run_kb_channel_text_retrieval
 from app.services.reranker import rerank
+
+FINAL_RERANK_MAX_CANDIDATES = 24
+FINAL_RERANK_CANDIDATE_MULTIPLIER = 2
+FINAL_RERANK_TEXT_MAX_CHARS = 1200
+GRAPH_RERANK_SOURCE_PREFIX = "graph"
+TEXT_GRAPH_RERANK_SOURCE = "text_graph"
 
 
 def _doc_key(doc: dict[str, Any]) -> tuple[Any, ...]:
@@ -344,38 +350,117 @@ def _build_rerank_text(doc: dict[str, Any]) -> str:
     return "\n".join(lines).strip() or content
 
 
-async def rerank_retrieved_docs(query: str, docs: list[dict[str, Any]], top_k: int) -> list[dict[str, Any]]:
-    if not docs:
+def _clip_rerank_text(text: str, *, limit: int = FINAL_RERANK_TEXT_MAX_CHARS) -> str:
+    normalized = " ".join(str(text or "").split()).strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[:limit]
+
+
+def _final_rerank_candidate_limit(total_count: int, top_k: int) -> int:
+    if total_count <= 0:
+        return 0
+    safe_top_k = max(1, int(top_k or 1))
+    return min(
+        total_count,
+        max(safe_top_k, min(FINAL_RERANK_MAX_CANDIDATES, safe_top_k * FINAL_RERANK_CANDIDATE_MULTIPLIER)),
+    )
+
+
+def _is_graph_rerank_candidate(doc: dict[str, Any]) -> bool:
+    source = str((doc.get("metadata") or {}).get("source") or "").strip()
+    return source == TEXT_GRAPH_RERANK_SOURCE or source.startswith(GRAPH_RERANK_SOURCE_PREFIX)
+
+
+def _select_final_rerank_candidates(
+    docs: list[dict[str, Any]],
+    *,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    candidate_limit = _final_rerank_candidate_limit(len(docs), top_k)
+    if candidate_limit <= 0:
         return []
+    if len(docs) <= candidate_limit:
+        return list(docs)
+
+    text_docs = [doc for doc in docs if not _is_graph_rerank_candidate(doc)]
+    graph_docs = [doc for doc in docs if _is_graph_rerank_candidate(doc)]
+    if not text_docs or not graph_docs:
+        return docs[:candidate_limit]
+
+    safe_top_k = max(1, int(top_k or 1))
+    graph_keep = min(len(graph_docs), max(1, min(safe_top_k, candidate_limit // 2)))
+    text_keep = candidate_limit - graph_keep
+    selected = [*text_docs[:text_keep], *graph_docs[:graph_keep]]
+
+    if len(selected) < candidate_limit:
+        selected_ids = {id(doc) for doc in selected}
+        for doc in docs:
+            if id(doc) in selected_ids:
+                continue
+            selected.append(doc)
+            selected_ids.add(id(doc))
+            if len(selected) >= candidate_limit:
+                break
+
+    return selected[:candidate_limit]
+
+
+async def rerank_retrieved_docs(
+    query: str,
+    docs: list[dict[str, Any]],
+    top_k: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    candidate_limit = _final_rerank_candidate_limit(len(docs), top_k)
+    candidate_docs = _select_final_rerank_candidates(docs, top_k=top_k)
+    graph_input_count = len([doc for doc in candidate_docs if _is_graph_rerank_candidate(doc)])
+    trace = {
+        "enabled": True,
+        "candidate_count": len(docs),
+        "candidate_limit": candidate_limit,
+        "input_count": len(candidate_docs),
+        "text_input_count": len(candidate_docs) - graph_input_count,
+        "graph_input_count": graph_input_count,
+        "output_count": 0,
+        "latency_ms": 0,
+        "truncated": len(candidate_docs) < len(docs),
+        "max_text_chars": FINAL_RERANK_TEXT_MAX_CHARS,
+    }
+    if not candidate_docs:
+        return [], trace
     rerank_inputs = [
         {
             "chunk_text": str(doc.get("content") or ""),
-            "search_text": _build_rerank_text(doc),
+            "search_text": _clip_rerank_text(_build_rerank_text(doc)),
             "document_chunk_id": (doc.get("metadata") or {}).get("document_chunk_id"),
             "_index": index,
         }
-        for index, doc in enumerate(docs)
+        for index, doc in enumerate(candidate_docs)
     ]
+    started_at = perf_counter()
     reranked_rows = await rerank(query, rerank_inputs, top_k=top_k)
+    trace["latency_ms"] = int((perf_counter() - started_at) * 1000)
     ordered_docs: list[dict[str, Any]] = []
     seen_indexes: set[int] = set()
     for row in reranked_rows:
         index = row.get("_index")
-        if not isinstance(index, int) or index in seen_indexes or index >= len(docs):
+        if not isinstance(index, int) or index in seen_indexes or index >= len(candidate_docs):
             continue
-        metadata = {**dict(docs[index].get("metadata") or {})}
+        metadata = {**dict(candidate_docs[index].get("metadata") or {})}
         if row.get("rerank_score") is not None:
             metadata["rerank_score"] = row.get("rerank_score")
-        ordered_docs.append({"content": docs[index].get("content") or "", "metadata": metadata})
+        ordered_docs.append({"content": candidate_docs[index].get("content") or "", "metadata": metadata})
         seen_indexes.add(index)
-    if len(ordered_docs) < min(top_k, len(docs)):
-        for index, doc in enumerate(docs):
+    if len(ordered_docs) < min(top_k, len(candidate_docs)):
+        for index, doc in enumerate(candidate_docs):
             if index in seen_indexes:
                 continue
             ordered_docs.append(doc)
-            if len(ordered_docs) >= min(top_k, len(docs)):
+            if len(ordered_docs) >= min(top_k, len(candidate_docs)):
                 break
-    return ordered_docs[:top_k]
+    ordered_docs = ordered_docs[:top_k]
+    trace["output_count"] = len(ordered_docs)
+    return ordered_docs, trace
 
 
 def _resolve_graph_mode_from_plan(graph_plan: dict[str, Any]) -> str | None:
@@ -539,7 +624,11 @@ def _write_retrieval_log(payload: dict[str, Any]) -> None:
     )
 
 
-async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
+async def kb_chat_retrieve_node(
+    state: KnowledgeQaState,
+    *,
+    node_id: str = "retrieve_knowledge",
+) -> dict[str, Any]:
     stream_writer = get_optional_stream_writer()
     if str(state.get("retrieval_strategy") or "").strip().lower() == "skip":
         return {
@@ -561,7 +650,8 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
 
     emit_progress(
         stream_writer,
-        node_id="retrieve",
+        workflow_id="knowledge_qa",
+        node_id=node_id,
         stage="retrieve",
         message="正在查找知识库内容",
     )
@@ -601,24 +691,20 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
     rerank_plan = dict(execution_plan.get("rerank") or {})
     context_plan = dict(execution_plan.get("context") or {})
     retrieval_strategy = str(
-        execution_plan.get("retrieval_strategy") or state.get("retrieval_strategy") or "parallel_fusion"
+        execution_plan.get("mode") or state.get("retrieval_strategy") or "parallel_fusion"
     ).strip().lower()
-    text_enabled = bool(
-        execution_plan.get(
-            "text_enabled",
-            bool(vector_plan.get("enabled", True)) or bool(lexical_plan.get("enabled", True)),
-        )
-    )
+    text_enabled = bool(vector_plan.get("enabled", True)) or bool(lexical_plan.get("enabled", True))
     final_top_k = int(context_plan.get("final_top_k") or 8)
     llm_reference_top_k = int(context_plan.get("llm_reference_top_k") or final_top_k)
     recall_k = int(vector_plan.get("recall_k") or final_top_k)
     lexical_k = int(lexical_plan.get("lexical_k") or final_top_k)
     graph_limit = int(graph_plan.get("limit") or final_top_k)
-    graph_enabled = bool(execution_plan.get("graph_enabled", graph_plan.get("enabled", True)))
+    graph_enabled = bool(graph_plan.get("enabled", True))
     graph_mode = _resolve_graph_mode_from_plan(graph_plan)
-    graph_max_hops = int(graph_plan.get("max_hops") or state.get("graph_max_hops") or 1)
+    graph_max_hops = int(graph_plan.get("max_hops") or 1)
     context_budget = int(context_plan.get("budget_chars") or 9000)
     rerank_enabled = bool(settings.RERANK_ENABLED) and bool(rerank_plan.get("enabled"))
+    text_candidate_limit = max(final_top_k, min(recall_k + lexical_k, final_top_k * 4))
     question_type = str(state.get("question_type") or "definition_lookup").strip().lower()
     resolved_graph_candidates = {
         "candidate_entities": list(candidate_entities[:graph_limit]),
@@ -681,13 +767,13 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
         "category_id": state.get("category_id"),
         "log_prefix": "[User KB Retrieval]",
         "user_id": state.get("user_id"),
-        "result_limit": final_top_k,
-        "llm_reference_top_k": llm_reference_top_k,
+        "result_limit": text_candidate_limit,
+        "llm_reference_top_k": text_candidate_limit,
         "context_budget": context_budget,
         "document_statuses": state.get("allowed_document_statuses"),
         "recall_k": recall_k,
         "lexical_k": lexical_k,
-        "rerank_enabled": rerank_enabled,
+        "rerank_enabled": False,
     }
 
     async def _run_text_retrieval(
@@ -776,11 +862,32 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
             primary_docs.append(doc)
         else:
             supporting_text_docs.append(doc)
-    reranked_primary_docs = (
-        await rerank_retrieved_docs(query, primary_docs, final_top_k)
-        if rerank_enabled
-        else primary_docs[:final_top_k]
-    )
+    if rerank_enabled:
+        emit_progress(
+            stream_writer,
+            workflow_id="knowledge_qa",
+            node_id=node_id,
+            stage="rerank",
+            message="正在对融合证据统一精排",
+            candidate_count=len(primary_docs),
+            top_k=final_top_k,
+        )
+        reranked_primary_docs, final_rerank_trace = await rerank_retrieved_docs(
+            query,
+            primary_docs,
+            final_top_k,
+        )
+    else:
+        reranked_primary_docs = primary_docs[:final_top_k]
+        final_rerank_trace = {
+            "enabled": False,
+            "candidate_count": len(primary_docs),
+            "input_count": len(primary_docs),
+            "output_count": len(reranked_primary_docs),
+            "latency_ms": 0,
+            "truncated": False,
+            "max_text_chars": FINAL_RERANK_TEXT_MAX_CHARS,
+        }
     supporting_docs = supporting_text_docs + graph_supporting_context_docs
     primary_context = _build_layer_context(reranked_primary_docs)
     supporting_context = _build_supporting_context(supporting_docs)
@@ -795,10 +902,15 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
     final_hits = len(reranked_primary_docs)
     text_trace = dict(text_result.get("retrieval_trace") or {})
     graph_trace = dict(graph_result.get("trace") or {})
-    rerank_trace = dict(text_trace.get("rerank") or {})
-    rerank_trace["enabled_for_primary_evidence"] = rerank_enabled
-    rerank_trace["input_count"] = len(primary_docs)
-    rerank_trace["output_count"] = len(reranked_primary_docs)
+    text_rerank_trace = dict(text_trace.get("rerank") or {})
+    rerank_trace = {
+        "text_stage": text_rerank_trace,
+        "final_stage": final_rerank_trace,
+        "enabled": rerank_enabled,
+        "input_count": final_rerank_trace.get("input_count"),
+        "output_count": final_rerank_trace.get("output_count"),
+        "latency_ms": final_rerank_trace.get("latency_ms"),
+    }
     trace = {
         "retrieval_strategy": retrieval_strategy,
         "text": {
@@ -883,6 +995,7 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
                 "关键词召回数": lexical_k,
                 "原始候选数": text_trace.get("raw_candidate_count"),
                 "合并候选数": text_trace.get("merged_candidate_count"),
+                "文本阶段精排": False,
                 "耗时毫秒": text_trace.get("text_retrieval_latency_ms"),
             },
             "图谱检索": {
@@ -903,6 +1016,9 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
                 "图谱证据数": trace["graph_evidence_count"],
                 "折叠重复数": duplicates_folded,
                 "辅助证据分组": trace["supporting_sections"],
+                "最终精排启用": rerank_trace["enabled"],
+                "最终精排输入数": rerank_trace["input_count"],
+                "最终精排输出数": rerank_trace["output_count"],
             },
             "图谱关系证据": {
                 "样例数量": len(graph_evidence_log_items),
@@ -911,6 +1027,7 @@ async def kb_chat_retrieve_node(state: KbChatState) -> dict[str, Any]:
             },
             "性能": {
                 "合并耗时毫秒": merge_latency_ms,
+                "最终精排耗时毫秒": rerank_trace["latency_ms"],
                 "文本总耗时毫秒": text_trace.get("total_latency_ms"),
             },
         }

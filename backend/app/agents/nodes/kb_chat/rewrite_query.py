@@ -8,7 +8,7 @@ from typing import Any
 from loguru import logger
 
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
-from app.agents.states import KbChatState
+from app.agents.states import KnowledgeQaState
 from app.services.kb_query_rewrite import build_kb_chat_retrieval_queries
 
 
@@ -84,7 +84,11 @@ async def build_kb_chat_rewrite(
     }
 
 
-async def kb_chat_rewrite_query_node(state: KbChatState) -> dict[str, Any]:
+async def kb_chat_rewrite_query_node(
+    state: KnowledgeQaState,
+    *,
+    node_id: str = "rewrite_query",
+) -> dict[str, Any]:
     stream_writer = get_optional_stream_writer()
     if str(state.get("retrieval_strategy") or "").strip().lower() == "skip":
         trace = {
@@ -106,7 +110,8 @@ async def kb_chat_rewrite_query_node(state: KbChatState) -> dict[str, Any]:
         }
     emit_progress(
         stream_writer,
-        node_id="rewrite_query",
+        workflow_id="knowledge_qa",
+        node_id=node_id,
         stage="rewrite",
         message="正在整理检索线索",
     )

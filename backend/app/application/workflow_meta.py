@@ -5,14 +5,32 @@ from __future__ import annotations
 from typing import Any
 
 WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
-    "kb_chat": {
-        "analyze": {"label": "正在分析问题并生成检索方案"},
-        "rewrite_query": {"label": "正在整理检索线索"},
-        "retrieve": {"label": "正在查找知识库内容"},
-        "evaluate": {"label": "正在核对答案依据"},
-        "answer": {"label": "正在组织最终回答"},
+    "agent": {
+        "load_context": {"label": "加载上下文"},
+        "understand": {"label": "理解意图"},
+        "route": {"label": "匹配能力"},
+        "clarify": {"label": "请求澄清"},
+        "plan": {"label": "制定计划"},
+        "execute": {"label": "执行计划"},
+        "respond": {"label": "输出结果"},
+    },
+    "knowledge_qa": {
+        "analyze_question": {"label": "分析问题"},
+        "plan_retrieval": {"label": "规划检索"},
+        "retrieve_knowledge": {"label": "检索知识"},
+        "compose_answer": {"label": "组织回答"},
     },
 }
+
+
+def get_node_workflow_id(root_workflow_id: str, node_id: str) -> str:
+    """Resolve the real workflow owner for a streamed node."""
+
+    if node_id in WORKFLOW_NODE_META.get("knowledge_qa", {}):
+        return "knowledge_qa"
+    if node_id in WORKFLOW_NODE_META.get(root_workflow_id, {}):
+        return root_workflow_id
+    return root_workflow_id
 
 
 def get_node_label(workflow_id: str, node_id: str) -> str:

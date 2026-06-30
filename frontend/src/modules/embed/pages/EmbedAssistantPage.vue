@@ -8,6 +8,7 @@ import EmbedMessageItem, {
 } from "@/modules/embed/components/EmbedMessageItem.vue";
 import EmbedSessionHistoryPanel from "@/modules/embed/components/EmbedSessionHistoryPanel.vue";
 import EmbedSuggestionChips from "@/modules/embed/components/EmbedSuggestionChips.vue";
+import EmbedWorkflowProgress from "@/modules/embed/components/EmbedWorkflowProgress.vue";
 import { useEmbeddedAssistant } from "@/modules/embed/composables/useEmbeddedAssistant";
 
 const {
@@ -21,7 +22,6 @@ const {
   messages,
   placeholder,
   deletingSessionId,
-  retrievedCount,
   scrollContainerRef,
   deleteSession,
   loadSessions,
@@ -29,8 +29,7 @@ const {
   sessions,
   sessionsError,
   sessionsLoading,
-  streamPhase,
-  streamStatus,
+  workflowRun,
   suggestions,
   sendMessage,
   submitFeedback,
@@ -41,8 +40,9 @@ const {
 const composerRef = useTemplateRef<InstanceType<typeof EmbedChatComposer>>("composerRef");
 
 const renderedMessages = computed<EmbedRenderableMessage[]>(() => {
+  const lastMessage = messages.value[messages.value.length - 1];
   const visibleMessages =
-    isTyping.value && messages.value.at(-1)?.role === "assistant" && !messages.value.at(-1)?.content
+    isTyping.value && lastMessage?.role === "assistant" && !lastMessage.content
       ? messages.value.slice(0, -1)
       : messages.value;
 
@@ -63,60 +63,12 @@ const renderedMessages = computed<EmbedRenderableMessage[]>(() => {
 });
 
 const showThinkingState = computed(() => {
-  const lastMessage = messages.value.at(-1);
+  const lastMessage = messages.value[messages.value.length - 1];
   return (
     isTyping.value &&
     lastMessage?.role === "assistant" &&
     !lastMessage.content
   );
-});
-
-const STREAM_PHASE_META: Record<string, { title: string; accentClass: string }> = {
-  plan_query: {
-    title: "正在理解问题",
-    accentClass: "is-sky",
-  },
-  analyze: {
-    title: "正在分析问题",
-    accentClass: "is-sky",
-  },
-  rewrite_query: {
-    title: "正在整理检索线索",
-    accentClass: "is-indigo",
-  },
-  retrieve: {
-    title: "正在检索知识库",
-    accentClass: "is-blue",
-  },
-  evaluate: {
-    title: "正在核对答案依据",
-    accentClass: "is-violet",
-  },
-  answer: {
-    title: "正在生成回复",
-    accentClass: "is-emerald",
-  },
-};
-
-const thinkingPhase = computed(() => {
-  const nodeId = streamPhase.value.nodeId;
-  const phaseMeta = nodeId ? STREAM_PHASE_META[nodeId] : null;
-  const fallbackTitle =
-    typeof retrievedCount.value === "number" && retrievedCount.value > 0
-      ? "正在组织答案"
-      : streamStatus.value?.includes("连接")
-        ? "正在连接助手"
-        : "正在处理中";
-  const detail =
-    typeof retrievedCount.value === "number" && retrievedCount.value > 0 && nodeId === "retrieve"
-      ? `已匹配 ${retrievedCount.value} 条相关内容`
-      : streamStatus.value || "正在处理你的问题";
-
-  return {
-    title: phaseMeta?.title ?? fallbackTitle,
-    detail,
-    accentClass: phaseMeta?.accentClass ?? "is-blue",
-  };
 });
 
 async function handleSend(text: string) {
@@ -218,7 +170,6 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
               :key="message.id"
               :message="message"
               :assistant-name="assistantName"
-              :stream-status="streamStatus"
               :is-typing="isTyping"
               @feedback="handleFeedback(message, $event)"
             />
@@ -227,21 +178,7 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
               <div class="embed-assistant-page__thinking-avatar">
                 <el-icon><ChatDotRound /></el-icon>
               </div>
-              <div class="embed-assistant-page__thinking-card">
-                <div class="embed-assistant-page__thinking-row">
-                  <div class="embed-assistant-page__thinking-dots">
-                    <span class="dot" />
-                    <span class="dot" />
-                    <span class="dot" />
-                  </div>
-                  <span
-                    class="embed-assistant-page__thinking-title"
-                    :class="thinkingPhase.accentClass"
-                  >
-                    {{ thinkingPhase.title }}
-                  </span>
-                </div>
-              </div>
+              <EmbedWorkflowProgress :run="workflowRun" />
             </div>
           </section>
 
@@ -615,72 +552,6 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
   margin-top: 2px;
 }
 
-.embed-assistant-page__thinking-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  width: 260px;
-  max-width: calc(100% - 42px);
-  padding: 14px 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 18px 18px 18px 4px;
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-}
-
-.embed-assistant-page__thinking-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.embed-assistant-page__thinking-dots {
-  display: flex;
-  gap: 4px;
-}
-
-.embed-assistant-page__thinking-dots .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #60a5fa;
-  animation: embed-thinking 1.2s infinite ease-in-out both;
-}
-
-.embed-assistant-page__thinking-dots .dot:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.embed-assistant-page__thinking-dots .dot:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-.embed-assistant-page__thinking-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #475569;
-}
-
-.embed-assistant-page__thinking-title.is-sky {
-  color: #0284c7;
-}
-
-.embed-assistant-page__thinking-title.is-indigo {
-  color: #4f46e5;
-}
-
-.embed-assistant-page__thinking-title.is-blue {
-  color: #2563eb;
-}
-
-.embed-assistant-page__thinking-title.is-violet {
-  color: #7c3aed;
-}
-
-.embed-assistant-page__thinking-title.is-emerald {
-  color: #059669;
-}
-
 .embed-assistant-page__composer {
   padding: 12px 16px 14px;
   background: rgba(255, 255, 255, 0.94);
@@ -788,27 +659,8 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
     font-size: 16px;
   }
 
-  .embed-assistant-page__thinking-card {
-    width: 100%;
-    max-width: calc(100% - 42px);
-  }
-
   .embed-assistant-page__composer {
     padding: 10px 12px 12px;
-  }
-}
-
-@keyframes embed-thinking {
-  0%,
-  80%,
-  100% {
-    opacity: 0.35;
-    transform: scale(0.85);
-  }
-
-  40% {
-    opacity: 1;
-    transform: scale(1);
   }
 }
 

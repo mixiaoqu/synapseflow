@@ -28,6 +28,7 @@ class SseEnvelope(TypedDict, total=False):
     """Payload shape returned by every streaming endpoint."""
 
     type: str
+    workflow_id: str
     node_id: str
     node_name: str
     timestamp: float
@@ -39,6 +40,7 @@ def build_sse_envelope(
     event_type: AgentEventType | str,
     data: dict[str, Any],
     *,
+    workflow_id: str | None = None,
     node_id: str = "",
     node_name: str = "",
     run_id: str | None = None,
@@ -49,6 +51,7 @@ def build_sse_envelope(
     event_name = event_type.value if isinstance(event_type, AgentEventType) else str(event_type)
     return {
         "type": event_name,
+        "workflow_id": workflow_id or "",
         "node_id": node_id,
         "node_name": node_name,
         "timestamp": time.time() if timestamp is None else timestamp,

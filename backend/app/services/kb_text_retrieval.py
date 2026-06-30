@@ -340,6 +340,18 @@ def _passes_rerank_threshold(
         return False
 
 
+def _passes_rrf_score_threshold(row: dict[str, Any], threshold: float | None) -> bool:
+    if threshold is None:
+        return True
+    raw_score = row.get("rrf_score")
+    if raw_score is None:
+        return True
+    try:
+        return float(raw_score) >= threshold
+    except (TypeError, ValueError):
+        return False
+
+
 def _apply_retrieval_thresholds(
     results: list[dict[str, Any]],
     *,
@@ -350,12 +362,14 @@ def _apply_retrieval_thresholds(
 
     rag = config_registry.get_rag_config().retrieval
     distance_threshold = rag.distance_threshold
+    rrf_score_threshold = rag.rrf_score_threshold
     rerank_threshold = rag.rerank_threshold
 
     filtered = [
         row
         for row in results
         if _passes_distance_threshold(row, distance_threshold)
+        and _passes_rrf_score_threshold(row, rrf_score_threshold)
         and _passes_rerank_threshold(
             row,
             rerank_enabled=rerank_enabled,
@@ -365,10 +379,11 @@ def _apply_retrieval_thresholds(
     removed = len(results) - len(filtered)
     if removed:
         logger.info(
-            "[KB Retrieval] threshold filtering removed {} of {} candidates | distance_threshold={} rerank_threshold={}",
+            "[KB Retrieval] threshold filtering removed {} of {} candidates | distance_threshold={} rrf_score_threshold={} rerank_threshold={}",
             removed,
             len(results),
             distance_threshold,
+            rrf_score_threshold if rrf_score_threshold is not None else "-",
             rerank_threshold if rerank_enabled else "-",
         )
     return filtered
@@ -591,6 +606,8 @@ async def _build_retrieval_output(
         }
         if row.get("rerank_score") is not None:
             meta["rerank_score"] = row["rerank_score"]
+        if row.get("rrf_score") is not None:
+            meta["rrf_score"] = row["rrf_score"]
         retrieved_docs.append({"content": row["chunk_text"], "metadata": meta})
 
     budget = rag.kb_context_max_chars if context_budget is None else context_budget

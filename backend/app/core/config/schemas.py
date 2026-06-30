@@ -85,6 +85,7 @@ class RagRetrievalProfileConfig:
 class RagRetrievalConfig:
     k_first: int
     distance_threshold: float
+    rrf_score_threshold: float | None
     rerank_threshold: float | None
     final_top_k: int
     llm_reference_top_k: int | None

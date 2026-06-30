@@ -25,6 +25,7 @@ def get_optional_stream_writer() -> StreamWriter | None:
 def emit_progress(
     writer: StreamWriter | None,
     *,
+    workflow_id: str,
     node_id: str,
     message: str,
     stage: str,
@@ -37,6 +38,7 @@ def emit_progress(
     writer(
         {
             "type": "progress",
+            "workflow_id": workflow_id,
             "node_id": node_id,
             "stage": stage,
             "message": message,

@@ -11,6 +11,11 @@ import {
   type EmbedSessionSummary,
 } from "@/shared/api/embed";
 import { consumeSseStream } from "@/shared/lib/stream/sse";
+import {
+  createWorkflowRun,
+  reduceWorkflowRunEvent,
+  type ChatWorkflowRun,
+} from "@/shared/lib/stream/workflowRun";
 import { AppRequestError, resolveDisplayErrorMessage } from "@/shared/utils/error";
 
 interface RetrievedDoc {
@@ -26,7 +31,7 @@ export interface EmbedMessage {
   retrievedDocs?: RetrievedDoc[];
   answerStatus?: string | null;
   logId?: number | null;
-  feedbackValue?: string | null;
+  feedbackValue?: "helpful" | "not_helpful" | null;
   feedbackSubmitting?: boolean;
 }
 
@@ -35,11 +40,6 @@ export interface SessionSummary {
   title: string;
   createdAt: string;
   preview?: string | null;
-}
-
-export interface StreamPhase {
-  nodeId: string | null;
-  status: string | null;
 }
 
 function findMessageById(messages: EmbedMessage[], messageId: string) {
@@ -138,9 +138,7 @@ export function useEmbeddedAssistant() {
   const suggestions = ref<string[]>([]);
   const contextLabel = ref("");
   const error = ref<string | null>(null);
-  const streamStatus = ref<string | null>(null);
-  const streamPhase = ref<StreamPhase>({ nodeId: null, status: null });
-  const retrievedCount = ref<number | null>(null);
+  const workflowRun = ref<ChatWorkflowRun | null>(null);
   const currentSessionId = ref<string | null>(null);
   const pageContext = ref<EmbedPageContext | null>(null);
   const pageConfig = ref<EmbedPageConfig | null>(null);
@@ -156,9 +154,7 @@ export function useEmbeddedAssistant() {
   function resetAssistantState() {
     messages.value = [];
     error.value = null;
-    streamStatus.value = null;
-    streamPhase.value = { nodeId: null, status: null };
-    retrievedCount.value = null;
+    workflowRun.value = null;
     currentSessionId.value = null;
   }
 
@@ -173,8 +169,7 @@ export function useEmbeddedAssistant() {
     activeAbortController?.abort();
     activeAbortController = null;
     isTyping.value = false;
-    streamStatus.value = null;
-    streamPhase.value = { nodeId: null, status: null };
+    workflowRun.value = null;
   }
 
   async function loadSessions(options: { force?: boolean } = {}) {
@@ -276,9 +271,7 @@ export function useEmbeddedAssistant() {
 
     messages.value = [...messages.value, userMessage, assistantMessage];
     error.value = null;
-    streamStatus.value = "正在连接助手...";
-    streamPhase.value = { nodeId: null, status: "正在连接助手..." };
-    retrievedCount.value = null;
+    workflowRun.value = createWorkflowRun(null, "正在连接助手...");
     isTyping.value = true;
     await scrollToBottom();
 
@@ -301,50 +294,14 @@ export function useEmbeddedAssistant() {
           return;
         }
 
+        workflowRun.value = reduceWorkflowRunEvent(workflowRun.value, event);
+
         switch (event.type) {
-          case "start": {
-            streamStatus.value = "正在准备问题...";
-            streamPhase.value = { nodeId: null, status: "正在准备问题..." };
-            break;
-          }
-          case "node_start": {
-            const nodeId = typeof event.node_id === "string" ? event.node_id.trim() : "";
-            const statusMap: Record<string, string> = {
-              plan_query: "正在理解问题并规划检索...",
-              analyze: "正在分析问题并生成检索方案...",
-              rewrite_query: "正在整理检索线索...",
-              retrieve: "正在检索知识库...",
-              evaluate: "正在核对答案依据...",
-              answer: "正在生成回答...",
-            };
-            const status = statusMap[nodeId] ?? "正在处理...";
-            streamStatus.value = status;
-            streamPhase.value = { nodeId: nodeId || null, status };
-            break;
-          }
-          case "node_complete": {
-            if (event.node_id === "retrieve") {
-              const count = event.data.retrieved_count;
-              if (typeof count === "number") {
-                retrievedCount.value = count;
-                const status =
-                  count > 0 ? "已匹配相关内容，正在生成回答..." : "未匹配到相关内容，正在整理说明...";
-                streamStatus.value = status;
-                streamPhase.value = { nodeId: "retrieve", status };
-              }
-            } else if (event.node_id === "answer") {
-              streamStatus.value = "正在整理回答...";
-              streamPhase.value = { nodeId: "answer", status: "正在整理回答..." };
-            }
-            break;
-          }
           case "token": {
             const text = event.data.text;
             if (typeof text !== "string" || !text) {
               break;
             }
-            streamStatus.value = "正在生成回答...";
-            streamPhase.value = { nodeId: "answer", status: "正在生成回答..." };
             const targetMessage = findMessageById(messages.value, assistantMessageId);
             if (targetMessage) {
               targetMessage.content += text;
@@ -356,11 +313,6 @@ export function useEmbeddedAssistant() {
             if (!Array.isArray(docs)) {
               break;
             }
-            retrievedCount.value = docs.length;
-            const status =
-              docs.length > 0 ? "已匹配相关内容，正在生成回答..." : "未匹配到相关内容，正在整理说明...";
-            streamStatus.value = status;
-            streamPhase.value = { nodeId: "retrieve", status };
             const targetMessage = findMessageById(messages.value, assistantMessageId);
             if (targetMessage) {
               targetMessage.retrievedDocs = docs as RetrievedDoc[];
@@ -368,8 +320,6 @@ export function useEmbeddedAssistant() {
             break;
           }
           case "complete": {
-            streamStatus.value = null;
-            streamPhase.value = { nodeId: null, status: null };
             const answer = event.data.answer;
             const sessionId = event.data.session_id;
             const docs = event.data.retrieved_docs;
@@ -377,9 +327,9 @@ export function useEmbeddedAssistant() {
               typeof event.data.answer_status === "string" ? event.data.answer_status : null;
             const logId = typeof event.data.log_id === "number" ? event.data.log_id : null;
 
-              if (typeof sessionId === "string" && sessionId) {
-                currentSessionId.value = sessionId;
-              }
+            if (typeof sessionId === "string" && sessionId) {
+              currentSessionId.value = sessionId;
+            }
 
             const targetMessage = findMessageById(messages.value, assistantMessageId);
             if (targetMessage) {
@@ -401,8 +351,6 @@ export function useEmbeddedAssistant() {
                 : "请求失败";
             const message = resolveDisplayErrorMessage(rawMessage, "请求失败，请稍后重试。");
             error.value = message;
-            streamStatus.value = null;
-            streamPhase.value = { nodeId: null, status: null };
             const targetMessage = findMessageById(messages.value, assistantMessageId);
             if (targetMessage) {
               targetMessage.content = message;
@@ -419,6 +367,11 @@ export function useEmbeddedAssistant() {
       if (!controller.signal.aborted) {
         const message = formatEmbedError(err, "请求失败。");
         error.value = message;
+        workflowRun.value = reduceWorkflowRunEvent(workflowRun.value, {
+          type: "error",
+          data: { message },
+          run_id: workflowRun.value?.id ?? null,
+        });
         const targetMessage = findMessageById(messages.value, assistantMessageId);
         if (targetMessage) {
           targetMessage.content = message;
@@ -429,8 +382,6 @@ export function useEmbeddedAssistant() {
         activeAbortController = null;
       }
       isTyping.value = false;
-      streamStatus.value = null;
-      streamPhase.value = { nodeId: null, status: null };
       if (sessionsLoaded.value) {
         await loadSessions({ force: true });
       }
@@ -451,7 +402,7 @@ export function useEmbeddedAssistant() {
     stopGenerating();
     error.value = null;
     currentSessionId.value = sessionId;
-    retrievedCount.value = null;
+    workflowRun.value = null;
 
     try {
       const detail = await embedApi.getSession(token.value, sessionId);
@@ -485,7 +436,7 @@ export function useEmbeddedAssistant() {
     }
   }
 
-  async function submitFeedback(logId: number, feedbackValue: string) {
+  async function submitFeedback(logId: number, feedbackValue: "helpful" | "not_helpful") {
     const targetMessage = messages.value.find((message) => message.logId === logId) ?? null;
     if (!targetMessage || targetMessage.feedbackSubmitting) {
       return;
@@ -529,7 +480,6 @@ export function useEmbeddedAssistant() {
     pageConfig,
     placeholder,
     deletingSessionId,
-    retrievedCount,
     scrollContainerRef,
     deleteSession,
     loadSessions,
@@ -537,8 +487,7 @@ export function useEmbeddedAssistant() {
     sessions,
     sessionsError,
     sessionsLoading,
-    streamPhase,
-    streamStatus,
+    workflowRun,
     suggestions,
     sendMessage,
     submitFeedback,

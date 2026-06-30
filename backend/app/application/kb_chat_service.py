@@ -20,7 +20,7 @@ from app.application.stream_events import (
     emit_progress,
     emit_start,
 )
-from app.application.workflow_meta import get_node_label
+from app.application.workflow_meta import get_node_label, get_node_workflow_id
 from app.core.config.settings import settings
 from app.db.session import AsyncSessionLocal
 from app.db.models import ContentRiskLog
@@ -69,7 +69,7 @@ class KbChatService(BaseAgentService):
 
     @staticmethod
     def _normalize_workflow_id(value: str | None) -> str:
-        return "kb_chat"
+        return "agent"
 
     def build_initial_state(
         self,
@@ -162,16 +162,6 @@ class KbChatService(BaseAgentService):
                 "plan_trace": {},
                 "rewrite_trace": {},
                 "retrieval_trace": {},
-                "retrieval_evaluation": {},
-                "evaluate_trace": {},
-                "graph_enabled": False,
-                "graph_intent": None,
-                "graph_mode": None,
-                "graph_requires_grounding": False,
-                "graph_max_hops": 0,
-                "graph_budget": 0,
-                "fusion_policy": None,
-                "graph_boost": None,
                 "graph_facts": {
                     "text": [],
                     "entities": [],
@@ -192,9 +182,9 @@ class KbChatService(BaseAgentService):
 
     def _get_graph(self) -> Any:
         if self._graph is None:
-            from app.agents.graphs.kb_chat_graph import create_kb_chat_graph
+            from app.agents.graphs.agent_graph import create_agent_graph
 
-            self._graph = create_kb_chat_graph(llm_factory=self._llm_factory)
+            self._graph = create_agent_graph(llm_factory=self._llm_factory)
         return self._graph
 
     async def _load_memory_context(
@@ -281,11 +271,6 @@ class KbChatService(BaseAgentService):
                     if isinstance(state.get("retrieval_trace"), dict)
                     else None
                 ),
-                "retrieval_evaluation": (
-                    dict(state.get("retrieval_evaluation") or {})
-                    if isinstance(state.get("retrieval_evaluation"), dict)
-                    else None
-                ),
                 "candidate_entities": list(state.get("candidate_entities") or []),
                 "answer_context": state.get("context"),
                 "retrieved_docs": list(retrieved_docs or []),
@@ -322,51 +307,112 @@ class KbChatService(BaseAgentService):
 
     @staticmethod
     def _node_progress_message(node_id: str) -> str:
-        if node_id == "analyze":
+        if node_id == "load_context":
+            return "正在加载会话上下文..."
+        if node_id == "understand":
             return "正在理解问题..."
-        if node_id == "rewrite_query":
-            return "正在整理检索问题..."
-        if node_id == "retrieve":
+        if node_id == "route":
+            return "正在匹配处理能力..."
+        if node_id == "clarify":
+            return "正在生成澄清问题..."
+        if node_id == "plan":
+            return "正在制定执行计划..."
+        if node_id == "execute":
+            return "正在执行计划..."
+        if node_id == "respond":
+            return "正在整理最终响应..."
+        if node_id == "analyze_question":
+            return "正在分析知识库问题..."
+        if node_id == "plan_retrieval":
+            return "正在规划知识库检索..."
+        if node_id == "retrieve_knowledge":
             return "正在检索知识库..."
-        if node_id == "evaluate":
-            return "Evaluating evidence..."
-        if node_id == "answer":
-            return "正在生成回答..."
+        if node_id == "compose_answer":
+            return "正在组织知识库回答..."
         return "正在处理..."
+
     @staticmethod
     def _node_summary(node_id: str, state: dict[str, Any]) -> dict[str, Any]:
-        if node_id == "analyze":
+        if node_id == "load_context":
+            return {
+                "session_id": state.get("session_id"),
+                "knowledge_base_id": state.get("knowledge_base_id"),
+                "category_id": state.get("category_id"),
+            }
+        if node_id == "understand":
+            intent = state.get("intent") or {}
+            return {
+                "intent_type": intent.get("type"),
+                "needs_clarification": intent.get("needs_clarification"),
+                "missing_fields": intent.get("missing_fields"),
+                "direct_answer_kind": intent.get("direct_answer_kind"),
+                "reason": intent.get("reason") or state.get("route_reason"),
+            }
+        if node_id == "route":
+            route = state.get("route") or {}
+            return {
+                "target_type": route.get("target_type"),
+                "target_id": route.get("target_id"),
+                "reason": route.get("reason"),
+            }
+        if node_id == "clarify":
+            clarification = state.get("clarification") or {}
+            return {
+                "missing_fields": clarification.get("missing_fields"),
+            }
+        if node_id == "plan":
+            plan = state.get("plan") or state.get("action_plan") or {}
+            steps = list(plan.get("steps") or [])
+            return {
+                "step_count": len(steps),
+            }
+        if node_id == "execute":
+            execution = state.get("execution") or {}
+            return {
+                "status": execution.get("status"),
+                "retrieved_count": len(state.get("retrieved_docs", [])),
+                "answer_status": state.get("answer_status"),
+            }
+        if node_id == "respond":
+            response = state.get("response") or state.get("final_response") or {}
+            return {
+                "answer_status": response.get("answer_status") or state.get("answer_status"),
+                "retrieved_count": len(state.get("retrieved_docs", [])),
+            }
+        if node_id == "analyze_question":
             return {
                 "question_type": state.get("question_type"),
-                "retrieval_required": state.get("retrieval_required"),
                 "retrieval_complexity": state.get("retrieval_complexity"),
+                "candidate_entity_count": len(state.get("candidate_entities", []) or []),
                 "reason": state.get("route_reason"),
             }
-        if node_id == "rewrite_query":
+        if node_id == "plan_retrieval":
+            execution_plan = state.get("retrieval_execution_plan") or {}
+            channels = execution_plan.get("channels") or {}
+            vector = channels.get("vector") or {}
+            lexical = channels.get("lexical") or {}
+            graph = channels.get("graph") or {}
+            context = execution_plan.get("context") or {}
+            return {
+                "retrieval_strategy": state.get("retrieval_strategy"),
+                "graph_channel_enabled": graph.get("enabled"),
+                "vector_top_k": vector.get("recall_k"),
+                "lexical_top_k": lexical.get("lexical_k"),
+                "context_top_k": context.get("final_top_k"),
+                "rerank_top_k": ((execution_plan.get("rerank") or {}).get("top_k")),
+            }
+        if node_id == "retrieve_knowledge":
             rewrite_trace = state.get("rewrite_trace") or {}
             return {
                 "rewrite_engine": rewrite_trace.get("engine"),
+                "retrieval_strategy": state.get("retrieval_strategy"),
                 "rewrite_policy": rewrite_trace.get("policy"),
                 "semantic_query_count": rewrite_trace.get("semantic_query_count"),
                 "lexical_term_count": rewrite_trace.get("lexical_term_count"),
                 "fallback_used": rewrite_trace.get("fallback_used"),
-            }
-        if node_id == "retrieve":
-            return {
                 "retrieved_count": len(state.get("retrieved_docs", [])),
-                "empty_reason": ((state.get("retrieval_trace") or {}).get("empty_reason")),
-                "semantic_query_count": len(state.get("semantic_queries", []) or []),
-                "lexical_term_count": len(state.get("lexical_terms", []) or []),
-                "retrieval_mode": "vector_lexical_graph",
             }
-        if node_id == "evaluate":
-            evaluation = state.get("retrieval_evaluation") or {}
-            return {
-                "status": evaluation.get("status"),
-                "next_action": evaluation.get("next_action"),
-                "reason": evaluation.get("reason"),
-            }
-        if node_id == "answer":
+        if node_id == "compose_answer":
             return {"answer_length": len(state.get("answer", ""))}
         return {"keys": sorted(state.keys())}
 
@@ -522,27 +568,16 @@ class KbChatService(BaseAgentService):
 
         def _build_trace_docs(raw_docs: list[Any]) -> list[dict[str, Any]]:
             docs: list[dict[str, Any]] = []
-            top_change_by_title = {
-                str(item.get("title") or ""): item
-                for item in list(rerank_trace.get("top_changes") or [])
-                if isinstance(item, dict)
-            }
             for index, doc in enumerate(raw_docs, start=1):
                 if not isinstance(doc, dict):
                     continue
                 metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
                 title = str(metadata.get("document_title") or f"候选片段 #{index}")
                 source_type = _source_type(metadata)
-                top_change = top_change_by_title.get(title) or {}
-                raw_original_rank = top_change.get("old_rank")
-                try:
-                    original_rank = int(raw_original_rank)
-                except (TypeError, ValueError):
-                    original_rank = index
                 docs.append(
                     {
                         "rank": int(doc.get("rank") or index),
-                        "original_rank": original_rank,
+                        "original_rank": index,
                         "title": title,
                         "section_path": str(metadata.get("section_path") or ""),
                         "source_type": source_type,
@@ -655,11 +690,6 @@ class KbChatService(BaseAgentService):
                 "retrieval_trace": (
                     retrieval_trace
                 ),
-                "retrieval_evaluation": (
-                    dict(result.get("retrieval_evaluation") or {})
-                    if isinstance(result.get("retrieval_evaluation"), dict)
-                    else {}
-                ),
                 "rewrite_trace": (
                     dict(result.get("rewrite_trace") or {})
                     if isinstance(result.get("rewrite_trace"), dict)
@@ -667,161 +697,6 @@ class KbChatService(BaseAgentService):
                 ),
             },
         }
-
-    @staticmethod
-    def _log_retrieval_summary(
-        *,
-        state: dict[str, Any],
-        result: dict[str, Any],
-        total_latency_ms: int,
-    ) -> None:
-        retrieval_trace = dict(result.get("retrieval_trace") or {})
-        text_trace = dict(retrieval_trace.get("text") or {})
-        graph_trace = dict(retrieval_trace.get("graph") or {})
-        rerank_trace = dict(retrieval_trace.get("rerank") or {})
-        evaluation = dict(result.get("retrieval_evaluation") or {})
-        rewrite_trace = dict(result.get("rewrite_trace") or {})
-        plan_trace = dict(result.get("plan_trace") or {})
-        evaluate_trace = dict(result.get("evaluate_trace") or {})
-        answer_trace = dict(result.get("answer_trace") or {})
-        semantic_queries = list(result.get("semantic_queries") or [])
-        lexical_terms = list(result.get("lexical_terms") or [])
-        candidate_entities = list(result.get("candidate_entities") or [])
-        graph_used = graph_trace.get("graph_used")
-        graph_hits = graph_trace.get("graph_hits", 0)
-        graph_empty_reason = graph_trace.get("empty_reason")
-        rerank_enabled = rerank_trace.get("rerank_enabled")
-        rerank_changed = rerank_trace.get("top_docs_changed")
-        top_changes = list(rerank_trace.get("top_changes") or [])
-        top_changes_text = "\n".join(
-            f"  - #{item.get('new_rank')}: 《{item.get('title') or 'Unknown document'}》 "
-            f"(原 #{item.get('old_rank')} -> 新 #{item.get('new_rank')})"
-            for item in top_changes[:3]
-        ) or "  - (暂无)"
-
-        logger.info(
-            "\n[问答日志 {}] {}\n"
-            "问题：{}\n"
-            "会话：{}\n"
-            "团队/知识库：{} / {}\n"
-            "\n"
-            "1. 问题理解\n"
-            "- question_type: {}\n"
-            "- retrieval_required: {}\n"
-            "- retrieval_complexity: {}\n"
-            "- reason: {}\n"
-            "- latency_ms: {}\n"
-            "\n"
-            "2. 检索改写\n"
-            "- 原问题: {}\n"
-            "- 向量语义查询:\n{}\n"
-            "- 关键词:\n{}\n"
-            "- candidate_entities: {}\n"
-            "- latency_ms: {}\n"
-            "\n"
-            "3. 文本检索\n"
-            "- semantic_query_count: {}\n"
-            "- lexical_term_count: {}\n"
-            "- recall_k: {}\n"
-            "- lexical_k: {}\n"
-            "- 召回 chunk: {}\n"
-            "- 去重后: {}\n"
-            "- latency_ms: {}\n"
-            "\n"
-            "4. 图谱检索\n"
-            "- graph_used: {}\n"
-            "- matched_entities: {}\n"
-            "- graph_hits: {}\n"
-            "- empty_reason: {}\n"
-            "- latency_ms: {}\n"
-            "\n"
-            "5. 重排\n"
-            "- rerank_enabled: {}\n"
-            "- 重排前候选: {}\n"
-            "- 重排后保留: {}\n"
-            "- rerank_top_docs_changed: {}\n"
-            "- top_changes:\n{}\n"
-            "- latency_ms: {}\n"
-            "\n"
-            "6. 结果合并\n"
-            "- 文本证据: {}\n"
-            "- 图谱补充证据: {}\n"
-            "- final_context_docs: {}\n"
-            "- empty_reason: {}\n"
-            "- latency_ms: {}\n"
-            "\n"
-            "7. 证据评估\n"
-            "- status: {}\n"
-            "- next_action: {}\n"
-            "- reason: {}\n"
-            "- latency_ms: {}\n"
-            "\n"
-            "8. 最终回答\n"
-            "- answer_status: {}\n"
-            "- confidence: {}\n"
-            "- latency_ms: {}\n"
-            "- total_latency_ms: {}\n"
-            "\n"
-            "9. 审查信息\n"
-            "- feedback: {}\n"
-            "- suggested_review_label: {}\n"
-            "- review_label: {}\n",
-            result.get("log_id") or "-",
-            result.get("created_at") or "-",
-            str(result.get("query") or state.get("query") or ""),
-            result.get("session_id") or state.get("session_id"),
-            result.get("team_name") or result.get("team_id") or state.get("team_id") or "-",
-            result.get("knowledge_base_name")
-            or result.get("knowledge_base_id")
-            or state.get("knowledge_base_id")
-            or "-",
-            result.get("question_type") or state.get("question_type"),
-            result.get("retrieval_required") if result.get("retrieval_required") is not None else state.get("retrieval_required"),
-            result.get("retrieval_complexity") or state.get("retrieval_complexity"),
-            result.get("route_reason") or result.get("reason") or state.get("route_reason"),
-            plan_trace.get("latency_ms", 0),
-            str(result.get("query") or state.get("query") or ""),
-            "\n".join(
-                f"  {index + 1}) {query}" for index, query in enumerate(semantic_queries[:3])
-            ) or "  (none)",
-            ", ".join(str(term) for term in lexical_terms[:12]) or "(none)",
-            ", ".join(candidate_entities) if candidate_entities else "(none)",
-            rewrite_trace.get("latency_ms", 0),
-            text_trace.get("semantic_query_count") or len(semantic_queries),
-            text_trace.get("lexical_term_count") or len(lexical_terms),
-            text_trace.get("recall_k", 0),
-            text_trace.get("lexical_k", 0),
-            text_trace.get("raw_candidate_count", 0),
-            text_trace.get("merged_candidate_count", text_trace.get("raw_candidate_count", 0)),
-            text_trace.get("latency_ms", 0),
-            graph_used,
-            ", ".join(candidate_entities) if candidate_entities else "(none)",
-            graph_hits,
-            graph_empty_reason or "(none)",
-            graph_trace.get("latency_ms", 0),
-            rerank_enabled,
-            rerank_trace.get("candidate_count", 0),
-            rerank_trace.get("final_count", 0),
-            rerank_changed,
-            top_changes_text,
-            rerank_trace.get("latency_ms", 0),
-            retrieval_trace.get("text_evidence_count", 0),
-            retrieval_trace.get("graph_evidence_count", 0),
-            retrieval_trace.get("final_context_docs", retrieval_trace.get("final_hits", 0)),
-            retrieval_trace.get("empty_reason"),
-            retrieval_trace.get("merge_latency_ms", 0),
-            evaluation.get("status"),
-            evaluation.get("next_action"),
-            evaluation.get("reason"),
-            evaluate_trace.get("latency_ms", 0),
-            result.get("answer_status"),
-            answer_trace.get("confidence") or "-",
-            answer_trace.get("latency_ms", 0),
-            total_latency_ms,
-            result.get("feedback_value") or "(none)",
-            result.get("suggested_review_label") or "(none)",
-            result.get("review_label") or "（未审核）",
-        )
 
     @staticmethod
     def _build_retrieval_review_log_message(
@@ -834,11 +709,9 @@ class KbChatService(BaseAgentService):
         text_trace = dict(retrieval_trace.get("text") or {})
         graph_trace = dict(retrieval_trace.get("graph") or {})
         rerank_trace = dict(retrieval_trace.get("rerank") or {})
-        evaluation = dict(result.get("retrieval_evaluation") or {})
         rewrite_trace = dict(result.get("rewrite_trace") or {})
         route_trace = dict(result.get("route_trace") or {})
         plan_trace = dict(result.get("plan_trace") or {})
-        evaluate_trace = dict(result.get("evaluate_trace") or {})
         answer_trace = dict(result.get("answer_trace") or {})
         semantic_queries = list(result.get("semantic_queries") or [])
         lexical_terms = list(result.get("lexical_terms") or [])
@@ -855,14 +728,10 @@ class KbChatService(BaseAgentService):
                 f"  {index + 1}. {value}" for index, value in enumerate(values[:3])
             )
 
-        def _format_top_changes(items: list[dict[str, Any]]) -> str:
-            if not items:
-                return "  - (none)"
-            return "\n".join(
-                f"  - #{item.get('new_rank')}: 《{item.get('title') or 'Unknown document'}》 "
-                f"(原 #{item.get('old_rank')} -> 新 #{item.get('new_rank')})"
-                for item in items[:3]
-            )
+        text_stage_rerank_trace = dict(rerank_trace.get("text_stage") or {})
+        text_stage_rerank_enabled = text_stage_rerank_trace.get("enabled")
+        if text_stage_rerank_enabled is None:
+            text_stage_rerank_enabled = text_stage_rerank_trace.get("rerank_enabled")
 
         return (
             "[问答审查日志 #{}] {}\n"
@@ -895,26 +764,22 @@ class KbChatService(BaseAgentService):
             "- graph_used: {}\n"
             "- graph_hits: {}\n"
             "- final_context_docs: {}\n"
-            "- rerank_enabled: {}\n"
-            "- rerank_top_docs_changed: {}\n"
-            "- top_changes:\n{}\n"
+            "- text_stage_rerank_enabled: {}\n"
+            "- final_rerank_enabled: {}\n"
+            "- final_rerank_input_count: {}\n"
+            "- final_rerank_output_count: {}\n"
+            "- final_rerank_latency_ms: {}\n"
             "- empty_reason: {}\n"
             "- retrieval_latency_ms: {}\n"
             "- merge_latency_ms: {}\n"
             "\n"
-            "4. 证据评估\n"
-            "- status: {}\n"
-            "- next_action: {}\n"
-            "- reason: {}\n"
-            "- evaluate_latency_ms: {}\n"
-            "\n"
-            "5. 答案生成\n"
+            "4. 答案生成\n"
             "- answer_status: {}\n"
             "- confidence: {}\n"
             "- answer_latency_ms: {}\n"
             "- total_latency_ms: {}\n"
             "\n"
-            "6. 审查信息\n"
+            "5. 审查信息\n"
             "- feedback: {}\n"
             "- suggested_review_label: {}\n"
             "- review_label: {}\n"
@@ -957,16 +822,14 @@ class KbChatService(BaseAgentService):
                 or retrieval_trace.get("final_hits")
                 or 0
             ),
-            bool(rerank_trace.get("rerank_enabled")),
-            bool(rerank_trace.get("top_docs_changed")),
-            _format_top_changes(list(rerank_trace.get("top_changes") or [])),
+            bool(text_stage_rerank_enabled),
+            bool(rerank_trace.get("enabled")),
+            int(rerank_trace.get("input_count") or 0),
+            int(rerank_trace.get("output_count") or 0),
+            int(rerank_trace.get("latency_ms") or 0),
             retrieval_trace.get("empty_reason") or graph_trace.get("empty_reason") or "-",
             int(text_trace.get("latency_ms") or retrieval_trace.get("text_retrieval_latency_ms") or 0),
             int(retrieval_trace.get("merge_latency_ms") or 0),
-            evaluation.get("status") or "-",
-            evaluation.get("next_action") or "-",
-            evaluation.get("reason") or "-",
-            int(evaluate_trace.get("latency_ms") or 0),
             result.get("answer_status") or "-",
             answer_trace.get("confidence") or "-",
             int(answer_trace.get("latency_ms") or 0),
@@ -1057,7 +920,7 @@ class KbChatService(BaseAgentService):
                     ),
                     final_context_count=int(retrieval_trace.get("final_context_docs") or len(retrieved_docs)),
                     empty_reason=str(retrieval_trace.get("empty_reason") or "") or None,
-                    rerank_enabled=bool(rerank_trace.get("enabled_for_primary_evidence")),
+                    rerank_enabled=bool(rerank_trace.get("enabled")),
                     trace_payload=trace_payload,
                 )
                 return row.id
@@ -1441,12 +1304,12 @@ class KbChatService(BaseAgentService):
         run_id = state.get("run_id")
         workflow_id = str(state.get("workflow_id") or self._workflow_id)
         graph = self._get_graph()
-        started_nodes: set[str] = set()
+        started_nodes: set[tuple[str, str]] = set()
         final_state = dict(state)
         started_at = perf_counter()
 
         try:
-            yield emit_start(run_id, "开始知识库问答")
+            yield emit_start(run_id, "开始知识库问答", workflow_id=workflow_id)
             query_risk_check = await self._check_content_risk(scene="query", text=request.query)
             if query_risk_check.blocked:
                 blocked_state = self._build_blocked_result(state, query_risk_check)
@@ -1482,6 +1345,7 @@ class KbChatService(BaseAgentService):
                         "session_id": state.get("session_id"),
                         "log_id": log_id,
                     },
+                    workflow_id=workflow_id,
                 )
                 return
 
@@ -1494,21 +1358,25 @@ class KbChatService(BaseAgentService):
 
                 if chunk_type == "updates":
                     for node_id, node_state in chunk_data.items():
-                        node_name = get_node_label(workflow_id, node_id)
-                        if node_id not in started_nodes:
+                        node_workflow_id = get_node_workflow_id(workflow_id, node_id)
+                        node_key = (node_workflow_id, node_id)
+                        node_name = get_node_label(node_workflow_id, node_id)
+                        if node_key not in started_nodes:
                             yield emit_node_start(
                                 node_id,
                                 node_name,
                                 run_id,
+                                workflow_id=node_workflow_id,
                                 message=self._node_progress_message(node_id),
                             )
-                            started_nodes.add(node_id)
+                            started_nodes.add(node_key)
 
                         final_state.update(node_state)
-                        if node_id == "retrieve":
+                        if node_id in {"retrieve_knowledge", "execute"}:
                             yield emit_event(
                                 AgentEventType.RETRIEVED,
                                 {"retrieved_docs": node_state.get("retrieved_docs", [])},
+                                workflow_id=node_workflow_id,
                                 node_id=node_id,
                                 node_name=node_name,
                                 run_id=run_id,
@@ -1519,49 +1387,58 @@ class KbChatService(BaseAgentService):
                             node_name,
                             run_id,
                             self._node_summary(node_id, node_state),
+                            workflow_id=node_workflow_id,
                         )
                 elif chunk_type == "custom":
-                    node_id = chunk_data.get("node_id") or "answer"
-                    node_name = get_node_label(workflow_id, node_id)
+                    node_id = str(chunk_data.get("node_id") or "compose_answer")
+                    node_workflow_id = str(
+                        chunk_data.get("workflow_id") or get_node_workflow_id(workflow_id, node_id)
+                    )
+                    node_key = (node_workflow_id, node_id)
+                    node_name = get_node_label(node_workflow_id, node_id)
                     if chunk_data.get("type") == "progress":
                         message = str(
                             chunk_data.get("message") or self._node_progress_message(node_id)
                         )
-                        if node_id not in started_nodes:
+                        if node_key not in started_nodes:
                             yield emit_node_start(
                                 node_id,
                                 node_name,
                                 run_id,
+                                workflow_id=node_workflow_id,
                                 message=message,
                             )
-                            started_nodes.add(node_id)
+                            started_nodes.add(node_key)
                         yield emit_progress(
                             run_id,
+                            workflow_id=node_workflow_id,
                             node_id=node_id,
                             node_name=node_name,
                             message=message,
                             data={
                                 key: value
                                 for key, value in chunk_data.items()
-                                if key not in {"type", "node_id", "message"}
+                                if key not in {"type", "workflow_id", "node_id", "message"}
                             },
                         )
                         continue
 
-                    if node_id not in started_nodes:
+                    if node_key not in started_nodes:
                         yield emit_node_start(
                             node_id,
                             node_name,
                             run_id,
+                            workflow_id=node_workflow_id,
                             message=self._node_progress_message(node_id),
                         )
-                        started_nodes.add(node_id)
+                        started_nodes.add(node_key)
 
                     text = chunk_data.get("text")
                     if text:
                         yield emit_event(
                             AgentEventType.TOKEN,
                             {"text": text},
+                            workflow_id=node_workflow_id,
                             node_id=node_id,
                             node_name=node_name,
                             run_id=run_id,
@@ -1611,12 +1488,13 @@ class KbChatService(BaseAgentService):
                     "session_id": state.get("session_id"),
                     "log_id": log_id,
                 },
+                workflow_id=workflow_id,
             )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.exception("[KB Chat] stream failed after retrieval/answer stage: {}", exc)
-            yield emit_error(run_id, self._public_stream_error_message(exc))
+            yield emit_error(run_id, self._public_stream_error_message(exc), workflow_id=workflow_id)
 
 
 kb_chat_service: KbChatService | None = None

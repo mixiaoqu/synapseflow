@@ -98,6 +98,7 @@ def test_rag_retrieval_config_reads_profiles(monkeypatch):
             "retrieval": {
                 "k_first": 32,
                 "distance_threshold": 0.5,
+                "rrf_score_threshold": 0.02,
                 "rerank_threshold": None,
                 "final_top_k": 16,
                 "llm_reference_top_k": 10,
@@ -133,6 +134,7 @@ def test_rag_retrieval_config_reads_profiles(monkeypatch):
 
     try:
         retrieval = config_registry.get_rag_config().retrieval
+        assert retrieval.rrf_score_threshold == 0.02
         assert retrieval.profiles["fast"].recall_k == 18
         assert retrieval.profiles["fast"].graph_limit == 6
         assert retrieval.profiles["standard"].context_budget == 12000

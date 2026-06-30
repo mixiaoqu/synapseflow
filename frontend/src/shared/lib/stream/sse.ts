@@ -1,6 +1,7 @@
 export interface SseEnvelope<TData = Record<string, unknown>> {
   type: string;
   data: TData;
+  workflow_id?: string | null;
   node_id?: string;
   node_name?: string;
   timestamp?: number;

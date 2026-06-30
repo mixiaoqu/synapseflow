@@ -7,7 +7,7 @@ from typing import Any, AsyncGenerator, Callable
 
 from app.agents.common.streaming import emit_progress, get_optional_stream_writer
 from app.agents.prompts.kb_chat import build_kb_chat_answer_prompt, build_page_context_block
-from app.agents.states import KbChatState
+from app.agents.states import KnowledgeQaState
 from app.core.llm import get_llm
 from app.services.chat_memory import format_chat_history
 
@@ -140,18 +140,21 @@ async def stream_kb_chat_answer_text(
     *,
     llm_factory: Callable[[], Any] | None = None,
     stream_writer: Callable[[dict[str, Any]], None] | None = None,
+    workflow_id: str = "knowledge_qa",
+    node_id: str = "compose_answer",
 ) -> AsyncGenerator[dict[str, Any], None]:
     fixed, _status = _template_answer(state)
     if fixed is not None:
         if stream_writer is not None:
-            stream_writer({"node_id": "answer", "text": fixed})
+            stream_writer({"workflow_id": workflow_id, "node_id": node_id, "text": fixed})
         yield {"type": "text", "text": fixed}
         return
 
     llm = llm_factory() if llm_factory is not None else _get_default_llm(state)
     emit_progress(
         stream_writer,
-        node_id="answer",
+        workflow_id=workflow_id,
+        node_id=node_id,
         stage="answer_stream",
         message="正在组织最终回答",
         context_len=len(state.get("context") or ""),
@@ -162,7 +165,7 @@ async def stream_kb_chat_answer_text(
         text = _coerce_text(getattr(chunk, "content", None))
         if text:
             if stream_writer is not None:
-                stream_writer({"node_id": "answer", "text": text})
+                stream_writer({"workflow_id": workflow_id, "node_id": node_id, "text": text})
             yield {"type": "text", "text": text}
         usage_output_tokens = _extract_usage_output_tokens(chunk) or usage_output_tokens
     yield {"type": "meta", "output_tokens": usage_output_tokens}
@@ -178,8 +181,10 @@ def _resolve_status(state: dict[str, Any]) -> str:
 def build_kb_chat_answer_node(
     *,
     llm_factory: Callable[[], Any] | None = None,
-) -> Callable[[KbChatState], Any]:
-    async def _node(state: KbChatState) -> dict[str, Any]:
+    workflow_id: str = "knowledge_qa",
+    node_id: str = "compose_answer",
+) -> Callable[[KnowledgeQaState], Any]:
+    async def _node(state: KnowledgeQaState) -> dict[str, Any]:
         stream_writer = get_optional_stream_writer()
         started_at = perf_counter()
         fixed, _fixed_status = _template_answer(state)
@@ -195,6 +200,8 @@ def build_kb_chat_answer_node(
                 state,
                 llm_factory=llm_factory,
                 stream_writer=stream_writer,
+                workflow_id=workflow_id,
+                node_id=node_id,
             ):
                 if item.get("type") == "text":
                     text = str(item.get("text") or "")

@@ -51,6 +51,8 @@ retrieval:
   hybrid_pool_limit: 64
   # Vector distance threshold. Smaller distance means higher similarity.
   distance_threshold: 0.5
+  # Minimum RRF fusion score to keep. null disables RRF score filtering.
+  rrf_score_threshold: 0.012
   # Minimum rerank score to keep. null disables rerank score filtering.
   rerank_threshold: null
   # Maximum retrieval results returned to application logic.
@@ -70,18 +72,18 @@ retrieval:
       context_budget: 8000
       rerank_enabled: true
     standard:
-      recall_k: 32
-      lexical_k: 24
-      graph_limit: 10
-      final_top_k: 10
-      llm_reference_top_k: 10
-      context_budget: 12000
-      rerank_enabled: true
-    broad:
       recall_k: 40
-      lexical_k: 32
-      graph_limit: 12
+      lexical_k: 28
+      graph_limit: 10
       final_top_k: 12
       llm_reference_top_k: 12
-      context_budget: 15000
+      context_budget: 14000
+      rerank_enabled: true
+    broad:
+      recall_k: 64
+      lexical_k: 40
+      graph_limit: 16
+      final_top_k: 18
+      llm_reference_top_k: 18
+      context_budget: 22000
       rerank_enabled: true

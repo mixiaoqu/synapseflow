@@ -207,25 +207,25 @@ class ConfigRegistry:
                 "final_top_k": 8,
                 "llm_reference_top_k": 8,
                 "context_budget": 8000,
-                "rerank_enabled": False,
+                "rerank_enabled": True,
             },
             "standard": {
-                "recall_k": 32,
-                "lexical_k": 24,
-                "graph_limit": 10,
-                "final_top_k": 10,
-                "llm_reference_top_k": 10,
-                "context_budget": 12000,
-                "rerank_enabled": False,
-            },
-            "broad": {
                 "recall_k": 40,
-                "lexical_k": 32,
-                "graph_limit": 12,
+                "lexical_k": 28,
+                "graph_limit": 10,
                 "final_top_k": 12,
                 "llm_reference_top_k": 12,
-                "context_budget": 15000,
-                "rerank_enabled": False,
+                "context_budget": 14000,
+                "rerank_enabled": True,
+            },
+            "broad": {
+                "recall_k": 64,
+                "lexical_k": 40,
+                "graph_limit": 16,
+                "final_top_k": 18,
+                "llm_reference_top_k": 18,
+                "context_budget": 22000,
+                "rerank_enabled": True,
             },
         }
         raw_profiles = retrieval.get("profiles", {}) or {}
@@ -249,6 +249,11 @@ class ConfigRegistry:
             retrieval=RagRetrievalConfig(
                 k_first=int(retrieval.get("k_first", 16)),
                 distance_threshold=float(retrieval.get("distance_threshold", 0.5)),
+                rrf_score_threshold=(
+                    float(retrieval["rrf_score_threshold"])
+                    if retrieval.get("rrf_score_threshold") is not None
+                    else None
+                ),
                 rerank_threshold=(
                     float(retrieval["rerank_threshold"])
                     if retrieval.get("rerank_threshold") is not None

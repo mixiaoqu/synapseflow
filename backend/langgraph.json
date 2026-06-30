@@ -3,7 +3,8 @@
     "."
   ],
   "graphs": {
-    "kb_chat": "./app/agents/graphs/kb_chat_graph.py:create_kb_chat_graph"
+    "agent": "./app/agents/graphs/agent_graph.py:create_agent_graph",
+    "knowledge_qa": "./app/agents/graphs/knowledge_qa_graph.py:create_knowledge_qa_graph"
   },
   "env": "langgraph.env"
 }

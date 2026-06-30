@@ -11,7 +11,11 @@ from app.services import kb_text_retrieval
 from app.services import vector_store
 
 
-def _rag_config(*, rerank_threshold: float | None = 0.35) -> RagConfig:
+def _rag_config(
+    *,
+    rerank_threshold: float | None = 0.35,
+    rrf_score_threshold: float | None = None,
+) -> RagConfig:
     return RagConfig(
         chunk=RagChunkConfig(
             size=700,
@@ -27,6 +31,7 @@ def _rag_config(*, rerank_threshold: float | None = 0.35) -> RagConfig:
         retrieval=RagRetrievalConfig(
             k_first=32,
             distance_threshold=0.5,
+            rrf_score_threshold=rrf_score_threshold,
             rerank_threshold=rerank_threshold,
             final_top_k=10,
             llm_reference_top_k=10,
@@ -110,6 +115,42 @@ def test_apply_retrieval_thresholds_keeps_lexical_only_hits_with_good_rerank(mon
     )
 
     assert [row["document_id"] for row in filtered] == [3]
+
+
+def test_apply_retrieval_thresholds_filters_low_rrf_score(monkeypatch):
+    monkeypatch.setattr(
+        kb_text_retrieval.config_registry,
+        "get_rag_config",
+        lambda: _rag_config(rrf_score_threshold=0.02),
+    )
+    rows = [
+        {
+            "document_id": 1,
+            "chunk_index": 0,
+            "distance": 0.28,
+            "rrf_score": 0.031,
+        },
+        {
+            "document_id": 2,
+            "chunk_index": 0,
+            "distance": 0.24,
+            "rrf_score": 0.012,
+        },
+        {
+            "document_id": 3,
+            "chunk_index": 0,
+            "distance": None,
+            "lexical_rank": 1.2,
+            "rrf_score": 0.018,
+        },
+    ]
+
+    filtered = kb_text_retrieval._apply_retrieval_thresholds(
+        rows,
+        rerank_enabled=False,
+    )
+
+    assert [row["document_id"] for row in filtered] == [1]
 
 
 def test_expand_results_with_parent_context_skips_missing_parent_windows(monkeypatch):

@@ -38,7 +38,6 @@ export interface EmbedRenderableMessage {
 const props = defineProps<{
   message: EmbedRenderableMessage;
   assistantName: string;
-  streamStatus?: string | null;
   isTyping?: boolean;
 }>();
 
@@ -129,7 +128,7 @@ async function handleCopy() {
             <span class="dot" />
             <span class="dot" />
           </div>
-          <span>{{ streamStatus || "正在生成回答..." }}</span>
+          <span>正在生成回答...</span>
         </div>
         <div
           v-else

@@ -38,6 +38,7 @@ def _rag_config(
         retrieval=RagRetrievalConfig(
             k_first=32,
             distance_threshold=0.5,
+            rrf_score_threshold=None,
             rerank_threshold=None,
             final_top_k=12,
             llm_reference_top_k=8,
