@@ -1396,6 +1396,42 @@ class KbChatService(BaseAgentService):
                     )
                     node_key = (node_workflow_id, node_id)
                     node_name = get_node_label(node_workflow_id, node_id)
+                    if chunk_data.get("type") == "node_complete":
+                        node_state = (
+                            chunk_data.get("node_state")
+                            if isinstance(chunk_data.get("node_state"), dict)
+                            else {}
+                        )
+                        if node_key not in started_nodes:
+                            yield emit_node_start(
+                                node_id,
+                                node_name,
+                                run_id,
+                                workflow_id=node_workflow_id,
+                                message=self._node_progress_message(node_id),
+                            )
+                            started_nodes.add(node_key)
+
+                        final_state.update(node_state)
+                        if node_id == "retrieve_knowledge":
+                            yield emit_event(
+                                AgentEventType.RETRIEVED,
+                                {"retrieved_docs": node_state.get("retrieved_docs", [])},
+                                workflow_id=node_workflow_id,
+                                node_id=node_id,
+                                node_name=node_name,
+                                run_id=run_id,
+                            )
+
+                        yield emit_node_complete(
+                            node_id,
+                            node_name,
+                            run_id,
+                            self._node_summary(node_id, node_state),
+                            workflow_id=node_workflow_id,
+                        )
+                        continue
+
                     if chunk_data.get("type") == "progress":
                         message = str(
                             chunk_data.get("message") or self._node_progress_message(node_id)

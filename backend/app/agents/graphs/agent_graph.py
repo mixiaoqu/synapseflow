@@ -8,9 +8,57 @@ from langgraph.graph import END, StateGraph
 
 from app.agents.common.agent_intent import build_agent_intent
 from app.agents.common.node_logging import log_node_info
+from app.agents.common.streaming import get_optional_stream_writer
 from app.agents.graphs.knowledge_qa_graph import create_knowledge_qa_graph
 from app.agents.nodes.kb_chat.answer import KB_CHITCHAT_REPLY, KB_OUT_OF_SCOPE_REPLY
 from app.agents.states import AgentState
+
+
+def _parse_stream_chunk(chunk: Any) -> tuple[str | None, dict[str, Any]]:
+    if isinstance(chunk, tuple) and len(chunk) == 2:
+        mode, data = chunk
+        if isinstance(mode, str) and isinstance(data, dict):
+            return mode, data
+        return None, {}
+
+    if isinstance(chunk, dict):
+        chunk_type = chunk.get("type")
+        chunk_data = chunk.get("data", {})
+        if isinstance(chunk_type, str) and isinstance(chunk_data, dict):
+            return chunk_type, chunk_data
+
+    return None, {}
+
+
+def _forward_knowledge_qa_custom_event(
+    writer: Callable[[dict[str, Any]], None] | None,
+    data: dict[str, Any],
+) -> None:
+    if writer is None:
+        return
+
+    payload = dict(data)
+    payload.setdefault("workflow_id", "knowledge_qa")
+    payload.setdefault("node_id", "compose_answer")
+    writer(payload)
+
+
+def _emit_knowledge_qa_node_complete(
+    writer: Callable[[dict[str, Any]], None] | None,
+    node_id: str,
+    node_state: dict[str, Any],
+) -> None:
+    if writer is None:
+        return
+
+    writer(
+        {
+            "type": "node_complete",
+            "workflow_id": "knowledge_qa",
+            "node_id": node_id,
+            "node_state": node_state,
+        }
+    )
 
 
 def _direct_answer_for_intent(intent: dict[str, Any]) -> tuple[str, str]:
@@ -207,10 +255,28 @@ def create_agent_graph(
         steps = list(plan.get("steps") or [])
         step_results: list[dict[str, Any]] = []
         final_result: dict[str, Any] = {}
+        stream_writer = get_optional_stream_writer()
         for step in steps:
             if step.get("type") != "workflow" or step.get("target_id") != "knowledge_qa":
                 continue
-            final_result = await knowledge_qa_graph.ainvoke(state)
+            async for chunk in knowledge_qa_graph.astream(
+                state,
+                stream_mode=["updates", "custom"],
+                version="v2",
+            ):
+                chunk_type, chunk_data = _parse_stream_chunk(chunk)
+                if chunk_type == "custom":
+                    _forward_knowledge_qa_custom_event(stream_writer, chunk_data)
+                    continue
+                if chunk_type != "updates":
+                    continue
+
+                for node_id, node_state in chunk_data.items():
+                    if not isinstance(node_id, str) or not isinstance(node_state, dict):
+                        continue
+                    final_result.update(node_state)
+                    _emit_knowledge_qa_node_complete(stream_writer, node_id, node_state)
+
             step_results.append(
                 {
                     "step_id": step.get("id"),
