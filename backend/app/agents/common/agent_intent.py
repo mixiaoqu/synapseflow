@@ -18,9 +18,11 @@ BUSINESS_OPS_HINT_PATTERN = re.compile(
 )
 KNOWLEDGE_QA_HINT_PATTERN = re.compile(
     r"(能否|是否|能不能|可不可以|有没有权限|权限|允许|规则|限制|流程|如何|怎么|怎样|说明|手册|文档)"
-    r".*(会员|门店负责人|负责人|角色|岗位|员工|账号|资料|页面|列表|功能|操作|配置|冻结|解冻|编辑|新增|删除|审核)"
+    r".*(会员|门店负责人|负责人|角色|岗位|员工|账号|资料|页面|列表|功能|操作|配置|冻结|解冻|编辑|新增|删除|审核|条件|筛选|搜索)"
     r"|(?:会员|门店负责人|负责人|角色|岗位|员工|账号|资料|页面|列表|功能|操作|配置|冻结|解冻|编辑|新增|删除|审核)"
-    r".*(能否|是否|能不能|可不可以|有没有权限|权限|允许|规则|限制|流程|如何|怎么|怎样|说明|手册|文档)"
+    r".*(能否|是否|能不能|可不可以|有没有权限|权限|允许|规则|限制|流程|如何|怎么|怎样|说明|手册|文档|条件|筛选|搜索条件|字段|关系)"
+    r"|(?:条件|筛选|搜索条件|筛选条件|查询条件|字段|页面行为|系统如何|系统怎么|同时设置)"
+    r".*(关系|如何|怎么|怎样|规则|逻辑|查询|筛选|搜索|生效)"
 )
 
 
@@ -137,14 +139,6 @@ async def build_agent_intent(
             "direct_answer_kind": None,
             "reason": "用户问题为空，需要补齐问题内容。",
         }
-    if BUSINESS_OPS_HINT_PATTERN.search(query):
-        return {
-            "type": "business_ops",
-            "needs_clarification": False,
-            "missing_fields": [],
-            "direct_answer_kind": None,
-            "reason": "用户正在查询或操作具体业务数据。",
-        }
     if KNOWLEDGE_QA_HINT_PATTERN.search(query):
         return {
             "type": "knowledge_qa",
@@ -152,6 +146,14 @@ async def build_agent_intent(
             "missing_fields": [],
             "direct_answer_kind": None,
             "reason": "用户正在询问业务规则、权限或操作说明，应从知识库回答。",
+        }
+    if BUSINESS_OPS_HINT_PATTERN.search(query):
+        return {
+            "type": "business_ops",
+            "needs_clarification": False,
+            "missing_fields": [],
+            "direct_answer_kind": None,
+            "reason": "用户正在查询或操作具体业务数据。",
         }
 
     llm = llm_factory() if llm_factory is not None else get_llm_for_planner(

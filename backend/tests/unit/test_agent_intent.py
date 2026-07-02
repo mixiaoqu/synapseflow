@@ -30,6 +30,17 @@ def test_how_to_member_list_question_routes_to_knowledge_qa():
     assert result["type"] == "knowledge_qa"
 
 
+def test_member_list_filter_rule_question_routes_to_knowledge_qa():
+    result = asyncio.run(
+        build_agent_intent(
+            "知识库查询 在会员列表中，搜索条件之间是什么关系？当操作人员同时设置了注册时间和手机号码两个条件时，系统如何查询？",
+            llm_factory=lambda: UnexpectedLlm(),
+        )
+    )
+
+    assert result["type"] == "knowledge_qa"
+
+
 def test_product_inventory_price_query_routes_to_business_ops():
     result = asyncio.run(
         build_agent_intent(
