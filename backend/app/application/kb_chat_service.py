@@ -20,7 +20,11 @@ from app.application.stream_events import (
     emit_progress,
     emit_start,
 )
-from app.application.workflow_meta import get_node_label, get_node_workflow_id
+from app.application.workflow_meta import (
+    get_display_stage_plan,
+    get_node_label,
+    get_node_workflow_id,
+)
 from app.core.config.settings import settings
 from app.db.session import AsyncSessionLocal
 from app.db.models import ContentRiskLog
@@ -57,19 +61,14 @@ class KbChatService(BaseAgentService):
         graph: Any | None = None,
         memory_store: ChatMemoryStore | None = None,
         content_risk_detection_service: Any | None = None,
-        workflow_id: str | None = None,
     ):
         self._llm_factory = llm_factory
         self._graph = graph
-        self._workflow_id = self._normalize_workflow_id(workflow_id or settings.KB_CHAT_WORKFLOW)
+        self._workflow_id = "agent"
         self._memory_store = memory_store or DatabaseChatMemoryStore()
         self._content_risk_detection_service = (
             content_risk_detection_service or get_content_risk_detection_service()
         )
-
-    @staticmethod
-    def _normalize_workflow_id(value: str | None) -> str:
-        return "agent"
 
     def build_initial_state(
         self,
@@ -104,6 +103,7 @@ class KbChatService(BaseAgentService):
                 "project_app_id": getattr(request, "project_app_id", None),
                 "external_user_id": getattr(request, "external_user_id", None),
                 "external_user_name": getattr(request, "external_user_name", None),
+                "store_id": getattr(request, "store_id", None),
                 "assistant_id": getattr(request, "assistant_id", None),
                 "assistant_name": getattr(request, "assistant_name", None),
                 "assistant_welcome_message": getattr(
@@ -279,6 +279,7 @@ class KbChatService(BaseAgentService):
                     if isinstance(state.get("page_context"), dict)
                     else None
                 ),
+                "store_id": state.get("store_id"),
                 "page_config": (
                     dict(state.get("page_config") or {})
                     if isinstance(state.get("page_config"), dict)
@@ -329,6 +330,14 @@ class KbChatService(BaseAgentService):
             return "正在检索知识库..."
         if node_id == "compose_answer":
             return "正在组织知识库回答..."
+        if node_id == "analyze_request":
+            return "正在分析业务请求..."
+        if node_id == "match_operation":
+            return "正在匹配业务操作..."
+        if node_id == "execute_operation":
+            return "正在查询业务数据..."
+        if node_id == "compose_result":
+            return "正在整理业务结果..."
         return "正在处理..."
 
     @staticmethod
@@ -413,6 +422,27 @@ class KbChatService(BaseAgentService):
                 "retrieved_count": len(state.get("retrieved_docs", [])),
             }
         if node_id == "compose_answer":
+            return {"answer_length": len(state.get("answer", ""))}
+        if node_id == "analyze_request":
+            request_info = state.get("business_request") or {}
+            return {
+                "operation_hint": request_info.get("operation_hint"),
+                "keyword": request_info.get("keyword"),
+            }
+        if node_id == "match_operation":
+            operation_info = state.get("business_operation") or {}
+            return {
+                "operation_id": operation_info.get("operation_id"),
+            }
+        if node_id == "execute_operation":
+            result = state.get("business_operation_result") or {}
+            data = result.get("data") or {}
+            return {
+                "success": result.get("success"),
+                "total": data.get("total"),
+                "missing_field_count": len(result.get("missing_fields") or []),
+            }
+        if node_id == "compose_result":
             return {"answer_length": len(state.get("answer", ""))}
         return {"keys": sorted(state.keys())}
 
@@ -1309,7 +1339,7 @@ class KbChatService(BaseAgentService):
         started_at = perf_counter()
 
         try:
-            yield emit_start(run_id, "开始知识库问答", workflow_id=workflow_id)
+            yield emit_start(run_id, "开始处理请求", workflow_id=workflow_id)
             query_risk_check = await self._check_content_risk(scene="query", text=request.query)
             if query_risk_check.blocked:
                 blocked_state = self._build_blocked_result(state, query_risk_check)
@@ -1372,6 +1402,24 @@ class KbChatService(BaseAgentService):
                             started_nodes.add(node_key)
 
                         final_state.update(node_state)
+                        if node_id == "route":
+                            route = dict(node_state.get("route") or {})
+                            target_id = str(route.get("target_id") or "direct_answer")
+                            yield emit_progress(
+                                run_id,
+                                workflow_id=node_workflow_id,
+                                node_id=node_id,
+                                node_name=node_name,
+                                message="已确认处理方式",
+                                data={
+                                    "display_stages": get_display_stage_plan(target_id),
+                                    "display_stage": "understand",
+                                    "display_title": "🤔 思考您的问题",
+                                    "activity_text": "已明确本次问题的处理方式",
+                                    "activity_status": "completed",
+                                },
+                            )
+
                         if node_id in {"retrieve_knowledge", "execute"}:
                             yield emit_event(
                                 AgentEventType.RETRIEVED,

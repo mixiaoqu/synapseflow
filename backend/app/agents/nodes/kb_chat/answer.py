@@ -5,7 +5,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any, AsyncGenerator, Callable
 
-from app.agents.common.streaming import emit_progress, get_optional_stream_writer
+from app.agents.common.streaming import emit_activity, get_optional_stream_writer
 from app.agents.prompts.kb_chat import build_kb_chat_answer_prompt, build_page_context_block
 from app.agents.states import KnowledgeQaState
 from app.core.llm import get_llm
@@ -151,12 +151,15 @@ async def stream_kb_chat_answer_text(
         return
 
     llm = llm_factory() if llm_factory is not None else _get_default_llm(state)
-    emit_progress(
+    emit_activity(
         stream_writer,
         workflow_id=workflow_id,
         node_id=node_id,
         stage="answer_stream",
         message="正在组织最终回答",
+        display_stage="compose",
+        display_title="💡 总结最终结果",
+        activity_text="正在组织最终回复",
         context_len=len(state.get("context") or ""),
         retrieved_count=len(state.get("retrieved_docs") or []),
     )

@@ -21,6 +21,7 @@ class KbChatRequest(BaseModel):
     project_app_id: Optional[int] = None
     external_user_id: Optional[str] = None
     external_user_name: Optional[str] = None
+    store_id: Optional[str] = None
     page_context: Dict[str, Any] | None = None
     page_config: Dict[str, Any] | None = None
 

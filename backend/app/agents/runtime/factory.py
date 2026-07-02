@@ -23,6 +23,7 @@ class GraphDefinition:
 def _build_registry() -> dict[str, GraphDefinition]:
     from app.agents.graphs import (
         create_agent_graph,
+        create_business_ops_graph,
         create_knowledge_qa_graph,
     )
 
@@ -48,6 +49,16 @@ def _build_registry() -> dict[str, GraphDefinition]:
                 "plan_retrieval",
                 "retrieve_knowledge",
                 "compose_answer",
+            ),
+        ),
+        "business_ops": GraphDefinition(
+            graph_id="business_ops",
+            factory=create_business_ops_graph,
+            node_ids=(
+                "analyze_request",
+                "match_operation",
+                "execute_operation",
+                "compose_result",
             ),
         ),
     }

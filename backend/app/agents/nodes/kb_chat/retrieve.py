@@ -9,8 +9,9 @@ from typing import Any
 
 from loguru import logger
 
-from app.agents.common.streaming import emit_progress, get_optional_stream_writer
+from app.agents.common.streaming import emit_activity, get_optional_stream_writer
 from app.agents.states import KnowledgeQaState
+from app.core.config.registry import config_registry
 from app.core.config.settings import settings
 from app.services.chat_memory import format_chat_history
 from app.services.graph_entity_candidate_service import resolve_graph_candidate_entities
@@ -19,7 +20,6 @@ from app.services.kb_graph_retrieval import GraphRetriever
 from app.services.kb_text_retrieval import run_kb_channel_text_retrieval
 from app.services.reranker import rerank
 
-FINAL_RERANK_MAX_CANDIDATES = 24
 FINAL_RERANK_CANDIDATE_MULTIPLIER = 2
 FINAL_RERANK_TEXT_MAX_CHARS = 1200
 GRAPH_RERANK_SOURCE_PREFIX = "graph"
@@ -363,13 +363,25 @@ def _final_rerank_candidate_limit(total_count: int, top_k: int) -> int:
     safe_top_k = max(1, int(top_k or 1))
     return min(
         total_count,
-        max(safe_top_k, min(FINAL_RERANK_MAX_CANDIDATES, safe_top_k * FINAL_RERANK_CANDIDATE_MULTIPLIER)),
+        max(safe_top_k, safe_top_k * FINAL_RERANK_CANDIDATE_MULTIPLIER),
     )
 
 
 def _is_graph_rerank_candidate(doc: dict[str, Any]) -> bool:
     source = str((doc.get("metadata") or {}).get("source") or "").strip()
     return source == TEXT_GRAPH_RERANK_SOURCE or source.startswith(GRAPH_RERANK_SOURCE_PREFIX)
+
+
+def _passes_final_rerank_threshold(doc: dict[str, Any], threshold: float | None) -> bool:
+    if threshold is None:
+        return True
+    raw_score = (doc.get("metadata") or {}).get("rerank_score")
+    if raw_score is None:
+        return True
+    try:
+        return float(raw_score) >= threshold
+    except (TypeError, ValueError):
+        return False
 
 
 def _select_final_rerank_candidates(
@@ -414,6 +426,7 @@ async def rerank_retrieved_docs(
     candidate_limit = _final_rerank_candidate_limit(len(docs), top_k)
     candidate_docs = _select_final_rerank_candidates(docs, top_k=top_k)
     graph_input_count = len([doc for doc in candidate_docs if _is_graph_rerank_candidate(doc)])
+    rerank_threshold = config_registry.get_rag_config().retrieval.rerank_threshold
     trace = {
         "enabled": True,
         "candidate_count": len(docs),
@@ -425,6 +438,8 @@ async def rerank_retrieved_docs(
         "latency_ms": 0,
         "truncated": len(candidate_docs) < len(docs),
         "max_text_chars": FINAL_RERANK_TEXT_MAX_CHARS,
+        "rerank_threshold": rerank_threshold,
+        "threshold_filtered_count": 0,
     }
     if not candidate_docs:
         return [], trace
@@ -459,8 +474,20 @@ async def rerank_retrieved_docs(
             if len(ordered_docs) >= min(top_k, len(candidate_docs)):
                 break
     ordered_docs = ordered_docs[:top_k]
-    trace["output_count"] = len(ordered_docs)
-    return ordered_docs, trace
+    filtered_docs = [
+        doc for doc in ordered_docs if _passes_final_rerank_threshold(doc, rerank_threshold)
+    ]
+    threshold_filtered_count = len(ordered_docs) - len(filtered_docs)
+    if threshold_filtered_count:
+        logger.info(
+            "[KB Retrieval] final rerank filtering removed {} of {} candidates | rerank_threshold={}",
+            threshold_filtered_count,
+            len(ordered_docs),
+            rerank_threshold,
+        )
+    trace["threshold_filtered_count"] = threshold_filtered_count
+    trace["output_count"] = len(filtered_docs)
+    return filtered_docs, trace
 
 
 def _resolve_graph_mode_from_plan(graph_plan: dict[str, Any]) -> str | None:
@@ -648,12 +675,15 @@ async def kb_chat_retrieve_node(
             },
         }
 
-    emit_progress(
+    emit_activity(
         stream_writer,
         workflow_id="knowledge_qa",
         node_id=node_id,
         stage="retrieve",
         message="正在查找知识库内容",
+        display_stage="execute",
+        display_title="🔍 查阅相关资料",
+        activity_text="正在查找知识库资料",
     )
     query = str(state.get("query") or "").strip()
     semantic_queries = _dedupe_queries(
@@ -863,12 +893,15 @@ async def kb_chat_retrieve_node(
         else:
             supporting_text_docs.append(doc)
     if rerank_enabled:
-        emit_progress(
+        emit_activity(
             stream_writer,
             workflow_id="knowledge_qa",
             node_id=node_id,
             stage="rerank",
             message="正在对融合证据统一精排",
+            display_stage="execute",
+            display_title="🔍 查阅相关资料",
+            activity_text="正在筛选更相关的资料",
             candidate_count=len(primary_docs),
             top_k=final_top_k,
         )
@@ -887,6 +920,8 @@ async def kb_chat_retrieve_node(
             "latency_ms": 0,
             "truncated": False,
             "max_text_chars": FINAL_RERANK_TEXT_MAX_CHARS,
+            "rerank_threshold": None,
+            "threshold_filtered_count": 0,
         }
     supporting_docs = supporting_text_docs + graph_supporting_context_docs
     primary_context = _build_layer_context(reranked_primary_docs)
@@ -910,6 +945,8 @@ async def kb_chat_retrieve_node(
         "input_count": final_rerank_trace.get("input_count"),
         "output_count": final_rerank_trace.get("output_count"),
         "latency_ms": final_rerank_trace.get("latency_ms"),
+        "rerank_threshold": final_rerank_trace.get("rerank_threshold"),
+        "threshold_filtered_count": final_rerank_trace.get("threshold_filtered_count"),
     }
     trace = {
         "retrieval_strategy": retrieval_strategy,
@@ -1019,6 +1056,8 @@ async def kb_chat_retrieve_node(
                 "最终精排启用": rerank_trace["enabled"],
                 "最终精排输入数": rerank_trace["input_count"],
                 "最终精排输出数": rerank_trace["output_count"],
+                "最终精排阈值": rerank_trace["rerank_threshold"],
+                "最终精排阈值过滤数": rerank_trace["threshold_filtered_count"],
             },
             "图谱关系证据": {
                 "样例数量": len(graph_evidence_log_items),

@@ -15,6 +15,7 @@ class AgentState(BaseAgentContext, total=False):
     project_app_id: Optional[int]
     external_user_id: Optional[str]
     external_user_name: Optional[str]
+    store_id: Optional[str]
     assistant_id: Optional[int]
     assistant_name: Optional[str]
     assistant_welcome_message: Optional[str]

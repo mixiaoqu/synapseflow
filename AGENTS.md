@@ -90,6 +90,7 @@ Current API router prefixes:
 - `/api/v1/users`: admin user management.
 - `/api/v1/content-risk`: content-risk rule library CRUD, rule CRUD, and test check.
 - `/api/v1/knowledge-bases`: knowledge-base CRUD.
+- `/api/v1/evaluations`: evaluation dataset, case, run, and report management.
 - `/api/v1/mcp`: bootstrap, scope resolution, search, and answer for read-only KB access.
 - health routes are registered without a versioned prefix tag in the router and also exist on the root app.
 
@@ -102,9 +103,10 @@ Application/service layer anchors:
 - `backend/app/application/project_service.py`: project and project app operations.
 - `backend/app/application/product_service.py`: product CRUD and team-scoped product listing.
 - `backend/app/application/mcp_service.py`: read-only MCP scope resolution plus search/answer proxying.
+- `backend/app/application/business_operations/*`: whitelisted business data operation boundary for agent-triggered business data queries or actions. The current implementation exposes product search through a controlled registry/service/mock gateway.
 - `backend/app/application/agent_service.py`: base agent context/state helpers.
 - `backend/app/application/stream_events.py`: SSE event envelope helpers.
-- `backend/app/application/workflow_meta.py`: node labels and workflow metadata for streamed UI.
+- `backend/app/application/workflow_meta.py`: backend-authoritative node labels and display stage metadata for streamed UI.
 
 Domain services and repositories:
 
@@ -133,24 +135,32 @@ Core data models currently include:
 
 The current graph registry is `backend/app/agents/runtime/factory.py`.
 
-Registered workflow:
+Registered workflows:
 
-- `kb_chat`: defined by `backend/app/agents/graphs/kb_chat_graph.py`
-- Actual graph path: `analyze -> rewrite_query -> retrieve -> evaluate -> answer`
-- `backend/langgraph.json` exposes only `kb_chat`.
+- `agent`: top-level workflow defined by `backend/app/agents/graphs/agent_graph.py`; path is `load_context -> understand -> route -> clarify/respond OR plan -> execute -> respond`.
+- `knowledge_qa`: reusable knowledge-base QA subgraph defined by `backend/app/agents/graphs/knowledge_qa_graph.py`; path is `analyze_question -> plan_retrieval -> retrieve_knowledge -> compose_answer`.
+- `business_ops`: controlled business data operation subgraph defined by `backend/app/agents/graphs/business_ops_graph.py`; path is `analyze_request -> match_operation -> execute_operation -> compose_result`.
+- `backend/langgraph.json` currently exposes `agent` and `knowledge_qa` for LangGraph tooling. `business_ops` is registered in the runtime factory and executed as a subgraph through `agent`.
 
 Important workflow files:
 
-- `backend/app/agents/states/kb_chat_state.py`: KB chat state shape.
-- `backend/app/agents/nodes/kb_chat/analyze.py`: retrieval strategy analysis.
+- `backend/app/agents/states/agent_state.py`: top-level agent state shape.
+- `backend/app/agents/states/knowledge_qa_state.py`: knowledge QA subgraph state shape.
+- `backend/app/agents/states/business_ops_state.py`: business data operation subgraph state shape.
+- `backend/app/agents/common/agent_intent.py`: top-level intent classification and fallback rules.
+- `backend/app/agents/common/knowledge_question_analysis.py`: knowledge-base question analysis.
+- `backend/app/agents/nodes/knowledge_qa/plan_retrieval.py`: knowledge retrieval planning.
 - `backend/app/agents/nodes/kb_chat/rewrite_query.py`: query rewriting.
-- `backend/app/agents/nodes/kb_chat/retrieve.py`: retrieval node.
-- `backend/app/agents/nodes/kb_chat/evaluate.py`: retrieval result evaluation.
+- `backend/app/agents/nodes/kb_chat/retrieve.py`: knowledge retrieval node reused by `knowledge_qa`.
 - `backend/app/agents/nodes/kb_chat/answer.py`: answer generation and streamed token output.
 - `backend/app/agents/prompts/kb_chat.py`: KB chat prompts.
 - `backend/app/agents/common/*`: shared retrieval, JSON LLM, document analysis, and streaming helpers.
 
-When changing streamed chat behavior, keep backend events compatible with the frontend SSE parser in `frontend/src/shared/lib/stream/sse.ts`.
+The chat application service always uses the top-level `agent` workflow. Do not reintroduce a configurable workflow selector unless there is a verified runtime need and a tested caller contract.
+
+Workflow display metadata is backend-authoritative. Backend SSE events should provide `display_stages`, `display_stage`, `display_title`, `activity_text`, `workflow_id`, `node_id`, and `node_name` through `backend/app/application/workflow_meta.py` and node activity events; frontend code should consume those fields instead of maintaining local workflow or node label maps.
+
+When changing streamed chat behavior, keep backend events compatible with the frontend SSE parser in `frontend/src/shared/lib/stream/sse.ts` and reducer in `frontend/src/shared/lib/stream/workflowRun.ts`.
 
 ## Retrieval and document pipeline
 
@@ -201,6 +211,7 @@ Frontend integration anchors:
 - `frontend/src/shared/api/*`: admin API integrations.
 - `frontend/src/modules/embed/composables/useEmbeddedAssistant.ts`: embedded assistant chat state.
 - `frontend/src/shared/lib/stream/sse.ts`: manual SSE parsing over fetch streams; the app does not use `EventSource`.
+- `frontend/src/shared/lib/stream/workflowRun.ts`: workflow progress reducer; display names and stage plans should come from backend SSE metadata.
 
 Auth and role helpers:
 
@@ -215,6 +226,7 @@ Only describe these as existing product surfaces unless code changes add more:
 - User login and session restoration.
 - End-user knowledge-base/assistant ask experience with streaming responses and chat history.
 - Embedded assistant experience for project apps.
+- Assistant-routed business data query boundary through `business_ops`; the current operation exposed by code is product search.
 - Admin product, project, and project-app management.
 - Admin knowledge-base, document, category, version, indexing, review, and publish management.
 - Admin assistant profile management and assistant preview/testing.

@@ -2,6 +2,8 @@ import type { SseEnvelope } from "@/shared/lib/stream/sse";
 
 export type WorkflowRunStatus = "idle" | "running" | "done" | "error";
 export type WorkflowNodeStatus = "pending" | "running" | "success" | "error" | "skipped";
+export type WorkflowDisplayActivityStatus = "running" | "completed" | "error";
+export type WorkflowDisplayStageStatus = "pending" | "running" | "success" | "error";
 
 export interface WorkflowRunError {
   code?: string;
@@ -33,58 +35,33 @@ export interface WorkflowState {
   durationMs?: number;
 }
 
+export interface WorkflowDisplayActivity {
+  text: string;
+  status: WorkflowDisplayActivityStatus;
+  at: number;
+}
+
+export interface WorkflowDisplayStage {
+  id: string;
+  title: string;
+  status: WorkflowDisplayStageStatus;
+  activities: WorkflowDisplayActivity[];
+}
+
 export interface ChatWorkflowRun {
   id: string;
   status: WorkflowRunStatus;
   workflows: Record<string, WorkflowState>;
+  displayStages: WorkflowDisplayStage[];
   currentWorkflowId?: string;
   currentNodeId?: string;
+  currentDisplayStageId?: string;
   startedAt: number;
   endedAt?: number;
   durationMs?: number;
   message?: string;
   error?: WorkflowRunError;
 }
-
-export interface WorkflowNodeDisplayItem extends WorkflowNodeState {
-  workflowId: string;
-  workflowName: string;
-}
-
-const WORKFLOW_NAMES: Record<string, string> = {
-  agent: "助手编排",
-  knowledge_qa: "知识库问答",
-  business_ops: "业务操作",
-};
-
-const NODE_NAMES: Record<string, Record<string, string>> = {
-  agent: {
-    load_context: "准备上下文",
-    understand: "理解问题",
-    route: "匹配处理方式",
-    clarify: "补齐信息",
-    plan: "制定步骤",
-    execute: "执行任务",
-    respond: "整理回复",
-  },
-  knowledge_qa: {
-    analyze_question: "分析问题",
-    plan_retrieval: "规划检索",
-    retrieve_knowledge: "查找资料",
-    compose_answer: "生成回答",
-  },
-  business_ops: {
-    analyze_request: "分析请求",
-    match_operation: "匹配操作",
-    collect_params: "补齐参数",
-    authorize: "权限校验",
-    confirm_action: "等待确认",
-    execute_operation: "执行业务操作",
-    compose_result: "整理结果",
-  },
-};
-
-const WORKFLOW_ORDER = ["agent", "knowledge_qa", "business_ops"];
 
 function now() {
   return Date.now();
@@ -106,6 +83,10 @@ function eventData(event: SseEnvelope): Record<string, unknown> {
     : {};
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function cloneRun(run: ChatWorkflowRun): ChatWorkflowRun {
   const workflows: Record<string, WorkflowState> = {};
   for (const [workflowId, workflow] of Object.entries(run.workflows)) {
@@ -123,32 +104,26 @@ function cloneRun(run: ChatWorkflowRun): ChatWorkflowRun {
   return {
     ...run,
     workflows,
+    displayStages: run.displayStages.map((stage) => ({
+      ...stage,
+      activities: stage.activities.map((activity) => ({ ...activity })),
+    })),
     error: run.error ? { ...run.error } : undefined,
   };
 }
 
 function resolveWorkflowName(workflowId: string) {
-  return WORKFLOW_NAMES[workflowId] ?? workflowId;
+  return workflowId || "workflow";
 }
 
 function resolveNodeWorkflowId(event: SseEnvelope, nodeId: string) {
   const data = eventData(event);
   const explicitWorkflowId = normalizeText(event.workflow_id) || normalizeText(data.workflow_id);
-  if (explicitWorkflowId) {
-    return explicitWorkflowId;
-  }
-
-  if (NODE_NAMES.knowledge_qa[nodeId]) {
-    return "knowledge_qa";
-  }
-  if (NODE_NAMES.business_ops[nodeId]) {
-    return "business_ops";
-  }
-  return "agent";
+  return explicitWorkflowId || "agent";
 }
 
-function resolveNodeName(workflowId: string, nodeId: string, nodeName?: string) {
-  return NODE_NAMES[workflowId]?.[nodeId] || normalizeText(nodeName) || nodeId;
+function resolveNodeName(nodeId: string, nodeName?: string) {
+  return normalizeText(nodeName) || nodeId;
 }
 
 function ensureWorkflow(run: ChatWorkflowRun, workflowId: string, at: number) {
@@ -193,6 +168,136 @@ function ensureNode(
   return node;
 }
 
+function parseDisplayStages(value: unknown): Array<Pick<WorkflowDisplayStage, "id" | "title">> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (!isRecord(item)) {
+        return null;
+      }
+      const id = normalizeText(item.id);
+      const title = normalizeText(item.title);
+      return id && title ? { id, title } : null;
+    })
+    .filter((item): item is Pick<WorkflowDisplayStage, "id" | "title"> => Boolean(item));
+}
+
+function normalizeActivityStatus(value: unknown): WorkflowDisplayActivityStatus {
+  const status = normalizeText(value);
+  if (status === "completed" || status === "success") {
+    return "completed";
+  }
+  if (status === "error" || status === "failed") {
+    return "error";
+  }
+  return "running";
+}
+
+function applyDisplayStagePlan(run: ChatWorkflowRun, data: Record<string, unknown>) {
+  const stages = parseDisplayStages(data.display_stages);
+  if (stages.length === 0) {
+    return;
+  }
+
+  const existingById = new Map(run.displayStages.map((stage) => [stage.id, stage]));
+  run.displayStages = stages.map((stage, index) => {
+    const existing = existingById.get(stage.id);
+    return {
+      id: stage.id,
+      title: stage.title,
+      status: existing?.status ?? (index === 0 ? "running" : "pending"),
+      activities: existing?.activities ?? [],
+    };
+  });
+  run.currentDisplayStageId = run.currentDisplayStageId ?? run.displayStages[0]?.id;
+}
+
+function ensureDisplayStage(
+  run: ChatWorkflowRun,
+  stageId: string,
+  title: string,
+): WorkflowDisplayStage | null {
+  if (!stageId) {
+    return null;
+  }
+
+  const existing = run.displayStages.find((stage) => stage.id === stageId);
+  if (existing) {
+    if (title) {
+      existing.title = title;
+    }
+    return existing;
+  }
+
+  const stage = {
+    id: stageId,
+    title: title || stageId,
+    status: "pending" as WorkflowDisplayStageStatus,
+    activities: [],
+  };
+  run.displayStages.push(stage);
+  return stage;
+}
+
+function moveDisplayStage(run: ChatWorkflowRun, stageId: string, status: WorkflowDisplayActivityStatus) {
+  const currentIndex = run.displayStages.findIndex((stage) => stage.id === stageId);
+  if (currentIndex < 0) {
+    return;
+  }
+
+  run.currentDisplayStageId = stageId;
+  run.displayStages.forEach((stage, index) => {
+    if (index < currentIndex && stage.status !== "error") {
+      stage.status = "success";
+    }
+  });
+
+  const stage = run.displayStages[currentIndex];
+  if (status === "error") {
+    stage.status = "error";
+    return;
+  }
+  if (status === "running" || stage.status === "pending") {
+    stage.status = "running";
+  }
+}
+
+function applyDisplayActivity(run: ChatWorkflowRun, data: Record<string, unknown>, at: number) {
+  const stageId = normalizeText(data.display_stage);
+  const activityText = normalizeText(data.activity_text);
+  if (!stageId && !activityText) {
+    return;
+  }
+
+  const stage = ensureDisplayStage(
+    run,
+    stageId,
+    normalizeText(data.display_title),
+  );
+  if (!stage) {
+    return;
+  }
+
+  const activityStatus = normalizeActivityStatus(data.activity_status);
+  moveDisplayStage(run, stage.id, activityStatus);
+
+  if (!activityText) {
+    return;
+  }
+
+  stage.activities = [
+    ...stage.activities,
+    {
+      text: activityText,
+      status: activityStatus,
+      at,
+    },
+  ].slice(-2);
+}
+
 function completeRunningNodes(
   workflow: WorkflowState,
   at: number,
@@ -214,6 +319,11 @@ function completeRun(run: ChatWorkflowRun, at: number) {
       workflow.status = "success";
       workflow.endedAt = at;
       workflow.durationMs = workflow.startedAt ? Math.max(0, at - workflow.startedAt) : undefined;
+    }
+  }
+  for (const stage of run.displayStages) {
+    if (stage.status === "pending" || stage.status === "running") {
+      stage.status = "success";
     }
   }
 }
@@ -239,6 +349,7 @@ export function createWorkflowRun(runId?: string | null, message = "正在连接
     id: runId || `run-${now()}`,
     status: "running",
     workflows: {},
+    displayStages: [],
     startedAt: now(),
     message,
   };
@@ -256,6 +367,8 @@ export function reduceWorkflowRunEvent(
     run.id = event.run_id;
   }
   run.startedAt = run.startedAt || at;
+  applyDisplayStagePlan(run, data);
+  applyDisplayActivity(run, data, at);
 
   if (event.type === "start") {
     run.status = "running";
@@ -280,6 +393,12 @@ export function reduceWorkflowRunEvent(
     run.error = { message };
     run.endedAt = at;
     run.durationMs = Math.max(0, at - run.startedAt);
+    const currentStage = run.displayStages.find(
+      (stage) => stage.id === run.currentDisplayStageId,
+    );
+    if (currentStage) {
+      currentStage.status = "error";
+    }
   }
 
   const nodeId = normalizeText(event.node_id);
@@ -289,7 +408,7 @@ export function reduceWorkflowRunEvent(
 
   const workflowId = resolveNodeWorkflowId(event, nodeId);
   const workflow = ensureWorkflow(run, workflowId, at);
-  const nodeName = resolveNodeName(workflowId, nodeId, event.node_name);
+  const nodeName = resolveNodeName(nodeId, event.node_name);
   const node = ensureNode(workflow, nodeId, nodeName, at);
   const message = normalizeText(data.message);
 
@@ -341,17 +460,24 @@ export function reduceWorkflowRunEvent(
   return run;
 }
 
-export function getCurrentWorkflowNode(run: ChatWorkflowRun | null) {
-  if (!run) {
+export function getCurrentWorkflowDisplayStage(run: ChatWorkflowRun | null) {
+  if (!run || run.displayStages.length === 0) {
     return null;
   }
 
-  if (run.currentWorkflowId && run.currentNodeId) {
-    return run.workflows[run.currentWorkflowId]?.nodes[run.currentNodeId] ?? null;
+  if (run.currentDisplayStageId) {
+    const currentStage = run.displayStages.find((stage) => stage.id === run.currentDisplayStageId);
+    if (currentStage && currentStage.status !== "success") {
+      return currentStage;
+    }
   }
 
-  const runningNode = getWorkflowRunVisibleNodes(run).find((node) => node.status === "running");
-  return runningNode ?? null;
+  return (
+    run.displayStages.find((stage) => stage.status === "running") ||
+    run.displayStages.find((stage) => stage.status === "error") ||
+    run.displayStages[run.displayStages.length - 1] ||
+    null
+  );
 }
 
 export function getWorkflowRunMessage(run: ChatWorkflowRun | null) {
@@ -363,42 +489,18 @@ export function getWorkflowRunMessage(run: ChatWorkflowRun | null) {
     return run.error?.message || run.message || "请求失败";
   }
 
-  const currentNode = getCurrentWorkflowNode(run);
-  if (currentNode) {
-    return currentNode.message || currentNode.name;
+  const currentStage = getCurrentWorkflowDisplayStage(run);
+  const currentActivity = currentStage?.activities[currentStage.activities.length - 1];
+  if (currentActivity?.text) {
+    return currentActivity.text;
+  }
+  if (currentStage?.title) {
+    return currentStage.status === "success" ? currentStage.title : `正在${currentStage.title}`;
   }
 
   return run.message || null;
 }
 
-export function getWorkflowRunVisibleNodes(
-  run: ChatWorkflowRun | null,
-  limit = 6,
-): WorkflowNodeDisplayItem[] {
-  if (!run) {
-    return [];
-  }
-
-  const workflowIds = Object.keys(run.workflows).sort((left, right) => {
-    const leftIndex = WORKFLOW_ORDER.indexOf(left);
-    const rightIndex = WORKFLOW_ORDER.indexOf(right);
-    return (leftIndex === -1 ? 99 : leftIndex) - (rightIndex === -1 ? 99 : rightIndex);
-  });
-
-  const nodes = workflowIds.flatMap((workflowId) => {
-    const workflow = run.workflows[workflowId];
-    return workflow.nodeOrder
-      .map((nodeId) => workflow.nodes[nodeId])
-      .filter((node): node is WorkflowNodeState => Boolean(node))
-      .map((node) => ({
-        ...node,
-        workflowId,
-        workflowName: workflow.name,
-      }));
-  });
-
-  return nodes
-    .filter((node) => node.status !== "pending")
-    .sort((left, right) => (left.startedAt ?? 0) - (right.startedAt ?? 0))
-    .slice(-limit);
+export function getWorkflowDisplayStages(run: ChatWorkflowRun | null) {
+  return run?.displayStages ?? [];
 }

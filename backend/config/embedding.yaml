@@ -54,7 +54,7 @@ retrieval:
   # Minimum RRF fusion score to keep. null disables RRF score filtering.
   rrf_score_threshold: 0.012
   # Minimum rerank score to keep. null disables rerank score filtering.
-  rerank_threshold: null
+  rerank_threshold: 0.3
   # Maximum retrieval results returned to application logic.
   final_top_k: 16
   # Maximum reference chunks sent into the LLM prompt.

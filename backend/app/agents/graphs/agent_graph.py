@@ -9,6 +9,7 @@ from langgraph.graph import END, StateGraph
 from app.agents.common.agent_intent import build_agent_intent
 from app.agents.common.node_logging import log_node_info
 from app.agents.common.streaming import get_optional_stream_writer
+from app.agents.graphs.business_ops_graph import create_business_ops_graph
 from app.agents.graphs.knowledge_qa_graph import create_knowledge_qa_graph
 from app.agents.nodes.kb_chat.answer import KB_CHITCHAT_REPLY, KB_OUT_OF_SCOPE_REPLY
 from app.agents.states import AgentState
@@ -30,21 +31,22 @@ def _parse_stream_chunk(chunk: Any) -> tuple[str | None, dict[str, Any]]:
     return None, {}
 
 
-def _forward_knowledge_qa_custom_event(
+def _forward_subgraph_custom_event(
     writer: Callable[[dict[str, Any]], None] | None,
+    workflow_id: str,
     data: dict[str, Any],
 ) -> None:
     if writer is None:
         return
 
     payload = dict(data)
-    payload.setdefault("workflow_id", "knowledge_qa")
-    payload.setdefault("node_id", "compose_answer")
+    payload.setdefault("workflow_id", workflow_id)
     writer(payload)
 
 
-def _emit_knowledge_qa_node_complete(
+def _emit_subgraph_node_complete(
     writer: Callable[[dict[str, Any]], None] | None,
+    workflow_id: str,
     node_id: str,
     node_state: dict[str, Any],
 ) -> None:
@@ -54,7 +56,7 @@ def _emit_knowledge_qa_node_complete(
     writer(
         {
             "type": "node_complete",
-            "workflow_id": "knowledge_qa",
+            "workflow_id": workflow_id,
             "node_id": node_id,
             "node_state": node_state,
         }
@@ -83,6 +85,7 @@ def create_agent_graph(
         planner_llm_factory=planner_factory,
         answer_llm_factory=answer_llm_factory or llm_factory,
     )
+    business_ops_graph = create_business_ops_graph()
     workflow = StateGraph(AgentState)
 
     async def _load_context_node(state: AgentState) -> dict[str, Any]:
@@ -103,6 +106,9 @@ def create_agent_graph(
             "page": {
                 "context": dict(state.get("page_context") or {}),
                 "config": dict(state.get("page_config") or {}),
+            },
+            "business": {
+                "store_id": state.get("store_id"),
             },
             "memory": {
                 "chat_history": list(state.get("chat_history") or []),
@@ -149,7 +155,7 @@ def create_agent_graph(
                 page_type=page_context.get("page_type") or page_config.get("page_type"),
                 llm_factory=planner_factory,
             )
-            intent_type = str(intent_result.get("type") or "knowledge_qa").strip()
+            intent_type = str(intent_result.get("type") or "direct_answer").strip()
             intent = {
                 "type": intent_type,
                 "needs_clarification": bool(intent_result.get("needs_clarification")),
@@ -177,6 +183,7 @@ def create_agent_graph(
         route_targets = {
             "clarify": ("clarify", "clarify"),
             "knowledge_qa": ("workflow", "knowledge_qa"),
+            "business_ops": ("workflow", "business_ops"),
             "direct_answer": ("direct", "direct_answer"),
         }
         target_type, target_id = route_targets.get(intent_type, ("direct", "direct_answer"))
@@ -237,6 +244,15 @@ def create_agent_graph(
                     "input": "current_context",
                 }
             )
+        if target_type == "workflow" and target_id == "business_ops":
+            steps.append(
+                {
+                    "id": "step_1",
+                    "type": "workflow",
+                    "target_id": "business_ops",
+                    "input": "current_context",
+                }
+            )
         result = {"steps": steps}
         log_node_info(
             workflow_id="agent",
@@ -257,16 +273,24 @@ def create_agent_graph(
         final_result: dict[str, Any] = {}
         stream_writer = get_optional_stream_writer()
         for step in steps:
-            if step.get("type") != "workflow" or step.get("target_id") != "knowledge_qa":
+            if step.get("type") != "workflow":
                 continue
-            async for chunk in knowledge_qa_graph.astream(
+            target_id = str(step.get("target_id") or "").strip()
+            if target_id == "knowledge_qa":
+                subgraph = knowledge_qa_graph
+            elif target_id == "business_ops":
+                subgraph = business_ops_graph
+            else:
+                continue
+
+            async for chunk in subgraph.astream(
                 state,
                 stream_mode=["updates", "custom"],
                 version="v2",
             ):
                 chunk_type, chunk_data = _parse_stream_chunk(chunk)
                 if chunk_type == "custom":
-                    _forward_knowledge_qa_custom_event(stream_writer, chunk_data)
+                    _forward_subgraph_custom_event(stream_writer, target_id, chunk_data)
                     continue
                 if chunk_type != "updates":
                     continue
@@ -275,13 +299,13 @@ def create_agent_graph(
                     if not isinstance(node_id, str) or not isinstance(node_state, dict):
                         continue
                     final_result.update(node_state)
-                    _emit_knowledge_qa_node_complete(stream_writer, node_id, node_state)
+                    _emit_subgraph_node_complete(stream_writer, target_id, node_id, node_state)
 
             step_results.append(
                 {
                     "step_id": step.get("id"),
                     "type": "workflow",
-                    "target_id": "knowledge_qa",
+                    "target_id": target_id,
                     "status": "success",
                     "answer_status": final_result.get("answer_status"),
                     "retrieved_count": len(final_result.get("retrieved_docs") or []),
@@ -350,6 +374,8 @@ def create_agent_graph(
         if target_type == "clarify" and target_id == "clarify":
             return "clarify"
         if target_type == "workflow" and target_id == "knowledge_qa":
+            return "plan"
+        if target_type == "workflow" and target_id == "business_ops":
             return "plan"
         return "respond"
 

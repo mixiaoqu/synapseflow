@@ -16,6 +16,7 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     assistant_llm_model_key: Optional[str]
     assistant_persona_prompt: Optional[str]
     assistant_rule_template: Optional[str]
+    store_id: Optional[str]
     page_context: Dict[str, Any]
     page_config: Dict[str, Any]
     chat_history: List[Dict[str, Any]]

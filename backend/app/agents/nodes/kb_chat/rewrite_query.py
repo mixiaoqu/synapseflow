@@ -7,7 +7,7 @@ from typing import Any
 
 from loguru import logger
 
-from app.agents.common.streaming import emit_progress, get_optional_stream_writer
+from app.agents.common.streaming import emit_activity, get_optional_stream_writer
 from app.agents.states import KnowledgeQaState
 from app.services.kb_query_rewrite import build_kb_chat_retrieval_queries
 
@@ -108,12 +108,15 @@ async def kb_chat_rewrite_query_node(
             "entity_constraints": {},
             "rewrite_trace": trace,
         }
-    emit_progress(
+    emit_activity(
         stream_writer,
         workflow_id="knowledge_qa",
         node_id=node_id,
         stage="rewrite",
         message="正在整理检索线索",
+        display_stage="execute",
+        display_title="🔍 查阅相关资料",
+        activity_text="正在整理资料查找线索",
     )
     return await build_kb_chat_rewrite(
         str(state.get("query") or ""),

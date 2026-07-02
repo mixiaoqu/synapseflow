@@ -26,6 +26,8 @@ from app.services.vector_store import (
     search_lexical,
 )
 
+PRE_RERANK_MIN_CANDIDATE_MULTIPLIER = 2
+
 
 def _format_kb_chunk(doc: dict[str, Any], content: str) -> str:
     meta = doc.get("metadata", {}) or {}
@@ -357,20 +359,86 @@ def _apply_retrieval_thresholds(
     *,
     rerank_enabled: bool,
 ) -> list[dict[str, Any]]:
+    return _apply_post_rerank_thresholds(
+        _apply_pre_rerank_thresholds(results),
+        rerank_enabled=rerank_enabled,
+    )
+
+
+def _restore_min_candidates_after_pre_filter(
+    results: list[dict[str, Any]],
+    filtered: list[dict[str, Any]],
+    *,
+    min_keep: int,
+) -> list[dict[str, Any]]:
+    if min_keep <= 0 or len(filtered) >= min_keep:
+        return filtered
+
+    restored = list(filtered)
+    seen_ids = {id(row) for row in restored}
+    for row in results:
+        if id(row) in seen_ids:
+            continue
+        restored.append(row)
+        seen_ids.add(id(row))
+        if len(restored) >= min_keep:
+            break
+    return restored
+
+
+def _apply_pre_rerank_thresholds(
+    results: list[dict[str, Any]],
+    *,
+    min_keep: int = 0,
+) -> list[dict[str, Any]]:
     if not results:
         return []
 
     rag = config_registry.get_rag_config().retrieval
     distance_threshold = rag.distance_threshold
     rrf_score_threshold = rag.rrf_score_threshold
-    rerank_threshold = rag.rerank_threshold
 
     filtered = [
         row
         for row in results
         if _passes_distance_threshold(row, distance_threshold)
         and _passes_rrf_score_threshold(row, rrf_score_threshold)
-        and _passes_rerank_threshold(
+    ]
+    threshold_filtered_count = len(filtered)
+    filtered = _restore_min_candidates_after_pre_filter(
+        results,
+        filtered,
+        min_keep=min_keep,
+    )
+    removed = len(results) - len(filtered)
+    restored_count = len(filtered) - threshold_filtered_count
+    if removed:
+        logger.info(
+            "[KB Retrieval] pre-rerank filtering removed {} of {} candidates | distance_threshold={} rrf_score_threshold={} min_keep={} restored={}",
+            removed,
+            len(results),
+            distance_threshold,
+            rrf_score_threshold if rrf_score_threshold is not None else "-",
+            min_keep if min_keep > 0 else "-",
+            restored_count,
+        )
+    return filtered
+
+
+def _apply_post_rerank_thresholds(
+    results: list[dict[str, Any]],
+    *,
+    rerank_enabled: bool,
+) -> list[dict[str, Any]]:
+    if not results:
+        return []
+
+    rag = config_registry.get_rag_config().retrieval
+    rerank_threshold = rag.rerank_threshold
+    filtered = [
+        row
+        for row in results
+        if _passes_rerank_threshold(
             row,
             rerank_enabled=rerank_enabled,
             threshold=rerank_threshold,
@@ -379,11 +447,9 @@ def _apply_retrieval_thresholds(
     removed = len(results) - len(filtered)
     if removed:
         logger.info(
-            "[KB Retrieval] threshold filtering removed {} of {} candidates | distance_threshold={} rrf_score_threshold={} rerank_threshold={}",
+            "[KB Retrieval] post-rerank filtering removed {} of {} candidates | rerank_threshold={}",
             removed,
             len(results),
-            distance_threshold,
-            rrf_score_threshold if rrf_score_threshold is not None else "-",
             rerank_threshold if rerank_enabled else "-",
         )
     return filtered
@@ -399,6 +465,9 @@ async def _finalize_ranked_rows(
     candidate_count = len(results)
     rerank_latency_ms = 0
     rerank_top_docs_changed = False
+    pre_rerank_min_keep = max(final_top_k, final_top_k * PRE_RERANK_MIN_CANDIDATE_MULTIPLIER)
+    results = _apply_pre_rerank_thresholds(results, min_keep=pre_rerank_min_keep)
+    pre_rerank_count = len(results)
     pre_rerank_top_ids = [
         row.get("document_chunk_id") for row in list(results)[:final_top_k] if row.get("document_chunk_id") is not None
     ]
@@ -442,10 +511,12 @@ async def _finalize_ranked_rows(
                 "old_rank": previous_rank,
             }
         )
-    filtered = _apply_retrieval_thresholds(results, rerank_enabled=rerank_enabled)
+    filtered = _apply_post_rerank_thresholds(results, rerank_enabled=rerank_enabled)
     return filtered, {
         "rerank_enabled": rerank_enabled,
         "candidate_count": candidate_count,
+        "pre_rerank_count": pre_rerank_count,
+        "pre_rerank_filtered_count": candidate_count - pre_rerank_count,
         "post_rerank_count": len(results),
         "final_count": len(filtered),
         "latency_ms": rerank_latency_ms,

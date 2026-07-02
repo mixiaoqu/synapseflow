@@ -8,8 +8,20 @@ from typing import Any, Callable
 from app.agents.common.llm_json import parse_llm_json_object
 from app.core.llm import get_llm_for_planner
 
-ALLOWED_INTENT_TYPES = {"knowledge_qa", "clarify", "direct_answer"}
+ALLOWED_INTENT_TYPES = {"knowledge_qa", "business_ops", "clarify", "direct_answer"}
 ALLOWED_DIRECT_ANSWER_KINDS = {"chitchat", "out_of_scope"}
+BUSINESS_OPS_HINT_PATTERN = re.compile(
+    r"(商品|库存|价格|售价|条码|sku|SKU|查一下|查询|搜索).*(商品|库存|价格|售价|条码|sku|SKU|可乐)"
+    r"|(?:可乐|雪碧|冰红茶|矿泉水).*(库存|价格|售价|有没有|有吗)"
+    r"|(?:查询|查一下|搜索|查找|看看|统计|列出).*(订单|会员|门店|客户|用户|记录|数据|数据库|表|商品|库存|价格)"
+    r"|(?:订单|会员|门店|客户|用户|记录|数据|数据库|表).*(查询|查一下|搜索|查找|统计|列表|明细|数量)"
+)
+KNOWLEDGE_QA_HINT_PATTERN = re.compile(
+    r"(能否|是否|能不能|可不可以|有没有权限|权限|允许|规则|限制|流程|如何|怎么|怎样|说明|手册|文档)"
+    r".*(会员|门店负责人|负责人|角色|岗位|员工|账号|资料|页面|列表|功能|操作|配置|冻结|解冻|编辑|新增|删除|审核)"
+    r"|(?:会员|门店负责人|负责人|角色|岗位|员工|账号|资料|页面|列表|功能|操作|配置|冻结|解冻|编辑|新增|删除|审核)"
+    r".*(能否|是否|能不能|可不可以|有没有权限|权限|允许|规则|限制|流程|如何|怎么|怎样|说明|手册|文档)"
+)
 
 
 def _coerce_text(content: Any) -> str:
@@ -64,15 +76,16 @@ You route one user turn for the top-level agent workflow.
 
 Return JSON only:
 {{
-  "intent_type": "knowledge_qa",
+  "intent_type": "direct_answer",
   "needs_clarification": false,
   "missing_fields": [],
-  "direct_answer_kind": null,
+  "direct_answer_kind": "out_of_scope",
   "reason": "short reason"
 }}
 
 Allowed intent_type values:
 - knowledge_qa
+- business_ops
 - clarify
 - direct_answer
 
@@ -83,6 +96,8 @@ Allowed direct_answer_kind values when intent_type=direct_answer:
 Rules:
 - Do not answer the user.
 - Decide only the top-level route: knowledge QA, clarification, or direct reply.
+- Use business_ops when the user asks to query or operate concrete business data through tools, such as product inventory, prices, orders, members, stores, database records, tables, reports, or operational records.
+- Use knowledge_qa when the user asks about rules, permissions, roles, feature behavior, documentation, operation steps, or "whether someone can do something", even if the question mentions stores, members, orders, or other business nouns.
 - Do not classify the knowledge question type.
 - Do not extract entities.
 - Do not choose retrieval strategy, graph strategy, top-k, or rerank policy.
@@ -122,6 +137,22 @@ async def build_agent_intent(
             "direct_answer_kind": None,
             "reason": "用户问题为空，需要补齐问题内容。",
         }
+    if BUSINESS_OPS_HINT_PATTERN.search(query):
+        return {
+            "type": "business_ops",
+            "needs_clarification": False,
+            "missing_fields": [],
+            "direct_answer_kind": None,
+            "reason": "用户正在查询或操作具体业务数据。",
+        }
+    if KNOWLEDGE_QA_HINT_PATTERN.search(query):
+        return {
+            "type": "knowledge_qa",
+            "needs_clarification": False,
+            "missing_fields": [],
+            "direct_answer_kind": None,
+            "reason": "用户正在询问业务规则、权限或操作说明，应从知识库回答。",
+        }
 
     llm = llm_factory() if llm_factory is not None else get_llm_for_planner(
         temperature=0,
@@ -139,7 +170,7 @@ async def build_agent_intent(
     intent_type = _normalize_choice(
         parsed.get("intent_type") or parsed.get("type"),
         ALLOWED_INTENT_TYPES,
-        "knowledge_qa",
+        "direct_answer",
     )
     needs_clarification = bool(parsed.get("needs_clarification"))
     missing_fields = _coerce_string_list(parsed.get("missing_fields"), item_limit=80)
@@ -160,5 +191,5 @@ async def build_agent_intent(
         "missing_fields": missing_fields,
         "direct_answer_kind": direct_answer_kind,
         "reason": _compact_text(str(parsed.get("reason") or ""), limit=240)
-        or "主图已完成意图路由判断。",
+        or "主图无法确认需要调用知识库或业务数据能力，按直接回复处理。",
     }
