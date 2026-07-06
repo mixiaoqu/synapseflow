@@ -159,7 +159,7 @@ async def stream_kb_chat_answer_text(
         message="正在组织最终回答",
         display_stage="compose",
         display_title="💡 总结最终结果",
-        activity_text="正在组织最终回复",
+        activity_text="组织最终回复",
         context_len=len(state.get("context") or ""),
         retrieved_count=len(state.get("retrieved_docs") or []),
     )

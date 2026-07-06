@@ -10,25 +10,17 @@ class KnowledgeQaState(BaseAgentContext, total=False):
 
     workflow_id: str
     session_id: Optional[str]
+    original_query: str
     query: str
-    assistant_id: Optional[int]
-    assistant_name: Optional[str]
-    assistant_llm_model_key: Optional[str]
-    assistant_persona_prompt: Optional[str]
-    assistant_rule_template: Optional[str]
-    store_id: Optional[str]
+    intent: Dict[str, Any]
     page_context: Dict[str, Any]
-    page_config: Dict[str, Any]
-    chat_history: List[Dict[str, Any]]
-    memory_summary: Optional[str]
     allowed_document_statuses: List[str]
 
     retrieval: Dict[str, Any]
     evidence: Dict[str, Any]
-    knowledge_answer: Dict[str, Any]
+    workflow_result: Dict[str, Any]
 
-    question_analysis: Dict[str, Any]
-    question_intent: Dict[str, Any]
+    retrieval_analysis: Dict[str, Any]
     question_type: Optional[str]
     retrieval_strategy: Optional[str]
     retrieval_complexity: Optional[str]
@@ -40,8 +32,6 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     relation_queries: List[Dict[str, Any]]
     target_attributes: List[str]
     entity_constraints: Dict[str, Any]
-    route_reason: str
-    route_trace: Dict[str, Any]
     plan_trace: Dict[str, Any]
     rewrite_trace: Dict[str, Any]
     retrieval_trace: Dict[str, Any]
@@ -52,6 +42,4 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     primary_context: str
     supporting_context: str
     context: str
-    answer: str
     answer_status: str
-    answer_trace: Dict[str, Any]

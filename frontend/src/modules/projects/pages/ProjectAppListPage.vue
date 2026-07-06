@@ -18,6 +18,12 @@ import { ElMessage, ElMessageBox } from "element-plus";
 
 import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
+import {
+  bindProjectAppBusinessTool,
+  listBusinessTools,
+  listProjectAppBusinessToolBindings,
+  unbindProjectAppBusinessTool,
+} from "@/shared/api/business-tools";
 import { listAssistants } from "@/shared/api/assistants";
 import { listDocumentCategoriesTree } from "@/shared/api/document-categories";
 import { listKnowledgeBases } from "@/shared/api/knowledge-bases";
@@ -34,6 +40,7 @@ import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import { isForbiddenError } from "@/shared/utils/error";
 import type { AssistantSummary } from "@/shared/types/assistant";
+import type { BusinessTool, ProjectAppBusinessToolBinding } from "@/shared/types/business-tool";
 import type { DocumentCategoryTreeNode } from "@/shared/types/document-category";
 import type { KnowledgeBaseListItem } from "@/shared/types/knowledge-base";
 import {
@@ -49,6 +56,8 @@ const route = useRoute();
 const project = ref<ProjectSummary | null>(null);
 const apps = ref<ProjectAppSummary[]>([]);
 const assistants = ref<AssistantSummary[]>([]);
+const businessTools = ref<BusinessTool[]>([]);
+const businessToolBindings = ref<ProjectAppBusinessToolBinding[]>([]);
 const knowledgeBases = ref<KnowledgeBaseListItem[]>([]);
 const categoryTree = ref<DocumentCategoryTreeNode[]>([]);
 const loading = ref(false);
@@ -58,11 +67,15 @@ const statusLoadingId = ref<number | null>(null);
 const deletingAppId = ref<number | null>(null);
 const configSavingKey = ref<"" | "knowledge_base" | "category" | "assistant">("");
 const categoryLoading = ref(false);
+const businessToolLoading = ref(false);
+const bindingSaving = ref(false);
+const selectedBusinessToolId = ref<number | null>(null);
 const activeAppId = ref<number | null>(null);
 const integrationDialogVisible = ref(false);
 const integrationApp = ref<ProjectAppSummary | null>(null);
 const previewLoading = ref(false);
 const previewEmbedUrl = ref("");
+const previewStoreId = ref("STORE_001");
 const previewNeedsRefresh = ref(false);
 const categoryPath = ref<number[]>([]);
 const appDialogVisible = ref(false);
@@ -112,6 +125,26 @@ const previewUnavailableDescription = computed(() => {
 });
 const appDialogTitle = computed(() => (editingApp.value ? "编辑应用端" : "新建应用端"));
 const appDialogSubmitText = computed(() => (editingApp.value ? "保存应用端" : "创建应用端"));
+const availableBusinessTools = computed(() => {
+  const boundIds = new Set(businessToolBindings.value.map((item) => item.business_tool_id));
+  return businessTools.value.filter((item) => !boundIds.has(item.id));
+});
+
+function formatToolImplementationLabel(tool: BusinessTool) {
+  const implementation = tool.primary_implementation;
+  if (!implementation) {
+    return "未配置实现";
+  }
+  return `${implementation.connection_name} · ${implementation.method} ${implementation.path}`;
+}
+
+function formatBindingImplementationLabel(binding: ProjectAppBusinessToolBinding) {
+  const implementation = binding.primary_implementation;
+  if (!implementation) {
+    return "未配置可用实现";
+  }
+  return `${implementation.connection_name} · ${implementation.method} ${implementation.path}`;
+}
 
 function formatTerminalType(value: ProjectAppTerminalType) {
   return PROJECT_APP_TERMINAL_TYPE_LABELS[value] ?? "其他";
@@ -224,7 +257,7 @@ async function loadCategories(knowledgeBaseId: number | null, categoryId: number
 }
 
 async function loadOptionData(projectResponse: ProjectSummary) {
-  const [assistantResponses, knowledgeBaseResponses] = await Promise.all([
+  const [assistantResponses, knowledgeBaseResponses, businessToolResponses] = await Promise.all([
     listAssistants({
       team_id: projectResponse.team_id,
       active_only: true,
@@ -237,9 +270,36 @@ async function loadOptionData(projectResponse: ProjectSummary) {
       page: 1,
       page_size: 100,
     }),
+    listBusinessTools({
+      team_id: projectResponse.team_id,
+      enabled_status: "enabled",
+      lifecycle_status: "published",
+      page: 1,
+      page_size: 100,
+    }),
   ]);
   assistants.value = assistantResponses.items;
   knowledgeBases.value = knowledgeBaseResponses.items;
+  businessTools.value = businessToolResponses.items;
+}
+
+async function loadBusinessToolBindings(appId: number | null) {
+  businessToolBindings.value = [];
+  selectedBusinessToolId.value = null;
+  if (!projectId.value || !appId) {
+    return;
+  }
+
+  businessToolLoading.value = true;
+  try {
+    const response = await listProjectAppBusinessToolBindings(projectId.value, appId);
+    businessToolBindings.value = response.items;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "加载业务工具绑定失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    businessToolLoading.value = false;
+  }
 }
 
 async function loadPage() {
@@ -268,6 +328,7 @@ async function loadPage() {
     if (activeApp.value) {
       await loadCategories(activeApp.value.knowledge_base_id, activeApp.value.category_id);
     }
+    await loadBusinessToolBindings(activeApp.value?.id ?? null);
     hasLoadedData.value = true;
   } catch (error) {
     if (hasLoadedData.value) {
@@ -300,6 +361,7 @@ function selectApp(appId: number) {
   previewNeedsRefresh.value = false;
   const nextApp = apps.value.find((item) => item.id === appId) ?? null;
   void loadCategories(nextApp?.knowledge_base_id ?? null, nextApp?.category_id ?? null);
+  void loadBusinessToolBindings(nextApp?.id ?? null);
 }
 
 async function handleToggleStatus(app: ProjectAppSummary, nextValue: boolean | string | number) {
@@ -389,6 +451,76 @@ async function handleAssistantChange(value: number | string | null) {
   const assistantId = Number(value);
   const nextAssistantId = Number.isInteger(assistantId) && assistantId > 0 ? assistantId : null;
   await saveActiveAppConfig("assistant", { default_assistant_id: nextAssistantId }, "已更新默认助手。");
+}
+
+async function handleBindBusinessTool() {
+  if (!projectId.value || !activeApp.value || !selectedBusinessToolId.value || bindingSaving.value) {
+    return;
+  }
+
+  bindingSaving.value = true;
+  try {
+    await bindProjectAppBusinessTool(projectId.value, activeApp.value.id, {
+      business_tool_id: selectedBusinessToolId.value,
+      enabled: true,
+    });
+    selectedBusinessToolId.value = null;
+    await loadBusinessToolBindings(activeApp.value.id);
+    if (previewEmbedUrl.value) {
+      previewNeedsRefresh.value = true;
+    }
+    ElMessage.success("业务工具已绑定。");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "绑定业务工具失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    bindingSaving.value = false;
+  }
+}
+
+async function handleToggleBusinessToolBinding(binding: ProjectAppBusinessToolBinding, enabled: boolean) {
+  if (!projectId.value || !activeApp.value || bindingSaving.value) {
+    return;
+  }
+  bindingSaving.value = true;
+  try {
+    await bindProjectAppBusinessTool(projectId.value, activeApp.value.id, {
+      business_tool_id: binding.business_tool_id,
+      enabled,
+    });
+    await loadBusinessToolBindings(activeApp.value.id);
+    ElMessage.success(enabled ? "业务工具授权已启用。" : "业务工具授权已停用。");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "更新业务工具授权失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    bindingSaving.value = false;
+  }
+}
+
+function handleBusinessToolBindingSwitch(binding: ProjectAppBusinessToolBinding, value: unknown) {
+  void handleToggleBusinessToolBinding(binding, Boolean(value));
+}
+
+async function handleUnbindBusinessTool(binding: ProjectAppBusinessToolBinding) {
+  if (!projectId.value || !activeApp.value || bindingSaving.value) {
+    return;
+  }
+
+  bindingSaving.value = true;
+  try {
+    await unbindProjectAppBusinessTool(projectId.value, activeApp.value.id, binding.id);
+    await loadBusinessToolBindings(activeApp.value.id);
+    if (previewEmbedUrl.value) {
+      previewNeedsRefresh.value = true;
+    }
+    ElMessage.success("业务工具已解绑。");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "解绑业务工具失败，请稍后重试。";
+    ElMessage.error(message);
+  } finally {
+    bindingSaving.value = false;
+  }
 }
 
 async function handleSaveAppBasicInfo() {
@@ -483,6 +615,7 @@ async function handleDeleteApp(app: ProjectAppSummary) {
     activeAppId.value = apps.value[0]?.id ?? null;
     previewEmbedUrl.value = "";
     previewNeedsRefresh.value = false;
+    await loadBusinessToolBindings(activeAppId.value);
     ElMessage.success(`已删除应用端“${app.name}”。`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "删除应用端失败，请稍后重试。";
@@ -513,7 +646,9 @@ async function generatePreview() {
 
   previewLoading.value = true;
   try {
-    const response = await createProjectAppEmbedPreview(projectId.value, activeApp.value.id);
+    const response = await createProjectAppEmbedPreview(projectId.value, activeApp.value.id, {
+      store_id: previewStoreId.value.trim() || null,
+    });
     previewEmbedUrl.value = response.embed_url;
     previewNeedsRefresh.value = false;
     ElMessage.success("已生成沙盒测试链接。");
@@ -550,7 +685,8 @@ Content-Type: application/json
   "project_code": "${projectCode}",
   "app_code": "${appCode}",
   "external_user_id": "YOUR_USER_ID",
-  "external_user_name": "张三"
+  "external_user_name": "张三",
+  "store_id": "STORE_ID"
 }`;
 });
 
@@ -575,6 +711,12 @@ watch(
     void loadPage();
   },
 );
+
+watch(previewStoreId, () => {
+  if (previewEmbedUrl.value) {
+    previewNeedsRefresh.value = true;
+  }
+});
 </script>
 
 <template>
@@ -793,6 +935,98 @@ watch(
             </div>
           </section>
 
+          <section class="project-app-workspace-page__business-tool-card">
+            <div class="project-app-workspace-page__config-header">
+              <div>
+                <h3>业务工具</h3>
+                <p>仅当前应用端明确授权的已发布工具，才会进入助手的可用能力清单。</p>
+              </div>
+              <router-link class="project-app-workspace-page__plain-link" to="/business-tools">
+                管理工具
+              </router-link>
+            </div>
+
+            <div v-loading="businessToolLoading" class="project-app-workspace-page__business-tool-body">
+              <div
+                v-if="businessToolBindings.length > 0"
+                class="project-app-workspace-page__binding-list"
+              >
+                <div
+                  v-for="binding in businessToolBindings"
+                  :key="binding.id"
+                  class="project-app-workspace-page__binding-row"
+                >
+                  <div class="project-app-workspace-page__binding-main">
+                    <div>
+                      <strong>{{ binding.name }}</strong>
+                      <span>{{ binding.tool_key }} · {{ formatBindingImplementationLabel(binding) }}</span>
+                    </div>
+                    <small v-if="binding.unavailable_reason">{{ binding.unavailable_reason }}</small>
+                  </div>
+                  <div class="project-app-workspace-page__binding-actions">
+                    <el-tag
+                      size="small"
+                      :type="binding.is_available ? 'success' : 'warning'"
+                      effect="plain"
+                    >
+                      {{ binding.is_available ? "助手可用" : "暂不可用" }}
+                    </el-tag>
+                    <el-switch
+                      :model-value="binding.enabled"
+                      :loading="bindingSaving"
+                      aria-label="切换工具授权"
+                      @change="handleBusinessToolBindingSwitch(binding, $event)"
+                    />
+                    <el-button
+                      link
+                      type="danger"
+                      :loading="bindingSaving"
+                      @click="handleUnbindBusinessTool(binding)"
+                    >
+                      解绑
+                    </el-button>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else class="project-app-workspace-page__binding-empty">
+                <strong>当前应用端还没有业务工具</strong>
+                <span>授权后，助手会根据用户问题在这些工具中选择调用。</span>
+              </div>
+
+              <div class="project-app-workspace-page__binding-form">
+                <el-select
+                  v-model="selectedBusinessToolId"
+                  clearable
+                  filterable
+                  placeholder="选择要绑定的工具"
+                  class="project-app-workspace-page__binding-select"
+                  :disabled="availableBusinessTools.length === 0 || bindingSaving"
+                >
+                  <el-option
+                    v-for="tool in availableBusinessTools"
+                    :key="tool.id"
+                    :label="`${tool.name} · ${formatToolImplementationLabel(tool)}`"
+                    :value="tool.id"
+                  >
+                    <div class="project-app-workspace-page__tool-option">
+                      <span>{{ tool.name }}</span>
+                      <small>{{ tool.tool_key }} · {{ formatToolImplementationLabel(tool) }}</small>
+                    </div>
+                  </el-option>
+                </el-select>
+                <el-button
+                  type="primary"
+                  :disabled="!selectedBusinessToolId"
+                  :loading="bindingSaving"
+                  @click="handleBindBusinessTool"
+                >
+                  授权工具
+                </el-button>
+              </div>
+            </div>
+          </section>
+
           <section class="project-app-workspace-page__access-card">
             <div class="project-app-workspace-page__access-header">
               <div>
@@ -833,16 +1067,25 @@ watch(
             <div>
               <h3>沙盒测试</h3>
             </div>
-            <el-button
-              link
-              class="project-app-workspace-page__refresh-button"
-              :disabled="!canPreviewActiveApp"
-              :loading="previewLoading"
-              @click="generatePreview"
-            >
-              <el-icon><Refresh /></el-icon>
-              {{ previewEmbedUrl || previewNeedsRefresh ? "刷新测试" : "生成测试" }}
-            </el-button>
+            <div class="project-app-workspace-page__sandbox-actions">
+              <el-input
+                v-model="previewStoreId"
+                clearable
+                maxlength="120"
+                placeholder="门店 ID"
+                class="project-app-workspace-page__sandbox-store"
+              />
+              <el-button
+                link
+                class="project-app-workspace-page__refresh-button"
+                :disabled="!canPreviewActiveApp"
+                :loading="previewLoading"
+                @click="generatePreview"
+              >
+                <el-icon><Refresh /></el-icon>
+                {{ previewEmbedUrl || previewNeedsRefresh ? "刷新测试" : "生成测试" }}
+              </el-button>
+            </div>
           </div>
 
           <div class="project-app-workspace-page__sandbox-body">
@@ -1190,6 +1433,7 @@ watch(
 
 .project-app-workspace-page__status-card,
 .project-app-workspace-page__config-card,
+.project-app-workspace-page__business-tool-card,
 .project-app-workspace-page__access-card,
 .project-app-workspace-page__sandbox {
   border: 1px solid var(--admin-border);
@@ -1286,6 +1530,10 @@ watch(
   overflow: hidden;
 }
 
+.project-app-workspace-page__business-tool-card {
+  overflow: hidden;
+}
+
 .project-app-workspace-page__config-header,
 .project-app-workspace-page__access-header {
   justify-content: space-between;
@@ -1300,6 +1548,18 @@ watch(
 
 .project-app-workspace-page__link-button {
   border-radius: 10px;
+}
+
+.project-app-workspace-page__plain-link {
+  flex-shrink: 0;
+  color: var(--admin-primary);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.project-app-workspace-page__plain-link:hover {
+  color: var(--admin-primary-strong);
 }
 
 .project-app-workspace-page__config-list {
@@ -1379,6 +1639,106 @@ watch(
 .project-app-workspace-page__row-icon--assistant {
   background: #ecfdf5;
   color: #059669;
+}
+
+.project-app-workspace-page__business-tool-body {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.project-app-workspace-page__binding-list {
+  display: grid;
+  gap: 8px;
+}
+
+.project-app-workspace-page__binding-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: var(--admin-radius-md);
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.project-app-workspace-page__binding-row strong,
+.project-app-workspace-page__binding-row span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-app-workspace-page__binding-main {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.project-app-workspace-page__binding-main small {
+  color: #b45309;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.project-app-workspace-page__binding-row strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.project-app-workspace-page__binding-row span {
+  margin-top: 4px;
+  color: var(--admin-text-muted);
+  font-size: 12px;
+}
+
+.project-app-workspace-page__binding-actions,
+.project-app-workspace-page__binding-form {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-app-workspace-page__binding-empty {
+  display: grid;
+  gap: 5px;
+  border: 1px dashed #cbd5e1;
+  border-radius: var(--admin-radius-md);
+  background: #f8fafc;
+  color: var(--admin-text-muted);
+  font-size: 13px;
+  padding: 18px;
+  text-align: center;
+}
+
+.project-app-workspace-page__binding-empty strong {
+  color: var(--admin-text-secondary);
+  font-size: 13px;
+}
+
+.project-app-workspace-page__binding-empty span {
+  color: var(--admin-text-muted);
+  font-size: 12px;
+}
+
+.project-app-workspace-page__tool-option {
+  display: grid;
+  gap: 2px;
+}
+
+.project-app-workspace-page__tool-option small {
+  color: var(--admin-text-subtle);
+  font-size: 11px;
+}
+
+.project-app-workspace-page__binding-select {
+  flex: 1;
+  min-width: 0;
 }
 
 .project-app-workspace-page__terminal-icon--web {
@@ -1466,6 +1826,16 @@ watch(
   border-bottom: 1px solid #eef2f7;
   background: #ffffff;
   padding: 20px 22px;
+}
+
+.project-app-workspace-page__sandbox-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.project-app-workspace-page__sandbox-store {
+  width: 180px;
 }
 
 .project-app-workspace-page__refresh-button {
@@ -1659,9 +2029,28 @@ watch(
     flex-direction: column;
   }
 
+  .project-app-workspace-page__binding-row,
+  .project-app-workspace-page__binding-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .project-app-workspace-page__config-control {
     width: 100%;
     margin-left: 0;
+  }
+
+  .project-app-workspace-page__binding-actions {
+    justify-content: space-between;
+  }
+
+  .project-app-workspace-page__sandbox-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .project-app-workspace-page__sandbox-store {
+    width: 100%;
   }
 
   .project-app-workspace-page__access-list {

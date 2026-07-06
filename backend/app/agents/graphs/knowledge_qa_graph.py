@@ -9,8 +9,8 @@ from langgraph.graph import END, StateGraph
 from app.agents.common.knowledge_question_analysis import build_knowledge_question_analysis
 from app.agents.common.node_logging import log_node_info
 from app.agents.common.streaming import emit_activity, get_optional_stream_writer
+from app.agents.common.workflow_result import build_knowledge_workflow_result
 from app.agents.nodes.kb_chat import (
-    build_kb_chat_answer_node,
     kb_chat_retrieve_node,
     kb_chat_rewrite_query_node,
 )
@@ -27,12 +27,7 @@ def create_knowledge_qa_graph(
     """Create the reusable knowledge-base QA subgraph."""
 
     planner_factory = planner_llm_factory or llm_factory
-    answer_factory = answer_llm_factory or llm_factory
     workflow = StateGraph(KnowledgeQaState)
-    compose_node = build_kb_chat_answer_node(
-        llm_factory=answer_factory,
-        node_id="compose_answer",
-    )
 
     async def _analyze_question_node(state: KnowledgeQaState) -> dict[str, Any]:
         emit_activity(
@@ -43,31 +38,27 @@ def create_knowledge_qa_graph(
             message="正在分析知识库问题",
             display_stage="understand",
             display_title="🤔 思考您的问题",
-            activity_text="正在判断问题重点",
+            activity_text="判断问题重点",
         )
-        page_context = dict(state.get("page_context") or {})
-        page_config = dict(state.get("page_config") or {})
+        intent = dict(state.get("intent") or {})
+        goal = str(intent.get("goal") or state.get("query") or "").strip()
         analysis = await build_knowledge_question_analysis(
-            str(state.get("query") or ""),
-            chat_history=list(state.get("chat_history") or []),
-            memory_summary=state.get("memory_summary"),
-            page_type=page_context.get("page_type") or page_config.get("page_type"),
+            goal,
             llm_factory=planner_factory,
         )
         result = {
             "question_type": analysis["question_type"],
             "retrieval_complexity": analysis["retrieval_complexity"],
-            "retrieval_required": True,
             "candidate_entities": list(analysis.get("entities") or []),
-            "question_intent": {
+            "retrieval_analysis": {
                 "question_type": analysis["question_type"],
+                "retrieval_complexity": analysis["retrieval_complexity"],
                 "entities": list(analysis.get("entities") or []),
                 "needs_path": bool(analysis.get("needs_path")),
                 "needs_relation": bool(analysis.get("needs_relation")),
                 "needs_summary": bool(analysis.get("needs_summary")),
+                "reason": analysis.get("reason") or "",
             },
-            "route_reason": analysis.get("reason") or "",
-            "question_analysis": analysis,
         }
         log_node_info(
             workflow_id="knowledge_qa",
@@ -75,9 +66,9 @@ def create_knowledge_qa_graph(
             node_name="分析问题",
             details={
                 "问题类型": result.get("question_type"),
-                "问题复杂度": result.get("retrieval_complexity"),
+                "检索复杂度": result.get("retrieval_complexity"),
                 "候选实体数": len(result.get("candidate_entities") or []),
-                "判断原因": result.get("route_reason"),
+                "判断原因": analysis.get("reason"),
             },
         )
         emit_activity(
@@ -88,7 +79,7 @@ def create_knowledge_qa_graph(
             message="已分析知识库问题",
             display_stage="understand",
             display_title="🤔 思考您的问题",
-            activity_text="已明确需要查找的资料方向",
+            activity_text="已明确资料检索需求",
             activity_status="completed",
         )
         return result
@@ -102,7 +93,7 @@ def create_knowledge_qa_graph(
             message="正在规划知识库检索",
             display_stage="execute",
             display_title="🔍 查阅相关资料",
-            activity_text="正在确定资料查找范围",
+            activity_text="确定资料查找范围",
         )
         question_type = str(state.get("question_type") or "definition_lookup")
         retrieval_complexity = str(state.get("retrieval_complexity") or "standard")
@@ -238,33 +229,21 @@ def create_knowledge_qa_graph(
             workflow_id="knowledge_qa",
             node_id="compose_answer",
             stage="compose",
-            message="正在整理知识库回复",
+            message="正在整理知识库结果",
             display_stage="compose",
             display_title="💡 总结最终结果",
-            activity_text="正在把查到的资料整理成回复",
+            activity_text="整理可用于回答的知识库资料",
         )
-        result = await compose_node(state)
-        answer_trace = dict(result.get("answer_trace") or {})
-        knowledge_answer = {
-            "text": result.get("answer") or "",
-            "status": result.get("answer_status"),
-            "citations": list(state.get("retrieved_docs") or []),
-            "metadata": {
-                "retrieved_count": len(state.get("retrieved_docs") or []),
-                "context_length": len(state.get("context") or ""),
-            },
-        }
-        result["knowledge_answer"] = knowledge_answer
+        workflow_result = build_knowledge_workflow_result(state)
+        retrieved_docs = list(state.get("retrieved_docs") or [])
         log_node_info(
             workflow_id="knowledge_qa",
             node_id="compose_answer",
             node_name="组织回答",
             details={
-                "回答状态": result.get("answer_status"),
-                "回答长度": len(result.get("answer") or ""),
-                "输出Token估算": answer_trace.get("output_tokens"),
-                "首Token耗时毫秒": answer_trace.get("first_token_latency_ms"),
-                "总耗时毫秒": answer_trace.get("latency_ms"),
+                "结果状态": workflow_result.get("status"),
+                "主证据数": len(retrieved_docs),
+                "上下文长度": len(state.get("context") or ""),
             },
         )
         emit_activity(
@@ -272,13 +251,18 @@ def create_knowledge_qa_graph(
             workflow_id="knowledge_qa",
             node_id="compose_answer",
             stage="compose",
-            message="知识库回复整理完成",
+            message="知识库结果整理完成",
             display_stage="compose",
             display_title="💡 总结最终结果",
-            activity_text="已整理好知识库回复",
+            activity_text="已整理好知识库资料",
             activity_status="completed",
         )
-        return result
+        return {
+            "workflow_result": workflow_result,
+            "answer_status": workflow_result.get("answer_status"),
+            "retrieved_docs": retrieved_docs,
+            "backend_citations": retrieved_docs,
+        }
 
     workflow.add_node("analyze_question", _analyze_question_node)
     workflow.add_node("plan_retrieval", _plan_retrieval_node)

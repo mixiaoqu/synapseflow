@@ -55,7 +55,6 @@ export interface ChatWorkflowRun {
   displayStages: WorkflowDisplayStage[];
   currentWorkflowId?: string;
   currentNodeId?: string;
-  currentDisplayStageId?: string;
   startedAt: number;
   endedAt?: number;
   durationMs?: number;
@@ -81,10 +80,6 @@ function eventData(event: SseEnvelope): Record<string, unknown> {
   return event.data && typeof event.data === "object" && !Array.isArray(event.data)
     ? event.data
     : {};
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function cloneRun(run: ChatWorkflowRun): ChatWorkflowRun {
@@ -168,23 +163,6 @@ function ensureNode(
   return node;
 }
 
-function parseDisplayStages(value: unknown): Array<Pick<WorkflowDisplayStage, "id" | "title">> {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((item) => {
-      if (!isRecord(item)) {
-        return null;
-      }
-      const id = normalizeText(item.id);
-      const title = normalizeText(item.title);
-      return id && title ? { id, title } : null;
-    })
-    .filter((item): item is Pick<WorkflowDisplayStage, "id" | "title"> => Boolean(item));
-}
-
 function normalizeActivityStatus(value: unknown): WorkflowDisplayActivityStatus {
   const status = normalizeText(value);
   if (status === "completed" || status === "success") {
@@ -194,25 +172,6 @@ function normalizeActivityStatus(value: unknown): WorkflowDisplayActivityStatus 
     return "error";
   }
   return "running";
-}
-
-function applyDisplayStagePlan(run: ChatWorkflowRun, data: Record<string, unknown>) {
-  const stages = parseDisplayStages(data.display_stages);
-  if (stages.length === 0) {
-    return;
-  }
-
-  const existingById = new Map(run.displayStages.map((stage) => [stage.id, stage]));
-  run.displayStages = stages.map((stage, index) => {
-    const existing = existingById.get(stage.id);
-    return {
-      id: stage.id,
-      title: stage.title,
-      status: existing?.status ?? (index === 0 ? "running" : "pending"),
-      activities: existing?.activities ?? [],
-    };
-  });
-  run.currentDisplayStageId = run.currentDisplayStageId ?? run.displayStages[0]?.id;
 }
 
 function ensureDisplayStage(
@@ -248,7 +207,6 @@ function moveDisplayStage(run: ChatWorkflowRun, stageId: string, status: Workflo
     return;
   }
 
-  run.currentDisplayStageId = stageId;
   run.displayStages.forEach((stage, index) => {
     if (index < currentIndex && stage.status !== "error") {
       stage.status = "success";
@@ -267,8 +225,8 @@ function moveDisplayStage(run: ChatWorkflowRun, stageId: string, status: Workflo
 
 function applyDisplayActivity(run: ChatWorkflowRun, data: Record<string, unknown>, at: number) {
   const stageId = normalizeText(data.display_stage);
-  const activityText = normalizeText(data.activity_text);
-  if (!stageId && !activityText) {
+  const activityText = normalizeText(data.activity_text) || normalizeText(data.message);
+  if (!stageId || !activityText) {
     return;
   }
 
@@ -367,7 +325,16 @@ export function reduceWorkflowRunEvent(
     run.id = event.run_id;
   }
   run.startedAt = run.startedAt || at;
-  applyDisplayStagePlan(run, data);
+
+  if (
+    run.status === "done" &&
+    event.type !== "complete" &&
+    event.type !== "workflow_complete" &&
+    event.type !== "error"
+  ) {
+    return run;
+  }
+
   applyDisplayActivity(run, data, at);
 
   if (event.type === "start") {
@@ -377,7 +344,7 @@ export function reduceWorkflowRunEvent(
     return run;
   }
 
-  if (event.type === "complete") {
+  if (event.type === "complete" || event.type === "workflow_complete") {
     run.status = "done";
     run.message = "处理完成";
     run.endedAt = at;
@@ -393,11 +360,10 @@ export function reduceWorkflowRunEvent(
     run.error = { message };
     run.endedAt = at;
     run.durationMs = Math.max(0, at - run.startedAt);
-    const currentStage = run.displayStages.find(
-      (stage) => stage.id === run.currentDisplayStageId,
-    );
-    if (currentStage) {
-      currentStage.status = "error";
+    for (const stage of run.displayStages) {
+      if (stage.status === "running") {
+        stage.status = "error";
+      }
     }
   }
 
@@ -458,47 +424,6 @@ export function reduceWorkflowRunEvent(
   }
 
   return run;
-}
-
-export function getCurrentWorkflowDisplayStage(run: ChatWorkflowRun | null) {
-  if (!run || run.displayStages.length === 0) {
-    return null;
-  }
-
-  if (run.currentDisplayStageId) {
-    const currentStage = run.displayStages.find((stage) => stage.id === run.currentDisplayStageId);
-    if (currentStage && currentStage.status !== "success") {
-      return currentStage;
-    }
-  }
-
-  return (
-    run.displayStages.find((stage) => stage.status === "running") ||
-    run.displayStages.find((stage) => stage.status === "error") ||
-    run.displayStages[run.displayStages.length - 1] ||
-    null
-  );
-}
-
-export function getWorkflowRunMessage(run: ChatWorkflowRun | null) {
-  if (!run) {
-    return null;
-  }
-
-  if (run.status === "error") {
-    return run.error?.message || run.message || "请求失败";
-  }
-
-  const currentStage = getCurrentWorkflowDisplayStage(run);
-  const currentActivity = currentStage?.activities[currentStage.activities.length - 1];
-  if (currentActivity?.text) {
-    return currentActivity.text;
-  }
-  if (currentStage?.title) {
-    return currentStage.status === "success" ? currentStage.title : `正在${currentStage.title}`;
-  }
-
-  return run.message || null;
 }
 
 export function getWorkflowDisplayStages(run: ChatWorkflowRun | null) {

@@ -18,6 +18,7 @@ class AgentEventType(str, Enum):
     LOG = "log"
     NODE_START = "node_start"
     NODE_COMPLETE = "node_complete"
+    WORKFLOW_COMPLETE = "workflow_complete"
     ERROR = "error"
     COMPLETE = "complete"
     RETRIEVED = "retrieved"

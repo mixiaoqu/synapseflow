@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, cast
 
 from fastapi import HTTPException
 from loguru import logger
@@ -19,21 +19,25 @@ from app.application.stream_events import (
     emit_node_start,
     emit_progress,
     emit_start,
+    emit_workflow_complete,
 )
 from app.application.workflow_meta import (
-    get_display_stage_plan,
+    OUTPUT_NODE_IDS,
     get_node_label,
-    get_node_workflow_id,
+    normalize_activity_payload,
 )
-from app.core.config.settings import settings
-from app.db.session import AsyncSessionLocal
 from app.db.models import ContentRiskLog
+from app.db.session import AsyncSessionLocal
 from app.repositories.content_risk_log_repository import ContentRiskLogRepository
 from app.repositories.kb_chat_log_repository import KbChatLogRepository
 from app.services.chat_memory import (
     ChatMemoryContext,
     ChatMemoryStore,
     DatabaseChatMemoryStore,
+)
+from app.services.chat_memory_summary import (
+    ChatMemorySummaryService,
+    ChatMemorySummaryStore,
 )
 from app.services.content_risk_detection_service import (
     ContentRiskDetectionResult,
@@ -60,12 +64,18 @@ class KbChatService(BaseAgentService):
         llm_factory: Callable[[], Any] | None = None,
         graph: Any | None = None,
         memory_store: ChatMemoryStore | None = None,
+        memory_summary_service: ChatMemorySummaryService | None = None,
         content_risk_detection_service: Any | None = None,
     ):
         self._llm_factory = llm_factory
         self._graph = graph
         self._workflow_id = "agent"
         self._memory_store = memory_store or DatabaseChatMemoryStore()
+        self._memory_summary_service = memory_summary_service
+        if self._memory_summary_service is None and isinstance(
+            self._memory_store, DatabaseChatMemoryStore
+        ):
+            self._memory_summary_service = ChatMemorySummaryService()
         self._content_risk_detection_service = (
             content_risk_detection_service or get_content_risk_detection_service()
         )
@@ -139,43 +149,14 @@ class KbChatService(BaseAgentService):
                 "knowledge_base_ids": list(getattr(request, "knowledge_base_ids", None) or []),
                 "chat_history": history,
                 "memory_summary": memory_summary,
-                "retrieval_execution_plan": {},
-                "semantic_queries": [],
-                "lexical_terms": [],
-                "candidate_entities": [],
-                "relation_pairs": [],
-                "relation_queries": [],
-                "target_attributes": [],
-                "entity_constraints": {},
                 "allowed_document_statuses": list(
                     getattr(request, "allowed_document_statuses", None)
                     or VISIBLE_ASK_DOCUMENT_STATUSES
                 ),
                 "retrieved_docs": [],
-                "context": "",
                 "answer": "",
-                "question_type": None,
-                "retrieval_complexity": "standard",
-                "retrieval_required": True,
-                "route_reason": "",
-                "route_trace": {},
-                "plan_trace": {},
-                "rewrite_trace": {},
-                "retrieval_trace": {},
-                "graph_facts": {
-                    "text": [],
-                    "entities": [],
-                    "relations": [],
-                    "paths": [],
-                    "evidence": [],
-                },
-                "reranked_primary_evidence_docs": [],
-                "primary_evidence_docs": [],
-                "supporting_evidence_docs": [],
-                "primary_context": "",
-                "supporting_context": "",
+                "workflow_result": {},
                 "answer_status": "",
-                "answer_trace": {},
             },
         )
         return state
@@ -287,6 +268,21 @@ class KbChatService(BaseAgentService):
                 ),
             },
         )
+        if self._memory_summary_service is not None:
+            try:
+                await self._memory_summary_service.refresh(
+                    cast(ChatMemorySummaryStore, self._memory_store),
+                    user_id=int(user_id) if user_id else None,
+                    session_id=session_id,
+                    project_app_id=state.get("project_app_id"),
+                    external_user_id=state.get("external_user_id"),
+                )
+            except Exception as exc:
+                logger.exception(
+                    "[Chat Memory] failed to refresh session summary | session_id={} error={}",
+                    session_id,
+                    exc,
+                )
 
     @staticmethod
     def _parse_stream_chunk(chunk: Any) -> tuple[str | None, dict[str, Any]]:
@@ -308,18 +304,12 @@ class KbChatService(BaseAgentService):
 
     @staticmethod
     def _node_progress_message(node_id: str) -> str:
-        if node_id == "load_context":
-            return "正在加载会话上下文..."
-        if node_id == "understand":
+        if node_id == "decide":
             return "正在理解问题..."
-        if node_id == "route":
-            return "正在匹配处理能力..."
         if node_id == "clarify":
             return "正在生成澄清问题..."
-        if node_id == "plan":
-            return "正在制定执行计划..."
-        if node_id == "execute":
-            return "正在执行计划..."
+        if node_id == "invoke":
+            return "正在调用处理能力..."
         if node_id == "respond":
             return "正在整理最终响应..."
         if node_id == "analyze_question":
@@ -337,48 +327,31 @@ class KbChatService(BaseAgentService):
         if node_id == "execute_operation":
             return "正在查询业务数据..."
         if node_id == "compose_result":
-            return "正在整理业务结果..."
+            return "正在整理处理结果..."
         return "正在处理..."
 
     @staticmethod
     def _node_summary(node_id: str, state: dict[str, Any]) -> dict[str, Any]:
-        if node_id == "load_context":
+        if node_id == "decide":
+            decision = state.get("decision") or {}
+            intent = decision.get("intent") or {}
             return {
-                "session_id": state.get("session_id"),
-                "knowledge_base_id": state.get("knowledge_base_id"),
-                "category_id": state.get("category_id"),
-            }
-        if node_id == "understand":
-            intent = state.get("intent") or {}
-            return {
-                "intent_type": intent.get("type"),
-                "needs_clarification": intent.get("needs_clarification"),
-                "missing_fields": intent.get("missing_fields"),
-                "direct_answer_kind": intent.get("direct_answer_kind"),
-                "reason": intent.get("reason") or state.get("route_reason"),
-            }
-        if node_id == "route":
-            route = state.get("route") or {}
-            return {
-                "target_type": route.get("target_type"),
-                "target_id": route.get("target_id"),
-                "reason": route.get("reason"),
+                "action": decision.get("action"),
+                "intent_kind": intent.get("kind"),
+                "capability_id": decision.get("capability_id"),
+                "missing_fields": decision.get("missing_fields"),
+                "reason": decision.get("reason"),
             }
         if node_id == "clarify":
             clarification = state.get("clarification") or {}
             return {
                 "missing_fields": clarification.get("missing_fields"),
             }
-        if node_id == "plan":
-            plan = state.get("plan") or state.get("action_plan") or {}
-            steps = list(plan.get("steps") or [])
+        if node_id == "invoke":
+            workflow_result = state.get("workflow_result") or {}
             return {
-                "step_count": len(steps),
-            }
-        if node_id == "execute":
-            execution = state.get("execution") or {}
-            return {
-                "status": execution.get("status"),
+                "capability_id": (state.get("decision") or {}).get("capability_id"),
+                "status": workflow_result.get("status"),
                 "retrieved_count": len(state.get("retrieved_docs", [])),
                 "answer_status": state.get("answer_status"),
             }
@@ -389,11 +362,12 @@ class KbChatService(BaseAgentService):
                 "retrieved_count": len(state.get("retrieved_docs", [])),
             }
         if node_id == "analyze_question":
+            retrieval_analysis = state.get("retrieval_analysis") or {}
             return {
                 "question_type": state.get("question_type"),
                 "retrieval_complexity": state.get("retrieval_complexity"),
                 "candidate_entity_count": len(state.get("candidate_entities", []) or []),
-                "reason": state.get("route_reason"),
+                "reason": retrieval_analysis.get("reason"),
             }
         if node_id == "plan_retrieval":
             execution_plan = state.get("retrieval_execution_plan") or {}
@@ -422,7 +396,14 @@ class KbChatService(BaseAgentService):
                 "retrieved_count": len(state.get("retrieved_docs", [])),
             }
         if node_id == "compose_answer":
-            return {"answer_length": len(state.get("answer", ""))}
+            workflow_result = state.get("workflow_result") or {}
+            evidence = workflow_result.get("evidence") or {}
+            data = evidence.get("data") or {}
+            return {
+                "status": workflow_result.get("status"),
+                "answer_status": workflow_result.get("answer_status"),
+                "retrieved_count": len(data.get("retrieved_docs") or state.get("retrieved_docs", [])),
+            }
         if node_id == "analyze_request":
             request_info = state.get("business_request") or {}
             return {
@@ -443,7 +424,15 @@ class KbChatService(BaseAgentService):
                 "missing_field_count": len(result.get("missing_fields") or []),
             }
         if node_id == "compose_result":
-            return {"answer_length": len(state.get("answer", ""))}
+            workflow_result = state.get("workflow_result") or {}
+            evidence = workflow_result.get("evidence") or {}
+            data = evidence.get("data") or {}
+            business_result = data.get("business_result") or {}
+            return {
+                "status": workflow_result.get("status"),
+                "answer_status": workflow_result.get("answer_status"),
+                "total": business_result.get("total"),
+            }
         return {"keys": sorted(state.keys())}
 
     @staticmethod
@@ -1335,6 +1324,7 @@ class KbChatService(BaseAgentService):
         workflow_id = str(state.get("workflow_id") or self._workflow_id)
         graph = self._get_graph()
         started_nodes: set[tuple[str, str]] = set()
+        workflow_completed_for_answer = False
         final_state = dict(state)
         started_at = perf_counter()
 
@@ -1388,7 +1378,7 @@ class KbChatService(BaseAgentService):
 
                 if chunk_type == "updates":
                     for node_id, node_state in chunk_data.items():
-                        node_workflow_id = get_node_workflow_id(workflow_id, node_id)
+                        node_workflow_id = workflow_id
                         node_key = (node_workflow_id, node_id)
                         node_name = get_node_label(node_workflow_id, node_id)
                         if node_key not in started_nodes:
@@ -1402,25 +1392,7 @@ class KbChatService(BaseAgentService):
                             started_nodes.add(node_key)
 
                         final_state.update(node_state)
-                        if node_id == "route":
-                            route = dict(node_state.get("route") or {})
-                            target_id = str(route.get("target_id") or "direct_answer")
-                            yield emit_progress(
-                                run_id,
-                                workflow_id=node_workflow_id,
-                                node_id=node_id,
-                                node_name=node_name,
-                                message="已确认处理方式",
-                                data={
-                                    "display_stages": get_display_stage_plan(target_id),
-                                    "display_stage": "understand",
-                                    "display_title": "🤔 思考您的问题",
-                                    "activity_text": "已明确本次问题的处理方式",
-                                    "activity_status": "completed",
-                                },
-                            )
-
-                        if node_id in {"retrieve_knowledge", "execute"}:
+                        if node_id == "retrieve_knowledge":
                             yield emit_event(
                                 AgentEventType.RETRIEVED,
                                 {"retrieved_docs": node_state.get("retrieved_docs", [])},
@@ -1439,9 +1411,11 @@ class KbChatService(BaseAgentService):
                         )
                 elif chunk_type == "custom":
                     node_id = str(chunk_data.get("node_id") or "compose_answer")
-                    node_workflow_id = str(
-                        chunk_data.get("workflow_id") or get_node_workflow_id(workflow_id, node_id)
-                    )
+                    node_workflow_id = str(chunk_data.get("workflow_id") or "").strip()
+                    if not node_workflow_id:
+                        raise ValueError(
+                            f"Custom stream event is missing workflow_id: node_id={node_id}"
+                        )
                     node_key = (node_workflow_id, node_id)
                     node_name = get_node_label(node_workflow_id, node_id)
                     if chunk_data.get("type") == "node_complete":
@@ -1499,11 +1473,16 @@ class KbChatService(BaseAgentService):
                             node_id=node_id,
                             node_name=node_name,
                             message=message,
-                            data={
-                                key: value
-                                for key, value in chunk_data.items()
-                                if key not in {"type", "workflow_id", "node_id", "message"}
-                            },
+                            data=normalize_activity_payload(
+                                workflow_id=node_workflow_id,
+                                node_id=node_id,
+                                node_name=node_name,
+                                payload={
+                                    key: value
+                                    for key, value in chunk_data.items()
+                                    if key not in {"type", "workflow_id", "node_id", "message"}
+                                },
+                            ),
                         )
                         continue
 
@@ -1519,6 +1498,9 @@ class KbChatService(BaseAgentService):
 
                     text = chunk_data.get("text")
                     if text:
+                        if node_id in OUTPUT_NODE_IDS and not workflow_completed_for_answer:
+                            yield emit_workflow_complete(run_id, workflow_id=workflow_id)
+                            workflow_completed_for_answer = True
                         yield emit_event(
                             AgentEventType.TOKEN,
                             {"text": text},

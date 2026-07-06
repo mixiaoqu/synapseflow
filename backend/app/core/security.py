@@ -41,6 +41,7 @@ def create_embed_token(
     project_app_id: int,
     external_user_id: str,
     external_user_name: str | None = None,
+    store_id: str | None = None,
     initial_page_type: str | None = None,
     expires_delta: timedelta | None = None,
 ) -> str:
@@ -56,6 +57,7 @@ def create_embed_token(
         "project_app_id": project_app_id,
         "external_user_id": external_user_id,
         "external_user_name": external_user_name,
+        "store_id": store_id,
         "initial_page_type": initial_page_type,
         "exp": expire_at,
     }

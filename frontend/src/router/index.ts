@@ -7,6 +7,12 @@ import { useAdminBreadcrumbStore } from "@/stores/admin-breadcrumb";
 import LoginPage from "@/modules/auth/pages/LoginPage.vue";
 import AssistantDetailPage from "@/modules/assistants/pages/AssistantDetailPage.vue";
 import AssistantListPage from "@/modules/assistants/pages/AssistantListPage.vue";
+import BusinessApiDetailPage from "@/modules/business-tools/pages/BusinessApiDetailPage.vue";
+import BusinessApiPage from "@/modules/business-tools/pages/BusinessApiPage.vue";
+import BusinessToolListPage from "@/modules/business-tools/pages/BusinessToolListPage.vue";
+import BusinessConnectionPage from "@/modules/business-tools/pages/BusinessConnectionPage.vue";
+import BusinessToolCallLogPage from "@/modules/business-tools/pages/BusinessToolCallLogPage.vue";
+import BusinessToolDetailPage from "@/modules/business-tools/pages/BusinessToolDetailPage.vue";
 import ContentRiskLibrariesPage from "@/modules/content-risk/pages/ContentRiskLibrariesPage.vue";
 import ContentRiskLogsPage from "@/modules/content-risk/pages/ContentRiskLogsPage.vue";
 import EmbedAssistantPage from "@/modules/embed/pages/EmbedAssistantPage.vue";
@@ -191,6 +197,85 @@ const router = createRouter({
             parent: "assistants",
             title: "助手详情",
             description: "编辑助手配置并进行预览调试。",
+          },
+        },
+        {
+          path: "business-tools",
+          name: "business-tools",
+          component: BusinessToolListPage,
+          meta: {
+            title: "业务工具",
+            description: "维护可供智能助手调用的外部业务接口工具。",
+          },
+        },
+        {
+          path: "business-tools/connections",
+          name: "business-tool-connections",
+          component: BusinessConnectionPage,
+          meta: {
+            parent: "business-tools",
+            title: "业务连接",
+            description: "管理外部业务系统地址、环境和鉴权引用。",
+          },
+        },
+        {
+          path: "business-tools/apis",
+          name: "business-tool-apis",
+          component: BusinessApiPage,
+          meta: {
+            parent: "business-tools",
+            title: "业务接口",
+            description: "维护可被业务工具复用的外部接口定义。",
+          },
+        },
+        {
+          path: "business-tools/apis/new",
+          name: "business-tool-api-create",
+          component: BusinessApiDetailPage,
+          meta: {
+            parent: "business-tool-apis",
+            title: "新建业务接口",
+            description: "创建一份可供业务工具实现复用的外部接口定义。",
+          },
+        },
+        {
+          path: "business-tools/apis/:apiId",
+          name: "business-tool-api-detail",
+          component: BusinessApiDetailPage,
+          meta: {
+            parent: "business-tool-apis",
+            title: "业务接口详情",
+            description: "编辑外部接口结构、请求字段和响应字段定义。",
+          },
+        },
+        {
+          path: "business-tools/logs",
+          name: "business-tool-logs",
+          component: BusinessToolCallLogPage,
+          meta: {
+            parent: "business-tools",
+            title: "业务工具调用记录",
+            description: "查看工具调用状态、耗时和脱敏请求响应摘要。",
+          },
+        },
+        {
+          path: "business-tools/new",
+          name: "business-tool-create",
+          component: BusinessToolDetailPage,
+          meta: {
+            parent: "business-tools",
+            title: "新建业务工具",
+            description: "定义业务能力、绑定实现并发布给应用使用。",
+          },
+        },
+        {
+          path: "business-tools/:toolId",
+          name: "business-tool-detail",
+          component: BusinessToolDetailPage,
+          meta: {
+            parent: "business-tools",
+            title: "业务工具详情",
+            description: "编辑业务能力、工具实现、测试配置与发布状态。",
           },
         },
         {

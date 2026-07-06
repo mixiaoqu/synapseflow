@@ -1,20 +1,29 @@
-"""Top-level intent routing helper for agent workflows."""
+"""Top-level decision helper for the agent workflow."""
 
 from __future__ import annotations
 
+import json
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from app.agents.common.llm_json import parse_llm_json_object
+from app.agents.runtime.capabilities import CapabilityDefinition
 from app.core.llm import get_llm_for_planner
 
-ALLOWED_INTENT_TYPES = {"knowledge_qa", "business_ops", "clarify", "direct_answer"}
-ALLOWED_DIRECT_ANSWER_KINDS = {"chitchat", "out_of_scope"}
+ALLOWED_ACTIONS = {"invoke", "clarify", "respond", "unsupported"}
+ALLOWED_INTENT_KINDS = {
+    "information",
+    "data_query",
+    "action",
+    "conversation",
+    "unclear",
+}
+ALLOWED_RESPONSE_KINDS = {"out_of_scope"}
 BUSINESS_OPS_HINT_PATTERN = re.compile(
-    r"(商品|库存|价格|售价|条码|sku|SKU|查一下|查询|搜索).*(商品|库存|价格|售价|条码|sku|SKU|可乐)"
-    r"|(?:可乐|雪碧|冰红茶|矿泉水).*(库存|价格|售价|有没有|有吗)"
-    r"|(?:查询|查一下|搜索|查找|看看|统计|列出).*(订单|会员|门店|客户|用户|记录|数据|数据库|表|商品|库存|价格)"
-    r"|(?:订单|会员|门店|客户|用户|记录|数据|数据库|表).*(查询|查一下|搜索|查找|统计|列表|明细|数量)"
+    r"(?:查询|查一下|搜索|查找|获取|读取|查看|统计|列出|创建|更新|提交|取消|同步)"
+    r".*(?:订单|会员|门店|客户|用户|记录|数据|商品|库存|价格|物流|账户|工单|状态)"
+    r"|(?:订单|会员|门店|客户|用户|记录|数据|商品|库存|价格|物流|账户|工单|状态)"
+    r".*(?:查询|查一下|搜索|查找|获取|读取|查看|统计|列表|明细|数量|创建|更新|提交|取消|同步)"
 )
 KNOWLEDGE_QA_HINT_PATTERN = re.compile(
     r"(能否|是否|能不能|可不可以|有没有权限|权限|允许|规则|限制|流程|如何|怎么|怎样|说明|手册|文档)"
@@ -44,20 +53,32 @@ def _compact_text(text: str, *, limit: int = 600) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())[:limit].strip()
 
 
-def _normalize_choice(value: Any, allowed: set[str], default: str) -> str:
-    normalized = re.sub(r"\s+", "_", str(value or "").strip().lower())
-    return normalized if normalized in allowed else default
-
-
 def _coerce_string_list(value: Any, *, item_limit: int = 80) -> list[str]:
-    if isinstance(value, str):
-        raw_items = [value]
-    else:
-        raw_items = list(value or [])
+    raw_items = [value] if isinstance(value, str) else list(value or [])
     return [
         _compact_text(str(item), limit=item_limit)
         for item in raw_items
         if _compact_text(str(item), limit=item_limit)
+    ]
+
+
+def _resolve_capability_hint(query: str) -> str:
+    if KNOWLEDGE_QA_HINT_PATTERN.search(query):
+        return "knowledge_qa"
+    if BUSINESS_OPS_HINT_PATTERN.search(query):
+        return "business_ops"
+    return ""
+
+
+def _capability_catalog(
+    capabilities: Iterable[CapabilityDefinition],
+) -> list[dict[str, str]]:
+    return [
+        {
+            "capability_id": capability.capability_id,
+            "description": capability.description,
+        }
+        for capability in capabilities
     ]
 
 
@@ -66,49 +87,69 @@ def _build_prompt(
     *,
     chat_history: list[dict[str, Any]],
     memory_summary: str | None,
-    page_type: str | None,
+    page_context: dict[str, Any],
+    capabilities: Iterable[CapabilityDefinition],
 ) -> str:
     history = "\n".join(
         f"{item.get('role', 'user')}: {_compact_text(str(item.get('content') or ''), limit=240)}"
         for item in chat_history[-4:]
         if str(item.get("content") or "").strip()
     )
+    capability_catalog = _capability_catalog(capabilities)
+    capability_hint = _resolve_capability_hint(query)
     return f"""
-You route one user turn for the top-level agent workflow.
+You decide how the top-level agent should handle one user turn.
 
 Return JSON only:
 {{
-  "intent_type": "direct_answer",
-  "needs_clarification": false,
+  "action": "invoke",
+  "intent": {{
+    "kind": "information",
+    "goal": "a complete standalone user goal"
+  }},
+  "capability_id": "knowledge_qa",
   "missing_fields": [],
-  "direct_answer_kind": "out_of_scope",
-  "reason": "short reason"
+  "response_kind": null,
+  "reason": "short internal reason"
 }}
 
-Allowed intent_type values:
-- knowledge_qa
-- business_ops
-- clarify
-- direct_answer
+Allowed action values:
+- invoke: one available capability can handle the request
+- clarify: the high-level user goal is too incomplete to choose a capability
+- respond: answer a general conversation request directly without invoking a capability
+- unsupported: no available capability can handle the request
 
-Allowed direct_answer_kind values when intent_type=direct_answer:
-- chitchat
+Allowed intent.kind values:
+- information
+- data_query
+- action
+- conversation
+- unclear
+
+Allowed response_kind values:
 - out_of_scope
 
 Rules:
 - Do not answer the user.
-- Decide only the top-level route: knowledge QA, clarification, or direct reply.
-- Use business_ops when the user asks to query or operate concrete business data through tools, such as product inventory, prices, orders, members, stores, database records, tables, reports, or operational records.
-- Use knowledge_qa when the user asks about rules, permissions, roles, feature behavior, documentation, operation steps, or "whether someone can do something", even if the question mentions stores, members, orders, or other business nouns.
-- Do not classify the knowledge question type.
-- Do not extract entities.
-- Do not choose retrieval strategy, graph strategy, top-k, or rerank policy.
-- Use knowledge_qa when the user asks about content that should be answered from the current knowledge base or conversation context.
-- Use clarify only when the request is too incomplete to choose a route, such as an empty question or unresolved reference with no usable context.
-- Use direct_answer only for greetings, simple social turns, or requests clearly outside knowledge-base answering.
+- Resolve references and omitted context using conversation history, memory, and page context.
+- intent.goal must be concise, complete, standalone, and free of unresolved pronouns.
+- Choose at most one capability and only from the supplied capability catalog.
+- Use clarify only when the high-level goal itself is unclear. Capability-specific parameters are validated inside the selected capability.
+- Do not extract tool arguments, filters, sorting, retrieval strategy, top-k, or other capability-internal parameters.
+- Use respond for greetings, writing, rewriting, translation, summarization, comparison, logical reasoning, conversation review, and contextual continuation that can be completed from the current input and conversation context.
+- Use unsupported when the goal is clear but cannot be handled by respond or a supplied capability.
+- response_kind is out_of_scope only when no capability is invoked.
+- capability_id must be null unless action is invoke.
+- Prefer the capability hint only when it is present and consistent with the user goal.
 
-Page type:
-{page_type or "(none)"}
+Capability catalog:
+{json.dumps(capability_catalog, ensure_ascii=False, indent=2)}
+
+Capability hint:
+{capability_hint or "(none)"}
+
+Page context:
+{json.dumps(page_context, ensure_ascii=False, default=str)}
 
 Conversation summary:
 {_compact_text(memory_summary or "", limit=600) or "(none)"}
@@ -121,77 +162,88 @@ User question:
 """.strip()
 
 
-async def build_agent_intent(
+async def build_agent_decision(
     query: str,
     *,
+    capabilities: Iterable[CapabilityDefinition],
     chat_history: list[dict[str, Any]] | None = None,
     memory_summary: str | None = None,
-    page_type: str | None = None,
+    page_context: dict[str, Any] | None = None,
     llm_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
-    """Classify the user turn for top-level agent routing only."""
+    """Understand one user turn and select at most one capability."""
 
+    available_capabilities = tuple(capabilities)
     if not query.strip():
         return {
-            "type": "clarify",
-            "needs_clarification": True,
+            "action": "clarify",
+            "intent": {"kind": "unclear", "goal": ""},
+            "capability_id": None,
             "missing_fields": ["query"],
-            "direct_answer_kind": None,
+            "response_kind": None,
             "reason": "用户问题为空，需要补齐问题内容。",
-        }
-    if KNOWLEDGE_QA_HINT_PATTERN.search(query):
-        return {
-            "type": "knowledge_qa",
-            "needs_clarification": False,
-            "missing_fields": [],
-            "direct_answer_kind": None,
-            "reason": "用户正在询问业务规则、权限或操作说明，应从知识库回答。",
-        }
-    if BUSINESS_OPS_HINT_PATTERN.search(query):
-        return {
-            "type": "business_ops",
-            "needs_clarification": False,
-            "missing_fields": [],
-            "direct_answer_kind": None,
-            "reason": "用户正在查询或操作具体业务数据。",
         }
 
     llm = llm_factory() if llm_factory is not None else get_llm_for_planner(
         temperature=0,
-        max_tokens=160,
+        max_tokens=260,
     )
     response = await llm.ainvoke(
         _build_prompt(
             query,
             chat_history=list(chat_history or []),
             memory_summary=memory_summary,
-            page_type=page_type,
+            page_context=dict(page_context or {}),
+            capabilities=available_capabilities,
         )
     )
     parsed = parse_llm_json_object(_coerce_text(getattr(response, "content", response)))
-    intent_type = _normalize_choice(
-        parsed.get("intent_type") or parsed.get("type"),
-        ALLOWED_INTENT_TYPES,
-        "direct_answer",
-    )
-    needs_clarification = bool(parsed.get("needs_clarification"))
-    missing_fields = _coerce_string_list(parsed.get("missing_fields"), item_limit=80)
-    if needs_clarification or missing_fields:
-        intent_type = "clarify"
+    if not parsed:
+        raise ValueError("Top-level decision model returned no valid JSON object")
 
-    direct_answer_kind = None
-    if intent_type == "direct_answer":
-        direct_answer_kind = _normalize_choice(
-            parsed.get("direct_answer_kind"),
-            ALLOWED_DIRECT_ANSWER_KINDS,
-            "out_of_scope",
-        )
+    action = re.sub(r"\s+", "_", str(parsed.get("action") or "").strip().lower())
+    if action not in ALLOWED_ACTIONS:
+        raise ValueError(f"Unsupported top-level decision action: {action or '(empty)'}")
+
+    parsed_intent = dict(parsed.get("intent") or {})
+    intent_kind = re.sub(
+        r"\s+", "_", str(parsed_intent.get("kind") or "").strip().lower()
+    )
+    if intent_kind not in ALLOWED_INTENT_KINDS:
+        raise ValueError(f"Unsupported top-level intent kind: {intent_kind or '(empty)'}")
+    goal = _compact_text(str(parsed_intent.get("goal") or ""), limit=500)
+    if not goal and action != "clarify":
+        raise ValueError("Top-level decision is missing intent.goal")
+
+    missing_fields = _coerce_string_list(parsed.get("missing_fields"), item_limit=80)
+    if action == "clarify":
+        missing_fields = missing_fields or ["goal"]
+    else:
+        missing_fields = []
+
+    capability_id = str(parsed.get("capability_id") or "").strip() or None
+    available_ids = {
+        capability.capability_id for capability in available_capabilities
+    }
+    if action == "invoke":
+        if capability_id not in available_ids:
+            raise ValueError(f"Decision selected unavailable capability: {capability_id}")
+    else:
+        capability_id = None
+
+    response_kind = str(parsed.get("response_kind") or "").strip().lower() or None
+    if action == "unsupported":
+        if response_kind not in ALLOWED_RESPONSE_KINDS:
+            response_kind = "out_of_scope"
+    else:
+        response_kind = None
 
     return {
-        "type": intent_type,
-        "needs_clarification": intent_type == "clarify",
+        "action": action,
+        "intent": {"kind": intent_kind, "goal": goal},
+        "capability_id": capability_id,
         "missing_fields": missing_fields,
-        "direct_answer_kind": direct_answer_kind,
+        "response_kind": response_kind,
         "reason": _compact_text(str(parsed.get("reason") or ""), limit=240)
-        or "主图无法确认需要调用知识库或业务数据能力，按直接回复处理。",
+        or "主图已完成用户目标理解和能力选择。",
     }

@@ -56,20 +56,9 @@ def _coerce_string_list(value: Any, *, item_limit: int = 120) -> list[str]:
     ]
 
 
-def _build_prompt(
-    query: str,
-    *,
-    chat_history: list[dict[str, Any]],
-    memory_summary: str | None,
-    page_type: str | None,
-) -> str:
-    history = "\n".join(
-        f"{item.get('role', 'user')}: {_compact_text(str(item.get('content') or ''), limit=240)}"
-        for item in chat_history[-4:]
-        if str(item.get("content") or "").strip()
-    )
+def _build_prompt(goal: str) -> str:
     return f"""
-You analyze one knowledge-base question after the top-level agent has already routed it to knowledge QA.
+You analyze retrieval requirements for a resolved knowledge-base goal.
 
 Return JSON only:
 {{
@@ -99,7 +88,8 @@ Allowed retrieval_complexity values:
 
 Rules:
 - Do not answer the user.
-- Do not decide whether knowledge QA is needed; this workflow is already inside knowledge QA.
+- The top-level agent has already resolved conversation references and selected knowledge QA.
+- Analyze only how this standalone goal should be retrieved.
 - Do not choose retrieval strategy, graph strategy, top-k, or rerank policy.
 - Classify the question type and complexity so the next node can plan retrieval.
 - Use summary_lookup for broad overviews, summaries, or multi-aspect synthesis.
@@ -110,7 +100,7 @@ Rules:
 - Use location_lookup when the user asks where a capability, file, function, table, or config lives.
 - Use attribute_lookup for properties, structure, fields, config items, state, values, or schema-like questions.
 - Use definition_lookup for concepts, meanings, definitions, or plain explanations.
-- Extract concrete entities mentioned by the user, such as class/function/table/module/file/config names.
+- Extract concrete entities in the resolved goal, such as class/function/table/module/file/config names.
 - Set needs_path=true when the answer needs file/function/module location.
 - Set needs_relation=true when the answer needs dependency, call, ownership, or association evidence.
 - Set needs_summary=true when the answer needs a module/file/model/process summary.
@@ -118,42 +108,23 @@ Rules:
 - Prefer fast for precise single-target lookups.
 - Prefer broad for overviews, multi-aspect comparisons, or complex follow-ups.
 
-Page type:
-{page_type or "(none)"}
-
-Conversation summary:
-{_compact_text(memory_summary or "", limit=600) or "(none)"}
-
-Recent history:
-{history or "(none)"}
-
-User question:
-{query.strip()}
+Resolved user goal:
+{goal.strip()}
 """.strip()
 
 
 async def build_knowledge_question_analysis(
-    query: str,
+    goal: str,
     *,
-    chat_history: list[dict[str, Any]] | None = None,
-    memory_summary: str | None = None,
-    page_type: str | None = None,
     llm_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
-    """Analyze a question already routed into the knowledge_qa workflow."""
+    """Analyze retrieval needs for a resolved knowledge goal."""
 
     llm = llm_factory() if llm_factory is not None else get_llm_for_planner(
         temperature=0,
         max_tokens=240,
     )
-    response = await llm.ainvoke(
-        _build_prompt(
-            query,
-            chat_history=list(chat_history or []),
-            memory_summary=memory_summary,
-            page_type=page_type,
-        )
-    )
+    response = await llm.ainvoke(_build_prompt(goal))
     parsed = parse_llm_json_object(_coerce_text(getattr(response, "content", response)))
     question_type = _normalize_choice(
         parsed.get("question_type"),

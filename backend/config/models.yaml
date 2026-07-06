@@ -52,10 +52,20 @@ model_assets:
     streaming: true
     max_tokens: 4096
 
+  # deepseek-v4-flash:
+  #   type: chat
+  #   provider: deepseek
+  #   model: deepseek-v4-flash
+  #   name:  DeepSeek V4 Flash
+  #   request_timeout: 180
+  #   streaming: true
+  #   max_tokens: 4096
+
+    
   deepseek-v4-flash:
     type: chat
-    provider: deepseek
-    model: deepseek-v4-flash
+    provider: siliconflow
+    model: deepseek-ai/DeepSeek-V4-Flash
     name:  DeepSeek V4 Flash
     request_timeout: 180
     streaming: true

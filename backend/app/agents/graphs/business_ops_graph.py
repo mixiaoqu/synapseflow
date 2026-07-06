@@ -1,124 +1,175 @@
-"""Subgraph for controlled business data operations."""
+"""Subgraph for dynamically configured business tools."""
 
 from __future__ import annotations
 
+import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 from langgraph.graph import END, StateGraph
+from loguru import logger
 
+from app.agents.common.llm_json import parse_llm_json_object
 from app.agents.common.node_logging import log_node_info
 from app.agents.common.streaming import emit_activity, get_optional_stream_writer
-from app.application.business_operations import (
-    PRODUCT_SEARCH_OPERATION_ID,
-    BusinessOperationRegistry,
-    BusinessOperationService,
-)
+from app.agents.common.workflow_result import build_business_workflow_result
+from app.agents.states import BusinessOpsState
+from app.application.business_operations import BusinessOperationService
 from app.application.business_operations.schemas import (
     BusinessOperationActor,
     BusinessOperationRequest,
 )
-from app.agents.states import BusinessOpsState
+from app.core.llm import get_llm_for_planner
 
 
-_PRODUCT_SEARCH_HINTS = (
-    "查",
-    "查询",
-    "搜索",
-    "找",
-    "商品",
-    "库存",
-    "价格",
-    "售价",
-    "条码",
-    "sku",
-    "SKU",
-)
+def _coerce_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            item if isinstance(item, str) else str(item.get("text", ""))
+            for item in content
+            if isinstance(item, (str, dict))
+        )
+    return str(content or "")
 
 
-def _compact_text(value: Any, *, limit: int = 120) -> str:
+def _compact_text(value: Any, *, limit: int = 180) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip())[:limit].strip()
 
 
-def _extract_product_keyword(query: str) -> str:
-    keyword = _compact_text(query)
-    replacements = [
-        "帮我",
-        "请帮我",
-        "帮忙",
-        "查询一下",
-        "查一下",
-        "查询",
-        "搜索",
-        "找一下",
-        "找",
-        "这个门店",
-        "这个店",
-        "门店",
-        "店里",
-        "有没有",
-        "商品",
-        "库存",
-        "价格",
-        "售价",
-        "多少",
-        "一下",
+def _serialize_tool_candidates(records) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": record.tool.tool_key,
+            "name": record.tool.name,
+            "description": record.tool.description or "",
+            "typical_queries": list(record.tool.typical_queries or []),
+            "risk_level": record.tool.risk_level,
+            "requires_confirmation": bool(record.tool.requires_confirmation),
+            "params": [
+                {
+                    "key": item.get("key"),
+                    "label": item.get("label"),
+                    "type": item.get("type", "text"),
+                    "required": bool(item.get("required")),
+                    "description": item.get("description", ""),
+                }
+                for item in list(record.tool.params_schema or [])
+                if isinstance(item, dict) and item.get("key")
+            ],
+        }
+        for record in records
     ]
-    for text in replacements:
-        keyword = keyword.replace(text, " ")
-    keyword = re.sub(r"[，。！？、,.!?]", " ", keyword)
-    return _compact_text(keyword)
 
 
-def _format_product_search_answer(result: dict[str, Any]) -> str:
-    if not result.get("success"):
-        missing_fields = list(result.get("missing_fields") or [])
-        if missing_fields:
-            labels = "、".join(str(item.get("label") or item.get("key")) for item in missing_fields)
-            return f"还需要补充：{labels}。"
-        error = result.get("error") or {}
-        return str(error.get("message") or result.get("message") or "业务操作执行失败。")
+def _build_business_request_analysis_prompt(
+    query: str,
+    candidates: list[dict[str, Any]],
+) -> str:
+    tools_json = json.dumps(candidates, ensure_ascii=False, default=str)
+    return f"""
+你是业务工具调用规划器。根据用户问题，从候选工具中选择一个最匹配的工具并提取参数。
 
-    data = dict(result.get("data") or {})
-    items = list(data.get("items") or [])
-    if not items:
-        return str(result.get("message") or "没有找到相关商品。")
+只输出 JSON，不要输出 Markdown、解释或自然语言回答。
 
-    lines = [str(result.get("message") or "已找到相关商品。")]
-    for index, item in enumerate(items, start=1):
-        name = item.get("name") or item.get("sku_id") or "未命名商品"
-        price = item.get("price")
-        stock = item.get("stock")
-        unit = item.get("unit") or "件"
-        lines.append(f"{index}. {name}，售价 {price} 元，库存 {stock} {unit}")
-    return "\n".join(lines)
+规则：
+1. operation_id 只能使用候选工具中的 id，不能发明工具。
+2. params 只能包含所选工具定义的参数；不要把礼貌用语、疑问词或命令词当成参数值。
+3. 缺少必填信息时返回 clarification_required，并给出一个简短中文追问。
+4. 没有任何工具能满足请求时返回 unsupported，不要勉强选择。
+5. 不要回答业务问题，只生成可执行计划。
 
+输出格式：
+{{
+  "status": "ready | clarification_required | unsupported",
+  "operation_id": "候选工具 id 或 null",
+  "params": {{}},
+  "clarification": null,
+  "reason": "简短选择依据"
+}}
 
-def _looks_like_product_search(query: str) -> bool:
-    normalized = str(query or "").strip()
-    return bool(normalized) and any(hint in normalized for hint in _PRODUCT_SEARCH_HINTS)
+候选工具：
+{tools_json}
 
-
-def _product_count(result: dict[str, Any]) -> int:
-    data = result.get("data") if isinstance(result.get("data"), dict) else {}
-    total = data.get("total")
-    if isinstance(total, int):
-        return total
-    items = data.get("items")
-    return len(items) if isinstance(items, list) else 0
+用户问题：
+{query.strip()}
+""".strip()
 
 
-def create_business_ops_graph():
-    """Create the business operations workflow graph."""
+def _normalize_business_request(
+    parsed: dict[str, Any],
+    *,
+    query: str,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    candidate_map = {str(item["id"]): item for item in candidates}
+    status = str(parsed.get("status") or "unsupported").strip().lower()
+    if status not in {"ready", "clarification_required", "unsupported"}:
+        status = "unsupported"
+    operation_id = str(parsed.get("operation_id") or "").strip()
+    if operation_id not in candidate_map:
+        operation_id = ""
+        if status == "ready":
+            status = "unsupported"
+    raw_params = parsed.get("params") if isinstance(parsed.get("params"), dict) else {}
+    allowed_params = {
+        str(item.get("key") or "")
+        for item in candidate_map.get(operation_id, {}).get("params", [])
+    }
+    params = {
+        str(key): value
+        for key, value in raw_params.items()
+        if str(key) in allowed_params and value is not None
+    }
+    return {
+        "raw_query": query,
+        "status": status,
+        "operation_id": operation_id or None,
+        "params": params,
+        "clarification": (
+            _compact_text(parsed.get("clarification"), limit=200)
+            if parsed.get("clarification")
+            else None
+        ),
+        "reason": _compact_text(parsed.get("reason"), limit=240),
+    }
 
+
+async def _analyze_business_request_with_llm(
+    query: str,
+    *,
+    candidates: list[dict[str, Any]],
+    llm_factory: Callable[[], Any] | None = None,
+) -> dict[str, Any]:
+    llm = llm_factory() if llm_factory is not None else get_llm_for_planner(
+        temperature=0,
+        max_tokens=700,
+    )
+    response = await llm.ainvoke(_build_business_request_analysis_prompt(query, candidates))
+    content = _coerce_text(getattr(response, "content", response))
+    parsed = parse_llm_json_object(content)
+    if not parsed:
+        raise ValueError("业务工具规划模型未返回有效 JSON")
+    return _normalize_business_request(parsed, query=query, candidates=candidates)
+
+
+def create_business_ops_graph(
+    *,
+    planner_llm_factory: Callable[[], Any] | None = None,
+    answer_llm_factory: Callable[[], Any] | None = None,
+    llm_factory: Callable[[], Any] | None = None,
+):
+    """Create the dynamic business operations workflow graph."""
+
+    del answer_llm_factory
+    planner_factory = planner_llm_factory or llm_factory
     workflow = StateGraph(BusinessOpsState)
-    registry = BusinessOperationRegistry()
-    service = BusinessOperationService(registry=registry)
+    service = BusinessOperationService()
 
     async def _analyze_request_node(state: BusinessOpsState) -> dict[str, Any]:
         stream_writer = get_optional_stream_writer()
         query = str(state.get("query") or "").strip()
-        keyword = _extract_product_keyword(query)
         emit_activity(
             stream_writer,
             workflow_id="business_ops",
@@ -127,22 +178,48 @@ def create_business_ops_graph():
             message="正在理解业务数据需求",
             display_stage="understand",
             display_title="🤔 思考您的问题",
-            activity_text="正在识别需要查询或操作的业务数据",
+            activity_text="识别可用的业务工具和调用参数",
         )
-        result = {
-            "business_request": {
+        records = await service.list_available_tools(state.get("project_app_id"))
+        candidates = _serialize_tool_candidates(records)
+        if not candidates:
+            request_info = {
                 "raw_query": query,
-                "operation_hint": "product.search" if _looks_like_product_search(query) else "",
-                "keyword": keyword,
+                "status": "unsupported",
+                "operation_id": None,
+                "params": {},
+                "clarification": None,
+                "reason": "当前应用端没有已发布且可用的业务工具。",
             }
-        }
+        else:
+            try:
+                request_info = await _analyze_business_request_with_llm(
+                    query,
+                    candidates=candidates,
+                    llm_factory=planner_factory,
+                )
+            except Exception:
+                logger.exception("[business_ops] failed to plan dynamic tool call. query={}", query)
+                request_info = {
+                    "raw_query": query,
+                    "status": "unsupported",
+                    "operation_id": None,
+                    "params": {},
+                    "clarification": None,
+                    "reason": "业务工具调用计划生成失败。",
+                }
+        operation_name = next(
+            (item["name"] for item in candidates if item["id"] == request_info.get("operation_id")),
+            None,
+        )
         log_node_info(
             workflow_id="business_ops",
             node_id="analyze_request",
             node_name="分析请求",
             details={
-                "原始问题": query,
-                "商品关键词": keyword,
+                "候选工具数": len(candidates),
+                "选择工具": request_info.get("operation_id"),
+                "计划状态": request_info.get("status"),
             },
         )
         emit_activity(
@@ -150,83 +227,112 @@ def create_business_ops_graph():
             workflow_id="business_ops",
             node_id="analyze_request",
             stage="analyze",
-            message="已理解业务数据需求",
+            message="业务需求分析完成",
             display_stage="understand",
             display_title="🤔 思考您的问题",
-            activity_text=f"已识别业务数据关键词“{keyword or query}”",
+            activity_text=(f"已选择“{operation_name}”" if operation_name else "未找到可直接执行的业务工具"),
             activity_status="completed",
         )
-        return result
+        return {
+            "available_business_tools": candidates,
+            "business_request": request_info,
+        }
 
     async def _match_operation_node(state: BusinessOpsState) -> dict[str, Any]:
         stream_writer = get_optional_stream_writer()
-        operation = registry.get(PRODUCT_SEARCH_OPERATION_ID)
-        operation_payload = operation.model_dump() if operation is not None else {}
+        request_info = dict(state.get("business_request") or {})
+        operation_id = str(request_info.get("operation_id") or "")
+        candidates = list(state.get("available_business_tools") or [])
+        operation = next((item for item in candidates if item.get("id") == operation_id), None)
         emit_activity(
             stream_writer,
             workflow_id="business_ops",
             node_id="match_operation",
             stage="match",
-            message="正在选择业务数据操作",
+            message="正在确认业务工具",
             display_stage="execute",
             display_title="📊 查询业务数据",
-            activity_text="正在准备商品库存和价格查询",
+            activity_text="校验工具能力和参数",
         )
-        result = {
-            "business_operation": {
-                "operation_id": PRODUCT_SEARCH_OPERATION_ID,
-                "operation": operation_payload,
-            }
-        }
         log_node_info(
             workflow_id="business_ops",
             node_id="match_operation",
             node_name="匹配操作",
-            details={
-                "操作ID": PRODUCT_SEARCH_OPERATION_ID,
-                "操作名称": operation_payload.get("name"),
-            },
+            details={"操作ID": operation_id or None, "操作名称": (operation or {}).get("name")},
         )
         emit_activity(
             stream_writer,
             workflow_id="business_ops",
             node_id="match_operation",
             stage="match",
-            message="已选择业务数据操作",
+            message="业务工具确认完成",
             display_stage="execute",
             display_title="📊 查询业务数据",
-            activity_text="已准备商品库存和价格查询",
+            activity_text=(f"已准备调用“{operation['name']}”" if operation else "没有可执行的工具调用"),
             activity_status="completed",
         )
-        return result
+        return {
+            "business_operation": {
+                "operation_id": operation_id or None,
+                "operation": operation or {},
+            }
+        }
 
     async def _execute_operation_node(state: BusinessOpsState) -> dict[str, Any]:
         stream_writer = get_optional_stream_writer()
         request_info = dict(state.get("business_request") or {})
-        keyword = str(request_info.get("keyword") or "").strip()
-        store_id = str(state.get("store_id") or "").strip()
+        operation_info = dict(state.get("business_operation") or {})
+        operation = dict(operation_info.get("operation") or {})
+        status = str(request_info.get("status") or "unsupported")
+        if status != "ready" or not operation:
+            message = (
+                str(request_info.get("clarification") or "").strip()
+                or str(request_info.get("reason") or "").strip()
+                or "当前问题还不能转换为确定的业务工具调用。"
+            )
+            result_payload = {
+                "success": False,
+                "operation_id": request_info.get("operation_id") or "",
+                "message": message,
+                "data": {},
+                "error": {
+                    "code": status.upper(),
+                    "message": message,
+                    "retryable": status == "clarification_required",
+                },
+            }
+            return {"business_operation_result": result_payload, "business_result": {}}
+
         emit_activity(
             stream_writer,
             workflow_id="business_ops",
             node_id="execute_operation",
             stage="execute",
-            message="正在查询业务数据",
+            message="正在调用业务工具",
             display_stage="execute",
             display_title="📊 查询业务数据",
-            activity_text=f"正在查询门店 {store_id or '当前门店'} 的“{keyword}”",
-            store_id=store_id or None,
-            keyword=keyword,
+            activity_text=f"调用“{operation.get('name') or operation.get('id')}”",
         )
+        page_context = dict(state.get("page_context") or {})
+        scope = {
+            "project_app_id": state.get("project_app_id"),
+            "product_id": state.get("product_id"),
+            "project_id": state.get("project_id"),
+            "store_id": state.get("store_id"),
+            **page_context,
+        }
         result = await service.execute(
             BusinessOperationRequest(
-                operation_id=PRODUCT_SEARCH_OPERATION_ID,
+                operation_id=str(operation["id"]),
+                project_app_id=state.get("project_app_id"),
+                session_id=state.get("session_id"),
                 actor=BusinessOperationActor(
                     user_id=state.get("user_id"),
                     external_user_id=state.get("external_user_id"),
                     external_user_name=state.get("external_user_name"),
                 ),
-                scope={"store_id": state.get("store_id")},
-                params={"keyword": keyword},
+                scope={key: value for key, value in scope.items() if value is not None},
+                params=dict(request_info.get("params") or {}),
             )
         )
         result_payload = result.model_dump()
@@ -235,31 +341,24 @@ def create_business_ops_graph():
             node_id="execute_operation",
             node_name="执行业务操作",
             details={
-                "操作ID": PRODUCT_SEARCH_OPERATION_ID,
+                "操作ID": operation["id"],
                 "是否成功": result.success,
-                "消息": result.message,
-                "结果数": (result.data or {}).get("total"),
+                "HTTP状态": result.http_status,
+                "耗时毫秒": result.duration_ms,
             },
-        )
-        count = _product_count(result_payload)
-        activity_text = (
-            f"已找到 {count} 个相关商品"
-            if result.success
-            else str(result.message or "业务查询未完成")
         )
         emit_activity(
             stream_writer,
             workflow_id="business_ops",
             node_id="execute_operation",
             stage="execute",
-            message="业务数据查询完成" if result.success else "业务数据查询未完成",
+            message="业务工具调用完成" if result.success else "业务工具调用未完成",
             display_stage="execute",
             display_title="📊 查询业务数据",
-            activity_text=activity_text,
+            activity_text=("已获取业务数据" if result.success else result.message),
             activity_status="completed" if result.success else "error",
-            store_id=store_id or None,
-            keyword=keyword,
-            result_count=count,
+            tool_key=operation["id"],
+            duration_ms=result.duration_ms,
         )
         return {
             "business_operation_result": result_payload,
@@ -268,7 +367,6 @@ def create_business_ops_graph():
 
     async def _compose_result_node(state: BusinessOpsState) -> dict[str, Any]:
         stream_writer = get_optional_stream_writer()
-        operation_result = dict(state.get("business_operation_result") or {})
         emit_activity(
             stream_writer,
             workflow_id="business_ops",
@@ -277,19 +375,9 @@ def create_business_ops_graph():
             message="正在整理业务结果",
             display_stage="compose",
             display_title="💡 总结最终结果",
-            activity_text="正在整理库存和价格信息",
+            activity_text="整理可用于回答的业务数据",
         )
-        answer = _format_product_search_answer(operation_result)
-        answer_status = "answered" if operation_result.get("success") else "business_operation_failed"
-        log_node_info(
-            workflow_id="business_ops",
-            node_id="compose_result",
-            node_name="整理结果",
-            details={
-                "回答状态": answer_status,
-                "回答长度": len(answer),
-            },
-        )
+        workflow_result = build_business_workflow_result(state)
         emit_activity(
             stream_writer,
             workflow_id="business_ops",
@@ -298,12 +386,12 @@ def create_business_ops_graph():
             message="业务结果整理完成",
             display_stage="compose",
             display_title="💡 总结最终结果",
-            activity_text="已整理好库存和价格回复",
+            activity_text="已整理好业务数据",
             activity_status="completed",
         )
         return {
-            "answer": answer,
-            "answer_status": answer_status,
+            "workflow_result": workflow_result,
+            "answer_status": workflow_result.get("answer_status"),
             "retrieved_docs": [],
             "backend_citations": [],
         }

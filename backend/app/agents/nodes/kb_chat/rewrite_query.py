@@ -116,7 +116,7 @@ async def kb_chat_rewrite_query_node(
         message="正在整理检索线索",
         display_stage="execute",
         display_title="🔍 查阅相关资料",
-        activity_text="正在整理资料查找线索",
+        activity_text="整理资料查找线索",
     )
     return await build_kb_chat_rewrite(
         str(state.get("query") or ""),

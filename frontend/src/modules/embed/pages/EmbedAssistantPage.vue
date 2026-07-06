@@ -8,7 +8,6 @@ import EmbedMessageItem, {
 } from "@/modules/embed/components/EmbedMessageItem.vue";
 import EmbedSessionHistoryPanel from "@/modules/embed/components/EmbedSessionHistoryPanel.vue";
 import EmbedSuggestionChips from "@/modules/embed/components/EmbedSuggestionChips.vue";
-import EmbedWorkflowProgress from "@/modules/embed/components/EmbedWorkflowProgress.vue";
 import { useEmbeddedAssistant } from "@/modules/embed/composables/useEmbeddedAssistant";
 
 const {
@@ -39,36 +38,32 @@ const {
 
 const composerRef = useTemplateRef<InstanceType<typeof EmbedChatComposer>>("composerRef");
 
-const renderedMessages = computed<EmbedRenderableMessage[]>(() => {
+const activeWorkflowMessageId = computed(() => {
+  if (!workflowRun.value) {
+    return null;
+  }
   const lastMessage = messages.value[messages.value.length - 1];
-  const visibleMessages =
-    isTyping.value && lastMessage?.role === "assistant" && !lastMessage.content
-      ? messages.value.slice(0, -1)
-      : messages.value;
+  return lastMessage?.role === "assistant" ? lastMessage.id : null;
+});
 
-  if (visibleMessages.length === 0) {
+const renderedMessages = computed<EmbedRenderableMessage[]>(() => {
+  if (messages.value.length === 0) {
     return [];
   }
 
-  return visibleMessages.map((message) => ({
+  return messages.value.map((message) => ({
     id: message.id,
     role: message.role,
     content: message.content,
-    kind: "normal",
+    kind:
+      message.id === activeWorkflowMessageId.value && isTyping.value && !message.content
+        ? "streaming"
+        : "normal",
     logId: message.logId,
     retrievedDocs: message.retrievedDocs,
     feedbackValue: message.feedbackValue,
     feedbackSubmitting: message.feedbackSubmitting,
   }));
-});
-
-const showThinkingState = computed(() => {
-  const lastMessage = messages.value[messages.value.length - 1];
-  return (
-    isTyping.value &&
-    lastMessage?.role === "assistant" &&
-    !lastMessage.content
-  );
 });
 
 async function handleSend(text: string) {
@@ -171,15 +166,11 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
               :message="message"
               :assistant-name="assistantName"
               :is-typing="isTyping"
+              :workflow-run="
+                message.id === activeWorkflowMessageId ? workflowRun : null
+              "
               @feedback="handleFeedback(message, $event)"
             />
-
-            <div v-if="showThinkingState" class="embed-assistant-page__thinking">
-              <div class="embed-assistant-page__thinking-avatar">
-                <el-icon><ChatDotRound /></el-icon>
-              </div>
-              <EmbedWorkflowProgress :run="workflowRun" />
-            </div>
           </section>
 
           <footer class="embed-assistant-page__composer">
@@ -529,27 +520,6 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
   line-height: 1.75;
   color: #334155;
   white-space: pre-wrap;
-}
-
-.embed-assistant-page__thinking {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-}
-
-.embed-assistant-page__thinking-avatar {
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
-  color: #ffffff;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
-  flex-shrink: 0;
-  margin-top: 2px;
 }
 
 .embed-assistant-page__composer {

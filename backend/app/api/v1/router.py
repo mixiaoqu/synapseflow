@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     assistants,
     ask,
     auth,
+    business_tools,
     content_risk_libraries,
     document_categories,
     documents,
@@ -29,6 +30,7 @@ api_router.include_router(ask.admin_router, prefix="/admin/qa", tags=["admin-qa"
 api_router.include_router(embed.router, prefix="/embed", tags=["embed"])
 api_router.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
 api_router.include_router(assistants.router, prefix="/assistants", tags=["assistants"])
+api_router.include_router(business_tools.router, prefix="/business-tools", tags=["business-tools"])
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
 api_router.include_router(
     document_categories.router,

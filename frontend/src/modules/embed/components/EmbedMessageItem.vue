@@ -2,8 +2,10 @@
 import { computed, ref } from "vue";
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
-import { ChatDotRound, Check, CopyDocument, Document, User } from "@element-plus/icons-vue";
+import { Check, CopyDocument, Document, Loading, User } from "@element-plus/icons-vue";
 import EmbedFeedbackActions from "@/modules/embed/components/EmbedFeedbackActions.vue";
+import EmbedWorkflowProgress from "@/modules/embed/components/EmbedWorkflowProgress.vue";
+import type { ChatWorkflowRun } from "@/shared/lib/stream/workflowRun";
 
 interface RetrievedDoc {
   content?: string;
@@ -39,6 +41,7 @@ const props = defineProps<{
   message: EmbedRenderableMessage;
   assistantName: string;
   isTyping?: boolean;
+  workflowRun?: ChatWorkflowRun | null;
 }>();
 
 const emit = defineEmits<{
@@ -50,22 +53,8 @@ const markdownRenderer = new MarkdownIt({
   linkify: true,
 });
 
-const AI_SUGGESTION_PREFIX = "🤖 AI智能客服建议（由AI生成）：";
-
 const displayContent = computed(() => {
-  if (
-    props.message.role !== "assistant" ||
-    props.message.kind === "welcome" ||
-    !props.message.content.trim()
-  ) {
-    return props.message.content;
-  }
-
-  if (props.message.content.trimStart().startsWith(AI_SUGGESTION_PREFIX)) {
-    return props.message.content;
-  }
-
-  return `${AI_SUGGESTION_PREFIX}\n\n${props.message.content}`;
+  return props.message.content;
 });
 
 const renderedHtml = computed(() => {
@@ -99,18 +88,17 @@ async function handleCopy() {
 <template>
   <div :class="['embed-message-item', `is-${message.role}`, `is-${message.kind ?? 'normal'}`]">
     <div :class="['embed-message-item__avatar', `is-${message.role}`]">
-      <el-icon v-if="message.role === 'assistant'"><ChatDotRound /></el-icon>
+      <span v-if="message.role === 'assistant'" class="embed-message-item__assistant-mark">↯</span>
       <el-icon v-else><User /></el-icon>
     </div>
 
     <div class="embed-message-item__body">
-      <div v-if="message.role === 'assistant'" class="embed-message-item__role">
-        {{ message.role === "assistant" ? assistantName : "我" }}
-      </div>
-
-      <article :class="['embed-message-item__bubble', `is-${message.role}`, `is-${message.kind ?? 'normal'}`]">
+      <article
+        v-if="message.content || message.kind === 'streaming' || !(message.role === 'assistant' && workflowRun)"
+        :class="['embed-message-item__bubble', `is-${message.role}`, `is-${message.kind ?? 'normal'}`]"
+      >
         <button
-          v-if="message.role === 'assistant' && message.content"
+          v-if="message.role === 'assistant' && message.content && !isTyping"
           type="button"
           class="embed-message-item__copy-button"
           :class="{ 'is-copied': copied }"
@@ -123,12 +111,8 @@ async function handleCopy() {
         </button>
 
         <div v-if="message.kind === 'streaming'" class="embed-message-item__streaming">
-          <div class="embed-message-item__typing-indicator">
-            <span class="dot" />
-            <span class="dot" />
-            <span class="dot" />
-          </div>
-          <span>正在生成回答...</span>
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>思考中...</span>
         </div>
         <div
           v-else
@@ -136,6 +120,11 @@ async function handleCopy() {
           v-html="renderedHtml"
         />
       </article>
+
+      <EmbedWorkflowProgress
+        v-if="message.role === 'assistant' && workflowRun"
+        :run="workflowRun"
+      />
 
       <div
         v-if="
@@ -158,6 +147,7 @@ async function handleCopy() {
               :title="getDocTitle(doc)"
             >
               <el-icon><Document /></el-icon>
+              <span v-if="index === 0">来源参考：</span>
               <span>{{ getDocTitle(doc) }}</span>
             </div>
             <div
@@ -190,7 +180,7 @@ async function handleCopy() {
 .embed-message-item {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
 }
 
@@ -200,19 +190,29 @@ async function handleCopy() {
 
 .embed-message-item__avatar {
   display: inline-flex;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 999px;
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .embed-message-item__avatar.is-assistant {
-  background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%);
+  background: linear-gradient(135deg, #6366f1 0%, #7c83ff 100%);
   color: #ffffff;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+  box-shadow: 0 6px 14px rgba(99, 102, 241, 0.18);
+}
+
+.embed-message-item__assistant-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  transform: translateY(-1px);
 }
 
 .embed-message-item__avatar.is-user {
@@ -227,7 +227,7 @@ async function handleCopy() {
 .embed-message-item__body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -238,8 +238,8 @@ async function handleCopy() {
 
 .embed-message-item.is-assistant .embed-message-item__body {
   align-items: flex-start;
-  width: min(86%, 720px);
-  max-width: min(86%, 720px);
+  width: min(88%, 720px);
+  max-width: min(88%, 720px);
 }
 
 .embed-message-item__bubble {
@@ -260,35 +260,30 @@ async function handleCopy() {
 
 .embed-message-item__bubble.is-assistant {
   position: relative;
-  padding: 16px 18px;
+  padding: 0;
   width: 100%;
-  background: rgba(255, 255, 255, 0.96);
+  background: transparent;
   color: #1e293b;
-  border: 1px solid #e2e8f0;
-  border-radius: 18px 18px 18px 6px;
-  box-shadow:
-    0 10px 28px rgba(15, 23, 42, 0.05),
-    0 1px 3px rgba(15, 23, 42, 0.03);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .embed-message-item__bubble.is-welcome {
+  padding: 16px 18px;
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   border-color: #dbeafe;
+  border: 1px solid #dbeafe;
+  border-radius: 18px 18px 18px 6px;
   box-shadow:
     0 12px 30px rgba(37, 99, 235, 0.06),
     0 1px 3px rgba(15, 23, 42, 0.03);
 }
 
-.embed-message-item__role {
-  font-size: 12px;
-  line-height: 1;
-  padding: 0 2px;
-}
-
 .embed-message-item__copy-button {
   position: absolute;
-  right: 10px;
-  bottom: 10px;
+  right: 0;
+  bottom: -34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -310,6 +305,11 @@ async function handleCopy() {
   opacity: 1;
 }
 
+.embed-message-item__bubble.is-welcome .embed-message-item__copy-button {
+  right: 10px;
+  bottom: 10px;
+}
+
 .embed-message-item__copy-button:hover {
   border-color: #cbd5e1;
   color: #475569;
@@ -322,16 +322,14 @@ async function handleCopy() {
   background: #f0fdf4;
 }
 
-.embed-message-item.is-assistant .embed-message-item__role {
-  color: #2563eb;
-  font-weight: 600;
-  opacity: 0.95;
-}
-
 .embed-message-item__content {
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.75;
   word-break: break-word;
+}
+
+.embed-message-item__content :deep(p) {
+  color: #1e293b;
 }
 
 .markdown-body :deep(*) {
@@ -429,8 +427,8 @@ async function handleCopy() {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
-  margin-top: 2px;
+  gap: 10px;
+  margin-top: 6px;
   padding-left: 2px;
 }
 
@@ -441,21 +439,26 @@ async function handleCopy() {
 .embed-message-item__citation-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .embed-message-item__citation-chip {
   display: inline-flex;
-  max-width: 170px;
+  max-width: min(100%, 520px);
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  border: 1px solid #e2e8f0;
-  border-radius: 999px;
-  background: #ffffff;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   font-size: 12px;
-  color: #64748b;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  color: #94a3b8;
+  box-shadow: none;
+}
+
+.embed-message-item__citation-chip .el-icon {
+  color: #94a3b8;
+  font-size: 13px;
 }
 
 .embed-message-item__citation-chip span {
@@ -466,9 +469,7 @@ async function handleCopy() {
 
 .embed-message-item__citation-chip.is-more {
   max-width: none;
-  border-color: #dbeafe;
-  background: #eff6ff;
-  color: #2563eb;
+  color: #94a3b8;
 }
 
 .embed-message-item__feedback-wrap {
@@ -479,43 +480,15 @@ async function handleCopy() {
 .embed-message-item__streaming {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   color: #64748b;
   font-size: 13px;
   margin-top: 4px;
 }
 
-.embed-message-item__typing-indicator {
-  display: flex;
-  gap: 3px;
-}
-
-.embed-message-item__typing-indicator .dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background-color: #94a3b8;
-  animation: typing 1.4s infinite ease-in-out both;
-}
-
-.embed-message-item__typing-indicator .dot:nth-child(1) {
-  animation-delay: -0.32s;
-}
-
-.embed-message-item__typing-indicator .dot:nth-child(2) {
-  animation-delay: -0.16s;
-}
-
-@keyframes typing {
-  0%,
-  80%,
-  100% {
-    transform: scale(0);
-  }
-
-  40% {
-    transform: scale(1);
-  }
+.embed-message-item__streaming .el-icon {
+  color: #818cf8;
+  font-size: 14px;
 }
 
 @media (max-width: 768px) {
@@ -528,8 +501,8 @@ async function handleCopy() {
   }
 
   .embed-message-item.is-assistant .embed-message-item__body {
-    width: calc(100% - 42px);
-    max-width: calc(100% - 42px);
+    width: calc(100% - 40px);
+    max-width: calc(100% - 40px);
   }
 }
 </style>

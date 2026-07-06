@@ -683,7 +683,7 @@ async def kb_chat_retrieve_node(
         message="正在查找知识库内容",
         display_stage="execute",
         display_title="🔍 查阅相关资料",
-        activity_text="正在查找知识库资料",
+        activity_text="查找知识库资料",
     )
     query = str(state.get("query") or "").strip()
     semantic_queries = _dedupe_queries(
@@ -901,7 +901,7 @@ async def kb_chat_retrieve_node(
             message="正在对融合证据统一精排",
             display_stage="execute",
             display_title="🔍 查阅相关资料",
-            activity_text="正在筛选更相关的资料",
+            activity_text="筛选更相关的资料",
             candidate_count=len(primary_docs),
             top_k=final_top_k,
         )

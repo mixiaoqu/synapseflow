@@ -19,6 +19,7 @@ from app.models.schemas.project import (
     ProjectAppBulkActionRequest,
     ProjectAppBulkActionResponse,
     ProjectAppCreate,
+    ProjectAppEmbedPreviewCreate,
     ProjectAppListResponse,
     ProjectAppResponse,
     ProjectAppUpdate,
@@ -212,6 +213,7 @@ async def create_project_app_embed_preview(
     project_id: int,
     app_id: int,
     request: Request,
+    body: ProjectAppEmbedPreviewCreate | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
@@ -226,6 +228,7 @@ async def create_project_app_embed_preview(
         project_app_id=runtime.app.id,
         external_user_id=f"admin-preview:{current_user.id}",
         external_user_name=(current_user.full_name or current_user.username or "").strip() or None,
+        store_id=((body.store_id or "").strip() or None) if body else None,
         expires_delta=timedelta(minutes=expires),
     )
     base_url = _resolve_embed_frontend_base_url(request)

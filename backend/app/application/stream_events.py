@@ -55,6 +55,22 @@ def emit_complete(run_id: str | None, data: dict[str, Any], *, workflow_id: str 
     )
 
 
+def emit_workflow_complete(
+    run_id: str | None,
+    message: str = "任务流程已完成",
+    *,
+    workflow_id: str = "",
+) -> str:
+    return emit_event(
+        AgentEventType.WORKFLOW_COMPLETE,
+        {"message": message},
+        workflow_id=workflow_id,
+        node_id=SYSTEM_NODE_ID,
+        node_name=SYSTEM_NODE_NAME,
+        run_id=run_id,
+    )
+
+
 def emit_error(run_id: str | None, message: str, *, workflow_id: str = "") -> str:
     return emit_event(
         AgentEventType.ERROR,

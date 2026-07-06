@@ -134,7 +134,12 @@ class EmbedSessionCreate(BaseModel):
     app_code: str = Field(..., min_length=1, max_length=120)
     external_user_id: str = Field(..., min_length=1, max_length=255)
     external_user_name: str | None = Field(default=None, max_length=255)
+    store_id: str | None = Field(default=None, max_length=120)
     initial_page_type: str | None = Field(default=None, max_length=120)
+
+
+class ProjectAppEmbedPreviewCreate(BaseModel):
+    store_id: str | None = Field(default=None, max_length=120)
 
 
 class EmbedSessionResponse(BaseModel):

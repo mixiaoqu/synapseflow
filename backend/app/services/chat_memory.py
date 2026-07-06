@@ -122,12 +122,35 @@ def format_chat_history(
     messages: list[dict[str, str]] | None,
     *,
     max_messages: int | None = None,
+    max_chars: int | None = None,
+    max_message_chars: int | None = None,
 ) -> str:
     """Format recent messages into a compact prompt-friendly transcript."""
 
     items = list(messages or [])
     if max_messages is not None and max_messages > 0:
         items = items[-max_messages:]
+
+    if max_chars is not None and max_chars > 0:
+        remaining_chars = max_chars
+        bounded_reversed: list[dict[str, str]] = []
+        for message in reversed(items):
+            if remaining_chars <= 0:
+                break
+            content = str(message.get("content") or "").strip()
+            if not content:
+                continue
+            if max_message_chars is not None and max_message_chars > 0:
+                content = content[:max_message_chars]
+            content = content[:remaining_chars]
+            bounded_reversed.append(
+                {
+                    "role": str(message.get("role") or "assistant"),
+                    "content": content,
+                }
+            )
+            remaining_chars -= len(content)
+        items = list(reversed(bounded_reversed))
 
     lines: list[str] = []
     for message in items:
@@ -248,6 +271,64 @@ class DatabaseChatMemoryStore:
             if latest_preview:
                 session.preview = self._truncate(latest_preview, 120)
 
+            await db.commit()
+
+    async def load_summary_context(
+        self,
+        *,
+        user_id: int | None,
+        session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+    ) -> ChatMemoryContext:
+        """Load messages outside the recent window for summary generation."""
+
+        async with AsyncSessionLocal() as db:
+            session = await self._get_session(
+                db,
+                user_id=user_id,
+                session_id=session_id,
+                project_app_id=project_app_id,
+                external_user_id=external_user_id,
+            )
+            if not session:
+                return ChatMemoryContext(messages=[], summary=None)
+
+            result = await db.execute(
+                select(ChatMessage.role, ChatMessage.content)
+                .where(ChatMessage.chat_session_id == session.id)
+                .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                .offset(self.history_limit)
+            )
+            messages = [
+                {"role": role, "content": content}
+                for role, content in reversed(result.all())
+                if str(content or "").strip()
+            ]
+            return ChatMemoryContext(messages=messages, summary=session.summary)
+
+    async def update_summary(
+        self,
+        *,
+        user_id: int | None,
+        session_id: str,
+        summary: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+    ) -> None:
+        """Persist the generated summary for one scoped chat session."""
+
+        async with AsyncSessionLocal() as db:
+            session = await self._get_session(
+                db,
+                user_id=user_id,
+                session_id=session_id,
+                project_app_id=project_app_id,
+                external_user_id=external_user_id,
+            )
+            if session is None:
+                raise ValueError(f"Chat session not found: {session_id}")
+            session.summary = summary.strip() or None
             await db.commit()
 
     async def list_sessions(

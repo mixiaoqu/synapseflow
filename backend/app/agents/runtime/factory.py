@@ -11,13 +11,13 @@ class GraphDefinition:
     """Metadata for a compiled graph factory."""
 
     graph_id: str
-    factory: Callable[[], Any]
+    factory: Callable[..., Any]
     node_ids: tuple[str, ...]
 
-    def build(self) -> Any:
+    def build(self, **factory_kwargs: Any) -> Any:
         """Compile and return the configured graph."""
 
-        return self.factory()
+        return self.factory(**factory_kwargs)
 
 
 def _build_registry() -> dict[str, GraphDefinition]:
@@ -32,12 +32,9 @@ def _build_registry() -> dict[str, GraphDefinition]:
             graph_id="agent",
             factory=create_agent_graph,
             node_ids=(
-                "load_context",
-                "understand",
-                "route",
+                "decide",
                 "clarify",
-                "plan",
-                "execute",
+                "invoke",
                 "respond",
             ),
         ),

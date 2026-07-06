@@ -89,6 +89,7 @@ def _build_embed_runtime_request(
         project_app_id=runtime.app.id,
         external_user_id=context.external_user_id,
         external_user_name=context.external_user_name,
+        store_id=context.store_id,
         team_id=assistant.team_id,
         knowledge_base_id=runtime.app.knowledge_base_id,
         category_id=runtime.app.category_id,
@@ -170,6 +171,7 @@ async def create_embed_session(
         project_app_id=runtime.app.id,
         external_user_id=body.external_user_id.strip(),
         external_user_name=(body.external_user_name or "").strip() or None,
+        store_id=(body.store_id or "").strip() or None,
         initial_page_type=(body.initial_page_type or "").strip() or None,
         expires_delta=timedelta(minutes=expires),
     )

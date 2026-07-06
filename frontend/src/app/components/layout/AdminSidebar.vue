@@ -5,6 +5,7 @@ import { useRoute } from "vue-router";
 import {
   ChatDotRound,
   Collection,
+  Connection,
   DocumentChecked,
   Expand,
   FolderOpened,
@@ -41,6 +42,7 @@ const navIcons: Record<
   "knowledge-bases": Collection,
   projects: FolderOpened,
   assistants: MagicStick,
+  "business-tools": Connection,
   evaluations: DocumentChecked,
   "evaluation-knowledge-bases": Collection,
   "evaluation-reports": DocumentChecked,

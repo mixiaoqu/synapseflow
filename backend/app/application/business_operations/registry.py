@@ -1,4 +1,4 @@
-"""Whitelist registry for controlled business data operations."""
+"""Dynamic registry for project-app business operations."""
 
 from __future__ import annotations
 
@@ -6,36 +6,36 @@ from app.application.business_operations.schemas import (
     BusinessOperationDefinition,
     BusinessOperationParamSpec,
 )
-
-PRODUCT_SEARCH_OPERATION_ID = "product.search"
+from app.repositories.business_tool_repository import BusinessToolExecutionRecord
 
 
 class BusinessOperationRegistry:
-    """Holds the business data operations an agent is allowed to request."""
+    """Build operation definitions from published tools available to one app."""
 
-    def __init__(self) -> None:
-        self._operations = {
-            PRODUCT_SEARCH_OPERATION_ID: BusinessOperationDefinition(
-                id=PRODUCT_SEARCH_OPERATION_ID,
-                name="查询商品数据",
-                description="按门店和关键词查询商品库存与价格。",
-                risk_level="low",
-                requires_confirmation=False,
-                required_scope=["store_id"],
-                params=[
-                    BusinessOperationParamSpec(
-                        key="keyword",
-                        label="查询关键词",
-                        type="text",
-                        required=True,
-                        description="商品名称、条码或 SKU 编码。",
-                    )
-                ],
-            )
-        }
+    @staticmethod
+    def from_tool_record(record: BusinessToolExecutionRecord) -> BusinessOperationDefinition:
+        tool = record.tool
+        return BusinessOperationDefinition(
+            id=tool.tool_key,
+            name=tool.name,
+            description=tool.description or tool.name,
+            risk_level=tool.risk_level,
+            requires_confirmation=tool.requires_confirmation,
+            params=[
+                BusinessOperationParamSpec(
+                    key=str(item.get("key") or "").strip(),
+                    label=str(item.get("label") or item.get("key") or "参数").strip(),
+                    type=str(item.get("type") or "text").strip(),
+                    required=bool(item.get("required")),
+                    description=str(item.get("description") or "").strip(),
+                )
+                for item in list(tool.params_schema or [])
+                if str(item.get("key") or "").strip()
+            ],
+        )
 
-    def list_operations(self) -> list[BusinessOperationDefinition]:
-        return list(self._operations.values())
-
-    def get(self, operation_id: str) -> BusinessOperationDefinition | None:
-        return self._operations.get(operation_id)
+    def list_from_records(
+        self,
+        records: list[BusinessToolExecutionRecord],
+    ) -> list[BusinessOperationDefinition]:
+        return [self.from_tool_record(record) for record in records]

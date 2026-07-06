@@ -31,12 +31,10 @@ class AgentState(BaseAgentContext, total=False):
     memory_summary: Optional[str]
     allowed_document_statuses: List[str]
 
-    runtime_context: Dict[str, Any]
-    intent: Dict[str, Any]
-    route: Dict[str, Any]
+    decision: Dict[str, Any]
     clarification: Dict[str, Any]
-    plan: Dict[str, Any]
-    execution: Dict[str, Any]
+    handoff_message: str
+    workflow_result: Dict[str, Any]
     response: Dict[str, Any]
 
     answer: str

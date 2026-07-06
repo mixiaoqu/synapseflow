@@ -6,12 +6,9 @@ from typing import Any
 
 WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
     "agent": {
-        "load_context": {"label": "加载上下文"},
-        "understand": {"label": "理解意图"},
-        "route": {"label": "匹配能力"},
+        "decide": {"label": "理解问题"},
         "clarify": {"label": "请求澄清"},
-        "plan": {"label": "制定计划"},
-        "execute": {"label": "执行计划"},
+        "invoke": {"label": "调用能力"},
         "respond": {"label": "输出结果"},
     },
     "knowledge_qa": {
@@ -28,24 +25,7 @@ WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
-EXECUTE_STAGE_TITLES: dict[str, str] = {
-    "knowledge_qa": "🔍 查阅相关资料",
-    "business_ops": "📊 查询业务数据",
-    "clarify": "🚀 补充必要信息",
-    "direct_answer": "🚀 处理请求",
-}
-
-
-def get_node_workflow_id(root_workflow_id: str, node_id: str) -> str:
-    """Resolve the real workflow owner for a streamed node."""
-
-    if node_id in WORKFLOW_NODE_META.get("knowledge_qa", {}):
-        return "knowledge_qa"
-    if node_id in WORKFLOW_NODE_META.get("business_ops", {}):
-        return "business_ops"
-    if node_id in WORKFLOW_NODE_META.get(root_workflow_id, {}):
-        return root_workflow_id
-    return root_workflow_id
+OUTPUT_NODE_IDS = {"compose_answer", "compose_result", "respond"}
 
 
 def get_node_label(workflow_id: str, node_id: str) -> str:
@@ -60,15 +40,25 @@ def get_node_model(workflow_id: str, node_id: str) -> str | None:
     return WORKFLOW_NODE_META.get(workflow_id, {}).get(node_id, {}).get("model")
 
 
-def get_display_stage_plan(target_id: str | None) -> list[dict[str, str]]:
-    """Return the stable user-facing stage plan for one assistant turn."""
+def normalize_activity_payload(
+    *,
+    workflow_id: str,
+    node_id: str,
+    node_name: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Expose only real runtime child-node activity for display."""
 
-    normalized = str(target_id or "").strip()
-    return [
-        {"id": "understand", "title": "🤔 思考您的问题"},
-        {
-            "id": "execute",
-            "title": EXECUTE_STAGE_TITLES.get(normalized, EXECUTE_STAGE_TITLES["direct_answer"]),
-        },
-        {"id": "compose", "title": "💡 总结最终结果"},
-    ]
+    normalized_payload = dict(payload)
+    legacy_display_stage = str(normalized_payload.get("display_stage") or "").strip()
+    for key in ("display_stage", "display_title"):
+        normalized_payload.pop(key, None)
+
+    if node_id in OUTPUT_NODE_IDS or legacy_display_stage == "compose":
+        normalized_payload.pop("activity_text", None)
+        normalized_payload.pop("activity_status", None)
+        return normalized_payload
+
+    normalized_payload["display_stage"] = node_id
+    normalized_payload["display_title"] = node_name or get_node_label(workflow_id, node_id)
+    return normalized_payload

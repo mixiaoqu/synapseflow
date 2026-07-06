@@ -4,6 +4,7 @@ import type {
   ProjectBulkActionResponse,
   ProjectAppBulkAction,
   ProjectAppBulkActionResponse,
+  ProjectAppEmbedPreviewPayload,
   ProjectAppEmbedPreviewResponse,
   ProjectAppListResponse,
   ProjectAppSummary,
@@ -132,9 +133,14 @@ export function bulkActionProjectApps(
   });
 }
 
-export function createProjectAppEmbedPreview(projectId: number, appId: number) {
+export function createProjectAppEmbedPreview(
+  projectId: number,
+  appId: number,
+  payload: ProjectAppEmbedPreviewPayload = {},
+) {
   return request<ProjectAppEmbedPreviewResponse>({
     url: `/projects/${projectId}/apps/${appId}/embed-preview`,
     method: "POST",
+    data: payload,
   });
 }

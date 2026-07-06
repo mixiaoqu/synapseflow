@@ -281,6 +281,201 @@ class ProjectApp(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class BusinessConnection(Base):
+    """Reusable connection to one external business system."""
+
+    __tablename__ = "business_connections"
+    __table_args__ = (
+        UniqueConstraint("team_id", "name", name="uq_business_connections_team_name"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    environment = Column(String(30), nullable=False, default="production", index=True)
+    base_url = Column(Text, nullable=False)
+    auth_type = Column(String(20), nullable=False, default="none")
+    auth_secret_ref = Column(String(255), nullable=True)
+    auth_header_name = Column(String(100), nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    status = Column(String(20), nullable=False, default="untested", index=True)
+    last_tested_at = Column(DateTime(timezone=True), nullable=True)
+    last_test_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class BusinessApi(Base):
+    """One concrete external API exposed by a business system."""
+
+    __tablename__ = "business_apis"
+    __table_args__ = (
+        UniqueConstraint("team_id", "api_key", name="uq_business_apis_team_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    connection_id = Column(
+        Integer,
+        ForeignKey("business_connections.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    api_key = Column(String(120), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    method = Column(String(10), nullable=False, default="GET")
+    path = Column(Text, nullable=False)
+    request_schema = Column(JSON, nullable=False, default=dict)
+    response_schema = Column(JSON, nullable=False, default=dict)
+    source_type = Column(String(30), nullable=False, default="manual", index=True)
+    source_version = Column(String(100), nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class BusinessTool(Base):
+    """Stable business capability exposed to agents and applications."""
+
+    __tablename__ = "business_tools"
+    __table_args__ = (
+        UniqueConstraint("team_id", "tool_key", name="uq_business_tools_team_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    tool_key = Column(String(120), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    typical_queries = Column(JSON, nullable=False, default=list)
+    params_schema = Column(JSON, nullable=False, default=list)
+    risk_level = Column(String(20), nullable=False, default="low", index=True)
+    requires_confirmation = Column(Boolean, nullable=False, default=False)
+    status = Column(String(20), nullable=False, default="draft", index=True)
+    last_tested_at = Column(DateTime(timezone=True), nullable=True)
+    last_test_error = Column(Text, nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class BusinessToolImplementation(Base):
+    """One concrete technical implementation bound to a business tool."""
+
+    __tablename__ = "business_tool_implementations"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_tool_id",
+            "business_api_id",
+            name="uq_business_tool_implementations_tool_api",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    business_tool_id = Column(
+        Integer,
+        ForeignKey("business_tools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    business_api_id = Column(
+        Integer,
+        ForeignKey("business_apis.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    implementation_type = Column(String(30), nullable=False, default="http", index=True)
+    context_binding = Column(JSON, nullable=False, default=dict)
+    request_mapping = Column(JSON, nullable=False, default=dict)
+    response_mapping = Column(JSON, nullable=False, default=dict)
+    status = Column(String(20), nullable=False, default="draft", index=True)
+    last_tested_at = Column(DateTime(timezone=True), nullable=True)
+    last_test_error = Column(Text, nullable=True)
+    priority = Column(Integer, nullable=False, default=100, index=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class ProjectAppBusinessToolBinding(Base):
+    """Business tool binding enabled for one project application."""
+
+    __tablename__ = "project_app_business_tool_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_app_id",
+            "business_tool_id",
+            name="uq_project_app_business_tool_bindings_app_tool",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    project_app_id = Column(
+        Integer,
+        ForeignKey("project_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    business_tool_id = Column(
+        Integer,
+        ForeignKey("business_tools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class BusinessToolCallLog(Base):
+    """Redacted runtime record for one business tool call."""
+
+    __tablename__ = "business_tool_call_logs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_app_id = Column(
+        Integer,
+        ForeignKey("project_apps.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    business_api_id = Column(
+        Integer,
+        ForeignKey("business_apis.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    business_tool_id = Column(
+        Integer,
+        ForeignKey("business_tools.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    business_tool_implementation_id = Column(
+        Integer,
+        ForeignKey("business_tool_implementations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    tool_key = Column(String(120), nullable=False, index=True)
+    tool_name = Column(String(100), nullable=False)
+    api_key = Column(String(120), nullable=True, index=True)
+    api_name = Column(String(100), nullable=True)
+    session_id = Column(String(100), nullable=True, index=True)
+    actor_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    external_user_id = Column(String(255), nullable=True)
+    status = Column(String(30), nullable=False, index=True)
+    http_status = Column(Integer, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    request_payload = Column(JSON, nullable=False, default=dict)
+    response_payload = Column(JSON, nullable=False, default=dict)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, index=True)
+
+
 class DocumentCategory(Base):
     """Knowledge-base scoped document category."""
 

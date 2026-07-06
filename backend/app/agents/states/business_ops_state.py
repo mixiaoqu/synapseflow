@@ -1,6 +1,6 @@
 """State model for the business operations workflow."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from app.agents.runtime.context import BaseAgentContext
 
@@ -10,7 +10,9 @@ class BusinessOpsState(BaseAgentContext, total=False):
 
     workflow_id: str
     session_id: Optional[str]
+    original_query: str
     query: str
+    intent: Dict[str, Any]
     product_id: Optional[int]
     project_id: Optional[int]
     project_app_id: Optional[int]
@@ -19,13 +21,13 @@ class BusinessOpsState(BaseAgentContext, total=False):
     store_id: Optional[str]
     page_context: Dict[str, Any]
     page_config: Dict[str, Any]
-    chat_history: List[Dict[str, Any]]
-    memory_summary: Optional[str]
 
     business_request: Dict[str, Any]
+    available_business_tools: list[Dict[str, Any]]
     business_operation: Dict[str, Any]
     business_operation_result: Dict[str, Any]
     business_result: Dict[str, Any]
+    workflow_result: Dict[str, Any]
 
     answer: str
     answer_status: str

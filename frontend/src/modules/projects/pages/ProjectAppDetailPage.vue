@@ -78,6 +78,7 @@ const pageError = ref<unknown>(null);
 const saveLoading = ref(false);
 const previewLoading = ref(false);
 const previewEmbedUrl = ref("");
+const previewStoreId = ref("STORE_001");
 const codeEditedManually = ref(false);
 const categoryPath = ref<number[]>([]);
 const rightPanelTab = ref<"sandbox" | "integration">("sandbox");
@@ -134,7 +135,8 @@ Content-Type: application/json
   "project_code": "${projectCode}",
   "app_code": "${appCode}",
   "external_user_id": "YOUR_USER_ID",
-  "external_user_name": "张三"
+  "external_user_name": "张三",
+  "store_id": "STORE_ID"
 }`;
 });
 
@@ -358,7 +360,9 @@ async function generatePreview() {
 
   previewLoading.value = true;
   try {
-    const response = await createProjectAppEmbedPreview(projectId.value, appId.value);
+    const response = await createProjectAppEmbedPreview(projectId.value, appId.value, {
+      store_id: previewStoreId.value.trim() || null,
+    });
     previewEmbedUrl.value = response.embed_url;
     ElMessage.success("已生成嵌入预览链接。");
   } catch (error) {
@@ -625,6 +629,10 @@ watch(
             <div>
               <span>默认助手</span>
               <strong>{{ selectedAssistant?.name || "未绑定" }}</strong>
+            </div>
+            <div>
+              <span>门店 ID</span>
+              <el-input v-model="previewStoreId" clearable maxlength="120" placeholder="门店 ID" />
             </div>
           </div>
 
@@ -908,7 +916,7 @@ watch(
 
 .project-app-detail-page__sandbox-summary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 12px;
 }
