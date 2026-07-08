@@ -153,6 +153,18 @@ class KbChatService(BaseAgentService):
                     getattr(request, "allowed_document_statuses", None)
                     or VISIBLE_ASK_DOCUMENT_STATUSES
                 ),
+                "normalized_query": "",
+                "scope": {},
+                "session_context": {},
+                "channel_context": {},
+                "trace": {},
+                "classification": {},
+                "route": {},
+                "task_plan": {},
+                "execution_runs": [],
+                "sub_agent_results": [],
+                "collected_results": {},
+                "synthesized_result": {},
                 "retrieved_docs": [],
                 "answer": "",
                 "workflow_result": {},
@@ -234,7 +246,8 @@ class KbChatService(BaseAgentService):
             answer_metadata={
                 "answer_status": answer_status,
                 "log_id": log_id,
-                "workflow_id": state.get("workflow_id") or (state.get("metadata") or {}).get("workflow"),
+                "workflow_id": state.get("workflow_id")
+                or (state.get("metadata") or {}).get("workflow"),
                 "retrieval_execution_plan": (
                     dict(state.get("retrieval_execution_plan") or {})
                     if isinstance(state.get("retrieval_execution_plan"), dict)
@@ -304,12 +317,20 @@ class KbChatService(BaseAgentService):
 
     @staticmethod
     def _node_progress_message(node_id: str) -> str:
-        if node_id == "decide":
-            return "正在理解问题..."
-        if node_id == "clarify":
-            return "正在生成澄清问题..."
-        if node_id == "invoke":
-            return "正在调用处理能力..."
+        if node_id == "intake":
+            return "正在整理请求上下文..."
+        if node_id == "classify":
+            return "正在识别任务类型..."
+        if node_id == "route":
+            return "正在选择处理路径..."
+        if node_id == "orchestrate_plan":
+            return "正在规划执行步骤..."
+        if node_id == "dispatch":
+            return "正在分发子智能体执行..."
+        if node_id == "collect":
+            return "正在收集执行结果..."
+        if node_id == "synthesize":
+            return "正在整编最终结果..."
         if node_id == "respond":
             return "正在整理最终响应..."
         if node_id == "analyze_question":
@@ -332,28 +353,58 @@ class KbChatService(BaseAgentService):
 
     @staticmethod
     def _node_summary(node_id: str, state: dict[str, Any]) -> dict[str, Any]:
-        if node_id == "decide":
-            decision = state.get("decision") or {}
-            intent = decision.get("intent") or {}
+        if node_id == "intake":
+            scope = state.get("scope") or {}
             return {
-                "action": decision.get("action"),
+                "query_length": len(str(state.get("normalized_query") or "")),
+                "team_id": scope.get("team_id"),
+                "knowledge_base_id": scope.get("knowledge_base_id"),
+            }
+        if node_id == "classify":
+            classification = state.get("classification") or {}
+            intent = classification.get("intent") or {}
+            return {
+                "request_type": classification.get("request_type"),
+                "task_shape": classification.get("task_shape"),
+                "goal_clarity": classification.get("goal_clarity"),
                 "intent_kind": intent.get("kind"),
-                "capability_id": decision.get("capability_id"),
-                "missing_fields": decision.get("missing_fields"),
-                "reason": decision.get("reason"),
+                "domain_hints": classification.get("domain_hints"),
+                "risk_hint": classification.get("risk_hint"),
+                "reason": classification.get("reason"),
             }
-        if node_id == "clarify":
-            clarification = state.get("clarification") or {}
+        if node_id == "route":
+            route = state.get("route") or {}
             return {
-                "missing_fields": clarification.get("missing_fields"),
+                "route_type": route.get("route_type"),
+                "target_sub_agents": route.get("target_sub_agents"),
+                "reason": route.get("reason"),
             }
-        if node_id == "invoke":
-            workflow_result = state.get("workflow_result") or {}
+        if node_id == "orchestrate_plan":
+            task_plan = state.get("task_plan") or {}
             return {
-                "capability_id": (state.get("decision") or {}).get("capability_id"),
-                "status": workflow_result.get("status"),
-                "retrieved_count": len(state.get("retrieved_docs", [])),
-                "answer_status": state.get("answer_status"),
+                "execution_mode": task_plan.get("execution_mode"),
+                "step_count": len(task_plan.get("steps") or []),
+            }
+        if node_id == "dispatch":
+            runs = list(state.get("execution_runs") or [])
+            return {
+                "run_count": len(runs),
+                "success_count": len([run for run in runs if run.get("status") == "success"]),
+                "failed_count": len([run for run in runs if run.get("status") != "success"]),
+            }
+        if node_id == "collect":
+            collected = state.get("collected_results") or {}
+            return {
+                "success_count": collected.get("success_count"),
+                "failed_count": collected.get("failed_count"),
+                "retrieved_count": len(collected.get("citations") or []),
+            }
+        if node_id == "synthesize":
+            synthesized = state.get("synthesized_result") or {}
+            return {
+                "final_status": synthesized.get("final_status"),
+                "answer_status": synthesized.get("answer_status"),
+                "retrieved_count": len(synthesized.get("citations") or []),
             }
         if node_id == "respond":
             response = state.get("response") or state.get("final_response") or {}
@@ -396,13 +447,15 @@ class KbChatService(BaseAgentService):
                 "retrieved_count": len(state.get("retrieved_docs", [])),
             }
         if node_id == "compose_answer":
-            workflow_result = state.get("workflow_result") or {}
-            evidence = workflow_result.get("evidence") or {}
-            data = evidence.get("data") or {}
+            sub_agent_result = state.get("sub_agent_result") or {}
+            data = sub_agent_result.get("data") or {}
+            content = data.get("content") or {}
             return {
-                "status": workflow_result.get("status"),
-                "answer_status": workflow_result.get("answer_status"),
-                "retrieved_count": len(data.get("retrieved_docs") or state.get("retrieved_docs", [])),
+                "status": sub_agent_result.get("status"),
+                "answer_status": sub_agent_result.get("answer_status"),
+                "retrieved_count": len(
+                    content.get("retrieved_docs") or state.get("retrieved_docs", [])
+                ),
             }
         if node_id == "analyze_request":
             request_info = state.get("business_request") or {}
@@ -424,13 +477,12 @@ class KbChatService(BaseAgentService):
                 "missing_field_count": len(result.get("missing_fields") or []),
             }
         if node_id == "compose_result":
-            workflow_result = state.get("workflow_result") or {}
-            evidence = workflow_result.get("evidence") or {}
-            data = evidence.get("data") or {}
-            business_result = data.get("business_result") or {}
+            sub_agent_result = state.get("sub_agent_result") or {}
+            data = sub_agent_result.get("data") or {}
+            business_result = data.get("content") or {}
             return {
-                "status": workflow_result.get("status"),
-                "answer_status": workflow_result.get("answer_status"),
+                "status": sub_agent_result.get("status"),
+                "answer_status": sub_agent_result.get("answer_status"),
                 "total": business_result.get("total"),
             }
         return {"keys": sorted(state.keys())}
@@ -444,7 +496,9 @@ class KbChatService(BaseAgentService):
         return "partial"
 
     @staticmethod
-    def _resolve_retrieval_status(*, retrieval_trace: dict[str, Any], retrieved_count: int) -> str | None:
+    def _resolve_retrieval_status(
+        *, retrieval_trace: dict[str, Any], retrieved_count: int
+    ) -> str | None:
         empty_reason = str(retrieval_trace.get("empty_reason") or "").strip()
         if empty_reason in {"empty_knowledge_base", "empty_collection"}:
             return empty_reason
@@ -490,9 +544,7 @@ class KbChatService(BaseAgentService):
             else {}
         )
         retrieval_funnel = (
-            text_trace.get("funnel")
-            if isinstance(text_trace.get("funnel"), dict)
-            else {}
+            text_trace.get("funnel") if isinstance(text_trace.get("funnel"), dict) else {}
         )
         semantic_query_stats = [
             item
@@ -504,12 +556,9 @@ class KbChatService(BaseAgentService):
             for item in list(retrieval_funnel.get("lexical_terms") or [])
             if isinstance(item, dict)
         ]
+
         def _string_items(value: Any) -> list[str]:
-            return [
-                str(item).strip()
-                for item in list(value or [])
-                if str(item or "").strip()
-            ]
+            return [str(item).strip() for item in list(value or []) if str(item or "").strip()]
 
         semantic_queries = _string_items(result.get("semantic_queries")) or _string_items(
             state.get("semantic_queries")
@@ -559,7 +608,13 @@ class KbChatService(BaseAgentService):
             source = str(metadata.get("source") or "").strip().lower()
             if source in {"hybrid", "text_graph"}:
                 return "hybrid"
-            if source in {"graph", "graph_entity", "graph_relation", "graph_relation_evidence", "graph_path"}:
+            if source in {
+                "graph",
+                "graph_entity",
+                "graph_relation",
+                "graph_relation_evidence",
+                "graph_path",
+            }:
                 return "graph"
             if source == "lexical":
                 return "lexical"
@@ -615,7 +670,9 @@ class KbChatService(BaseAgentService):
                 )
             return docs
 
-        final_context_docs = _build_trace_docs(list(result.get("primary_evidence_docs") or retrieved_docs or []))
+        final_context_docs = _build_trace_docs(
+            list(result.get("primary_evidence_docs") or retrieved_docs or [])
+        )
         selected_identities = {
             str(doc.get("identity") or "")
             for doc in final_context_docs
@@ -630,7 +687,9 @@ class KbChatService(BaseAgentService):
             )
         )
         for doc in ranked_candidates:
-            doc["selected"] = bool(doc.get("identity") and doc.get("identity") in selected_identities)
+            doc["selected"] = bool(
+                doc.get("identity") and doc.get("identity") in selected_identities
+            )
 
         return {
             "query_clues": {
@@ -662,7 +721,9 @@ class KbChatService(BaseAgentService):
                 "graph": {
                     "query_count": len(candidate_entities),
                     "recall_count": graph_hit_count,
-                    "candidate_count": int(retrieval_trace.get("graph_primary_count") or graph_hit_count),
+                    "candidate_count": int(
+                        retrieval_trace.get("graph_primary_count") or graph_hit_count
+                    ),
                     "status": _source_status(
                         query_count=len(candidate_entities),
                         recall_count=graph_hit_count,
@@ -704,11 +765,11 @@ class KbChatService(BaseAgentService):
             },
             "ranked_candidates": ranked_candidates,
             "final_context_docs": final_context_docs,
-            "supporting_evidence_docs": _build_trace_docs(list(result.get("supporting_evidence_docs") or [])),
+            "supporting_evidence_docs": _build_trace_docs(
+                list(result.get("supporting_evidence_docs") or [])
+            ),
             "debug": {
-                "retrieval_trace": (
-                    retrieval_trace
-                ),
+                "retrieval_trace": (retrieval_trace),
                 "rewrite_trace": (
                     dict(result.get("rewrite_trace") or {})
                     if isinstance(result.get("rewrite_trace"), dict)
@@ -743,9 +804,7 @@ class KbChatService(BaseAgentService):
         def _format_queries(values: list[str]) -> str:
             if not values:
                 return "  (none)"
-            return "\n".join(
-                f"  {index + 1}. {value}" for index, value in enumerate(values[:3])
-            )
+            return "\n".join(f"  {index + 1}. {value}" for index, value in enumerate(values[:3]))
 
         text_stage_rerank_trace = dict(rerank_trace.get("text_stage") or {})
         text_stage_rerank_enabled = text_stage_rerank_trace.get("enabled")
@@ -813,14 +872,13 @@ class KbChatService(BaseAgentService):
             or state.get("knowledge_base_id")
             or "-",
             result.get("question_type") or state.get("question_type") or "-",
-            result.get("retrieval_required")
-            if result.get("retrieval_required") is not None
-            else state.get("retrieval_required"),
+            (
+                result.get("retrieval_required")
+                if result.get("retrieval_required") is not None
+                else state.get("retrieval_required")
+            ),
             result.get("retrieval_complexity") or state.get("retrieval_complexity") or "-",
-            result.get("route_reason")
-            or result.get("reason")
-            or state.get("route_reason")
-            or "-",
+            result.get("route_reason") or result.get("reason") or state.get("route_reason") or "-",
             int(route_trace.get("latency_ms") or 0),
             int(plan_trace.get("latency_ms") or 0),
             str(result.get("query") or state.get("query") or ""),
@@ -837,9 +895,7 @@ class KbChatService(BaseAgentService):
             bool(graph_trace.get("graph_used")),
             int(graph_trace.get("graph_hits") or 0),
             int(
-                retrieval_trace.get("final_context_docs")
-                or retrieval_trace.get("final_hits")
-                or 0
+                retrieval_trace.get("final_context_docs") or retrieval_trace.get("final_hits") or 0
             ),
             bool(text_stage_rerank_enabled),
             bool(rerank_trace.get("enabled")),
@@ -847,7 +903,11 @@ class KbChatService(BaseAgentService):
             int(rerank_trace.get("output_count") or 0),
             int(rerank_trace.get("latency_ms") or 0),
             retrieval_trace.get("empty_reason") or graph_trace.get("empty_reason") or "-",
-            int(text_trace.get("latency_ms") or retrieval_trace.get("text_retrieval_latency_ms") or 0),
+            int(
+                text_trace.get("latency_ms")
+                or retrieval_trace.get("text_retrieval_latency_ms")
+                or 0
+            ),
             int(retrieval_trace.get("merge_latency_ms") or 0),
             result.get("answer_status") or "-",
             answer_trace.get("confidence") or "-",
@@ -937,7 +997,9 @@ class KbChatService(BaseAgentService):
                         or text_trace.get("merged_candidate_count")
                         or 0
                     ),
-                    final_context_count=int(retrieval_trace.get("final_context_docs") or len(retrieved_docs)),
+                    final_context_count=int(
+                        retrieval_trace.get("final_context_docs") or len(retrieved_docs)
+                    ),
                     empty_reason=str(retrieval_trace.get("empty_reason") or "") or None,
                     rerank_enabled=bool(rerank_trace.get("enabled")),
                     trace_payload=trace_payload,
@@ -1560,7 +1622,9 @@ class KbChatService(BaseAgentService):
             raise
         except Exception as exc:
             logger.exception("[KB Chat] stream failed after retrieval/answer stage: {}", exc)
-            yield emit_error(run_id, self._public_stream_error_message(exc), workflow_id=workflow_id)
+            yield emit_error(
+                run_id, self._public_stream_error_message(exc), workflow_id=workflow_id
+            )
 
 
 kb_chat_service: KbChatService | None = None

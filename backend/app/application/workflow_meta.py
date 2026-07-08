@@ -6,9 +6,13 @@ from typing import Any
 
 WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
     "agent": {
-        "decide": {"label": "理解问题"},
-        "clarify": {"label": "请求澄清"},
-        "invoke": {"label": "调用能力"},
+        "intake": {"label": "整理上下文"},
+        "classify": {"label": "识别任务"},
+        "route": {"label": "选择路径"},
+        "orchestrate_plan": {"label": "规划执行"},
+        "dispatch": {"label": "分发执行"},
+        "collect": {"label": "收集结果"},
+        "synthesize": {"label": "整编结果"},
         "respond": {"label": "输出结果"},
     },
     "knowledge_qa": {
@@ -27,6 +31,53 @@ WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
 
 OUTPUT_NODE_IDS = {"compose_answer", "compose_result", "respond"}
 
+CUSTOMER_STAGE_TITLES = {
+    "understand": "理解需求",
+    "plan": "规划步骤",
+    "knowledge_search": "查阅资料",
+    "business_query": "查询业务数据",
+    "execute": "处理任务",
+    "compose": "整理答案",
+}
+
+NODE_CUSTOMER_STAGES = {
+    "agent": {
+        "intake": "understand",
+        "classify": "understand",
+        "route": "understand",
+        "orchestrate_plan": "plan",
+        "dispatch": "execute",
+        "collect": "execute",
+        "synthesize": "compose",
+        "respond": "compose",
+    },
+    "knowledge_qa": {
+        "analyze_question": "understand",
+        "plan_retrieval": "knowledge_search",
+        "retrieve_knowledge": "knowledge_search",
+        "compose_answer": "compose",
+    },
+    "business_ops": {
+        "analyze_request": "understand",
+        "match_operation": "business_query",
+        "execute_operation": "business_query",
+        "compose_result": "compose",
+    },
+}
+
+LEGACY_CUSTOMER_STAGE_ALIASES = {
+    "intake": "understand",
+    "classify": "understand",
+    "route": "understand",
+    "orchestrate_plan": "plan",
+    "dispatch": "execute",
+    "collect": "execute",
+    "synthesize": "compose",
+    "understand": "understand",
+    "execute": "execute",
+    "compose": "compose",
+}
+
 
 def get_node_label(workflow_id: str, node_id: str) -> str:
     """Return the display label for a workflow node."""
@@ -38,6 +89,24 @@ def get_node_model(workflow_id: str, node_id: str) -> str | None:
     """Return the display model name for a workflow node, if configured."""
 
     return WORKFLOW_NODE_META.get(workflow_id, {}).get(node_id, {}).get("model")
+
+
+def _customer_stage_from_payload(
+    *,
+    workflow_id: str,
+    node_id: str,
+    legacy_display_stage: str,
+) -> str:
+    if legacy_display_stage == "execute":
+        if workflow_id == "knowledge_qa":
+            return "knowledge_search"
+        if workflow_id == "business_ops":
+            return "business_query"
+
+    if legacy_display_stage:
+        return LEGACY_CUSTOMER_STAGE_ALIASES.get(legacy_display_stage, legacy_display_stage)
+
+    return NODE_CUSTOMER_STAGES.get(workflow_id, {}).get(node_id, node_id)
 
 
 def normalize_activity_payload(
@@ -54,11 +123,19 @@ def normalize_activity_payload(
     for key in ("display_stage", "display_title"):
         normalized_payload.pop(key, None)
 
-    if node_id in OUTPUT_NODE_IDS or legacy_display_stage == "compose":
+    if node_id in OUTPUT_NODE_IDS and not legacy_display_stage:
         normalized_payload.pop("activity_text", None)
         normalized_payload.pop("activity_status", None)
         return normalized_payload
 
-    normalized_payload["display_stage"] = node_id
-    normalized_payload["display_title"] = node_name or get_node_label(workflow_id, node_id)
+    customer_stage = _customer_stage_from_payload(
+        workflow_id=workflow_id,
+        node_id=node_id,
+        legacy_display_stage=legacy_display_stage,
+    )
+    normalized_payload["display_stage"] = customer_stage
+    normalized_payload["display_title"] = CUSTOMER_STAGE_TITLES.get(
+        customer_stage,
+        node_name or get_node_label(workflow_id, node_id),
+    )
     return normalized_payload

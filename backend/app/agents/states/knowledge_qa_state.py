@@ -18,7 +18,7 @@ class KnowledgeQaState(BaseAgentContext, total=False):
 
     retrieval: Dict[str, Any]
     evidence: Dict[str, Any]
-    workflow_result: Dict[str, Any]
+    sub_agent_result: Dict[str, Any]
 
     retrieval_analysis: Dict[str, Any]
     question_type: Optional[str]

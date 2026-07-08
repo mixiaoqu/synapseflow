@@ -31,9 +31,18 @@ class AgentState(BaseAgentContext, total=False):
     memory_summary: Optional[str]
     allowed_document_statuses: List[str]
 
-    decision: Dict[str, Any]
-    clarification: Dict[str, Any]
-    handoff_message: str
+    normalized_query: str
+    scope: Dict[str, Any]
+    session_context: Dict[str, Any]
+    channel_context: Dict[str, Any]
+    trace: Dict[str, Any]
+    classification: Dict[str, Any]
+    route: Dict[str, Any]
+    task_plan: Dict[str, Any]
+    execution_runs: List[Dict[str, Any]]
+    sub_agent_results: List[Dict[str, Any]]
+    collected_results: Dict[str, Any]
+    synthesized_result: Dict[str, Any]
     workflow_result: Dict[str, Any]
     response: Dict[str, Any]
 

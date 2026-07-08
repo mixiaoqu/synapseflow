@@ -1,4 +1,4 @@
-"""Top-level decision helper for the agent workflow."""
+"""Top-level request classification helper for the agent workflow."""
 
 from __future__ import annotations
 
@@ -7,18 +7,24 @@ import re
 from typing import Any, Callable, Iterable
 
 from app.agents.common.llm_json import parse_llm_json_object
-from app.agents.runtime.capabilities import CapabilityDefinition
+from app.agents.runtime.sub_agents import SubAgentDefinition
 from app.core.llm import get_llm_for_planner
 
-ALLOWED_ACTIONS = {"invoke", "clarify", "respond", "unsupported"}
-ALLOWED_INTENT_KINDS = {
+ALLOWED_REQUEST_TYPES = {
+    "conversation",
     "information",
     "data_query",
     "action",
-    "conversation",
     "unclear",
 }
-ALLOWED_RESPONSE_KINDS = {"out_of_scope"}
+ALLOWED_TASK_SHAPES = {
+    "direct",
+    "single_sub_agent",
+    "multi_sub_agent",
+    "non_executable",
+}
+ALLOWED_GOAL_CLARITY = {"clear", "unclear"}
+ALLOWED_RISK_HINTS = {"none", "approval", "safe_block"}
 BUSINESS_OPS_HINT_PATTERN = re.compile(
     r"(?:查询|查一下|搜索|查找|获取|读取|查看|统计|列出|创建|更新|提交|取消|同步)"
     r".*(?:订单|会员|门店|客户|用户|记录|数据|商品|库存|价格|物流|账户|工单|状态)"
@@ -53,6 +59,11 @@ def _compact_text(text: str, *, limit: int = 600) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())[:limit].strip()
 
 
+def _normalize_choice(value: Any, allowed: set[str], default: str) -> str:
+    normalized = re.sub(r"\s+", "_", str(value or "").strip().lower())
+    return normalized if normalized in allowed else default
+
+
 def _coerce_string_list(value: Any, *, item_limit: int = 80) -> list[str]:
     raw_items = [value] if isinstance(value, str) else list(value or [])
     return [
@@ -62,23 +73,24 @@ def _coerce_string_list(value: Any, *, item_limit: int = 80) -> list[str]:
     ]
 
 
-def _resolve_capability_hint(query: str) -> str:
+def _resolve_sub_agent_hints(query: str) -> list[str]:
+    hints: list[str] = []
     if KNOWLEDGE_QA_HINT_PATTERN.search(query):
-        return "knowledge_qa"
+        hints.append("knowledge_qa")
     if BUSINESS_OPS_HINT_PATTERN.search(query):
-        return "business_ops"
-    return ""
+        hints.append("business_ops")
+    return hints
 
 
-def _capability_catalog(
-    capabilities: Iterable[CapabilityDefinition],
+def _sub_agent_catalog(
+    sub_agents: Iterable[SubAgentDefinition],
 ) -> list[dict[str, str]]:
     return [
         {
-            "capability_id": capability.capability_id,
-            "description": capability.description,
+            "sub_agent_id": sub_agent.sub_agent_id,
+            "description": sub_agent.description,
         }
-        for capability in capabilities
+        for sub_agent in sub_agents
     ]
 
 
@@ -88,65 +100,76 @@ def _build_prompt(
     chat_history: list[dict[str, Any]],
     memory_summary: str | None,
     page_context: dict[str, Any],
-    capabilities: Iterable[CapabilityDefinition],
+    sub_agents: Iterable[SubAgentDefinition],
 ) -> str:
     history = "\n".join(
         f"{item.get('role', 'user')}: {_compact_text(str(item.get('content') or ''), limit=240)}"
         for item in chat_history[-4:]
         if str(item.get("content") or "").strip()
     )
-    capability_catalog = _capability_catalog(capabilities)
-    capability_hint = _resolve_capability_hint(query)
+    sub_agent_catalog = _sub_agent_catalog(sub_agents)
+    sub_agent_hints = _resolve_sub_agent_hints(query)
     return f"""
-You decide how the top-level agent should handle one user turn.
+You classify one enterprise agent request. Do not route, plan, call tools, or answer.
 
 Return JSON only:
 {{
-  "action": "invoke",
+  "request_type": "information",
+  "task_shape": "single_sub_agent",
+  "goal_clarity": "clear",
+  "needs_sub_agent": true,
+  "domain_hints": ["knowledge_qa"],
+  "sub_tasks": [
+    {{
+      "sub_agent_id": "knowledge_qa",
+      "goal": "a standalone goal for this sub-agent",
+      "depends_on": []
+    }}
+  ],
   "intent": {{
     "kind": "information",
     "goal": "a complete standalone user goal"
   }},
-  "capability_id": "knowledge_qa",
-  "missing_fields": [],
-  "response_kind": null,
+  "risk_hint": "none",
   "reason": "short internal reason"
 }}
 
-Allowed action values:
-- invoke: one available capability can handle the request
-- clarify: the high-level user goal is too incomplete to choose a capability
-- respond: answer a general conversation request directly without invoking a capability
-- unsupported: no available capability can handle the request
+Allowed request_type values:
+- conversation: greetings, writing, rewriting, translation, summarization, comparison, reasoning, or conversation review
+- information: knowledge, rules, docs, process, explanation, or retrieval-backed questions
+- data_query: real-time business data lookup or statistics
+- action: create, update, submit, cancel, sync, or other business operation
+- unclear: the high-level user goal is not understandable
 
-Allowed intent.kind values:
-- information
-- data_query
-- action
-- conversation
-- unclear
+Allowed task_shape values:
+- direct: the response can be produced from the current input/context without invoking a sub-agent
+- single_sub_agent: one sub-agent is enough
+- multi_sub_agent: multiple sub-agents are likely needed
+- non_executable: the platform should not or cannot handle the request
 
-Allowed response_kind values:
-- out_of_scope
+Allowed goal_clarity values: clear, unclear
+Allowed risk_hint values: none, approval, safe_block
 
 Rules:
-- Do not answer the user.
-- Resolve references and omitted context using conversation history, memory, and page context.
-- intent.goal must be concise, complete, standalone, and free of unresolved pronouns.
-- Choose at most one capability and only from the supplied capability catalog.
-- Use clarify only when the high-level goal itself is unclear. Capability-specific parameters are validated inside the selected capability.
-- Do not extract tool arguments, filters, sorting, retrieval strategy, top-k, or other capability-internal parameters.
-- Use respond for greetings, writing, rewriting, translation, summarization, comparison, logical reasoning, conversation review, and contextual continuation that can be completed from the current input and conversation context.
-- Use unsupported when the goal is clear but cannot be handled by respond or a supplied capability.
-- response_kind is out_of_scope only when no capability is invoked.
-- capability_id must be null unless action is invoke.
-- Prefer the capability hint only when it is present and consistent with the user goal.
+- intent.goal must be concise, complete, standalone, and free of unresolved pronouns when goal_clarity is clear.
+- domain_hints may only use sub_agent_id values from the sub-agent catalog.
+- sub_tasks must split independent goals when one request contains multiple unrelated work items.
+- sub_tasks[].sub_agent_id must use a value from domain_hints.
+- sub_tasks[].depends_on must be empty unless one sub-agent truly needs another sub-agent's result.
+- Use direct for light conversation, writing, rewriting, translation, summarization, comparison, and reasoning that can be answered from context.
+- Use single_sub_agent for one knowledge or business sub-agent.
+- Use multi_sub_agent only when the request clearly needs more than one sub-agent.
+- Use non_executable when the goal is outside the platform sub-agents.
+- Use approval only for requests that should require human confirmation before execution.
+- Use safe_block only for requests that should be blocked by policy or safety.
+- Do not extract tool arguments, filters, retrieval strategies, or execution steps.
+- Prefer keyword hints only when consistent with the user goal.
 
-Capability catalog:
-{json.dumps(capability_catalog, ensure_ascii=False, indent=2)}
+Sub-agent catalog:
+{json.dumps(sub_agent_catalog, ensure_ascii=False, indent=2)}
 
-Capability hint:
-{capability_hint or "(none)"}
+Keyword hints:
+{json.dumps(sub_agent_hints, ensure_ascii=False)}
 
 Page context:
 {json.dumps(page_context, ensure_ascii=False, default=str)}
@@ -162,31 +185,135 @@ User question:
 """.strip()
 
 
-async def build_agent_decision(
+def _normalize_classification(
+    parsed: dict[str, Any],
+    *,
+    query: str,
+    sub_agents: tuple[SubAgentDefinition, ...],
+) -> dict[str, Any]:
+    available_ids = {sub_agent.sub_agent_id for sub_agent in sub_agents}
+    request_type = _normalize_choice(
+        parsed.get("request_type"),
+        ALLOWED_REQUEST_TYPES,
+        "unclear",
+    )
+    task_shape = _normalize_choice(
+        parsed.get("task_shape"),
+        ALLOWED_TASK_SHAPES,
+        "non_executable",
+    )
+    goal_clarity = _normalize_choice(
+        parsed.get("goal_clarity"),
+        ALLOWED_GOAL_CLARITY,
+        "unclear",
+    )
+    risk_hint = _normalize_choice(
+        parsed.get("risk_hint"),
+        ALLOWED_RISK_HINTS,
+        "none",
+    )
+    parsed_intent = dict(parsed.get("intent") or {})
+    intent_kind = _normalize_choice(
+        parsed_intent.get("kind"),
+        ALLOWED_REQUEST_TYPES,
+        request_type,
+    )
+    goal = _compact_text(str(parsed_intent.get("goal") or ""), limit=500)
+    if not goal and goal_clarity == "clear":
+        goal = _compact_text(query, limit=500)
+
+    domain_hints = [
+        item
+        for item in _coerce_string_list(parsed.get("domain_hints"), item_limit=80)
+        if item in available_ids
+    ]
+    if task_shape == "single_sub_agent" and len(domain_hints) > 1:
+        domain_hints = domain_hints[:1]
+    if task_shape in {"direct", "non_executable"}:
+        domain_hints = []
+    keyword_hints = _resolve_sub_agent_hints(query)
+    if len(keyword_hints) > 1:
+        domain_hints = [item for item in keyword_hints if item in available_ids]
+        task_shape = "multi_sub_agent"
+    sub_tasks = []
+    for item in list(parsed.get("sub_tasks") or []):
+        if not isinstance(item, dict):
+            continue
+        sub_agent_id = _compact_text(str(item.get("sub_agent_id") or ""), limit=80)
+        if sub_agent_id not in domain_hints:
+            continue
+        sub_tasks.append(
+            {
+                "sub_agent_id": sub_agent_id,
+                "goal": _compact_text(str(item.get("goal") or goal or query), limit=500),
+                "depends_on": [
+                    value
+                    for value in _coerce_string_list(item.get("depends_on"), item_limit=80)
+                    if value in domain_hints
+                ],
+            }
+        )
+    planned_sub_agent_ids = {item["sub_agent_id"] for item in sub_tasks}
+    for sub_agent_id in domain_hints:
+        if sub_agent_id in planned_sub_agent_ids:
+            continue
+        sub_tasks.append(
+            {
+                "sub_agent_id": sub_agent_id,
+                "goal": goal or _compact_text(query, limit=500),
+                "depends_on": [],
+            }
+        )
+
+    return {
+        "request_type": request_type,
+        "task_shape": task_shape,
+        "goal_clarity": goal_clarity,
+        "needs_sub_agent": bool(parsed.get("needs_sub_agent"))
+        and task_shape in {"single_sub_agent", "multi_sub_agent"},
+        "domain_hints": domain_hints,
+        "sub_tasks": sub_tasks,
+        "intent": {"kind": intent_kind, "goal": goal},
+        "risk_hint": risk_hint,
+        "reason": _compact_text(str(parsed.get("reason") or ""), limit=240)
+        or "已完成请求类型识别。",
+        "keyword_hints": keyword_hints,
+    }
+
+
+async def build_agent_classification(
     query: str,
     *,
-    capabilities: Iterable[CapabilityDefinition],
+    sub_agents: Iterable[SubAgentDefinition],
     chat_history: list[dict[str, Any]] | None = None,
     memory_summary: str | None = None,
     page_context: dict[str, Any] | None = None,
     llm_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
-    """Understand one user turn and select at most one capability."""
+    """Classify one user turn without routing or planning it."""
 
-    available_capabilities = tuple(capabilities)
+    available_sub_agents = tuple(sub_agents)
     if not query.strip():
         return {
-            "action": "clarify",
+            "request_type": "unclear",
+            "task_shape": "non_executable",
+            "goal_clarity": "unclear",
+            "needs_sub_agent": False,
+            "domain_hints": [],
+            "sub_tasks": [],
             "intent": {"kind": "unclear", "goal": ""},
-            "capability_id": None,
-            "missing_fields": ["query"],
-            "response_kind": None,
+            "risk_hint": "none",
             "reason": "用户问题为空，需要补齐问题内容。",
+            "keyword_hints": [],
         }
 
-    llm = llm_factory() if llm_factory is not None else get_llm_for_planner(
-        temperature=0,
-        max_tokens=260,
+    llm = (
+        llm_factory()
+        if llm_factory is not None
+        else get_llm_for_planner(
+            temperature=0,
+            max_tokens=360,
+        )
     )
     response = await llm.ainvoke(
         _build_prompt(
@@ -194,56 +321,14 @@ async def build_agent_decision(
             chat_history=list(chat_history or []),
             memory_summary=memory_summary,
             page_context=dict(page_context or {}),
-            capabilities=available_capabilities,
+            sub_agents=available_sub_agents,
         )
     )
     parsed = parse_llm_json_object(_coerce_text(getattr(response, "content", response)))
     if not parsed:
-        raise ValueError("Top-level decision model returned no valid JSON object")
-
-    action = re.sub(r"\s+", "_", str(parsed.get("action") or "").strip().lower())
-    if action not in ALLOWED_ACTIONS:
-        raise ValueError(f"Unsupported top-level decision action: {action or '(empty)'}")
-
-    parsed_intent = dict(parsed.get("intent") or {})
-    intent_kind = re.sub(
-        r"\s+", "_", str(parsed_intent.get("kind") or "").strip().lower()
+        raise ValueError("Top-level classification model returned no valid JSON object")
+    return _normalize_classification(
+        parsed,
+        query=query,
+        sub_agents=available_sub_agents,
     )
-    if intent_kind not in ALLOWED_INTENT_KINDS:
-        raise ValueError(f"Unsupported top-level intent kind: {intent_kind or '(empty)'}")
-    goal = _compact_text(str(parsed_intent.get("goal") or ""), limit=500)
-    if not goal and action != "clarify":
-        raise ValueError("Top-level decision is missing intent.goal")
-
-    missing_fields = _coerce_string_list(parsed.get("missing_fields"), item_limit=80)
-    if action == "clarify":
-        missing_fields = missing_fields or ["goal"]
-    else:
-        missing_fields = []
-
-    capability_id = str(parsed.get("capability_id") or "").strip() or None
-    available_ids = {
-        capability.capability_id for capability in available_capabilities
-    }
-    if action == "invoke":
-        if capability_id not in available_ids:
-            raise ValueError(f"Decision selected unavailable capability: {capability_id}")
-    else:
-        capability_id = None
-
-    response_kind = str(parsed.get("response_kind") or "").strip().lower() or None
-    if action == "unsupported":
-        if response_kind not in ALLOWED_RESPONSE_KINDS:
-            response_kind = "out_of_scope"
-    else:
-        response_kind = None
-
-    return {
-        "action": action,
-        "intent": {"kind": intent_kind, "goal": goal},
-        "capability_id": capability_id,
-        "missing_fields": missing_fields,
-        "response_kind": response_kind,
-        "reason": _compact_text(str(parsed.get("reason") or ""), limit=240)
-        or "主图已完成用户目标理解和能力选择。",
-    }

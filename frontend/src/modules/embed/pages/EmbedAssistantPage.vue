@@ -9,6 +9,7 @@ import EmbedMessageItem, {
 import EmbedSessionHistoryPanel from "@/modules/embed/components/EmbedSessionHistoryPanel.vue";
 import EmbedSuggestionChips from "@/modules/embed/components/EmbedSuggestionChips.vue";
 import { useEmbeddedAssistant } from "@/modules/embed/composables/useEmbeddedAssistant";
+import assistantAvatarUrl from "@/shared/assets/assistant-avatar.png";
 
 const {
   assistantName,
@@ -109,7 +110,11 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
           <header class="embed-assistant-page__header">
             <div class="embed-assistant-page__header-main">
               <div class="embed-assistant-page__assistant-avatar">
-                <el-icon><ChatDotRound /></el-icon>
+                <img
+                  class="embed-assistant-page__assistant-avatar-image"
+                  :src="assistantAvatarUrl"
+                  :alt="assistantName"
+                >
               </div>
               <div class="embed-assistant-page__assistant-meta">
                 <div class="embed-assistant-page__assistant-name-row">
@@ -148,7 +153,11 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
             <div v-if="messages.length === 0" class="embed-assistant-page__welcome">
               <div class="embed-assistant-page__welcome-row">
                 <div class="embed-assistant-page__welcome-avatar">
-                  <el-icon><ChatDotRound /></el-icon>
+                  <img
+                    class="embed-assistant-page__assistant-avatar-image"
+                    :src="assistantAvatarUrl"
+                    :alt="assistantName"
+                  >
                 </div>
                 <div class="embed-assistant-page__welcome-card">
                   <div class="embed-assistant-page__welcome-eyebrow">欢迎使用</div>
@@ -280,11 +289,17 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
   height: 34px;
   align-items: center;
   justify-content: center;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
-  color: #ffffff;
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
+  overflow: hidden;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
   flex-shrink: 0;
+}
+
+.embed-assistant-page__assistant-avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .embed-assistant-page__assistant-meta {
@@ -477,10 +492,10 @@ async function handleFeedback(message: EmbedRenderableMessage, value: "helpful" 
   height: 32px;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
-  color: #ffffff;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+  overflow: hidden;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
   flex-shrink: 0;
   margin-bottom: 4px;
 }

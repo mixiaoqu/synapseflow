@@ -12,7 +12,7 @@ from loguru import logger
 from app.agents.common.llm_json import parse_llm_json_object
 from app.agents.common.node_logging import log_node_info
 from app.agents.common.streaming import emit_activity, get_optional_stream_writer
-from app.agents.common.workflow_result import build_business_workflow_result
+from app.agents.common.sub_agent_result import build_business_sub_agent_result
 from app.agents.states import BusinessOpsState
 from app.application.business_operations import BusinessOperationService
 from app.application.business_operations.schemas import (
@@ -114,8 +114,7 @@ def _normalize_business_request(
             status = "unsupported"
     raw_params = parsed.get("params") if isinstance(parsed.get("params"), dict) else {}
     allowed_params = {
-        str(item.get("key") or "")
-        for item in candidate_map.get(operation_id, {}).get("params", [])
+        str(item.get("key") or "") for item in candidate_map.get(operation_id, {}).get("params", [])
     }
     params = {
         str(key): value
@@ -142,9 +141,13 @@ async def _analyze_business_request_with_llm(
     candidates: list[dict[str, Any]],
     llm_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
-    llm = llm_factory() if llm_factory is not None else get_llm_for_planner(
-        temperature=0,
-        max_tokens=700,
+    llm = (
+        llm_factory()
+        if llm_factory is not None
+        else get_llm_for_planner(
+            temperature=0,
+            max_tokens=700,
+        )
     )
     response = await llm.ainvoke(_build_business_request_analysis_prompt(query, candidates))
     content = _coerce_text(getattr(response, "content", response))
@@ -230,7 +233,9 @@ def create_business_ops_graph(
             message="业务需求分析完成",
             display_stage="understand",
             display_title="🤔 思考您的问题",
-            activity_text=(f"已选择“{operation_name}”" if operation_name else "未找到可直接执行的业务工具"),
+            activity_text=(
+                f"已选择“{operation_name}”" if operation_name else "未找到可直接执行的业务工具"
+            ),
             activity_status="completed",
         )
         return {
@@ -268,7 +273,9 @@ def create_business_ops_graph(
             message="业务工具确认完成",
             display_stage="execute",
             display_title="📊 查询业务数据",
-            activity_text=(f"已准备调用“{operation['name']}”" if operation else "没有可执行的工具调用"),
+            activity_text=(
+                f"已准备调用“{operation['name']}”" if operation else "没有可执行的工具调用"
+            ),
             activity_status="completed",
         )
         return {
@@ -377,7 +384,7 @@ def create_business_ops_graph(
             display_title="💡 总结最终结果",
             activity_text="整理可用于回答的业务数据",
         )
-        workflow_result = build_business_workflow_result(state)
+        sub_agent_result = build_business_sub_agent_result(state)
         emit_activity(
             stream_writer,
             workflow_id="business_ops",
@@ -390,8 +397,8 @@ def create_business_ops_graph(
             activity_status="completed",
         )
         return {
-            "workflow_result": workflow_result,
-            "answer_status": workflow_result.get("answer_status"),
+            "sub_agent_result": sub_agent_result,
+            "answer_status": sub_agent_result.get("answer_status"),
             "retrieved_docs": [],
             "backend_citations": [],
         }

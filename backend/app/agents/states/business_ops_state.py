@@ -27,7 +27,7 @@ class BusinessOpsState(BaseAgentContext, total=False):
     business_operation: Dict[str, Any]
     business_operation_result: Dict[str, Any]
     business_result: Dict[str, Any]
-    workflow_result: Dict[str, Any]
+    sub_agent_result: Dict[str, Any]
 
     answer: str
     answer_status: str

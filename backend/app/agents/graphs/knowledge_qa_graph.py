@@ -9,7 +9,7 @@ from langgraph.graph import END, StateGraph
 from app.agents.common.knowledge_question_analysis import build_knowledge_question_analysis
 from app.agents.common.node_logging import log_node_info
 from app.agents.common.streaming import emit_activity, get_optional_stream_writer
-from app.agents.common.workflow_result import build_knowledge_workflow_result
+from app.agents.common.sub_agent_result import build_knowledge_sub_agent_result
 from app.agents.nodes.kb_chat import (
     kb_chat_retrieve_node,
     kb_chat_rewrite_query_node,
@@ -234,14 +234,14 @@ def create_knowledge_qa_graph(
             display_title="💡 总结最终结果",
             activity_text="整理可用于回答的知识库资料",
         )
-        workflow_result = build_knowledge_workflow_result(state)
+        sub_agent_result = build_knowledge_sub_agent_result(state)
         retrieved_docs = list(state.get("retrieved_docs") or [])
         log_node_info(
             workflow_id="knowledge_qa",
             node_id="compose_answer",
             node_name="组织回答",
             details={
-                "结果状态": workflow_result.get("status"),
+                "结果状态": sub_agent_result.get("status"),
                 "主证据数": len(retrieved_docs),
                 "上下文长度": len(state.get("context") or ""),
             },
@@ -258,8 +258,8 @@ def create_knowledge_qa_graph(
             activity_status="completed",
         )
         return {
-            "workflow_result": workflow_result,
-            "answer_status": workflow_result.get("answer_status"),
+            "sub_agent_result": sub_agent_result,
+            "answer_status": sub_agent_result.get("answer_status"),
             "retrieved_docs": retrieved_docs,
             "backend_citations": retrieved_docs,
         }

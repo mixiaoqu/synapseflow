@@ -2,9 +2,10 @@
 import { computed, ref } from "vue";
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
-import { Check, CopyDocument, Document, Loading, User } from "@element-plus/icons-vue";
+import { Document, Loading, User } from "@element-plus/icons-vue";
 import EmbedFeedbackActions from "@/modules/embed/components/EmbedFeedbackActions.vue";
 import EmbedWorkflowProgress from "@/modules/embed/components/EmbedWorkflowProgress.vue";
+import assistantAvatarUrl from "@/shared/assets/assistant-avatar.png";
 import type { ChatWorkflowRun } from "@/shared/lib/stream/workflowRun";
 
 interface RetrievedDoc {
@@ -66,6 +67,20 @@ const renderedHtml = computed(() => {
   return DOMPurify.sanitize(rawHtml);
 });
 
+const hasAssistantMeta = computed(() => {
+  if (props.message.role !== "assistant") {
+    return false;
+  }
+  if (props.message.kind === "streaming" || props.message.kind === "welcome") {
+    return false;
+  }
+  return Boolean(
+    props.message.content ||
+    props.message.logId ||
+    (props.message.retrievedDocs && props.message.retrievedDocs.length > 0),
+  );
+});
+
 const copied = ref(false);
 
 async function handleCopy() {
@@ -88,28 +103,25 @@ async function handleCopy() {
 <template>
   <div :class="['embed-message-item', `is-${message.role}`, `is-${message.kind ?? 'normal'}`]">
     <div :class="['embed-message-item__avatar', `is-${message.role}`]">
-      <span v-if="message.role === 'assistant'" class="embed-message-item__assistant-mark">↯</span>
+      <img
+        v-if="message.role === 'assistant'"
+        class="embed-message-item__assistant-avatar-image"
+        :src="assistantAvatarUrl"
+        :alt="assistantName"
+      >
       <el-icon v-else><User /></el-icon>
     </div>
 
     <div class="embed-message-item__body">
+      <EmbedWorkflowProgress
+        v-if="message.role === 'assistant' && workflowRun"
+        :run="workflowRun"
+      />
+
       <article
-        v-if="message.content || message.kind === 'streaming' || !(message.role === 'assistant' && workflowRun)"
+        v-if="message.content || !(message.role === 'assistant' && workflowRun)"
         :class="['embed-message-item__bubble', `is-${message.role}`, `is-${message.kind ?? 'normal'}`]"
       >
-        <button
-          v-if="message.role === 'assistant' && message.content && !isTyping"
-          type="button"
-          class="embed-message-item__copy-button"
-          :class="{ 'is-copied': copied }"
-          :title="copied ? '已复制' : '复制回答'"
-          :aria-label="copied ? '已复制' : '复制回答'"
-          @click="handleCopy"
-        >
-          <el-icon v-if="copied"><Check /></el-icon>
-          <el-icon v-else><CopyDocument /></el-icon>
-        </button>
-
         <div v-if="message.kind === 'streaming'" class="embed-message-item__streaming">
           <el-icon class="is-loading"><Loading /></el-icon>
           <span>思考中...</span>
@@ -121,18 +133,8 @@ async function handleCopy() {
         />
       </article>
 
-      <EmbedWorkflowProgress
-        v-if="message.role === 'assistant' && workflowRun"
-        :run="workflowRun"
-      />
-
       <div
-        v-if="
-          message.role === 'assistant' &&
-          message.kind !== 'streaming' &&
-          message.kind !== 'welcome' &&
-          ((message.retrievedDocs && message.retrievedDocs.length > 0) || message.logId)
-        "
+        v-if="hasAssistantMeta"
         class="embed-message-item__meta"
       >
         <div
@@ -161,14 +163,17 @@ async function handleCopy() {
         </div>
 
         <div
-          v-if="message.logId"
-          class="embed-message-item__feedback-wrap"
+          v-if="message.content"
+          class="embed-message-item__actions-wrap"
         >
           <EmbedFeedbackActions
             :value="message.feedbackValue ?? null"
             :loading="message.feedbackSubmitting"
-            :disabled="isTyping || !!message.feedbackValue"
+            :disabled="!message.logId || isTyping || !!message.feedbackValue"
+            :copied="copied"
+            :copy-disabled="!message.content"
             @submit="emit('feedback', $event)"
+            @copy="handleCopy"
           />
         </div>
       </div>
@@ -200,19 +205,15 @@ async function handleCopy() {
 }
 
 .embed-message-item__avatar.is-assistant {
-  background: linear-gradient(135deg, #6366f1 0%, #7c83ff 100%);
-  color: #ffffff;
-  box-shadow: 0 6px 14px rgba(99, 102, 241, 0.18);
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 6px 14px rgba(37, 99, 235, 0.12);
 }
 
-.embed-message-item__assistant-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 17px;
-  font-weight: 700;
-  line-height: 1;
-  transform: translateY(-1px);
+.embed-message-item__assistant-avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .embed-message-item__avatar.is-user {
@@ -278,48 +279,6 @@ async function handleCopy() {
   box-shadow:
     0 12px 30px rgba(37, 99, 235, 0.06),
     0 1px 3px rgba(15, 23, 42, 0.03);
-}
-
-.embed-message-item__copy-button {
-  position: absolute;
-  right: 0;
-  bottom: -34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.96);
-  color: #94a3b8;
-  cursor: pointer;
-  opacity: 0;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
-}
-
-.embed-message-item__bubble.is-assistant:hover .embed-message-item__copy-button,
-.embed-message-item__copy-button:focus-visible,
-.embed-message-item__copy-button.is-copied {
-  opacity: 1;
-}
-
-.embed-message-item__bubble.is-welcome .embed-message-item__copy-button {
-  right: 10px;
-  bottom: 10px;
-}
-
-.embed-message-item__copy-button:hover {
-  border-color: #cbd5e1;
-  color: #475569;
-  background: #f8fafc;
-}
-
-.embed-message-item__copy-button.is-copied {
-  border-color: #bbf7d0;
-  color: #16a34a;
-  background: #f0fdf4;
 }
 
 .embed-message-item__content {
@@ -472,7 +431,7 @@ async function handleCopy() {
   color: #94a3b8;
 }
 
-.embed-message-item__feedback-wrap {
+.embed-message-item__actions-wrap {
   display: flex;
   align-items: center;
 }
