@@ -23,7 +23,9 @@ from app.application.stream_events import (
 )
 from app.application.workflow_meta import (
     OUTPUT_NODE_IDS,
+    build_node_summary,
     get_node_label,
+    get_node_progress_message,
     normalize_activity_payload,
 )
 from app.db.models import ContentRiskLog
@@ -314,178 +316,6 @@ class KbChatService(BaseAgentService):
                 return chunk_type, chunk_data
 
         return None, {}
-
-    @staticmethod
-    def _node_progress_message(node_id: str) -> str:
-        if node_id == "intake":
-            return "正在整理请求上下文..."
-        if node_id == "classify":
-            return "正在识别任务类型..."
-        if node_id == "route":
-            return "正在选择处理路径..."
-        if node_id == "orchestrate_plan":
-            return "正在规划执行步骤..."
-        if node_id == "dispatch":
-            return "正在分发子智能体执行..."
-        if node_id == "collect":
-            return "正在收集执行结果..."
-        if node_id == "synthesize":
-            return "正在整编最终结果..."
-        if node_id == "respond":
-            return "正在整理最终响应..."
-        if node_id == "analyze_question":
-            return "正在分析知识库问题..."
-        if node_id == "plan_retrieval":
-            return "正在规划知识库检索..."
-        if node_id == "retrieve_knowledge":
-            return "正在检索知识库..."
-        if node_id == "compose_answer":
-            return "正在组织知识库回答..."
-        if node_id == "analyze_request":
-            return "正在分析业务请求..."
-        if node_id == "match_operation":
-            return "正在匹配业务操作..."
-        if node_id == "execute_operation":
-            return "正在查询业务数据..."
-        if node_id == "compose_result":
-            return "正在整理处理结果..."
-        return "正在处理..."
-
-    @staticmethod
-    def _node_summary(node_id: str, state: dict[str, Any]) -> dict[str, Any]:
-        if node_id == "intake":
-            scope = state.get("scope") or {}
-            return {
-                "query_length": len(str(state.get("normalized_query") or "")),
-                "team_id": scope.get("team_id"),
-                "knowledge_base_id": scope.get("knowledge_base_id"),
-            }
-        if node_id == "classify":
-            classification = state.get("classification") or {}
-            intent = classification.get("intent") or {}
-            return {
-                "request_type": classification.get("request_type"),
-                "task_shape": classification.get("task_shape"),
-                "goal_clarity": classification.get("goal_clarity"),
-                "intent_kind": intent.get("kind"),
-                "domain_hints": classification.get("domain_hints"),
-                "risk_hint": classification.get("risk_hint"),
-                "reason": classification.get("reason"),
-            }
-        if node_id == "route":
-            route = state.get("route") or {}
-            return {
-                "route_type": route.get("route_type"),
-                "target_sub_agents": route.get("target_sub_agents"),
-                "reason": route.get("reason"),
-            }
-        if node_id == "orchestrate_plan":
-            task_plan = state.get("task_plan") or {}
-            return {
-                "execution_mode": task_plan.get("execution_mode"),
-                "step_count": len(task_plan.get("steps") or []),
-            }
-        if node_id == "dispatch":
-            runs = list(state.get("execution_runs") or [])
-            return {
-                "run_count": len(runs),
-                "success_count": len([run for run in runs if run.get("status") == "success"]),
-                "failed_count": len([run for run in runs if run.get("status") != "success"]),
-            }
-        if node_id == "collect":
-            collected = state.get("collected_results") or {}
-            return {
-                "success_count": collected.get("success_count"),
-                "failed_count": collected.get("failed_count"),
-                "retrieved_count": len(collected.get("citations") or []),
-            }
-        if node_id == "synthesize":
-            synthesized = state.get("synthesized_result") or {}
-            return {
-                "final_status": synthesized.get("final_status"),
-                "answer_status": synthesized.get("answer_status"),
-                "retrieved_count": len(synthesized.get("citations") or []),
-            }
-        if node_id == "respond":
-            response = state.get("response") or state.get("final_response") or {}
-            return {
-                "answer_status": response.get("answer_status") or state.get("answer_status"),
-                "retrieved_count": len(state.get("retrieved_docs", [])),
-            }
-        if node_id == "analyze_question":
-            retrieval_analysis = state.get("retrieval_analysis") or {}
-            return {
-                "question_type": state.get("question_type"),
-                "retrieval_complexity": state.get("retrieval_complexity"),
-                "candidate_entity_count": len(state.get("candidate_entities", []) or []),
-                "reason": retrieval_analysis.get("reason"),
-            }
-        if node_id == "plan_retrieval":
-            execution_plan = state.get("retrieval_execution_plan") or {}
-            channels = execution_plan.get("channels") or {}
-            vector = channels.get("vector") or {}
-            lexical = channels.get("lexical") or {}
-            graph = channels.get("graph") or {}
-            context = execution_plan.get("context") or {}
-            return {
-                "retrieval_strategy": state.get("retrieval_strategy"),
-                "graph_channel_enabled": graph.get("enabled"),
-                "vector_top_k": vector.get("recall_k"),
-                "lexical_top_k": lexical.get("lexical_k"),
-                "context_top_k": context.get("final_top_k"),
-                "rerank_top_k": ((execution_plan.get("rerank") or {}).get("top_k")),
-            }
-        if node_id == "retrieve_knowledge":
-            rewrite_trace = state.get("rewrite_trace") or {}
-            return {
-                "rewrite_engine": rewrite_trace.get("engine"),
-                "retrieval_strategy": state.get("retrieval_strategy"),
-                "rewrite_policy": rewrite_trace.get("policy"),
-                "semantic_query_count": rewrite_trace.get("semantic_query_count"),
-                "lexical_term_count": rewrite_trace.get("lexical_term_count"),
-                "fallback_used": rewrite_trace.get("fallback_used"),
-                "retrieved_count": len(state.get("retrieved_docs", [])),
-            }
-        if node_id == "compose_answer":
-            sub_agent_result = state.get("sub_agent_result") or {}
-            data = sub_agent_result.get("data") or {}
-            content = data.get("content") or {}
-            return {
-                "status": sub_agent_result.get("status"),
-                "answer_status": sub_agent_result.get("answer_status"),
-                "retrieved_count": len(
-                    content.get("retrieved_docs") or state.get("retrieved_docs", [])
-                ),
-            }
-        if node_id == "analyze_request":
-            request_info = state.get("business_request") or {}
-            return {
-                "operation_hint": request_info.get("operation_hint"),
-                "keyword": request_info.get("keyword"),
-            }
-        if node_id == "match_operation":
-            operation_info = state.get("business_operation") or {}
-            return {
-                "operation_id": operation_info.get("operation_id"),
-            }
-        if node_id == "execute_operation":
-            result = state.get("business_operation_result") or {}
-            data = result.get("data") or {}
-            return {
-                "success": result.get("success"),
-                "total": data.get("total"),
-                "missing_field_count": len(result.get("missing_fields") or []),
-            }
-        if node_id == "compose_result":
-            sub_agent_result = state.get("sub_agent_result") or {}
-            data = sub_agent_result.get("data") or {}
-            business_result = data.get("content") or {}
-            return {
-                "status": sub_agent_result.get("status"),
-                "answer_status": sub_agent_result.get("answer_status"),
-                "total": business_result.get("total"),
-            }
-        return {"keys": sorted(state.keys())}
 
     @staticmethod
     def _resolve_answer_status(result: dict[str, Any]) -> str:
@@ -1449,7 +1279,7 @@ class KbChatService(BaseAgentService):
                                 node_name,
                                 run_id,
                                 workflow_id=node_workflow_id,
-                                message=self._node_progress_message(node_id),
+                                message=get_node_progress_message(node_workflow_id, node_id),
                             )
                             started_nodes.add(node_key)
 
@@ -1468,7 +1298,7 @@ class KbChatService(BaseAgentService):
                             node_id,
                             node_name,
                             run_id,
-                            self._node_summary(node_id, node_state),
+                            build_node_summary(node_workflow_id, node_id, node_state),
                             workflow_id=node_workflow_id,
                         )
                 elif chunk_type == "custom":
@@ -1492,7 +1322,7 @@ class KbChatService(BaseAgentService):
                                 node_name,
                                 run_id,
                                 workflow_id=node_workflow_id,
-                                message=self._node_progress_message(node_id),
+                                message=get_node_progress_message(node_workflow_id, node_id),
                             )
                             started_nodes.add(node_key)
 
@@ -1511,14 +1341,15 @@ class KbChatService(BaseAgentService):
                             node_id,
                             node_name,
                             run_id,
-                            self._node_summary(node_id, node_state),
+                            build_node_summary(node_workflow_id, node_id, node_state),
                             workflow_id=node_workflow_id,
                         )
                         continue
 
                     if chunk_data.get("type") == "progress":
                         message = str(
-                            chunk_data.get("message") or self._node_progress_message(node_id)
+                            chunk_data.get("message")
+                            or get_node_progress_message(node_workflow_id, node_id)
                         )
                         if node_key not in started_nodes:
                             yield emit_node_start(
@@ -1554,7 +1385,7 @@ class KbChatService(BaseAgentService):
                             node_name,
                             run_id,
                             workflow_id=node_workflow_id,
-                            message=self._node_progress_message(node_id),
+                            message=get_node_progress_message(node_workflow_id, node_id),
                         )
                         started_nodes.add(node_key)
 

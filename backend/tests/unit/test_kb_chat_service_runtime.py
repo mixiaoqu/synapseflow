@@ -440,6 +440,8 @@ def test_kb_chat_stream_emits_standardized_envelopes():
     assert payloads[2]["data"]["retrieved_docs"][0]["metadata"]["document_title"] == (
         "LangGraph Intro"
     )
+    assert payloads[3]["data"] == {}
+    assert payloads[8]["data"] == {}
     assert payloads[-1]["data"]["answer"] == "LangGraph helps compose flows."
     assert payloads[-1]["data"]["answer_status"] == "answered"
     assert payloads[-1]["data"]["session_id"]

@@ -4,28 +4,77 @@ from __future__ import annotations
 
 from typing import Any
 
+
 WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
     "agent": {
-        "intake": {"label": "整理上下文"},
-        "classify": {"label": "识别任务"},
-        "route": {"label": "选择路径"},
-        "orchestrate_plan": {"label": "规划执行"},
-        "dispatch": {"label": "分发执行"},
-        "collect": {"label": "收集结果"},
-        "synthesize": {"label": "整编结果"},
-        "respond": {"label": "输出结果"},
+        "intake": {
+            "label": "整理上下文",
+            "progress_message": "正在整理请求上下文...",
+        },
+        "classify": {
+            "label": "识别任务",
+            "progress_message": "正在识别任务类型...",
+        },
+        "route": {
+            "label": "选择路径",
+            "progress_message": "正在选择处理路径...",
+        },
+        "orchestrate_plan": {
+            "label": "规划执行",
+            "progress_message": "正在规划执行步骤...",
+        },
+        "dispatch": {
+            "label": "分发执行",
+            "progress_message": "正在分发子智能体执行...",
+        },
+        "collect": {
+            "label": "收集结果",
+            "progress_message": "正在收集执行结果...",
+        },
+        "synthesize": {
+            "label": "整编结果",
+            "progress_message": "正在整编最终结果...",
+        },
+        "respond": {
+            "label": "输出结果",
+            "progress_message": "正在整理最终响应...",
+        },
     },
     "knowledge_qa": {
-        "analyze_question": {"label": "分析问题"},
-        "plan_retrieval": {"label": "规划检索"},
-        "retrieve_knowledge": {"label": "检索知识"},
-        "compose_answer": {"label": "组织回答"},
+        "analyze_question": {
+            "label": "分析问题",
+            "progress_message": "正在分析知识库问题...",
+        },
+        "plan_retrieval": {
+            "label": "规划检索",
+            "progress_message": "正在规划知识库检索...",
+        },
+        "retrieve_knowledge": {
+            "label": "检索知识",
+            "progress_message": "正在检索知识库...",
+        },
+        "compose_answer": {
+            "label": "组织回答",
+            "progress_message": "正在组织知识库回答...",
+        },
     },
     "business_ops": {
-        "analyze_request": {"label": "分析请求"},
-        "match_operation": {"label": "匹配操作"},
-        "execute_operation": {"label": "执行业务操作"},
-        "compose_result": {"label": "整理结果"},
+        "analyze_request": {
+            "label": "分析请求",
+            "progress_message": "正在分析业务请求...",
+        },
+        "match_operation": {
+            "label": "匹配操作",
+            "progress_message": "正在匹配业务操作...",
+        },
+        "execute_operation": {
+            "label": "执行业务操作",
+            "progress_message": "正在查询业务数据...",
+        },
+        "compose_result": {
+            "label": "整理结果",
+            "progress_message": "正在整理处理结果...",
+        },
     },
 }
 
@@ -89,6 +138,22 @@ def get_node_model(workflow_id: str, node_id: str) -> str | None:
     """Return the display model name for a workflow node, if configured."""
 
     return WORKFLOW_NODE_META.get(workflow_id, {}).get(node_id, {}).get("model")
+
+
+def get_node_progress_message(workflow_id: str, node_id: str) -> str:
+    """Return the user-facing progress message for a workflow node."""
+
+    return (
+        WORKFLOW_NODE_META.get(workflow_id, {}).get(node_id, {}).get("progress_message")
+        or "正在处理..."
+    )
+
+
+def build_node_summary(workflow_id: str, node_id: str, state: dict[str, Any]) -> dict[str, Any]:
+    """Return an intentionally empty node payload for node_complete events."""
+
+    _ = (workflow_id, node_id, state)
+    return {}
 
 
 def _customer_stage_from_payload(
