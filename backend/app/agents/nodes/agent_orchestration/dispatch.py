@@ -24,7 +24,55 @@ def build_dispatch_node(*, sub_agent_graphs: dict[str, Any]):
         task_plan = dict(state.get("task_plan") or {})
         steps = [dict(step) for step in list(task_plan.get("steps") or [])]
 
-        async def execute_step(step: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        def dependency_inputs(
+            step: dict[str, Any], execution_runs_by_id: dict[str, dict[str, Any]]
+        ) -> dict[str, dict[str, Any]]:
+            return {
+                dependency_id: {
+                    "step_id": dependency_id,
+                    "sub_agent_id": dependency_run.get("sub_agent_id"),
+                    "status": dependency_run.get("status"),
+                    "sub_agent_result": dict(dependency_run.get("sub_agent_result") or {}),
+                }
+                for dependency_id in list(step.get("dependencies") or [])
+                if (dependency_run := execution_runs_by_id.get(dependency_id)) is not None
+            }
+
+        def build_blocked_run(
+            step: dict[str, Any],
+            *,
+            dependency_results: dict[str, dict[str, Any]],
+            message: str,
+            code: str,
+        ) -> dict[str, Any]:
+            sub_agent_id = str(step.get("sub_agent_id") or "").strip()
+            sub_agent_result = build_failed_sub_agent_result(
+                sub_agent_id=sub_agent_id,
+                run_id=state.get("run_id"),
+                step_id=step.get("step_id"),
+                message=message,
+            )
+            sub_agent_result["errors"] = [
+                {
+                    "code": code,
+                    "message": message,
+                    "retryable": False,
+                    "details": {"dependencies": dependency_results},
+                }
+            ]
+            return {
+                "step_id": step.get("step_id"),
+                "sub_agent_id": sub_agent_id,
+                "status": "blocked",
+                "sub_agent_result": sub_agent_result,
+                "dependency_results": dependency_results,
+                "diagnostics": {},
+                "error": message,
+            }
+
+        async def execute_step(
+            step: dict[str, Any], dependency_results: dict[str, dict[str, Any]]
+        ) -> dict[str, Any]:
             step = dict(step)
             sub_agent_id = str(step.get("sub_agent_id") or "").strip()
             try:
@@ -32,6 +80,7 @@ def build_dispatch_node(*, sub_agent_graphs: dict[str, Any]):
                 subgraph = sub_agent_graphs.get(sub_agent_id)
                 if subgraph is None:
                     raise RuntimeError(f"Sub-agent graph is not initialized: {sub_agent_id}")
+                step["dependency_results"] = dependency_results
                 child_input = sub_agent.input_builder(state, step)
                 sub_agent_result: dict[str, Any] | None = None
                 final_child_state: dict[str, Any] = {}
@@ -67,16 +116,14 @@ def build_dispatch_node(*, sub_agent_graphs: dict[str, Any]):
                     raise RuntimeError(
                         f"Sub-agent {sub_agent_id} completed without sub_agent_result"
                     )
-                return (
-                    {
-                        "step_id": step.get("step_id"),
-                        "sub_agent_id": sub_agent_id,
-                        "status": sub_agent_result.get("status") or "failed",
-                        "sub_agent_result": sub_agent_result,
-                        "node_state": final_child_state,
-                    },
-                    knowledge_diagnostics(final_child_state),
-                )
+                return {
+                    "step_id": step.get("step_id"),
+                    "sub_agent_id": sub_agent_id,
+                    "status": sub_agent_result.get("status") or "failed",
+                    "sub_agent_result": sub_agent_result,
+                    "dependency_results": dependency_results,
+                    "diagnostics": knowledge_diagnostics(final_child_state),
+                }
             except Exception as exc:
                 sub_agent_result = build_failed_sub_agent_result(
                     sub_agent_id=sub_agent_id,
@@ -84,31 +131,88 @@ def build_dispatch_node(*, sub_agent_graphs: dict[str, Any]):
                     step_id=step.get("step_id"),
                     message=str(exc),
                 )
-                return (
-                    {
-                        "step_id": step.get("step_id"),
-                        "sub_agent_id": sub_agent_id,
-                        "status": "failed",
-                        "sub_agent_result": sub_agent_result,
-                        "node_state": {},
-                        "error": str(exc),
-                    },
-                    {},
+                return {
+                    "step_id": step.get("step_id"),
+                    "sub_agent_id": sub_agent_id,
+                    "status": "failed",
+                    "sub_agent_result": sub_agent_result,
+                    "dependency_results": dependency_results,
+                    "diagnostics": {},
+                    "error": str(exc),
+                }
+
+        execution_runs: dict[str, dict[str, Any]] = {}
+        execution_runs_by_id = execution_runs
+        remaining_steps = {str(step.get("step_id") or ""): step for step in steps}
+        execution_mode = str(task_plan.get("execution_mode") or "dag")
+
+        while remaining_steps:
+            invalid_steps = [
+                step
+                for step in remaining_steps.values()
+                if any(
+                    dependency_id not in remaining_steps and dependency_id not in execution_runs_by_id
+                    for dependency_id in list(step.get("dependencies") or [])
                 )
+            ]
+            blocked_steps = [
+                step
+                for step in remaining_steps.values()
+                if step not in invalid_steps
+                and any(
+                    execution_runs_by_id.get(dependency_id, {}).get("status") != "success"
+                    for dependency_id in list(step.get("dependencies") or [])
+                    if dependency_id in execution_runs_by_id
+                )
+            ]
+            for step in [*invalid_steps, *blocked_steps]:
+                step_id = str(step.get("step_id") or "")
+                dependency_results = dependency_inputs(step, execution_runs_by_id)
+                code = "UNKNOWN_DEPENDENCY" if step in invalid_steps else "DEPENDENCY_FAILED"
+                message = (
+                    "任务计划引用了不存在的依赖步骤。"
+                    if code == "UNKNOWN_DEPENDENCY"
+                    else "前序步骤未成功完成，当前步骤不会执行。"
+                )
+                execution_run = build_blocked_run(
+                    step,
+                    dependency_results=dependency_results,
+                    message=message,
+                    code=code,
+                )
+                execution_runs[step_id] = execution_run
+                remaining_steps.pop(step_id)
 
-        execution_mode = str(task_plan.get("execution_mode") or "sequential")
-        if execution_mode == "parallel":
-            step_outputs = await asyncio.gather(*(execute_step(step) for step in steps))
-        else:
-            step_outputs = []
-            for step in steps:
-                step_outputs.append(await execute_step(step))
+            if invalid_steps or blocked_steps:
+                continue
 
-        execution_runs: list[dict[str, Any]] = []
-        diagnostics: dict[str, Any] = {}
-        for execution_run, step_diagnostics in step_outputs:
-            execution_runs.append(execution_run)
-            diagnostics.update(step_diagnostics)
+            ready_steps = [
+                step
+                for step in remaining_steps.values()
+                if all(dependency_id in execution_runs_by_id for dependency_id in step.get("dependencies") or [])
+            ]
+            if ready_steps:
+                step_outputs = await asyncio.gather(
+                    *(
+                        execute_step(step, dependency_inputs(step, execution_runs_by_id))
+                        for step in ready_steps
+                    )
+                )
+                for step, execution_run in zip(ready_steps, step_outputs):
+                    step_id = str(step.get("step_id") or "")
+                    execution_runs[step_id] = execution_run
+                    remaining_steps.pop(step_id)
+                continue
+
+            for step_id, step in list(remaining_steps.items()):
+                execution_run = build_blocked_run(
+                    step,
+                    dependency_results=dependency_inputs(step, execution_runs_by_id),
+                    message="任务计划存在循环依赖，当前步骤无法调度。",
+                    code="CYCLIC_DEPENDENCY",
+                )
+                execution_runs[step_id] = execution_run
+                remaining_steps.pop(step_id)
         log_node_info(
             workflow_id="agent",
             node_id="dispatch",
@@ -116,10 +220,10 @@ def build_dispatch_node(*, sub_agent_graphs: dict[str, Any]):
             details={
                 "执行模式": execution_mode,
                 "执行步骤数": len(execution_runs),
-                "成功数": len([run for run in execution_runs if run.get("status") == "success"]),
-                "失败数": len([run for run in execution_runs if run.get("status") != "success"]),
+                "成功数": len([run for run in execution_runs.values() if run.get("status") == "success"]),
+                "失败数": len([run for run in execution_runs.values() if run.get("status") != "success"]),
             },
         )
-        return {**diagnostics, "execution_runs": execution_runs}
+        return {"execution_runs": execution_runs}
 
     return dispatch_node

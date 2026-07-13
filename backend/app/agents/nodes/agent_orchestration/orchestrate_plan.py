@@ -17,7 +17,7 @@ def _execution_mode(steps: list[dict[str, Any]]) -> str:
         return "single"
     if all(not step.get("dependencies") for step in steps):
         return "parallel"
-    return "sequential"
+    return "dag"
 
 
 def build_task_plan(state: dict[str, Any]) -> dict[str, Any]:
@@ -48,9 +48,9 @@ def build_task_plan(state: dict[str, Any]) -> dict[str, Any]:
         for index, item in enumerate(sub_tasks, start=1):
             sub_agent_id = str(item.get("sub_agent_id") or "").strip()
             dependencies = [
-                step_id_by_sub_agent[dependency]
+                step_id_by_sub_agent.get(dependency, dependency)
                 for dependency in list(item.get("depends_on") or [])
-                if dependency in step_id_by_sub_agent
+                if isinstance(dependency, str) and dependency.strip()
             ]
             steps.append(
                 {

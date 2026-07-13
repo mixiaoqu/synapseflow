@@ -8,10 +8,11 @@ from app.agents.common.node_logging import log_node_info
 from app.agents.states import AgentState
 
 
-def collect_execution_results(execution_runs: list[dict[str, Any]]) -> dict[str, Any]:
+def collect_execution_results(execution_runs: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    runs = list(execution_runs.values())
     sub_agent_results = [
         dict(run.get("sub_agent_result") or {})
-        for run in execution_runs
+        for run in runs
         if isinstance(run.get("sub_agent_result"), dict)
     ]
     successes = [result for result in sub_agent_results if result.get("status") == "success"]
@@ -49,7 +50,7 @@ def collect_execution_results(execution_runs: list[dict[str, Any]]) -> dict[str,
 
 
 async def collect_node(state: AgentState) -> dict[str, Any]:
-    collected_results = collect_execution_results(list(state.get("execution_runs") or []))
+    collected_results = collect_execution_results(dict(state.get("execution_runs") or {}))
     log_node_info(
         workflow_id="agent",
         node_id="collect",

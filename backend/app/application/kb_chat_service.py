@@ -163,7 +163,7 @@ class KbChatService(BaseAgentService):
                 "classification": {},
                 "route": {},
                 "task_plan": {},
-                "execution_runs": [],
+                "execution_runs": {},
                 "sub_agent_results": [],
                 "collected_results": {},
                 "synthesized_result": {},
@@ -1326,7 +1326,6 @@ class KbChatService(BaseAgentService):
                             )
                             started_nodes.add(node_key)
 
-                        final_state.update(node_state)
                         if node_id == "retrieve_knowledge":
                             yield emit_event(
                                 AgentEventType.RETRIEVED,

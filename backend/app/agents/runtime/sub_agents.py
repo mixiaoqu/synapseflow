@@ -33,6 +33,12 @@ def _build_shared_input(
     metadata = dict(state.get("metadata") or {})
     metadata["workflow"] = workflow_id
     metadata["parent_step_id"] = step.get("step_id")
+    dependency_results = {
+        str(step_id): dict(result)
+        for step_id, result in dict(step.get("dependency_results") or {}).items()
+        if isinstance(result, Mapping)
+    }
+    metadata["dependency_step_ids"] = list(dependency_results)
     return {
         "workflow_id": workflow_id,
         "request_id": state.get("request_id"),
@@ -47,6 +53,7 @@ def _build_shared_input(
         "original_query": original_query,
         "query": goal or original_query,
         "intent": intent,
+        "dependency_results": dependency_results,
     }
 
 

@@ -13,6 +13,7 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     original_query: str
     query: str
     intent: Dict[str, Any]
+    dependency_results: Dict[str, Dict[str, Any]]
     page_context: Dict[str, Any]
     allowed_document_statuses: List[str]
 

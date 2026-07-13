@@ -39,7 +39,7 @@ class AgentState(BaseAgentContext, total=False):
     classification: Dict[str, Any]
     route: Dict[str, Any]
     task_plan: Dict[str, Any]
-    execution_runs: List[Dict[str, Any]]
+    execution_runs: Dict[str, Dict[str, Any]]
     sub_agent_results: List[Dict[str, Any]]
     collected_results: Dict[str, Any]
     synthesized_result: Dict[str, Any]
