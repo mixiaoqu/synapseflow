@@ -25,6 +25,9 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     question_type: Optional[str]
     retrieval_strategy: Optional[str]
     retrieval_complexity: Optional[str]
+    needs_path: bool
+    needs_relation: bool
+    needs_summary: bool
     retrieval_execution_plan: Dict[str, Any]
     semantic_queries: List[str]
     lexical_terms: List[str]
@@ -34,6 +37,7 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     target_attributes: List[str]
     entity_constraints: Dict[str, Any]
     plan_trace: Dict[str, Any]
+    query_plan_trace: Dict[str, Any]
     rewrite_trace: Dict[str, Any]
     retrieval_trace: Dict[str, Any]
     retrieved_docs: List[Dict[str, Any]]

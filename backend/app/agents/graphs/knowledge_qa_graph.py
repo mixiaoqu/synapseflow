@@ -6,14 +6,11 @@ from typing import Any, Callable
 
 from langgraph.graph import END, StateGraph
 
-from app.agents.common.knowledge_question_analysis import build_knowledge_question_analysis
+from app.agents.common.knowledge_query_plan import build_knowledge_query_plan
 from app.agents.common.node_logging import log_node_info
 from app.agents.common.streaming import emit_activity, get_optional_stream_writer
 from app.agents.common.sub_agent_result import build_knowledge_sub_agent_result
-from app.agents.nodes.kb_chat import (
-    kb_chat_retrieve_node,
-    kb_chat_rewrite_query_node,
-)
+from app.agents.nodes.kb_chat import kb_chat_retrieve_node
 from app.agents.nodes.knowledge_qa import build_knowledge_qa_retrieval_plan
 from app.agents.states import KnowledgeQaState
 
@@ -29,57 +26,48 @@ def create_knowledge_qa_graph(
     planner_factory = planner_llm_factory or llm_factory
     workflow = StateGraph(KnowledgeQaState)
 
-    async def _analyze_question_node(state: KnowledgeQaState) -> dict[str, Any]:
+    async def _plan_query_node(state: KnowledgeQaState) -> dict[str, Any]:
         emit_activity(
             get_optional_stream_writer(),
             workflow_id="knowledge_qa",
-            node_id="analyze_question",
-            stage="analyze",
-            message="正在分析知识库问题",
+            node_id="plan_query",
+            stage="plan",
+            message="正在规划知识库检索线索",
             display_stage="understand",
             display_title="🤔 思考您的问题",
-            activity_text="判断问题重点",
+            activity_text="分析问题并生成检索线索",
         )
         intent = dict(state.get("intent") or {})
         goal = str(intent.get("goal") or state.get("query") or "").strip()
-        analysis = await build_knowledge_question_analysis(
+        query_plan = await build_knowledge_query_plan(
             goal,
+            chat_history=list(state.get("chat_history") or []),
+            memory_summary=state.get("memory_summary"),
+            page_context=dict(state.get("page_context") or {}),
             llm_factory=planner_factory,
         )
-        result = {
-            "question_type": analysis["question_type"],
-            "retrieval_complexity": analysis["retrieval_complexity"],
-            "candidate_entities": list(analysis.get("entities") or []),
-            "retrieval_analysis": {
-                "question_type": analysis["question_type"],
-                "retrieval_complexity": analysis["retrieval_complexity"],
-                "entities": list(analysis.get("entities") or []),
-                "needs_path": bool(analysis.get("needs_path")),
-                "needs_relation": bool(analysis.get("needs_relation")),
-                "needs_summary": bool(analysis.get("needs_summary")),
-                "reason": analysis.get("reason") or "",
-            },
-        }
+        result = dict(query_plan)
         log_node_info(
             workflow_id="knowledge_qa",
-            node_id="analyze_question",
-            node_name="分析问题",
+            node_id="plan_query",
+            node_name="规划查询",
             details={
-                "问题类型": result.get("question_type"),
-                "检索复杂度": result.get("retrieval_complexity"),
-                "候选实体数": len(result.get("candidate_entities") or []),
-                "判断原因": analysis.get("reason"),
+                "问题类型": query_plan.get("question_type"),
+                "检索复杂度": query_plan.get("retrieval_complexity"),
+                "语义查询数": len(query_plan.get("semantic_queries") or []),
+                "候选实体数": len(query_plan.get("candidate_entities") or []),
+                "是否使用HyDE": (query_plan.get("query_plan_trace") or {}).get("hyde_used"),
             },
         )
         emit_activity(
             get_optional_stream_writer(),
             workflow_id="knowledge_qa",
-            node_id="analyze_question",
-            stage="analyze",
-            message="已分析知识库问题",
+            node_id="plan_query",
+            stage="plan",
+            message="知识库检索线索规划完成",
             display_stage="understand",
             display_title="🤔 思考您的问题",
-            activity_text="已明确资料检索需求",
+            activity_text="已生成查询、关键词和实体线索",
             activity_status="completed",
         )
         return result
@@ -141,14 +129,8 @@ def create_knowledge_qa_graph(
         return result
 
     async def _retrieve_knowledge_node(state: KnowledgeQaState) -> dict[str, Any]:
-        rewrite = await kb_chat_rewrite_query_node(
-            state,
-            node_id="retrieve_knowledge",
-        )
-        prepared_state = {**state, **rewrite}
-        result = await kb_chat_retrieve_node(prepared_state, node_id="retrieve_knowledge")
+        result = await kb_chat_retrieve_node(state, node_id="retrieve_knowledge")
         result = {
-            **rewrite,
             **result,
             "retrieval": {
                 "question_type": state.get("question_type"),
@@ -156,17 +138,16 @@ def create_knowledge_qa_graph(
                 "complexity": state.get("retrieval_complexity"),
                 "plan": state.get("retrieval_execution_plan") or {},
                 "queries": {
-                    "semantic": list(rewrite.get("semantic_queries") or []),
-                    "lexical": list(rewrite.get("lexical_terms") or []),
-                    "entities": list(rewrite.get("candidate_entities") or []),
-                    "relations": list(rewrite.get("relation_queries") or []),
+                    "semantic": list(state.get("semantic_queries") or []),
+                    "lexical": list(state.get("lexical_terms") or []),
+                    "entities": list(state.get("candidate_entities") or []),
+                    "relations": list(state.get("relation_queries") or []),
                 },
             },
         }
         retrieval_trace = dict(result.get("retrieval_trace") or {})
         text_trace = dict(retrieval_trace.get("text") or {})
         graph_trace = dict(retrieval_trace.get("graph") or {})
-        rewrite_trace = dict(result.get("rewrite_trace") or {})
         result["evidence"] = {
             "docs": list(result.get("retrieved_docs") or []),
             "context": {
@@ -185,11 +166,11 @@ def create_knowledge_qa_graph(
             node_id="retrieve_knowledge",
             node_name="检索知识",
             details={
-                "改写引擎": rewrite_trace.get("engine"),
-                "语义查询数": len(result.get("semantic_queries") or []),
-                "关键词数": len(result.get("lexical_terms") or []),
-                "候选实体数": len(result.get("candidate_entities") or []),
-                "关系查询数": len(result.get("relation_queries") or []),
+                "规划引擎": (state.get("query_plan_trace") or {}).get("engine"),
+                "语义查询数": len(state.get("semantic_queries") or []),
+                "关键词数": len(state.get("lexical_terms") or []),
+                "候选实体数": len(state.get("candidate_entities") or []),
+                "关系查询数": len(state.get("relation_queries") or []),
                 "检索策略": retrieval_trace.get("retrieval_strategy"),
                 "文本命中数": text_trace.get("text_hits"),
                 "图谱命中数": graph_trace.get("graph_hits"),
@@ -264,12 +245,12 @@ def create_knowledge_qa_graph(
             "backend_citations": retrieved_docs,
         }
 
-    workflow.add_node("analyze_question", _analyze_question_node)
+    workflow.add_node("plan_query", _plan_query_node)
     workflow.add_node("plan_retrieval", _plan_retrieval_node)
     workflow.add_node("retrieve_knowledge", _retrieve_knowledge_node)
     workflow.add_node("compose_answer", _compose_answer_node)
-    workflow.set_entry_point("analyze_question")
-    workflow.add_edge("analyze_question", "plan_retrieval")
+    workflow.set_entry_point("plan_query")
+    workflow.add_edge("plan_query", "plan_retrieval")
     workflow.add_edge("plan_retrieval", "retrieve_knowledge")
     workflow.add_edge("retrieve_knowledge", "compose_answer")
     workflow.add_edge("compose_answer", END)

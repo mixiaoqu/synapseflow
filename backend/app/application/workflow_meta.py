@@ -41,9 +41,9 @@ WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
         },
     },
     "knowledge_qa": {
-        "analyze_question": {
-            "label": "分析问题",
-            "progress_message": "正在分析知识库问题...",
+        "plan_query": {
+            "label": "规划查询",
+            "progress_message": "正在规划知识库检索线索...",
         },
         "plan_retrieval": {
             "label": "规划检索",
@@ -101,7 +101,7 @@ NODE_CUSTOMER_STAGES = {
         "respond": "compose",
     },
     "knowledge_qa": {
-        "analyze_question": "understand",
+        "plan_query": "understand",
         "plan_retrieval": "knowledge_search",
         "retrieve_knowledge": "knowledge_search",
         "compose_answer": "compose",

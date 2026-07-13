@@ -46,7 +46,7 @@ def _build_registry() -> dict[str, GraphDefinition]:
             graph_id="knowledge_qa",
             factory=create_knowledge_qa_graph,
             node_ids=(
-                "analyze_question",
+                "plan_query",
                 "plan_retrieval",
                 "retrieve_knowledge",
                 "compose_answer",

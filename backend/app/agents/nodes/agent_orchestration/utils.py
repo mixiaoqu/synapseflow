@@ -104,7 +104,7 @@ def knowledge_diagnostics(child_state: dict[str, Any]) -> dict[str, Any]:
         "lexical_terms": list(child_state.get("lexical_terms") or []),
         "candidate_entities": list(child_state.get("candidate_entities") or []),
         "plan_trace": dict(child_state.get("plan_trace") or {}),
-        "rewrite_trace": dict(child_state.get("rewrite_trace") or {}),
+        "query_plan_trace": dict(child_state.get("query_plan_trace") or {}),
         "retrieval_trace": dict(child_state.get("retrieval_trace") or {}),
         "context": str(child_state.get("context") or ""),
     }
