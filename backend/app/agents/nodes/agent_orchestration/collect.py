@@ -22,26 +22,83 @@ def collect_execution_results(execution_runs: dict[str, dict[str, Any]]) -> dict
         for result in sub_agent_results
         if result.get("status") not in {"success", "needs_input"}
     ]
-    citations: list[dict[str, Any]] = []
+    knowledge_context: list[dict[str, Any]] = []
+    citation_refs: list[str] = []
+    business_data: list[dict[str, Any]] = []
     clarifications: list[dict[str, Any]] = []
     result_errors: list[dict[str, Any]] = []
     for sub_agent_result in sub_agent_results:
+        data = dict(sub_agent_result.get("data") or {})
+        content = data.get("content")
+        if data.get("kind") == "document" and isinstance(content, dict):
+            knowledge_context.extend(
+                dict(item)
+                for item in list(content.get("knowledge_context") or [])
+                if isinstance(item, dict)
+            )
+        elif data.get("kind") == "action_result" and isinstance(content, dict):
+            business_data.append(
+                {
+                    "sub_agent_id": sub_agent_result.get("sub_agent_id"),
+                    "content": dict(content),
+                }
+            )
         evidence = dict(sub_agent_result.get("evidence") or {})
-        citations.extend(list(evidence.get("citations") or []))
+        citation_refs.extend(
+            str(item.get("ref_id") or "").strip()
+            for item in list(evidence.get("citations") or [])
+            if isinstance(item, dict) and str(item.get("ref_id") or "").strip()
+        )
         actions = dict(sub_agent_result.get("actions") or {})
         clarifications.extend(list(actions.get("required_user_input") or []))
-        result_errors.extend(list(sub_agent_result.get("errors") or []))
+        result_errors.extend(
+            {
+                "sub_agent_id": sub_agent_result.get("sub_agent_id"),
+                "code": item.get("code"),
+                "message": item.get("message"),
+                "retryable": bool(item.get("retryable")),
+            }
+            for item in list(sub_agent_result.get("errors") or [])
+            if isinstance(item, dict)
+        )
+
+    context_by_ref: dict[str, dict[str, Any]] = {}
+    for item in knowledge_context:
+        ref_id = str(item.get("ref_id") or "").strip()
+        if ref_id and ref_id not in context_by_ref:
+            context_by_ref[ref_id] = item
+    deduped_citation_refs = list(dict.fromkeys(citation_refs))
+
+    retrieved_docs = [
+        {
+            "content": item.get("content") or "",
+            "metadata": {
+                **dict(item.get("source") or {}),
+                "ref_id": ref_id,
+                "role": item.get("role"),
+                "kind": item.get("kind"),
+            },
+        }
+        for ref_id, item in context_by_ref.items()
+        if item.get("role") == "primary"
+    ]
     return {
-        "task_results": execution_runs,
-        "sub_agent_results": sub_agent_results,
         "success_count": len(successes),
         "failed_count": len(failures),
         "needs_input_count": len(needs_input),
         "partial": bool(successes and (failures or needs_input)),
-        "citations": citations,
+        "knowledge_context": list(context_by_ref.values()),
+        "business_data": business_data,
+        "citation_refs": deduped_citation_refs,
+        "retrieved_docs": retrieved_docs,
         "errors": result_errors
         or [
-            {"sub_agent_id": result.get("sub_agent_id"), "error": result.get("summary")}
+            {
+                "sub_agent_id": result.get("sub_agent_id"),
+                "code": "SUB_AGENT_FAILED",
+                "message": result.get("summary"),
+                "retryable": False,
+            }
             for result in failures
         ],
         "clarifications": clarifications,
@@ -58,13 +115,12 @@ async def collect_node(state: AgentState) -> dict[str, Any]:
         details={
             "成功数": collected_results.get("success_count"),
             "失败数": collected_results.get("failed_count"),
-            "引用数": len(collected_results.get("citations") or []),
+            "引用数": len(collected_results.get("citation_refs") or []),
             "澄清数": len(collected_results.get("clarifications") or []),
         },
     )
     return {
         "collected_results": collected_results,
-        "sub_agent_results": list(collected_results.get("sub_agent_results") or []),
-        "retrieved_docs": list(collected_results.get("citations") or []),
-        "backend_citations": list(collected_results.get("citations") or []),
+        "retrieved_docs": list(collected_results.get("retrieved_docs") or []),
+        "backend_citations": list(collected_results.get("retrieved_docs") or []),
     }

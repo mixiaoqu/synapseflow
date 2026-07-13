@@ -116,14 +116,19 @@ def _base_result(
 
 
 def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
-    retrieved_docs = list(state.get("retrieved_docs") or [])
-    retrieval_trace = dict(state.get("retrieval_trace") or {})
-    evidence = dict(state.get("evidence") or {})
-    status = "success" if retrieved_docs else "failed"
-    answer_status = "answered" if retrieved_docs else "no_answer"
+    retrieval_result = dict(state.get("retrieval_result") or {})
+    retrieval_status = str(retrieval_result.get("status") or "failed")
+    evidence_items = [
+        dict(item)
+        for item in list(retrieval_result.get("evidence_items") or [])
+        if isinstance(item, dict)
+    ]
+    primary_count = len([item for item in evidence_items if item.get("role") == "primary"])
+    status = "success" if retrieval_status == "found" and primary_count else "failed"
+    answer_status = "answered" if status == "success" else "no_answer"
     message = (
-        f"已找到 {len(retrieved_docs)} 条相关知识证据。"
-        if retrieved_docs
+        f"已找到 {primary_count} 条主要知识证据。"
+        if status == "success"
         else "当前知识库没有找到可用于回答的相关内容。"
     )
     result = _base_result(
@@ -137,30 +142,26 @@ def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
     result["data"] = {
         "kind": "document",
         "content": {
-            "primary_context": state.get("primary_context") or "",
-            "supporting_context": state.get("supporting_context") or "",
-            "context": state.get("context") or "",
-            "retrieved_docs": retrieved_docs,
+            "knowledge_context": evidence_items,
         },
         "normalized": {
-            "retrieval": dict(state.get("retrieval") or {}),
-            "retrieval_trace": retrieval_trace,
-            "evidence": evidence,
+            "retrieval_status": retrieval_status,
+            "reason_code": retrieval_result.get("reason_code"),
+            "budget": dict(retrieval_result.get("budget") or {}),
+            "metrics": dict(retrieval_result.get("metrics") or {}),
+            "warnings": list(retrieval_result.get("warnings") or []),
         },
     }
     result["evidence"] = {
-        "citations": retrieved_docs,
-        "sources": retrieved_docs,
-        "reasoning_trace": [
+        "citations": [
             {
-                "stage": "retrieval",
-                "status": "found" if retrieved_docs else "empty",
-                "data": {
-                    "retrieval_analysis": dict(state.get("retrieval_analysis") or {}),
-                    "retrieval": dict(state.get("retrieval") or {}),
-                    "retrieval_trace": retrieval_trace,
-                },
+                "ref_id": item.get("ref_id"),
+                "role": item.get("role"),
+                "kind": item.get("kind"),
+                **dict(item.get("source") or {}),
             }
+            for item in evidence_items
+            if item.get("role") == "primary"
         ],
     }
     return result

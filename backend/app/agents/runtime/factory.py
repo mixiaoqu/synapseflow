@@ -49,7 +49,7 @@ def _build_registry() -> dict[str, GraphDefinition]:
                 "plan_query",
                 "plan_retrieval",
                 "retrieve_knowledge",
-                "compose_answer",
+                "compose_result",
             ),
         ),
         "business_ops": GraphDefinition(

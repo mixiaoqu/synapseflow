@@ -17,8 +17,7 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     page_context: Dict[str, Any]
     allowed_document_statuses: List[str]
 
-    retrieval: Dict[str, Any]
-    evidence: Dict[str, Any]
+    retrieval_result: Dict[str, Any]
     sub_agent_result: Dict[str, Any]
 
     retrieval_analysis: Dict[str, Any]
@@ -38,13 +37,4 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     entity_constraints: Dict[str, Any]
     plan_trace: Dict[str, Any]
     query_plan_trace: Dict[str, Any]
-    rewrite_trace: Dict[str, Any]
-    retrieval_trace: Dict[str, Any]
-    retrieved_docs: List[Dict[str, Any]]
-    graph_facts: Dict[str, List[Dict[str, Any]]]
-    primary_evidence_docs: List[Dict[str, Any]]
-    supporting_evidence_docs: List[Dict[str, Any]]
-    primary_context: str
-    supporting_context: str
-    context: str
     answer_status: str

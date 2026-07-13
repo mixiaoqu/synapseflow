@@ -164,7 +164,6 @@ class KbChatService(BaseAgentService):
                 "route": {},
                 "task_plan": {},
                 "execution_runs": {},
-                "sub_agent_results": [],
                 "collected_results": {},
                 "synthesized_result": {},
                 "retrieved_docs": [],
@@ -316,6 +315,23 @@ class KbChatService(BaseAgentService):
                 return chunk_type, chunk_data
 
         return None, {}
+
+    @staticmethod
+    def _retrieved_docs_from_node_state(node_state: dict[str, Any]) -> list[dict[str, Any]]:
+        retrieval_result = dict(node_state.get("retrieval_result") or {})
+        return [
+            {
+                "content": item.get("content") or "",
+                "metadata": {
+                    **dict(item.get("source") or {}),
+                    "ref_id": item.get("ref_id"),
+                    "role": item.get("role"),
+                    "kind": item.get("kind"),
+                },
+            }
+            for item in list(retrieval_result.get("evidence_items") or [])
+            if isinstance(item, dict) and item.get("role") == "primary"
+        ]
 
     @staticmethod
     def _resolve_answer_status(result: dict[str, Any]) -> str:
@@ -1287,7 +1303,11 @@ class KbChatService(BaseAgentService):
                         if node_id == "retrieve_knowledge":
                             yield emit_event(
                                 AgentEventType.RETRIEVED,
-                                {"retrieved_docs": node_state.get("retrieved_docs", [])},
+                                {
+                                    "retrieved_docs": self._retrieved_docs_from_node_state(
+                                        node_state
+                                    )
+                                },
                                 workflow_id=node_workflow_id,
                                 node_id=node_id,
                                 node_name=node_name,
@@ -1302,7 +1322,9 @@ class KbChatService(BaseAgentService):
                             workflow_id=node_workflow_id,
                         )
                 elif chunk_type == "custom":
-                    node_id = str(chunk_data.get("node_id") or "compose_answer")
+                    node_id = str(chunk_data.get("node_id") or "").strip()
+                    if not node_id:
+                        raise ValueError("Custom stream event is missing node_id")
                     node_workflow_id = str(chunk_data.get("workflow_id") or "").strip()
                     if not node_workflow_id:
                         raise ValueError(
@@ -1329,7 +1351,11 @@ class KbChatService(BaseAgentService):
                         if node_id == "retrieve_knowledge":
                             yield emit_event(
                                 AgentEventType.RETRIEVED,
-                                {"retrieved_docs": node_state.get("retrieved_docs", [])},
+                                {
+                                    "retrieved_docs": self._retrieved_docs_from_node_state(
+                                        node_state
+                                    )
+                                },
                                 workflow_id=node_workflow_id,
                                 node_id=node_id,
                                 node_name=node_name,

@@ -53,9 +53,9 @@ WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
             "label": "检索知识",
             "progress_message": "正在检索知识库...",
         },
-        "compose_answer": {
-            "label": "组织回答",
-            "progress_message": "正在组织知识库回答...",
+        "compose_result": {
+            "label": "整理结果",
+            "progress_message": "正在整理知识库结果...",
         },
     },
     "business_ops": {
@@ -78,7 +78,7 @@ WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
-OUTPUT_NODE_IDS = {"compose_answer", "compose_result", "respond"}
+OUTPUT_NODE_IDS = {"compose_result", "respond"}
 
 CUSTOMER_STAGE_TITLES = {
     "understand": "理解需求",
@@ -104,7 +104,7 @@ NODE_CUSTOMER_STAGES = {
         "plan_query": "understand",
         "plan_retrieval": "knowledge_search",
         "retrieve_knowledge": "knowledge_search",
-        "compose_answer": "compose",
+        "compose_result": "compose",
     },
     "business_ops": {
         "analyze_request": "understand",

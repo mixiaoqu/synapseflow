@@ -138,7 +138,7 @@ The current graph registry is `backend/app/agents/runtime/factory.py`.
 Registered workflows:
 
 - `agent`: top-level workflow defined by `backend/app/agents/graphs/agent_graph.py`; path is `load_context -> understand -> route -> clarify/respond OR plan -> execute -> respond`.
-- `knowledge_qa`: reusable knowledge-base QA subgraph defined by `backend/app/agents/graphs/knowledge_qa_graph.py`; path is `analyze_question -> plan_retrieval -> retrieve_knowledge -> compose_answer`.
+- `knowledge_qa`: reusable knowledge-base QA subgraph defined by `backend/app/agents/graphs/knowledge_qa_graph.py`; path is `plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result`.
 - `business_ops`: controlled business data operation subgraph defined by `backend/app/agents/graphs/business_ops_graph.py`; path is `analyze_request -> match_operation -> execute_operation -> compose_result`.
 - `backend/langgraph.json` currently exposes `agent` and `knowledge_qa` for LangGraph tooling. `business_ops` is registered in the runtime factory and executed as a subgraph through `agent`.
 
@@ -148,10 +148,9 @@ Important workflow files:
 - `backend/app/agents/states/knowledge_qa_state.py`: knowledge QA subgraph state shape.
 - `backend/app/agents/states/business_ops_state.py`: business data operation subgraph state shape.
 - `backend/app/agents/common/agent_intent.py`: top-level intent classification and fallback rules.
-- `backend/app/agents/common/knowledge_question_analysis.py`: knowledge-base question analysis.
+- `backend/app/agents/common/knowledge_query_plan.py`: one-call structured knowledge query planning, with conditional HyDE for complex questions.
 - `backend/app/agents/nodes/knowledge_qa/plan_retrieval.py`: knowledge retrieval planning.
-- `backend/app/agents/nodes/kb_chat/rewrite_query.py`: query rewriting.
-- `backend/app/agents/nodes/kb_chat/retrieve.py`: knowledge retrieval node reused by `knowledge_qa`.
+- `backend/app/agents/nodes/kb_chat/retrieve.py`: text/graph retrieval, evidence deduplication, unified reranking, and compact retrieval result assembly reused by `knowledge_qa`.
 - `backend/app/agents/nodes/kb_chat/answer.py`: answer generation and streamed token output.
 - `backend/app/agents/prompts/kb_chat.py`: KB chat prompts.
 - `backend/app/agents/common/*`: shared retrieval, JSON LLM, document analysis, and streaming helpers.

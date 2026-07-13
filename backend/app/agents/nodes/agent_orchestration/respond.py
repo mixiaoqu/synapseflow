@@ -158,9 +158,11 @@ def build_respond_node(*, answer_llm_factory: Callable[[], Any] | None):
                 if writer is not None:
                     writer({"workflow_id": "agent", "node_id": "respond", "text": text})
             answer = "".join(parts).strip() or "抱歉，当前没有生成有效回答。"
-            answer_status = str(
-                (state.get("synthesized_result") or {}).get("answer_status") or ""
-            ) or ("answered" if parts else "generation_failed")
+            answer_status = (
+                str((state.get("synthesized_result") or {}).get("answer_status") or "answered")
+                if parts
+                else "generation_failed"
+            )
         else:
             answer, answer_status = build_non_execution_answer(state)
             if writer is not None and answer:

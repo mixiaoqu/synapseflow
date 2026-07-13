@@ -130,37 +130,8 @@ def create_knowledge_qa_graph(
 
     async def _retrieve_knowledge_node(state: KnowledgeQaState) -> dict[str, Any]:
         result = await kb_chat_retrieve_node(state, node_id="retrieve_knowledge")
-        result = {
-            **result,
-            "retrieval": {
-                "question_type": state.get("question_type"),
-                "strategy": state.get("retrieval_strategy"),
-                "complexity": state.get("retrieval_complexity"),
-                "plan": state.get("retrieval_execution_plan") or {},
-                "queries": {
-                    "semantic": list(state.get("semantic_queries") or []),
-                    "lexical": list(state.get("lexical_terms") or []),
-                    "entities": list(state.get("candidate_entities") or []),
-                    "relations": list(state.get("relation_queries") or []),
-                },
-            },
-        }
-        retrieval_trace = dict(result.get("retrieval_trace") or {})
-        text_trace = dict(retrieval_trace.get("text") or {})
-        graph_trace = dict(retrieval_trace.get("graph") or {})
-        result["evidence"] = {
-            "docs": list(result.get("retrieved_docs") or []),
-            "context": {
-                "primary": result.get("primary_context") or "",
-                "supporting": result.get("supporting_context") or "",
-            },
-            "stats": {
-                "text_hits": text_trace.get("text_hits"),
-                "graph_hits": graph_trace.get("graph_hits"),
-                "final_count": len(result.get("retrieved_docs") or []),
-            },
-            "status": "found" if result.get("retrieved_docs") else "empty",
-        }
+        retrieval_result = dict(result.get("retrieval_result") or {})
+        metrics = dict(retrieval_result.get("metrics") or {})
         log_node_info(
             workflow_id="knowledge_qa",
             node_id="retrieve_knowledge",
@@ -171,24 +142,25 @@ def create_knowledge_qa_graph(
                 "关键词数": len(state.get("lexical_terms") or []),
                 "候选实体数": len(state.get("candidate_entities") or []),
                 "关系查询数": len(state.get("relation_queries") or []),
-                "检索策略": retrieval_trace.get("retrieval_strategy"),
-                "文本命中数": text_trace.get("text_hits"),
-                "图谱命中数": graph_trace.get("graph_hits"),
-                "最终主证据数": len(result.get("retrieved_docs") or []),
-                "辅助证据数": len(result.get("supporting_evidence_docs") or []),
-                "空结果原因": retrieval_trace.get("empty_reason"),
-                "上下文长度": len(result.get("context") or ""),
+                "检索策略": state.get("retrieval_strategy"),
+                "文本命中数": metrics.get("text_hit_count"),
+                "图谱命中数": metrics.get("graph_hit_count"),
+                "最终主证据数": metrics.get("primary_count"),
+                "辅助证据数": metrics.get("supporting_count"),
+                "空结果原因": retrieval_result.get("reason_code"),
+                "上下文长度": (retrieval_result.get("budget") or {}).get("used_chars"),
             },
         )
-        retrieved_docs = list(result.get("retrieved_docs") or [])
+        evidence_items = list(retrieval_result.get("evidence_items") or [])
+        primary_items = [item for item in evidence_items if item.get("role") == "primary"]
         top_title = ""
-        if retrieved_docs:
-            metadata = dict(retrieved_docs[0].get("metadata") or {})
-            top_title = str(metadata.get("document_title") or "").strip()
+        if primary_items:
+            source = dict(primary_items[0].get("source") or {})
+            top_title = str(source.get("document_title") or "").strip()
         activity_text = (
-            f"已找到 {len(retrieved_docs)} 条相关资料"
+            f"已找到 {len(primary_items)} 条相关资料"
             if not top_title
-            else f"已找到 {len(retrieved_docs)} 条相关资料，包括《{top_title}》"
+            else f"已找到 {len(primary_items)} 条相关资料，包括《{top_title}》"
         )
         emit_activity(
             get_optional_stream_writer(),
@@ -200,15 +172,15 @@ def create_knowledge_qa_graph(
             display_title="🔍 查阅相关资料",
             activity_text=activity_text,
             activity_status="completed",
-            retrieved_count=len(retrieved_docs),
+            retrieved_count=len(primary_items),
         )
         return result
 
-    async def _compose_answer_node(state: KnowledgeQaState) -> dict[str, Any]:
+    async def _compose_result_node(state: KnowledgeQaState) -> dict[str, Any]:
         emit_activity(
             get_optional_stream_writer(),
             workflow_id="knowledge_qa",
-            node_id="compose_answer",
+            node_id="compose_result",
             stage="compose",
             message="正在整理知识库结果",
             display_stage="compose",
@@ -216,21 +188,22 @@ def create_knowledge_qa_graph(
             activity_text="整理可用于回答的知识库资料",
         )
         sub_agent_result = build_knowledge_sub_agent_result(state)
-        retrieved_docs = list(state.get("retrieved_docs") or [])
+        retrieval_result = dict(state.get("retrieval_result") or {})
+        metrics = dict(retrieval_result.get("metrics") or {})
         log_node_info(
             workflow_id="knowledge_qa",
-            node_id="compose_answer",
-            node_name="组织回答",
+            node_id="compose_result",
+            node_name="整理结果",
             details={
                 "结果状态": sub_agent_result.get("status"),
-                "主证据数": len(retrieved_docs),
-                "上下文长度": len(state.get("context") or ""),
+                "主证据数": metrics.get("primary_count"),
+                "上下文长度": (retrieval_result.get("budget") or {}).get("used_chars"),
             },
         )
         emit_activity(
             get_optional_stream_writer(),
             workflow_id="knowledge_qa",
-            node_id="compose_answer",
+            node_id="compose_result",
             stage="compose",
             message="知识库结果整理完成",
             display_stage="compose",
@@ -241,17 +214,15 @@ def create_knowledge_qa_graph(
         return {
             "sub_agent_result": sub_agent_result,
             "answer_status": sub_agent_result.get("answer_status"),
-            "retrieved_docs": retrieved_docs,
-            "backend_citations": retrieved_docs,
         }
 
     workflow.add_node("plan_query", _plan_query_node)
     workflow.add_node("plan_retrieval", _plan_retrieval_node)
     workflow.add_node("retrieve_knowledge", _retrieve_knowledge_node)
-    workflow.add_node("compose_answer", _compose_answer_node)
+    workflow.add_node("compose_result", _compose_result_node)
     workflow.set_entry_point("plan_query")
     workflow.add_edge("plan_query", "plan_retrieval")
     workflow.add_edge("plan_retrieval", "retrieve_knowledge")
-    workflow.add_edge("retrieve_knowledge", "compose_answer")
-    workflow.add_edge("compose_answer", END)
+    workflow.add_edge("retrieve_knowledge", "compose_result")
+    workflow.add_edge("compose_result", END)
     return workflow.compile()

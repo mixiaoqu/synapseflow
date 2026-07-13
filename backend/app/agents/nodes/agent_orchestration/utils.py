@@ -95,6 +95,7 @@ def knowledge_diagnostics(child_state: dict[str, Any]) -> dict[str, Any]:
     if not child_state.get("retrieval_analysis"):
         return {}
     retrieval_analysis = dict(child_state.get("retrieval_analysis") or {})
+    retrieval_result = dict(child_state.get("retrieval_result") or {})
     return {
         "question_type": child_state.get("question_type"),
         "retrieval_complexity": child_state.get("retrieval_complexity"),
@@ -105,6 +106,9 @@ def knowledge_diagnostics(child_state: dict[str, Any]) -> dict[str, Any]:
         "candidate_entities": list(child_state.get("candidate_entities") or []),
         "plan_trace": dict(child_state.get("plan_trace") or {}),
         "query_plan_trace": dict(child_state.get("query_plan_trace") or {}),
-        "retrieval_trace": dict(child_state.get("retrieval_trace") or {}),
-        "context": str(child_state.get("context") or ""),
+        "retrieval_status": retrieval_result.get("status"),
+        "retrieval_reason_code": retrieval_result.get("reason_code"),
+        "retrieval_budget": dict(retrieval_result.get("budget") or {}),
+        "retrieval_metrics": dict(retrieval_result.get("metrics") or {}),
+        "retrieval_warnings": list(retrieval_result.get("warnings") or []),
     }
