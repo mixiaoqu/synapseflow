@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 from app.agents.common.node_logging import log_node_info
@@ -86,6 +87,7 @@ def build_task_plan(state: dict[str, Any]) -> dict[str, Any]:
 
 
 async def orchestrate_plan_node(state: AgentState) -> dict[str, Any]:
+    started_at = perf_counter()
     writer = get_optional_stream_writer()
     emit_activity(
         writer,
@@ -107,6 +109,7 @@ async def orchestrate_plan_node(state: AgentState) -> dict[str, Any]:
             "步骤数": len(task_plan.get("steps") or []),
             "规划原因": task_plan.get("reason"),
         },
+        elapsed_ms=int((perf_counter() - started_at) * 1000),
     )
     emit_activity(
         writer,

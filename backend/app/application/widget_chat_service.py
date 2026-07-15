@@ -1,0 +1,205 @@
+"""AgentChat widget application service."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+from types import SimpleNamespace
+
+from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.application.kb_chat_service import get_kb_chat_service
+from app.core.config import settings
+from app.core.config.assistant_pages import AssistantPageConfig, get_assistant_page_config
+from app.core.security import create_widget_token
+from app.models.schemas.kb_chat import KbChatFeedbackRequest
+from app.models.schemas.widget import (
+    WidgetBootstrapResponse,
+    WidgetChatRequest,
+    WidgetPageConfigResponse,
+    WidgetSessionCreate,
+)
+from app.repositories.kb_chat_log_repository import KbChatLogRepository
+from app.repositories.project_repository import ProjectAppRuntimeRecord, ProjectRepository
+
+
+@dataclass(frozen=True, slots=True)
+class WidgetSessionContext:
+    project_id: int
+    project_app_id: int
+    external_user_id: str
+    external_user_name: str | None
+    store_id: str | None
+    initial_page_type: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class WidgetSessionCredential:
+    token: str
+    expires_in_seconds: int
+
+
+class WidgetChatService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repository = ProjectRepository(db)
+        self.chat_service = get_kb_chat_service()
+
+    async def create_credential(self, payload: WidgetSessionCreate) -> WidgetSessionCredential:
+        runtime = await self.repository.get_runtime_by_codes(
+            product_code=payload.product_code,
+            project_code=payload.project_code,
+            app_code=payload.app_code,
+            active_only=True,
+        )
+        if runtime is None:
+            raise HTTPException(status_code=404, detail="Active project application not found")
+
+        expires = max(1, settings.WIDGET_TOKEN_EXPIRE_MINUTES)
+        token = create_widget_token(
+            project_id=runtime.project.id,
+            project_app_id=runtime.app.id,
+            external_user_id=payload.external_user_id.strip(),
+            external_user_name=(payload.external_user_name or "").strip() or None,
+            store_id=(payload.store_id or "").strip() or None,
+            initial_page_type=(payload.initial_page_type or "").strip() or None,
+            expires_delta=timedelta(minutes=expires),
+        )
+        return WidgetSessionCredential(token=token, expires_in_seconds=expires * 60)
+
+    async def get_runtime(self, context: WidgetSessionContext) -> ProjectAppRuntimeRecord:
+        runtime = await self.repository.get_runtime_by_app_id(
+            project_app_id=context.project_app_id,
+            active_only=True,
+        )
+        if runtime is None or runtime.project.id != context.project_id:
+            raise HTTPException(status_code=404, detail="Active project application not found")
+        return runtime
+
+    @staticmethod
+    def _resolve_page_config(
+        runtime: ProjectAppRuntimeRecord,
+        page_type: str | None,
+    ) -> AssistantPageConfig | None:
+        return get_assistant_page_config(
+            runtime.product.code,
+            runtime.project.code,
+            runtime.app.code,
+            page_type,
+        )
+
+    @staticmethod
+    def _page_config_response(config: AssistantPageConfig) -> WidgetPageConfigResponse:
+        return WidgetPageConfigResponse(
+            page_type=config.page_type,
+            page_name=config.page_name,
+            page_description=config.page_description,
+            assistant_intro=config.assistant_intro,
+            suggested_questions=list(config.suggested_questions or []),
+        )
+
+    async def bootstrap(
+        self,
+        context: WidgetSessionContext,
+        page_type: str | None,
+    ) -> WidgetBootstrapResponse:
+        runtime = await self.get_runtime(context)
+        assistant = runtime.assistant
+        resolved_page_type = (page_type or "").strip() or context.initial_page_type
+        page_config = self._resolve_page_config(runtime, resolved_page_type)
+        return WidgetBootstrapResponse(
+            project_name=runtime.project.name,
+            app_name=runtime.app.name,
+            assistant_name=assistant.name,
+            welcome_message=assistant.welcome_message,
+            placeholder_text=assistant.placeholder_text,
+            suggested_prompts=list(assistant.suggested_prompts or []),
+            page_config=(
+                self._page_config_response(page_config) if page_config is not None else None
+            ),
+        )
+
+    async def list_sessions(self, context: WidgetSessionContext, limit: int):
+        return await self.chat_service.list_sessions(
+            user_id=None,
+            limit=limit,
+            project_app_id=context.project_app_id,
+            external_user_id=context.external_user_id,
+        )
+
+    async def get_session(self, context: WidgetSessionContext, session_id: str):
+        session = await self.chat_service.get_session(
+            user_id=None,
+            session_id=session_id,
+            project_app_id=context.project_app_id,
+            external_user_id=context.external_user_id,
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        return session
+
+    async def delete_session(self, context: WidgetSessionContext, session_id: str) -> None:
+        deleted = await self.chat_service.delete_session(
+            user_id=None,
+            session_id=session_id,
+            project_app_id=context.project_app_id,
+            external_user_id=context.external_user_id,
+        )
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+
+    async def stream(self, context: WidgetSessionContext, payload: WidgetChatRequest):
+        query = payload.query.strip()
+        if not query:
+            raise HTTPException(status_code=400, detail="query is required")
+        runtime = await self.get_runtime(context)
+        page_context = payload.page_context.model_dump(exclude_none=True)
+        page_context["app_id"] = runtime.app.code
+        page_config = self._resolve_page_config(runtime, payload.page_context.page_type)
+        assistant = runtime.assistant
+        request = SimpleNamespace(
+            query=query,
+            session_id=payload.session_id,
+            product_id=runtime.product.id,
+            project_id=runtime.project.id,
+            project_app_id=runtime.app.id,
+            external_user_id=context.external_user_id,
+            external_user_name=context.external_user_name,
+            store_id=context.store_id,
+            team_id=assistant.team_id,
+            knowledge_base_id=runtime.app.knowledge_base_id,
+            category_id=runtime.app.category_id,
+            assistant_id=assistant.id,
+            assistant_name=assistant.name,
+            assistant_welcome_message=assistant.welcome_message,
+            assistant_placeholder_text=assistant.placeholder_text,
+            assistant_llm_model_key=assistant.llm_model_key,
+            assistant_persona_prompt=assistant.persona_prompt,
+            assistant_rule_template=assistant.rule_template,
+            assistant_suggested_prompts=list(assistant.suggested_prompts or []),
+            page_context=page_context,
+            page_config=page_config.model_dump() if page_config is not None else None,
+        )
+        return self.chat_service.stream(request, user_id=None)
+
+    async def submit_feedback(
+        self,
+        context: WidgetSessionContext,
+        log_id: int,
+        payload: KbChatFeedbackRequest,
+    ) -> None:
+        repository = KbChatLogRepository(self.db)
+        existing = await repository.get_by_id(log_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="KB chat log not found")
+        if (
+            existing.project_app_id != context.project_app_id
+            or existing.external_user_id != context.external_user_id
+        ):
+            raise HTTPException(status_code=403, detail="Cannot submit feedback for another user")
+        await repository.submit_feedback(
+            log_id=log_id,
+            feedback_value=payload.feedback_value,
+            feedback_note=payload.feedback_note,
+        )

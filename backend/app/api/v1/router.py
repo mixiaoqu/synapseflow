@@ -6,7 +6,7 @@ from app.api.v1.endpoints import (
     assistants,
     ask,
     auth,
-    business_tools,
+    agent_integrations,
     content_risk_libraries,
     document_categories,
     documents,
@@ -19,6 +19,7 @@ from app.api.v1.endpoints import (
     projects,
     teams,
     users,
+    widget,
 )
 
 api_router = APIRouter()
@@ -28,9 +29,10 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(ask.router, prefix="/ask", tags=["ask"])
 api_router.include_router(ask.admin_router, prefix="/admin/qa", tags=["admin-qa"])
 api_router.include_router(embed.router, prefix="/embed", tags=["embed"])
+api_router.include_router(widget.router, prefix="/widget", tags=["widget"])
 api_router.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
 api_router.include_router(assistants.router, prefix="/assistants", tags=["assistants"])
-api_router.include_router(business_tools.router, prefix="/business-tools", tags=["business-tools"])
+api_router.include_router(agent_integrations.router, prefix="/agent-integrations", tags=["agent-integrations"])
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
 api_router.include_router(
     document_categories.router,

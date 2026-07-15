@@ -275,10 +275,6 @@ When updating this file:
 - Verify frontend route claims against `frontend/src/router/index.ts`.
 - Keep commands consistent with `backend/pyproject.toml`, `frontend/package.json`, `docker-compose.yml`, and the lockfiles.
 
-## 代码风格统一规则
-
-- 本仓库采用“AGENTS.md 定底线，`docs/development/code-style.md` 定细则”的双文档方式统一多人和多 AI 的代码风格。
-- 在修改代码前，先阅读与改动范围直接相关的现有实现，优先延续当前文件和当前层级已经存在的风格，不要自行发明新模式。
 
 ### 命名
 
@@ -318,4 +314,3 @@ When updating this file:
 
 - 新增或修改代码前，先判断这段代码属于哪一层、是否沿用了该层现有模式、命名是否体现业务含义。
 - 如果发现当前的方案不合理，或者有更好更合理的方案，可以提出来由用户确认。
-- 如需细则、正反例和拆分建议，查看 [docs/development/code-style.md](docs/development/code-style.md)。

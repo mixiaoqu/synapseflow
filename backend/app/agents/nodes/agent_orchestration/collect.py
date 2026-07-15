@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 from app.agents.common.node_logging import log_node_info
@@ -107,6 +108,7 @@ def collect_execution_results(execution_runs: dict[str, dict[str, Any]]) -> dict
 
 
 async def collect_node(state: AgentState) -> dict[str, Any]:
+    started_at = perf_counter()
     collected_results = collect_execution_results(dict(state.get("execution_runs") or {}))
     log_node_info(
         workflow_id="agent",
@@ -118,6 +120,7 @@ async def collect_node(state: AgentState) -> dict[str, Any]:
             "引用数": len(collected_results.get("citation_refs") or []),
             "澄清数": len(collected_results.get("clarifications") or []),
         },
+        elapsed_ms=int((perf_counter() - started_at) * 1000),
     )
     return {
         "collected_results": collected_results,

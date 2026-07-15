@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any, Callable
 
 from app.agents.common.agent_intent import build_agent_classification
@@ -17,6 +18,7 @@ def build_classify_node(
     planner_llm_factory: Callable[[], Any] | None,
 ):
     async def classify_node(state: AgentState) -> dict[str, Any]:
+        started_at = perf_counter()
         writer = get_optional_stream_writer()
         emit_activity(
             writer,
@@ -48,6 +50,7 @@ def build_classify_node(
                 "风险提示": classification.get("risk_hint"),
                 "判断原因": classification.get("reason"),
             },
+            elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
         emit_activity(
             writer,

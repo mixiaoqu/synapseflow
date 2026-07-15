@@ -85,6 +85,7 @@ function formatSessionTime(value: string) {
     trigger="click"
     placement="bottom-end"
     :width="360"
+    :z-index="2147483001"
     popper-class="embed-history-popover"
   >
     <template #reference>

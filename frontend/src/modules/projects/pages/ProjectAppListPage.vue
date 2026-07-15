@@ -19,11 +19,11 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
 import {
-  bindProjectAppBusinessTool,
-  listBusinessTools,
-  listProjectAppBusinessToolBindings,
-  unbindProjectAppBusinessTool,
-} from "@/shared/api/business-tools";
+  bindProjectAppToolSet,
+  listMcpServers,
+  listProjectAppToolSetBindings,
+  unbindProjectAppToolSet,
+} from "@/shared/api/agent-integrations";
 import { listAssistants } from "@/shared/api/assistants";
 import { listDocumentCategoriesTree } from "@/shared/api/document-categories";
 import { listKnowledgeBases } from "@/shared/api/knowledge-bases";
@@ -40,7 +40,7 @@ import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import { isForbiddenError } from "@/shared/utils/error";
 import type { AssistantSummary } from "@/shared/types/assistant";
-import type { BusinessTool, ProjectAppBusinessToolBinding } from "@/shared/types/business-tool";
+import type { AgentAppToolSetBinding, McpServer } from "@/shared/types/agent-integration";
 import type { DocumentCategoryTreeNode } from "@/shared/types/document-category";
 import type { KnowledgeBaseListItem } from "@/shared/types/knowledge-base";
 import {
@@ -56,8 +56,8 @@ const route = useRoute();
 const project = ref<ProjectSummary | null>(null);
 const apps = ref<ProjectAppSummary[]>([]);
 const assistants = ref<AssistantSummary[]>([]);
-const businessTools = ref<BusinessTool[]>([]);
-const businessToolBindings = ref<ProjectAppBusinessToolBinding[]>([]);
+const toolSetServers = ref<McpServer[]>([]);
+const toolSetBindings = ref<AgentAppToolSetBinding[]>([]);
 const knowledgeBases = ref<KnowledgeBaseListItem[]>([]);
 const categoryTree = ref<DocumentCategoryTreeNode[]>([]);
 const loading = ref(false);
@@ -67,9 +67,8 @@ const statusLoadingId = ref<number | null>(null);
 const deletingAppId = ref<number | null>(null);
 const configSavingKey = ref<"" | "knowledge_base" | "category" | "assistant">("");
 const categoryLoading = ref(false);
-const businessToolLoading = ref(false);
-const bindingSaving = ref(false);
-const selectedBusinessToolId = ref<number | null>(null);
+const toolSetLoading = ref(false);
+const toolSetSavingId = ref<number | null>(null);
 const activeAppId = ref<number | null>(null);
 const integrationDialogVisible = ref(false);
 const integrationApp = ref<ProjectAppSummary | null>(null);
@@ -125,26 +124,10 @@ const previewUnavailableDescription = computed(() => {
 });
 const appDialogTitle = computed(() => (editingApp.value ? "编辑应用端" : "新建应用端"));
 const appDialogSubmitText = computed(() => (editingApp.value ? "保存应用端" : "创建应用端"));
-const availableBusinessTools = computed(() => {
-  const boundIds = new Set(businessToolBindings.value.map((item) => item.business_tool_id));
-  return businessTools.value.filter((item) => !boundIds.has(item.id));
-});
-
-function formatToolImplementationLabel(tool: BusinessTool) {
-  const implementation = tool.primary_implementation;
-  if (!implementation) {
-    return "未配置实现";
-  }
-  return `${implementation.connection_name} · ${implementation.method} ${implementation.path}`;
+function getToolSetBinding(serverId: number) {
+  return toolSetBindings.value.find((binding) => binding.mcp_server_id === serverId) ?? null;
 }
 
-function formatBindingImplementationLabel(binding: ProjectAppBusinessToolBinding) {
-  const implementation = binding.primary_implementation;
-  if (!implementation) {
-    return "未配置可用实现";
-  }
-  return `${implementation.connection_name} · ${implementation.method} ${implementation.path}`;
-}
 
 function formatTerminalType(value: ProjectAppTerminalType) {
   return PROJECT_APP_TERMINAL_TYPE_LABELS[value] ?? "其他";
@@ -257,7 +240,7 @@ async function loadCategories(knowledgeBaseId: number | null, categoryId: number
 }
 
 async function loadOptionData(projectResponse: ProjectSummary) {
-  const [assistantResponses, knowledgeBaseResponses, businessToolResponses] = await Promise.all([
+  const [assistantResponses, knowledgeBaseResponses, toolSetResponse] = await Promise.all([
     listAssistants({
       team_id: projectResponse.team_id,
       active_only: true,
@@ -270,35 +253,32 @@ async function loadOptionData(projectResponse: ProjectSummary) {
       page: 1,
       page_size: 100,
     }),
-    listBusinessTools({
+    listMcpServers({
       team_id: projectResponse.team_id,
-      enabled_status: "enabled",
-      lifecycle_status: "published",
       page: 1,
       page_size: 100,
     }),
   ]);
   assistants.value = assistantResponses.items;
   knowledgeBases.value = knowledgeBaseResponses.items;
-  businessTools.value = businessToolResponses.items;
+  toolSetServers.value = toolSetResponse.items;
 }
 
-async function loadBusinessToolBindings(appId: number | null) {
-  businessToolBindings.value = [];
-  selectedBusinessToolId.value = null;
+async function loadToolSetBindings(appId: number | null) {
+  toolSetBindings.value = [];
   if (!projectId.value || !appId) {
     return;
   }
 
-  businessToolLoading.value = true;
+  toolSetLoading.value = true;
   try {
-    const response = await listProjectAppBusinessToolBindings(projectId.value, appId);
-    businessToolBindings.value = response.items;
+    const response = await listProjectAppToolSetBindings(projectId.value, appId);
+    toolSetBindings.value = response.items;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "加载业务工具绑定失败，请稍后重试。";
+    const message = error instanceof Error ? error.message : "加载 MCP 工具集绑定失败，请稍后重试。";
     ElMessage.error(message);
   } finally {
-    businessToolLoading.value = false;
+    toolSetLoading.value = false;
   }
 }
 
@@ -328,7 +308,7 @@ async function loadPage() {
     if (activeApp.value) {
       await loadCategories(activeApp.value.knowledge_base_id, activeApp.value.category_id);
     }
-    await loadBusinessToolBindings(activeApp.value?.id ?? null);
+    await loadToolSetBindings(activeApp.value?.id ?? null);
     hasLoadedData.value = true;
   } catch (error) {
     if (hasLoadedData.value) {
@@ -361,7 +341,7 @@ function selectApp(appId: number) {
   previewNeedsRefresh.value = false;
   const nextApp = apps.value.find((item) => item.id === appId) ?? null;
   void loadCategories(nextApp?.knowledge_base_id ?? null, nextApp?.category_id ?? null);
-  void loadBusinessToolBindings(nextApp?.id ?? null);
+  void loadToolSetBindings(nextApp?.id ?? null);
 }
 
 async function handleToggleStatus(app: ProjectAppSummary, nextValue: boolean | string | number) {
@@ -453,73 +433,31 @@ async function handleAssistantChange(value: number | string | null) {
   await saveActiveAppConfig("assistant", { default_assistant_id: nextAssistantId }, "已更新默认助手。");
 }
 
-async function handleBindBusinessTool() {
-  if (!projectId.value || !activeApp.value || !selectedBusinessToolId.value || bindingSaving.value) {
+async function handleToolSetBindingChange(server: McpServer, enabled: boolean) {
+  if (!projectId.value || !activeApp.value || toolSetSavingId.value) {
     return;
   }
-
-  bindingSaving.value = true;
+  toolSetSavingId.value = server.id;
   try {
-    await bindProjectAppBusinessTool(projectId.value, activeApp.value.id, {
-      business_tool_id: selectedBusinessToolId.value,
-      enabled: true,
-    });
-    selectedBusinessToolId.value = null;
-    await loadBusinessToolBindings(activeApp.value.id);
+    const binding = getToolSetBinding(server.id);
+    if (enabled) {
+      await bindProjectAppToolSet(projectId.value, activeApp.value.id, {
+        mcp_server_id: server.id,
+        enabled: true,
+      });
+    } else if (binding) {
+      await unbindProjectAppToolSet(projectId.value, activeApp.value.id, binding.id);
+    }
+    await loadToolSetBindings(activeApp.value.id);
     if (previewEmbedUrl.value) {
       previewNeedsRefresh.value = true;
     }
-    ElMessage.success("业务工具已绑定。");
+    ElMessage.success(enabled ? "MCP 工具集已绑定。" : "MCP 工具集已解除绑定。");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "绑定业务工具失败，请稍后重试。";
+    const message = error instanceof Error ? error.message : "更新 MCP 工具集绑定失败，请稍后重试。";
     ElMessage.error(message);
   } finally {
-    bindingSaving.value = false;
-  }
-}
-
-async function handleToggleBusinessToolBinding(binding: ProjectAppBusinessToolBinding, enabled: boolean) {
-  if (!projectId.value || !activeApp.value || bindingSaving.value) {
-    return;
-  }
-  bindingSaving.value = true;
-  try {
-    await bindProjectAppBusinessTool(projectId.value, activeApp.value.id, {
-      business_tool_id: binding.business_tool_id,
-      enabled,
-    });
-    await loadBusinessToolBindings(activeApp.value.id);
-    ElMessage.success(enabled ? "业务工具授权已启用。" : "业务工具授权已停用。");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "更新业务工具授权失败，请稍后重试。";
-    ElMessage.error(message);
-  } finally {
-    bindingSaving.value = false;
-  }
-}
-
-function handleBusinessToolBindingSwitch(binding: ProjectAppBusinessToolBinding, value: unknown) {
-  void handleToggleBusinessToolBinding(binding, Boolean(value));
-}
-
-async function handleUnbindBusinessTool(binding: ProjectAppBusinessToolBinding) {
-  if (!projectId.value || !activeApp.value || bindingSaving.value) {
-    return;
-  }
-
-  bindingSaving.value = true;
-  try {
-    await unbindProjectAppBusinessTool(projectId.value, activeApp.value.id, binding.id);
-    await loadBusinessToolBindings(activeApp.value.id);
-    if (previewEmbedUrl.value) {
-      previewNeedsRefresh.value = true;
-    }
-    ElMessage.success("业务工具已解绑。");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "解绑业务工具失败，请稍后重试。";
-    ElMessage.error(message);
-  } finally {
-    bindingSaving.value = false;
+    toolSetSavingId.value = null;
   }
 }
 
@@ -615,7 +553,7 @@ async function handleDeleteApp(app: ProjectAppSummary) {
     activeAppId.value = apps.value[0]?.id ?? null;
     previewEmbedUrl.value = "";
     previewNeedsRefresh.value = false;
-    await loadBusinessToolBindings(activeAppId.value);
+    await loadToolSetBindings(activeAppId.value);
     ElMessage.success(`已删除应用端“${app.name}”。`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "删除应用端失败，请稍后重试。";
@@ -938,91 +876,52 @@ watch(previewStoreId, () => {
           <section class="project-app-workspace-page__business-tool-card">
             <div class="project-app-workspace-page__config-header">
               <div>
-                <h3>业务工具</h3>
-                <p>仅当前应用端明确授权的已发布工具，才会进入助手的可用能力清单。</p>
+                <h3>MCP 工具集</h3>
+                <p>绑定 MCP 服务后，助手可使用该工具集中已启用的工具。</p>
               </div>
-              <router-link class="project-app-workspace-page__plain-link" to="/business-tools">
-                管理工具
+              <router-link class="project-app-workspace-page__plain-link" to="/agent-integrations">
+                管理 MCP 工具集
               </router-link>
             </div>
 
-            <div v-loading="businessToolLoading" class="project-app-workspace-page__business-tool-body">
+            <div v-loading="toolSetLoading" class="project-app-workspace-page__business-tool-body">
               <div
-                v-if="businessToolBindings.length > 0"
+                v-if="toolSetServers.length > 0"
                 class="project-app-workspace-page__binding-list"
               >
                 <div
-                  v-for="binding in businessToolBindings"
-                  :key="binding.id"
+                  v-for="server in toolSetServers"
+                  :key="server.id"
                   class="project-app-workspace-page__binding-row"
                 >
                   <div class="project-app-workspace-page__binding-main">
                     <div>
-                      <strong>{{ binding.name }}</strong>
-                      <span>{{ binding.tool_key }} · {{ formatBindingImplementationLabel(binding) }}</span>
+                      <strong>{{ server.name }}</strong>
+                      <span>{{ server.tool_count }} 个工具 · {{ server.description?.trim() || server.endpoint_url }}</span>
                     </div>
-                    <small v-if="binding.unavailable_reason">{{ binding.unavailable_reason }}</small>
+                    <small v-if="server.status === 'error'">MCP 工具集当前不可用</small>
                   </div>
                   <div class="project-app-workspace-page__binding-actions">
                     <el-tag
                       size="small"
-                      :type="binding.is_available ? 'success' : 'warning'"
+                      :type="getToolSetBinding(server.id) ? 'success' : 'info'"
                       effect="plain"
                     >
-                      {{ binding.is_available ? "助手可用" : "暂不可用" }}
+                      {{ getToolSetBinding(server.id) ? "已绑定" : "未绑定" }}
                     </el-tag>
                     <el-switch
-                      :model-value="binding.enabled"
-                      :loading="bindingSaving"
-                      aria-label="切换工具授权"
-                      @change="handleBusinessToolBindingSwitch(binding, $event)"
+                      :model-value="Boolean(getToolSetBinding(server.id))"
+                      :loading="toolSetSavingId === server.id"
+                      aria-label="切换 MCP 工具集绑定"
+                      @change="handleToolSetBindingChange(server, Boolean($event))"
                     />
-                    <el-button
-                      link
-                      type="danger"
-                      :loading="bindingSaving"
-                      @click="handleUnbindBusinessTool(binding)"
-                    >
-                      解绑
-                    </el-button>
                   </div>
                 </div>
               </div>
 
               <div v-else class="project-app-workspace-page__binding-empty">
-                <strong>当前应用端还没有业务工具</strong>
-                <span>授权后，助手会根据用户问题在这些工具中选择调用。</span>
-              </div>
-
-              <div class="project-app-workspace-page__binding-form">
-                <el-select
-                  v-model="selectedBusinessToolId"
-                  clearable
-                  filterable
-                  placeholder="选择要绑定的工具"
-                  class="project-app-workspace-page__binding-select"
-                  :disabled="availableBusinessTools.length === 0 || bindingSaving"
-                >
-                  <el-option
-                    v-for="tool in availableBusinessTools"
-                    :key="tool.id"
-                    :label="`${tool.name} · ${formatToolImplementationLabel(tool)}`"
-                    :value="tool.id"
-                  >
-                    <div class="project-app-workspace-page__tool-option">
-                      <span>{{ tool.name }}</span>
-                      <small>{{ tool.tool_key }} · {{ formatToolImplementationLabel(tool) }}</small>
-                    </div>
-                  </el-option>
-                </el-select>
-                <el-button
-                  type="primary"
-                  :disabled="!selectedBusinessToolId"
-                  :loading="bindingSaving"
-                  @click="handleBindBusinessTool"
-                >
-                  授权工具
-                </el-button>
+                <strong>当前团队还没有 MCP 工具集</strong>
+                <span>请先在 Agent 集成页新增并测试 MCP 服务。</span>
               </div>
             </div>
           </section>
@@ -1696,8 +1595,7 @@ watch(previewStoreId, () => {
   font-size: 12px;
 }
 
-.project-app-workspace-page__binding-actions,
-.project-app-workspace-page__binding-form {
+.project-app-workspace-page__binding-actions {
   display: flex;
   flex-shrink: 0;
   align-items: center;
@@ -1724,21 +1622,6 @@ watch(previewStoreId, () => {
 .project-app-workspace-page__binding-empty span {
   color: var(--admin-text-muted);
   font-size: 12px;
-}
-
-.project-app-workspace-page__tool-option {
-  display: grid;
-  gap: 2px;
-}
-
-.project-app-workspace-page__tool-option small {
-  color: var(--admin-text-subtle);
-  font-size: 11px;
-}
-
-.project-app-workspace-page__binding-select {
-  flex: 1;
-  min-width: 0;
 }
 
 .project-app-workspace-page__terminal-icon--web {
@@ -2029,8 +1912,7 @@ watch(previewStoreId, () => {
     flex-direction: column;
   }
 
-  .project-app-workspace-page__binding-row,
-  .project-app-workspace-page__binding-form {
+  .project-app-workspace-page__binding-row {
     align-items: stretch;
     flex-direction: column;
   }

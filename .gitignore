@@ -80,6 +80,7 @@ frontend/.next/
 frontend/out/
 frontend/build/
 frontend/dist/
+frontend/dist-widget/
 frontend/.vite/
 frontend/.turbo/
 frontend/tsconfig.tsbuildinfo
@@ -143,6 +144,8 @@ backend/langgraph.env.example
 # 其他
 闭环验收清单.md
 code-style.md
+/artifacts/design-qa/
+/design-qa.md
 
 
 # e2e

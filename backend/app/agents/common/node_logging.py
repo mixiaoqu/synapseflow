@@ -39,6 +39,7 @@ def log_node_info(
     node_id: str,
     node_name: str,
     details: Mapping[str, Any],
+    elapsed_ms: int | None = None,
 ) -> None:
     """Print one readable Chinese log block for a workflow node."""
 
@@ -48,4 +49,6 @@ def log_node_info(
     ]
     for key, value in details.items():
         lines.append(f"- {key}: {_format_value(value)}")
+    if elapsed_ms is not None:
+        lines.append(f"- 节点耗时毫秒: {elapsed_ms}")
     logger.bind(agent_node_log=True).info("\n".join(lines))

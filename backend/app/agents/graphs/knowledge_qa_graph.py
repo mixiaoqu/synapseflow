@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any, Callable
 
 from langgraph.graph import END, StateGraph
@@ -27,6 +28,7 @@ def create_knowledge_qa_graph(
     workflow = StateGraph(KnowledgeQaState)
 
     async def _plan_query_node(state: KnowledgeQaState) -> dict[str, Any]:
+        started_at = perf_counter()
         emit_activity(
             get_optional_stream_writer(),
             workflow_id="knowledge_qa",
@@ -58,6 +60,7 @@ def create_knowledge_qa_graph(
                 "候选实体数": len(query_plan.get("candidate_entities") or []),
                 "是否使用HyDE": (query_plan.get("query_plan_trace") or {}).get("hyde_used"),
             },
+            elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
         emit_activity(
             get_optional_stream_writer(),
@@ -73,6 +76,7 @@ def create_knowledge_qa_graph(
         return result
 
     async def _plan_retrieval_node(state: KnowledgeQaState) -> dict[str, Any]:
+        started_at = perf_counter()
         emit_activity(
             get_optional_stream_writer(),
             workflow_id="knowledge_qa",
@@ -114,6 +118,7 @@ def create_knowledge_qa_graph(
                 "重排TopK": ((execution_plan.get("rerank") or {}).get("top_k")),
                 "上下文预算": context.get("budget_chars"),
             },
+            elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
         emit_activity(
             get_optional_stream_writer(),
@@ -129,6 +134,7 @@ def create_knowledge_qa_graph(
         return result
 
     async def _retrieve_knowledge_node(state: KnowledgeQaState) -> dict[str, Any]:
+        started_at = perf_counter()
         result = await kb_chat_retrieve_node(state, node_id="retrieve_knowledge")
         retrieval_result = dict(result.get("retrieval_result") or {})
         metrics = dict(retrieval_result.get("metrics") or {})
@@ -150,6 +156,7 @@ def create_knowledge_qa_graph(
                 "空结果原因": retrieval_result.get("reason_code"),
                 "上下文长度": (retrieval_result.get("budget") or {}).get("used_chars"),
             },
+            elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
         evidence_items = list(retrieval_result.get("evidence_items") or [])
         primary_items = [item for item in evidence_items if item.get("role") == "primary"]
@@ -177,6 +184,7 @@ def create_knowledge_qa_graph(
         return result
 
     async def _compose_result_node(state: KnowledgeQaState) -> dict[str, Any]:
+        started_at = perf_counter()
         emit_activity(
             get_optional_stream_writer(),
             workflow_id="knowledge_qa",
@@ -199,6 +207,7 @@ def create_knowledge_qa_graph(
                 "主证据数": metrics.get("primary_count"),
                 "上下文长度": (retrieval_result.get("budget") or {}).get("used_chars"),
             },
+            elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
         emit_activity(
             get_optional_stream_writer(),

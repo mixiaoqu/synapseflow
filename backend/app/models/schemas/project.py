@@ -1,7 +1,7 @@
 """Project and embedded application schemas."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -176,6 +176,7 @@ class EmbedAssistantBootstrapResponse(BaseModel):
 class EmbedPageContext(BaseModel):
     app_id: str | None = Field(default=None, max_length=120)
     page_type: str = Field(..., min_length=1, max_length=120)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class EmbedAssistantChatRequest(BaseModel):

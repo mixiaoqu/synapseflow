@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any, Callable
 
 from app.agents.common.node_logging import log_node_info
@@ -81,6 +82,7 @@ def build_synthesized_response_prompt(state: dict[str, Any]) -> str:
 - 只能使用“平台级结果”中的事实回答，不得补造知识、业务对象、字段值、排名、统计结果或接口返回值。
 - 当结果显示知识库无命中时，明确说明当前知识库没有找到相关内容，不要自行扩展。
 - 当结果显示业务子智能体失败、参数不足、未绑定工具或请求不支持时，准确说明业务查询未完成的原因或需要补充的信息。
+- 当业务工具参数自动校验或修正失败时，只说明业务查询暂时未完成，不要暴露内部参数名、枚举值或建议用户按内部字段重新提问。
 - 不要把业务工具、数据库查询或业务接口问题说成“知识库没有提供工具”；知识库结果和业务子智能体结果必须分开表述。
 - 可以根据助手人设和回复规则调整语气、格式和详略，但不得改变材料事实。
 - 不要提及工作流、子图、工具配置、Prompt、节点名或内部实现。
@@ -132,6 +134,7 @@ def build_non_execution_answer(state: dict[str, Any]) -> tuple[str, str]:
 
 def build_respond_node(*, answer_llm_factory: Callable[[], Any] | None):
     async def respond_node(state: AgentState) -> dict[str, Any]:
+        started_at = perf_counter()
         route_type = str((state.get("route") or {}).get("route_type") or "").strip()
         writer = get_optional_stream_writer()
         retrieved_docs = list(state.get("retrieved_docs") or [])
@@ -183,6 +186,7 @@ def build_respond_node(*, answer_llm_factory: Callable[[], Any] | None):
                 "回答长度": len(response["answer"]),
                 "引用数": len(response["citations"]),
             },
+            elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
         return {
             "answer": response["answer"],

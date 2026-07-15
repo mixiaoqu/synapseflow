@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 from app.agents.common.node_logging import log_node_info
@@ -11,6 +12,7 @@ from app.agents.states import AgentState
 
 
 async def intake_node(state: AgentState) -> dict[str, Any]:
+    started_at = perf_counter()
     writer = get_optional_stream_writer()
     emit_activity(
         writer,
@@ -60,7 +62,12 @@ async def intake_node(state: AgentState) -> dict[str, Any]:
             "会话ID": session_context.get("session_id"),
             "团队ID": scope.get("team_id"),
             "知识库ID": scope.get("knowledge_base_id"),
+            "产品ID": scope.get("product_id"),
+            "项目ID": scope.get("project_id"),
+            "应用ID": scope.get("project_app_id"),
+            "门店ID": scope.get("store_id"),
         },
+        elapsed_ms=int((perf_counter() - started_at) * 1000),
     )
     emit_activity(
         writer,

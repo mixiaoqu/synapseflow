@@ -64,6 +64,35 @@ def create_embed_token(
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
+def create_widget_token(
+    *,
+    project_id: int,
+    project_app_id: int,
+    external_user_id: str,
+    external_user_name: str | None = None,
+    store_id: str | None = None,
+    initial_page_type: str | None = None,
+    expires_delta: timedelta | None = None,
+) -> str:
+    """Create a short-lived token for the AgentChat widget."""
+
+    expire_at = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(minutes=settings.EMBED_TOKEN_EXPIRE_MINUTES)
+    )
+    payload = {
+        "sub": external_user_id,
+        "type": "widget",
+        "project_id": project_id,
+        "project_app_id": project_app_id,
+        "external_user_id": external_user_id,
+        "external_user_name": external_user_name,
+        "store_id": store_id,
+        "initial_page_type": initial_page_type,
+        "exp": expire_at,
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
 def create_mcp_token(
     *,
     product_id: int,
@@ -134,6 +163,26 @@ def decode_embed_token(token: str) -> dict:
         int(payload["project_app_id"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("Invalid embedded assistant token") from exc
+    return payload
+
+
+def decode_widget_token(token: str) -> dict:
+    """Decode and validate a short-lived AgentChat widget token."""
+
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except ExpiredSignatureError as exc:
+        raise ValueError("Widget token expired") from exc
+    except JWTError as exc:
+        raise ValueError("Invalid widget token") from exc
+
+    if payload.get("type") != "widget" or not payload.get("external_user_id"):
+        raise ValueError("Invalid widget token")
+    try:
+        int(payload["project_id"])
+        int(payload["project_app_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Invalid widget token") from exc
     return payload
 
 

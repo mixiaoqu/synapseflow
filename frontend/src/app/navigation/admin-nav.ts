@@ -4,7 +4,7 @@ export interface AdminNavItem {
     | "projects"
     | "knowledge-bases"
     | "assistants"
-    | "business-tools"
+    | "agent-integrations"
     | "evaluations"
     | "evaluation-knowledge-bases"
     | "evaluation-reports"
@@ -50,9 +50,9 @@ export const adminNavGroups: AdminNavGroup[] = [
         to: "/assistants",
       },
       {
-        key: "business-tools",
-        label: "业务工具",
-        to: "/business-tools",
+        key: "agent-integrations",
+        label: "Agent 集成",
+        to: "/agent-integrations",
       },
       {
         key: "projects",

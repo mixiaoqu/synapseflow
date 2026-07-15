@@ -42,7 +42,7 @@ const navIcons: Record<
   "knowledge-bases": Collection,
   projects: FolderOpened,
   assistants: MagicStick,
-  "business-tools": Connection,
+  "agent-integrations": Connection,
   evaluations: DocumentChecked,
   "evaluation-knowledge-bases": Collection,
   "evaluation-reports": DocumentChecked,

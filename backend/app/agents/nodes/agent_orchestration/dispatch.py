@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from time import perf_counter
 from typing import Any
 
 from app.agents.common.node_logging import log_node_info
@@ -16,10 +17,12 @@ from app.agents.nodes.agent_orchestration.utils import (
 )
 from app.agents.runtime.sub_agents import get_sub_agent_definition
 from app.agents.states import AgentState
+from loguru import logger
 
 
 def build_dispatch_node(*, sub_agent_graphs: dict[str, Any]):
     async def dispatch_node(state: AgentState) -> dict[str, Any]:
+        started_at = perf_counter()
         writer = get_optional_stream_writer()
         task_plan = dict(state.get("task_plan") or {})
         steps = [dict(step) for step in list(task_plan.get("steps") or [])]
@@ -125,6 +128,12 @@ def build_dispatch_node(*, sub_agent_graphs: dict[str, Any]):
                     "diagnostics": knowledge_diagnostics(final_child_state),
                 }
             except Exception as exc:
+                logger.exception(
+                    "[agent.dispatch] sub-agent execution failed | sub_agent_id={} step_id={} error={}",
+                    sub_agent_id,
+                    step.get("step_id"),
+                    exc,
+                )
                 sub_agent_result = build_failed_sub_agent_result(
                     sub_agent_id=sub_agent_id,
                     run_id=state.get("run_id"),
@@ -223,6 +232,7 @@ def build_dispatch_node(*, sub_agent_graphs: dict[str, Any]):
                 "成功数": len([run for run in execution_runs.values() if run.get("status") == "success"]),
                 "失败数": len([run for run in execution_runs.values() if run.get("status") != "success"]),
             },
+            elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
         return {"execution_runs": execution_runs}
 

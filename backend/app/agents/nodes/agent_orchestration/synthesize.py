@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 from app.agents.common.node_logging import log_node_info
@@ -53,6 +54,7 @@ def aggregate_workflow_result(
 
 
 async def synthesize_node(state: AgentState) -> dict[str, Any]:
+    started_at = perf_counter()
     collected_results = dict(state.get("collected_results") or {})
     synthesized_result = build_synthesized_result(collected_results)
     workflow_result = aggregate_workflow_result(synthesized_result)
@@ -66,6 +68,7 @@ async def synthesize_node(state: AgentState) -> dict[str, Any]:
             "引用数": len(synthesized_result.get("citation_refs") or []),
             "错误数": len(synthesized_result.get("errors") or []),
         },
+        elapsed_ms=int((perf_counter() - started_at) * 1000),
     )
     return {
         "synthesized_result": synthesized_result,

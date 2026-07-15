@@ -24,6 +24,8 @@ class BusinessOperationParamSpec(BaseModel):
     required: bool = True
     description: str = ""
     resolver: str | None = None
+    enum_values: list[Any] = Field(default_factory=list)
+    default: Any = None
 
 
 class BusinessOperationDefinition(BaseModel):
@@ -34,6 +36,7 @@ class BusinessOperationDefinition(BaseModel):
     requires_confirmation: bool = False
     required_scope: list[str] = Field(default_factory=list)
     params: list[BusinessOperationParamSpec] = Field(default_factory=list)
+    input_schema: dict[str, Any] = Field(default_factory=dict)
 
 
 class BusinessOperationActor(BaseModel):
@@ -64,6 +67,7 @@ class BusinessOperationErrorPayload(BaseModel):
     code: str
     message: str
     retryable: bool = False
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class BusinessOperationResult(BaseModel):

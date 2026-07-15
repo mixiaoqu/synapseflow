@@ -133,12 +133,19 @@ def _build_page_context(
     *,
     runtime: ProjectAppRuntimeRecord,
     page_type: str | None,
+    request_context: dict | None = None,
 ) -> dict | None:
-    if not page_type:
+    payload = dict(request_context or {})
+    if not page_type and not payload:
         return None
+    resolved_page_type = page_type or str(payload.get("page_type") or "").strip()
+    if not resolved_page_type:
+        return payload or None
+
     return {
+        **payload,
         "app_id": runtime.app.code,
-        "page_type": page_type,
+        "page_type": resolved_page_type,
     }
 
 
@@ -279,7 +286,15 @@ async def invoke_embed_assistant(
         context=context,
         query=query,
         session_id=body.session_id,
-        page_context=_build_page_context(runtime=runtime, page_type=page_type),
+        page_context=_build_page_context(
+            runtime=runtime,
+            page_type=page_type,
+            request_context=(
+                body.page_context.model_dump(exclude_none=True)
+                if body.page_context is not None
+                else None
+            ),
+        ),
         page_config=page_config,
     )
     return await get_kb_chat_service().invoke(request, user_id=None)
@@ -306,7 +321,15 @@ async def stream_embed_assistant(
         context=context,
         query=query,
         session_id=body.session_id,
-        page_context=_build_page_context(runtime=runtime, page_type=page_type),
+        page_context=_build_page_context(
+            runtime=runtime,
+            page_type=page_type,
+            request_context=(
+                body.page_context.model_dump(exclude_none=True)
+                if body.page_context is not None
+                else None
+            ),
+        ),
         page_config=page_config,
     )
     return StreamingResponse(

@@ -28,6 +28,8 @@ class BusinessOpsState(BaseAgentContext, total=False):
     business_operation: Dict[str, Any]
     business_operation_result: Dict[str, Any]
     business_result: Dict[str, Any]
+    business_retry_count: int
+    business_retry_error: Dict[str, Any]
     sub_agent_result: Dict[str, Any]
 
     answer: str

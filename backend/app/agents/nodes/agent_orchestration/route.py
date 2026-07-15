@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 from app.agents.common.node_logging import log_node_info
@@ -61,6 +62,7 @@ def build_route(
 
 def build_route_node(*, available_sub_agent_ids: set[str]):
     async def route_node(state: AgentState) -> dict[str, Any]:
+        started_at = perf_counter()
         writer = get_optional_stream_writer()
         classification = dict(state.get("classification") or {})
         emit_activity(
@@ -86,6 +88,7 @@ def build_route_node(*, available_sub_agent_ids: set[str]):
                 "目标子智能体": route.get("target_sub_agents"),
                 "路由原因": route.get("reason"),
             },
+            elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
         emit_activity(
             writer,
