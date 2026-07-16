@@ -13,6 +13,7 @@ class GraphDefinition:
     graph_id: str
     factory: Callable[..., Any]
     node_ids: tuple[str, ...]
+    expose_in_langgraph: bool = False
 
     def build(self, **factory_kwargs: Any) -> Any:
         """Compile and return the configured graph."""
@@ -41,6 +42,7 @@ def _build_registry() -> dict[str, GraphDefinition]:
                 "synthesize",
                 "respond",
             ),
+            expose_in_langgraph=True,
         ),
         "knowledge_qa": GraphDefinition(
             graph_id="knowledge_qa",
@@ -51,6 +53,7 @@ def _build_registry() -> dict[str, GraphDefinition]:
                 "retrieve_knowledge",
                 "compose_result",
             ),
+            expose_in_langgraph=True,
         ),
         "business_ops": GraphDefinition(
             graph_id="business_ops",
@@ -59,6 +62,7 @@ def _build_registry() -> dict[str, GraphDefinition]:
                 "analyze_request",
                 "match_operation",
                 "execute_operation",
+                "replan_operation_params",
                 "compose_result",
             ),
         ),

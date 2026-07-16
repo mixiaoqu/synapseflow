@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.mcp_auth import McpAuthContext, McpTokenContext
-from app.application.kb_chat_service import get_kb_chat_service
+from app.application.agent_chat_service import get_agent_chat_service
 from app.core.config import settings
 from app.core.security import create_mcp_token
 from app.models.schemas.mcp import (
@@ -249,7 +249,7 @@ class McpService:
             knowledge_base_branch_ids=[],
             category_id=scope.category_id,
         )
-        response = await get_kb_chat_service().preview(runtime_request, user_id=self.user_id)
+        response = await get_agent_chat_service().preview(runtime_request, user_id=self.user_id)
         return McpAnswerResponse(
             answer=response.answer,
             answer_status=response.answer_status,

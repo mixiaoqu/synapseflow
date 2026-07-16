@@ -96,7 +96,7 @@ Current API router prefixes:
 
 Application/service layer anchors:
 
-- `backend/app/application/kb_chat_service.py`: orchestrates user/admin/embed assistant chat, content-risk checks, memory persistence, logs, and SSE streaming.
+- `backend/app/application/agent_chat_service.py`: orchestrates user/admin/embed agent chat, content-risk checks, memory persistence, logs, and SSE streaming.
 - `backend/app/application/assistant_service.py`: assistant profile operations and assistant preview support.
 - `backend/app/application/document_service.py`: document lifecycle, content/version operations, review/publish transitions, and indexing triggers.
 - `backend/app/application/indexing_service.py`: indexing job orchestration.
@@ -137,10 +137,18 @@ The current graph registry is `backend/app/agents/runtime/factory.py`.
 
 Registered workflows:
 
-- `agent`: top-level workflow defined by `backend/app/agents/graphs/agent_graph.py`; path is `load_context -> understand -> route -> clarify/respond OR plan -> execute -> respond`.
+- `agent`: top-level workflow defined by `backend/app/agents/graphs/agent_graph.py`; path is `intake -> classify -> route -> respond` for direct responses, or `intake -> classify -> route -> orchestrate_plan -> dispatch -> collect -> synthesize -> respond` for delegated execution.
 - `knowledge_qa`: reusable knowledge-base QA subgraph defined by `backend/app/agents/graphs/knowledge_qa_graph.py`; path is `plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result`.
-- `business_ops`: controlled business data operation subgraph defined by `backend/app/agents/graphs/business_ops_graph.py`; path is `analyze_request -> match_operation -> execute_operation -> compose_result`.
+- `business_ops`: controlled business data operation subgraph defined by `backend/app/agents/graphs/business_ops_graph.py`; path is `analyze_request -> match_operation -> execute_operation -> compose_result`, with one optional `execute_operation -> replan_operation_params -> execute_operation` retry when tool parameters are invalid.
 - `backend/langgraph.json` currently exposes `agent` and `knowledge_qa` for LangGraph tooling. `business_ops` is registered in the runtime factory and executed as a subgraph through `agent`.
+
+`backend/tests/unit/test_workflow_registry_consistency.py` guards workflow documentation metadata: every compiled graph node must match its `GraphDefinition.node_ids` entry and `workflow_meta.py` metadata, while every `backend/langgraph.json` graph entry must point to the registered factory. Update these declarations together whenever a graph node changes.
+
+<!-- workflow-node-ids:start -->
+- `agent` nodes: `intake`, `classify`, `route`, `orchestrate_plan`, `dispatch`, `collect`, `synthesize`, `respond`
+- `knowledge_qa` nodes: `plan_query`, `plan_retrieval`, `retrieve_knowledge`, `compose_result`
+- `business_ops` nodes: `analyze_request`, `match_operation`, `execute_operation`, `replan_operation_params`, `compose_result`
+<!-- workflow-node-ids:end -->
 
 Important workflow files:
 

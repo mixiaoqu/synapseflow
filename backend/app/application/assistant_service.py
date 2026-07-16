@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.permission_service import PermissionService
-from app.application.kb_chat_service import get_kb_chat_service
+from app.application.agent_chat_service import get_agent_chat_service
 from app.core.config import config_registry
 from app.core.authz import PERMISSION_MANAGE_ASSISTANT, PERMISSION_VIEW_TEAM_RESOURCE
 from app.db.models import AssistantProfile, User
@@ -355,7 +355,7 @@ class AssistantService:
             allowed_document_statuses=allowed_statuses,
             session_id=None,
         )
-        return await get_kb_chat_service().preview(runtime_request, user_id=self.user_id)
+        return await get_agent_chat_service().preview(runtime_request, user_id=self.user_id)
 
     async def delete_profile(self, assistant_id: int, *, force: bool = False) -> None:
         record = await self.repository.get_by_id(assistant_id)

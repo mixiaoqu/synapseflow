@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.kb_chat_service import get_kb_chat_service
+from app.application.agent_chat_service import get_agent_chat_service
 from app.core.config import settings
 from app.core.config.assistant_pages import AssistantPageConfig, get_assistant_page_config
 from app.core.security import create_widget_token
@@ -44,7 +44,7 @@ class WidgetChatService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repository = ProjectRepository(db)
-        self.chat_service = get_kb_chat_service()
+        self.chat_service = get_agent_chat_service()
 
     async def create_credential(self, payload: WidgetSessionCreate) -> WidgetSessionCredential:
         runtime = await self.repository.get_runtime_by_codes(

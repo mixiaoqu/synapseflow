@@ -273,7 +273,7 @@ async def test_mcp_service_answer_uses_stateless_preview_response(
 
     captured: dict[str, object] = {}
 
-    class _FakeKbChatService:
+    class _FakeAgentChatService:
         async def preview(self, request, *, user_id: int):
             captured["method"] = "preview"
             captured["user_id"] = user_id
@@ -289,8 +289,8 @@ async def test_mcp_service_answer_uses_stateless_preview_response(
 
     monkeypatch.setattr(
         mcp_service_module,
-        "get_kb_chat_service",
-        lambda: _FakeKbChatService(),
+        "get_agent_chat_service",
+        lambda: _FakeAgentChatService(),
     )
 
     result = await service.answer(

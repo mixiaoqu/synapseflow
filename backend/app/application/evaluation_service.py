@@ -7,7 +7,7 @@ import re
 from time import perf_counter
 from typing import Any
 
-from app.application.kb_chat_service import get_kb_chat_service
+from app.application.agent_chat_service import get_agent_chat_service
 from app.core.llm.factory import get_llm_for_analysis
 from app.db.models import EvalCase, EvalDataset, EvalRun, KnowledgeBase, User
 from app.models.schemas.evaluation import (
@@ -351,7 +351,7 @@ class EvaluationService:
         status = "failed"
 
         try:
-            response = await get_kb_chat_service().preview(
+            response = await get_agent_chat_service().preview(
                 KbChatRequest(
                     query=case.question,
                     knowledge_base_id=int(dataset.knowledge_base_id),

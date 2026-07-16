@@ -15,7 +15,7 @@ from app.api.dependencies.embed import (
     get_embed_token_context,
     require_enterprise_service_token,
 )
-from app.application.kb_chat_service import get_kb_chat_service
+from app.application.agent_chat_service import get_agent_chat_service
 from app.core.config import settings
 from app.core.config.embed_pages import EmbedPageConfig, get_embed_page_config
 from app.core.security import create_embed_token
@@ -225,7 +225,7 @@ async def list_embed_sessions(
     limit: int = 30,
     context: EmbedTokenContext = Depends(get_embed_token_context),
 ):
-    return await get_kb_chat_service().list_sessions(
+    return await get_agent_chat_service().list_sessions(
         user_id=None,
         limit=limit,
         project_app_id=context.project_app_id,
@@ -238,7 +238,7 @@ async def get_embed_session(
     session_id: str,
     context: EmbedTokenContext = Depends(get_embed_token_context),
 ):
-    session = await get_kb_chat_service().get_session(
+    session = await get_agent_chat_service().get_session(
         user_id=None,
         session_id=session_id,
         project_app_id=context.project_app_id,
@@ -254,7 +254,7 @@ async def delete_embed_session(
     session_id: str,
     context: EmbedTokenContext = Depends(get_embed_token_context),
 ):
-    deleted = await get_kb_chat_service().delete_session(
+    deleted = await get_agent_chat_service().delete_session(
         user_id=None,
         session_id=session_id,
         project_app_id=context.project_app_id,
@@ -297,7 +297,7 @@ async def invoke_embed_assistant(
         ),
         page_config=page_config,
     )
-    return await get_kb_chat_service().invoke(request, user_id=None)
+    return await get_agent_chat_service().invoke(request, user_id=None)
 
 
 @router.post("/assistant/stream")
@@ -333,7 +333,7 @@ async def stream_embed_assistant(
         page_config=page_config,
     )
     return StreamingResponse(
-        get_kb_chat_service().stream(request, user_id=None),
+        get_agent_chat_service().stream(request, user_id=None),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

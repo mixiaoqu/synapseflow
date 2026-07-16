@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import get_current_user, require_content_roles
 from app.application.assistant_service import AssistantService
-from app.application.kb_chat_service import get_kb_chat_service
+from app.application.agent_chat_service import get_agent_chat_service
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.assistant import (
@@ -205,7 +205,7 @@ async def invoke_assistant(
         session_id=session_id,
     )
     try:
-        return await get_kb_chat_service().invoke(request, user_id=current_user.id)
+        return await get_agent_chat_service().invoke(request, user_id=current_user.id)
     except Exception as exc:
         logger.exception("[Assistants] invoke failed: {}", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -232,7 +232,7 @@ async def stream_assistant(
         session_id=session_id,
     )
     return StreamingResponse(
-        get_kb_chat_service().stream(request, user_id=current_user.id),
+        get_agent_chat_service().stream(request, user_id=current_user.id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

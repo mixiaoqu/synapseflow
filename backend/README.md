@@ -53,7 +53,7 @@ uv run pytest
 - 应用入口：[app/main.py](app/main.py)
 - API 路由汇总：[app/api/v1/router.py](app/api/v1/router.py)
 - 问答接口：[app/api/v1/endpoints/ask.py](app/api/v1/endpoints/ask.py)
-- 问答服务：[app/application/kb_chat_service.py](app/application/kb_chat_service.py)
+- Agent 对话编排服务：[app/application/agent_chat_service.py](app/application/agent_chat_service.py)
 - 文档管理接口：[app/api/v1/endpoints/documents.py](app/api/v1/endpoints/documents.py)
 - 文档索引服务：[app/services/document_indexer.py](app/services/document_indexer.py)
 - 知识库文本检索服务：[app/services/kb_text_retrieval.py](app/services/kb_text_retrieval.py)
@@ -63,7 +63,7 @@ uv run pytest
 ## 请求流转
 
 ### 问答链路
-`/api/v1/ask/*` → `kb_chat_service.py` → 检索/回答工作流 → SSE 或同步响应
+`/api/v1/ask/*` → `agent_chat_service.py` → 顶层 Agent 路由与执行 → SSE 或同步响应
 
 ### 管理链路
 `/api/v1/admin/qa/*` → 问答日志仓储与预览调用 → 后台质检界面

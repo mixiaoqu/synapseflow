@@ -4,7 +4,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from app.api.v1.endpoints.ask import _build_log_detail_response
-from app.application.kb_chat_service import KbChatService
+from app.application.agent_chat_service import AgentChatService
 from app.repositories.kb_chat_log_repository import (
     KbChatDiagnosticDocRecord,
     KbChatDiagnosticMessageRecord,
@@ -363,7 +363,7 @@ def test_kb_chat_invoke_uses_graph_result():
             summary="The user is asking about LangGraph basics.",
         )
     )
-    service = KbChatService(
+    service = AgentChatService(
         llm_factory=lambda: None,
         graph=graph,
         memory_store=memory_store,
@@ -404,7 +404,7 @@ def test_kb_chat_invoke_uses_graph_result():
 def test_kb_chat_stream_emits_standardized_envelopes():
     graph = FakeKbChatGraph()
     memory_store = FakeChatMemoryStore()
-    service = KbChatService(
+    service = AgentChatService(
         llm_factory=lambda: None,
         graph=graph,
         memory_store=memory_store,
@@ -458,7 +458,7 @@ def test_kb_chat_invoke_blocks_sensitive_query_before_graph_runs():
     graph = FakeKbChatGraph()
     memory_store = FakeChatMemoryStore()
     risk_service = FakeContentRiskDetectionService(blocked=True, matched_rules=["internal roadmap"])
-    service = KbChatService(
+    service = AgentChatService(
         llm_factory=lambda: None,
         graph=graph,
         memory_store=memory_store,
@@ -491,7 +491,7 @@ def test_kb_chat_invoke_blocks_sensitive_query_before_graph_runs():
 def test_kb_chat_stream_completes_with_blocked_payload_when_sensitive_query_matches():
     graph = FakeKbChatGraph()
     memory_store = FakeChatMemoryStore()
-    service = KbChatService(
+    service = AgentChatService(
         llm_factory=lambda: None,
         graph=graph,
         memory_store=memory_store,
@@ -519,7 +519,7 @@ def test_kb_chat_stream_completes_with_blocked_payload_when_sensitive_query_matc
 
 
 def test_kb_chat_build_initial_state_keeps_category_id():
-    service = KbChatService(
+    service = AgentChatService(
         llm_factory=lambda: None,
         graph=FakeKbChatGraph(),
         memory_store=FakeChatMemoryStore(),
@@ -541,8 +541,8 @@ def test_kb_chat_build_initial_state_keeps_category_id():
     assert state["allowed_document_statuses"] == list(VISIBLE_ASK_DOCUMENT_STATUSES)
 
 
-def test_kb_chat_service_can_build_v2_initial_state():
-    service = KbChatService(
+def test_agent_chat_service_can_build_v2_initial_state():
+    service = AgentChatService(
         llm_factory=lambda: None,
         graph=FakeKbChatGraph(),
         memory_store=SimpleNamespace(),
@@ -566,7 +566,7 @@ def test_kb_chat_service_can_build_v2_initial_state():
 
 
 def test_kb_chat_build_initial_state_keeps_assistant_context():
-    service = KbChatService(
+    service = AgentChatService(
         llm_factory=lambda: None,
         graph=FakeKbChatGraph(),
         memory_store=FakeChatMemoryStore(),
@@ -599,7 +599,7 @@ def test_kb_chat_build_initial_state_keeps_assistant_context():
 
 
 def test_kb_chat_build_initial_state_allows_admin_preview_status_override():
-    service = KbChatService(
+    service = AgentChatService(
         llm_factory=lambda: None,
         graph=FakeKbChatGraph(),
         memory_store=FakeChatMemoryStore(),
@@ -622,7 +622,7 @@ def test_kb_chat_build_initial_state_allows_admin_preview_status_override():
 def test_kb_chat_preview_runs_without_persistence():
     graph = FakeKbChatGraph()
     memory_store = FakeChatMemoryStore()
-    service = KbChatService(
+    service = AgentChatService(
         llm_factory=lambda: None,
         graph=graph,
         memory_store=memory_store,
@@ -663,7 +663,7 @@ def test_kb_chat_preview_runs_without_persistence():
 
 def test_kb_chat_list_sessions_returns_history_for_user():
     memory_store = FakeChatMemoryStore()
-    service = KbChatService(
+    service = AgentChatService(
         llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store
     )
 
@@ -685,7 +685,7 @@ def test_kb_chat_list_sessions_returns_history_for_user():
 
 def test_kb_chat_get_session_returns_persisted_messages():
     memory_store = FakeChatMemoryStore()
-    service = KbChatService(
+    service = AgentChatService(
         llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store
     )
 
@@ -708,7 +708,7 @@ def test_kb_chat_get_session_returns_persisted_messages():
 
 def test_kb_chat_delete_session_removes_history_item():
     memory_store = FakeChatMemoryStore()
-    service = KbChatService(
+    service = AgentChatService(
         llm_factory=lambda: None, graph=FakeKbChatGraph(), memory_store=memory_store
     )
 
@@ -808,7 +808,7 @@ def test_build_log_detail_response_serializes_nested_records():
 
 
 def test_kb_chat_v2_review_log_message_uses_current_flow_labels():
-    message = KbChatService._build_v2_retrieval_review_log_message(
+    message = AgentChatService._build_v2_retrieval_review_log_message(
         state={
             "workflow_id": "kb_chat_v2",
             "query": "如何查看会员的列表",

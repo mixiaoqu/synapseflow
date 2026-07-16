@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import get_current_user, require_review_roles
 from app.application.permission_service import PermissionService
-from app.application.kb_chat_service import get_kb_chat_service
+from app.application.agent_chat_service import get_agent_chat_service
 from app.core.authz import PERMISSION_REVIEW_QA_LOG, PERMISSION_VIEW_QA_LOG
 from app.db.models import User
 from app.db.session import get_db
@@ -139,7 +139,7 @@ async def ask_sessions(
     limit: int = Query(30, ge=1, le=100, description="Max number of sessions to return"),
     current_user: User = Depends(get_current_user),
 ):
-    return await get_kb_chat_service().list_sessions(user_id=current_user.id, limit=limit)
+    return await get_agent_chat_service().list_sessions(user_id=current_user.id, limit=limit)
 
 
 @router.get("/sessions/{session_id}", response_model=KbChatSessionDetail)
@@ -147,7 +147,7 @@ async def ask_session_detail(
     session_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    session = await get_kb_chat_service().get_session(
+    session = await get_agent_chat_service().get_session(
         user_id=current_user.id,
         session_id=session_id,
     )
@@ -161,7 +161,7 @@ async def delete_ask_session(
     session_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    deleted = await get_kb_chat_service().delete_session(
+    deleted = await get_agent_chat_service().delete_session(
         user_id=current_user.id,
         session_id=session_id,
     )
@@ -178,7 +178,7 @@ async def ask_invoke(
 ):
     await _require_team_scope(request=request, db=db, current_user=current_user)
     try:
-        return await get_kb_chat_service().invoke(request, user_id=current_user.id)
+        return await get_agent_chat_service().invoke(request, user_id=current_user.id)
     except Exception as exc:
         logger.exception("[Ask] invoke failed: {}", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -192,7 +192,7 @@ async def ask_stream(
 ):
     await _require_team_scope(request=request, db=db, current_user=current_user)
     return StreamingResponse(
-        get_kb_chat_service().stream(request, user_id=current_user.id),
+        get_agent_chat_service().stream(request, user_id=current_user.id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -243,7 +243,7 @@ async def admin_ask_preview(
         session_id=request.session_id,
         allowed_document_statuses=allowed_statuses,
     )
-    return await get_kb_chat_service().invoke(runtime_request, user_id=current_user.id)
+    return await get_agent_chat_service().invoke(runtime_request, user_id=current_user.id)
 
 
 @admin_router.get("/logs", response_model=KbChatLogListResponse)

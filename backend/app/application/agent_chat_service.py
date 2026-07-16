@@ -1,4 +1,4 @@
-﻿"""Application service for end-user knowledge-base chat."""
+﻿"""Application service for agent-routed chat."""
 
 from __future__ import annotations
 
@@ -56,8 +56,8 @@ if TYPE_CHECKING:
     )
 
 
-class KbChatService(BaseAgentService):
-    """Encapsulates end-user knowledge-base chat orchestration."""
+class AgentChatService(BaseAgentService):
+    """Orchestrate agent-routed chat across supported execution capabilities."""
 
     _PUBLIC_STREAM_ERROR_MESSAGE = "抱歉，当前服务暂时不可用，请稍后重试。"
 
@@ -771,7 +771,7 @@ class KbChatService(BaseAgentService):
         result: dict[str, Any],
         total_latency_ms: int,
     ) -> None:
-        message = KbChatService._build_retrieval_review_log_message(
+        message = AgentChatService._build_retrieval_review_log_message(
             state=state,
             result=result,
             total_latency_ms=total_latency_ms,
@@ -852,7 +852,7 @@ class KbChatService(BaseAgentService):
                 )
                 return row.id
         except Exception as exc:
-            logger.exception("[KB Chat] failed to persist log: {}", exc)
+            logger.exception("[Agent Chat] failed to persist log: {}", exc)
             return None
 
     async def _record_content_risk_log(
@@ -912,7 +912,7 @@ class KbChatService(BaseAgentService):
                 )
                 return row.id
         except Exception as exc:
-            logger.exception("[KB Chat] failed to persist content-risk log: {}", exc)
+            logger.exception("[Agent Chat] failed to persist content-risk log: {}", exc)
             return None
 
     @staticmethod
@@ -1105,7 +1105,7 @@ class KbChatService(BaseAgentService):
         project_app_id: int | None = None,
         external_user_id: str | None = None,
     ) -> list["KbChatSessionSummary"]:
-        """List persisted KB chat sessions for the current user."""
+        """List persisted agent chat sessions for the current user."""
 
         from app.models.schemas.kb_chat import KbChatSessionSummary
 
@@ -1147,7 +1147,7 @@ class KbChatService(BaseAgentService):
         project_app_id: int | None = None,
         external_user_id: str | None = None,
     ) -> "KbChatSessionDetail | None":
-        """Load one persisted KB chat session for the current user."""
+        """Load one persisted agent chat session for the current user."""
 
         from app.models.schemas.kb_chat import KbChatSessionDetail, KbChatSessionMessage
 
@@ -1210,7 +1210,7 @@ class KbChatService(BaseAgentService):
         project_app_id: int | None = None,
         external_user_id: str | None = None,
     ) -> bool:
-        """Delete one persisted KB chat session for the current user."""
+        """Delete one persisted agent chat session for the current user."""
 
         return await self._memory_store.delete_session(
             user_id=user_id,
@@ -1477,17 +1477,17 @@ class KbChatService(BaseAgentService):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.exception("[KB Chat] stream failed after retrieval/answer stage: {}", exc)
+            logger.exception("[Agent Chat] stream failed after execution stage: {}", exc)
             yield emit_error(
                 run_id, self._public_stream_error_message(exc), workflow_id=workflow_id
             )
 
 
-kb_chat_service: KbChatService | None = None
+agent_chat_service: AgentChatService | None = None
 
 
-def get_kb_chat_service() -> KbChatService:
-    global kb_chat_service
-    if kb_chat_service is None:
-        kb_chat_service = KbChatService()
-    return kb_chat_service
+def get_agent_chat_service() -> AgentChatService:
+    global agent_chat_service
+    if agent_chat_service is None:
+        agent_chat_service = AgentChatService()
+    return agent_chat_service

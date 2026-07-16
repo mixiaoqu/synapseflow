@@ -71,6 +71,10 @@ WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
             "label": "执行业务操作",
             "progress_message": "正在查询业务数据...",
         },
+        "replan_operation_params": {
+            "label": "修正业务参数",
+            "progress_message": "正在修正业务查询参数...",
+        },
         "compose_result": {
             "label": "整理结果",
             "progress_message": "正在整理处理结果...",
@@ -110,6 +114,7 @@ NODE_CUSTOMER_STAGES = {
         "analyze_request": "understand",
         "match_operation": "business_query",
         "execute_operation": "business_query",
+        "replan_operation_params": "business_query",
         "compose_result": "compose",
     },
 }
