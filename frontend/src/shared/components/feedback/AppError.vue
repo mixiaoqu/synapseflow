@@ -14,7 +14,6 @@ const props = withDefaults(
   {
     title: "加载失败",
     description: "页面内容暂时无法获取，请稍后重试。",
-    error: null,
     retryText: "重新加载",
     showRetry: true,
   },

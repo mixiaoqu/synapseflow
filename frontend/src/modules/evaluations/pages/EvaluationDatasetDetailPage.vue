@@ -922,7 +922,7 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
                   active-text="启用"
                   inactive-text="停用"
                   inline-prompt
-                  @change="(value) => handleToggleCaseEnabled(row, value)"
+                  @change="handleToggleCaseEnabled(row, $event)"
                 />
               </template>
             </el-table-column>

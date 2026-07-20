@@ -17,6 +17,7 @@ from app.db.models import (
     McpTool,
     Project,
     ProjectApp,
+    ProjectAppAccessCredential,
     Team,
 )
 
@@ -314,6 +315,33 @@ class AgentIntegrationRepository:
             ProjectApp.id == app_id,
         )
         return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def get_access_credential_by_app(
+        self,
+        project_app_id: int,
+    ) -> ProjectAppAccessCredential | None:
+        stmt = select(ProjectAppAccessCredential).where(
+            ProjectAppAccessCredential.project_app_id == project_app_id
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def get_access_credential_by_client_id(
+        self,
+        client_id: str,
+    ) -> ProjectAppAccessCredential | None:
+        stmt = select(ProjectAppAccessCredential).where(
+            ProjectAppAccessCredential.client_id == client_id
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def save_access_credential(
+        self,
+        credential: ProjectAppAccessCredential,
+    ) -> ProjectAppAccessCredential:
+        self.db.add(credential)
+        await self.db.commit()
+        await self.db.refresh(credential)
+        return credential
 
     async def list_project_app_tool_set_bindings(
         self,

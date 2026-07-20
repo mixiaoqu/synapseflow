@@ -3,22 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
 from types import SimpleNamespace
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.agent_chat_service import get_agent_chat_service
-from app.core.config import settings
 from app.core.config.assistant_pages import AssistantPageConfig, get_assistant_page_config
-from app.core.security import create_widget_token
 from app.models.schemas.kb_chat import KbChatFeedbackRequest
 from app.models.schemas.widget import (
     WidgetBootstrapResponse,
     WidgetChatRequest,
     WidgetPageConfigResponse,
-    WidgetSessionCreate,
 )
 from app.repositories.kb_chat_log_repository import KbChatLogRepository
 from app.repositories.project_repository import ProjectAppRuntimeRecord, ProjectRepository
@@ -26,18 +22,15 @@ from app.repositories.project_repository import ProjectAppRuntimeRecord, Project
 
 @dataclass(frozen=True, slots=True)
 class WidgetSessionContext:
+    team_id: int
+    product_id: int
     project_id: int
     project_app_id: int
     external_user_id: str
     external_user_name: str | None
+    trusted_scope: dict
     store_id: str | None
     initial_page_type: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class WidgetSessionCredential:
-    token: str
-    expires_in_seconds: int
 
 
 class WidgetChatService:
@@ -45,28 +38,6 @@ class WidgetChatService:
         self.db = db
         self.repository = ProjectRepository(db)
         self.chat_service = get_agent_chat_service()
-
-    async def create_credential(self, payload: WidgetSessionCreate) -> WidgetSessionCredential:
-        runtime = await self.repository.get_runtime_by_codes(
-            product_code=payload.product_code,
-            project_code=payload.project_code,
-            app_code=payload.app_code,
-            active_only=True,
-        )
-        if runtime is None:
-            raise HTTPException(status_code=404, detail="Active project application not found")
-
-        expires = max(1, settings.WIDGET_TOKEN_EXPIRE_MINUTES)
-        token = create_widget_token(
-            project_id=runtime.project.id,
-            project_app_id=runtime.app.id,
-            external_user_id=payload.external_user_id.strip(),
-            external_user_name=(payload.external_user_name or "").strip() or None,
-            store_id=(payload.store_id or "").strip() or None,
-            initial_page_type=(payload.initial_page_type or "").strip() or None,
-            expires_delta=timedelta(minutes=expires),
-        )
-        return WidgetSessionCredential(token=token, expires_in_seconds=expires * 60)
 
     async def get_runtime(self, context: WidgetSessionContext) -> ProjectAppRuntimeRecord:
         runtime = await self.repository.get_runtime_by_app_id(
@@ -167,6 +138,7 @@ class WidgetChatService:
             external_user_id=context.external_user_id,
             external_user_name=context.external_user_name,
             store_id=context.store_id,
+            trusted_scope=dict(context.trusted_scope),
             team_id=assistant.team_id,
             knowledge_base_id=runtime.app.knowledge_base_id,
             category_id=runtime.app.category_id,

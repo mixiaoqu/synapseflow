@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from secrets import token_urlsafe
 
 from jose import ExpiredSignatureError, JWTError, jwt
 from passlib.context import CryptContext
@@ -66,29 +67,39 @@ def create_embed_token(
 
 def create_widget_token(
     *,
+    client_id: str,
+    team_id: int,
+    product_id: int,
     project_id: int,
     project_app_id: int,
     external_user_id: str,
     external_user_name: str | None = None,
-    store_id: str | None = None,
+    trusted_scope: dict | None = None,
     initial_page_type: str | None = None,
-    expires_delta: timedelta | None = None,
+    token_version: int = 1,
+    expires_at: datetime | None = None,
 ) -> str:
     """Create a short-lived token for the AgentChat widget."""
 
-    expire_at = datetime.now(timezone.utc) + (
-        expires_delta or timedelta(minutes=settings.EMBED_TOKEN_EXPIRE_MINUTES)
+    resolved_expires_at = expires_at or datetime.now(timezone.utc) + timedelta(
+        minutes=settings.WIDGET_TOKEN_EXPIRE_MINUTES
     )
     payload = {
-        "sub": external_user_id,
+        "sub": f"{client_id}:{external_user_id}",
         "type": "widget",
+        "client_id": client_id,
+        "team_id": team_id,
+        "product_id": product_id,
         "project_id": project_id,
         "project_app_id": project_app_id,
         "external_user_id": external_user_id,
         "external_user_name": external_user_name,
-        "store_id": store_id,
+        "trusted_scope": dict(trusted_scope or {}),
         "initial_page_type": initial_page_type,
-        "exp": expire_at,
+        "token_version": token_version,
+        "scopes": ["agent.use"],
+        "jti": token_urlsafe(18),
+        "exp": resolved_expires_at,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
@@ -176,11 +187,18 @@ def decode_widget_token(token: str) -> dict:
     except JWTError as exc:
         raise ValueError("Invalid widget token") from exc
 
-    if payload.get("type") != "widget" or not payload.get("external_user_id"):
+    if (
+        payload.get("type") != "widget"
+        or not payload.get("client_id")
+        or not payload.get("external_user_id")
+    ):
         raise ValueError("Invalid widget token")
     try:
+        int(payload["team_id"])
+        int(payload["product_id"])
         int(payload["project_id"])
         int(payload["project_app_id"])
+        int(payload["token_version"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("Invalid widget token") from exc
     return payload

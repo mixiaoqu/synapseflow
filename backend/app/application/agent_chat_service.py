@@ -116,6 +116,7 @@ class AgentChatService(BaseAgentService):
                 "external_user_id": getattr(request, "external_user_id", None),
                 "external_user_name": getattr(request, "external_user_name", None),
                 "store_id": getattr(request, "store_id", None),
+                "trusted_scope": dict(getattr(request, "trusted_scope", None) or {}),
                 "assistant_id": getattr(request, "assistant_id", None),
                 "assistant_name": getattr(request, "assistant_name", None),
                 "assistant_welcome_message": getattr(

@@ -33,7 +33,24 @@ interface PreviewMessage {
   content: string;
 }
 
-function createDefaultForm(teamId: number | null): AssistantUpsertPayload {
+type AssistantFormState = Omit<
+  AssistantUpsertPayload,
+  | "description"
+  | "welcome_message"
+  | "placeholder_text"
+  | "llm_model_key"
+  | "persona_prompt"
+  | "rule_template"
+> & {
+  description: string;
+  welcome_message: string;
+  placeholder_text: string;
+  llm_model_key: string | null;
+  persona_prompt: string;
+  rule_template: string;
+};
+
+function createDefaultForm(teamId: number | null): AssistantFormState {
   return {
     name: "",
     slug: "",
@@ -99,7 +116,7 @@ const scopeText = computed(() =>
 );
 const previewWelcomeMessage = computed(() => form.welcome_message.trim());
 
-const rules: FormRules<AssistantUpsertPayload> = {
+const rules: FormRules<AssistantFormState> = {
   name: [{ required: true, message: "请输入助手名称", trigger: "blur" }],
   slug: [{ required: true, message: "请输入唯一标识", trigger: "blur" }],
 };

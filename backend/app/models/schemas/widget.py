@@ -1,23 +1,67 @@
 """AgentChat widget request and response schemas."""
 
+import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class WidgetSessionCreate(BaseModel):
-    product_code: str = Field(..., min_length=1, max_length=120)
-    project_code: str = Field(..., min_length=1, max_length=120)
-    app_code: str = Field(..., min_length=1, max_length=120)
+def _validate_context_object(value: dict, *, max_bytes: int) -> dict:
+    key_count = 0
+
+    def _walk(item, depth: int) -> None:
+        nonlocal key_count
+        if depth > 3:
+            raise ValueError("Context cannot be nested deeper than 3 levels")
+        if isinstance(item, dict):
+            key_count += len(item)
+            if key_count > 30:
+                raise ValueError("Context cannot contain more than 30 fields")
+            for key, child in item.items():
+                if not isinstance(key, str) or not key.strip() or len(key) > 120:
+                    raise ValueError("Context keys must be non-empty strings up to 120 characters")
+                _walk(child, depth + 1)
+        elif isinstance(item, list):
+            if len(item) > 100:
+                raise ValueError("Context arrays cannot contain more than 100 items")
+            for child in item:
+                _walk(child, depth + 1)
+        elif item is not None and not isinstance(item, (str, int, float, bool)):
+            raise ValueError("Context contains an unsupported value")
+
+    _walk(value, 1)
+    if len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")) > max_bytes:
+        raise ValueError(f"Context cannot exceed {max_bytes} bytes")
+    return value
+
+
+class IntegrationPrincipal(BaseModel):
     external_user_id: str = Field(..., min_length=1, max_length=255)
-    external_user_name: str | None = Field(default=None, max_length=255)
-    store_id: str | None = Field(default=None, max_length=120)
+    display_name: str | None = Field(default=None, max_length=255)
+
+
+class IntegrationBootstrapCreate(BaseModel):
+    principal: IntegrationPrincipal
+    scope: dict = Field(default_factory=dict)
     initial_page_type: str | None = Field(default=None, max_length=120)
 
+    @field_validator("scope")
+    @classmethod
+    def validate_scope(cls, value: dict) -> dict:
+        return _validate_context_object(value, max_bytes=4096)
 
-class WidgetSessionResponse(BaseModel):
-    token: str
-    expires_in_seconds: int
+
+class IntegrationWidgetConfig(BaseModel):
+    version: str
+    protocol_version: Literal["1"] = "1"
+
+
+class IntegrationBootstrapResponse(BaseModel):
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    api_base_url: str
+    widget: IntegrationWidgetConfig
 
 
 class WidgetPageContext(BaseModel):
@@ -30,6 +74,12 @@ class WidgetPageContext(BaseModel):
     entity_type: str | None = Field(default=None, max_length=120)
     entity_id: str | None = Field(default=None, max_length=255)
     entity_name: str | None = Field(default=None, max_length=255)
+    attributes: dict = Field(default_factory=dict)
+
+    @field_validator("attributes")
+    @classmethod
+    def validate_attributes(cls, value: dict) -> dict:
+        return _validate_context_object(value, max_bytes=8192)
 
 
 class WidgetChatRequest(BaseModel):

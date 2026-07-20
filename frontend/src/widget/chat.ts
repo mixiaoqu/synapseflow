@@ -10,21 +10,21 @@ import {
 } from "vue";
 
 import {
-  widgetApi,
+  createAgentChatApi,
   type WidgetBootstrap,
   type WidgetPageContext,
   type WidgetSessionMessage,
   type WidgetSessionSummary,
-} from "@/shared/api/widget";
-import { consumeSseStream } from "@/shared/lib/stream/sse";
+} from "./client/agent-chat-api";
+import { consumeSseStream } from "./stream/sse";
 import {
   createWorkflowRun,
   reduceWorkflowRunEvent,
   type ChatWorkflowRun,
-} from "@/shared/lib/stream/workflowRun";
-import { AppRequestError, resolveDisplayErrorMessage } from "@/shared/utils/error";
+} from "./stream/workflow-run";
+import { AppRequestError, resolveDisplayErrorMessage } from "./errors";
 
-export interface WidgetMessage {
+export interface AgentChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -35,7 +35,8 @@ export interface WidgetMessage {
   feedbackSubmitting?: boolean;
 }
 
-interface UseWidgetChatOptions {
+interface UseAgentChatOptions {
+  apiBaseUrl: string;
   token: MaybeRef<string>;
   pageContext: MaybeRef<WidgetPageContext>;
   refreshToken: () => Promise<string>;
@@ -52,7 +53,7 @@ function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function toMessage(message: WidgetSessionMessage): WidgetMessage | null {
+function toMessage(message: WidgetSessionMessage): AgentChatMessage | null {
   const role = message.role.trim().toLowerCase();
   if ((role !== "user" && role !== "assistant") || !message.content.trim()) {
     return null;
@@ -94,7 +95,8 @@ function resolveCompletedAnswer(streamedAnswer: string, completedAnswer: unknown
   return completedAnswer;
 }
 
-export function useWidgetChat(options: UseWidgetChatOptions) {
+export function useAgentChat(options: UseAgentChatOptions) {
+  const chatApi = createAgentChatApi(options.apiBaseUrl);
   const token = computed(() => unref(options.token).trim());
   const pageContext = computed(() => ({ ...unref(options.pageContext) }));
   const assistantName = ref(DEFAULT_NAME);
@@ -102,7 +104,7 @@ export function useWidgetChat(options: UseWidgetChatOptions) {
   const placeholder = ref(DEFAULT_PLACEHOLDER);
   const suggestions = ref<string[]>([]);
   const contextLabel = ref("");
-  const messages = ref<WidgetMessage[]>([]);
+  const messages = ref<AgentChatMessage[]>([]);
   const sessions = ref<WidgetSessionSummary[]>([]);
   const currentSessionId = ref<string | null>(null);
   const isInitializing = ref(true);
@@ -162,7 +164,7 @@ export function useWidgetChat(options: UseWidgetChatOptions) {
     error.value = null;
     try {
       const bootstrap = await withTokenRefresh((requestToken) =>
-        widgetApi.bootstrap(requestToken, pageContext.value),
+        chatApi.bootstrap(requestToken, pageContext.value),
       );
       if (requestId === bootstrapRequestId) {
         applyBootstrap(bootstrap);
@@ -207,7 +209,7 @@ export function useWidgetChat(options: UseWidgetChatOptions) {
       return;
     }
 
-    const assistantMessage = reactive<WidgetMessage>({
+    const assistantMessage = reactive<AgentChatMessage>({
       id: createId("assistant"),
       role: "assistant",
       content: "",
@@ -231,7 +233,7 @@ export function useWidgetChat(options: UseWidgetChatOptions) {
     abortController = controller;
     try {
       const stream = await withTokenRefresh((requestToken) =>
-        widgetApi.stream(
+        chatApi.stream(
           requestToken,
           {
             query,
@@ -313,7 +315,7 @@ export function useWidgetChat(options: UseWidgetChatOptions) {
     isLoadingSessions.value = true;
     try {
       sessions.value = await withTokenRefresh((requestToken) =>
-        widgetApi.listSessions(requestToken),
+        chatApi.listSessions(requestToken),
       );
     } catch (err) {
       error.value = errorMessage(err, "加载历史对话失败。");
@@ -326,12 +328,12 @@ export function useWidgetChat(options: UseWidgetChatOptions) {
     stopGenerating();
     try {
       const detail = await withTokenRefresh((requestToken) =>
-        widgetApi.getSession(requestToken, sessionId),
+        chatApi.getSession(requestToken, sessionId),
       );
       currentSessionId.value = sessionId;
       messages.value = detail.messages
         .map(toMessage)
-        .filter((message): message is WidgetMessage => message !== null);
+        .filter((message): message is AgentChatMessage => message !== null);
       workflowRun.value = null;
       await scrollToBottom();
     } catch (err) {
@@ -341,7 +343,7 @@ export function useWidgetChat(options: UseWidgetChatOptions) {
 
   async function deleteSession(sessionId: string) {
     try {
-      await withTokenRefresh((requestToken) => widgetApi.deleteSession(requestToken, sessionId));
+      await withTokenRefresh((requestToken) => chatApi.deleteSession(requestToken, sessionId));
       sessions.value = sessions.value.filter((session) => session.session_id !== sessionId);
       if (currentSessionId.value === sessionId) {
         startNewConversation();
@@ -351,14 +353,14 @@ export function useWidgetChat(options: UseWidgetChatOptions) {
     }
   }
 
-  async function submitFeedback(message: WidgetMessage, value: "helpful" | "not_helpful") {
+  async function submitFeedback(message: AgentChatMessage, value: "helpful" | "not_helpful") {
     if (!message.logId || message.feedbackSubmitting) {
       return;
     }
     message.feedbackSubmitting = true;
     try {
       await withTokenRefresh((requestToken) =>
-        widgetApi.submitFeedback(requestToken, message.logId as number, value),
+        chatApi.submitFeedback(requestToken, message.logId as number, value),
       );
       message.feedback = value;
     } catch (err) {

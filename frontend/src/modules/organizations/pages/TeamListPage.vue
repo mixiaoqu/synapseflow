@@ -144,6 +144,7 @@ function getMemberDisplayUser(member: TeamMember) {
     username: member.username || `用户 ${member.user_id}`,
     email: member.email || "",
     full_name: member.full_name || null,
+    is_active: true,
   };
 }
 
@@ -881,7 +882,7 @@ watch(memberSearchKeyword, (value) => {
                 !filteredMembers.every((member) => selectedMemberUserIds.includes(member.user_id))
               "
               :disabled="filteredMembers.length === 0"
-              @change="(checked) => handleToggleAllFilteredMembers(Boolean(checked))"
+              @change="handleToggleAllFilteredMembers(Boolean($event))"
             >
               全选当前筛选
             </el-checkbox>
@@ -934,7 +935,7 @@ watch(memberSearchKeyword, (value) => {
             >
               <el-checkbox
                 :model-value="selectedMemberUserIds.includes(member.user_id)"
-                @change="(checked) => handleToggleMemberSelection(member.user_id, Boolean(checked))"
+                @change="handleToggleMemberSelection(member.user_id, Boolean($event))"
               />
               <span class="team-list-page__member-avatar" :style="avatarStyle(member.user_id)">
                 {{ getInitials(getMemberDisplayUser(member).full_name, getMemberDisplayUser(member).username) }}

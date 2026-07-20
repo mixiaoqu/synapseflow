@@ -456,6 +456,7 @@ def create_business_ops_graph(
             activity_text=f"调用“{operation.get('name') or operation.get('id')}”",
         )
         scope = {
+            **dict(state.get("trusted_scope") or {}),
             "project_app_id": state.get("project_app_id"),
             "product_id": state.get("product_id"),
             "project_id": state.get("project_id"),

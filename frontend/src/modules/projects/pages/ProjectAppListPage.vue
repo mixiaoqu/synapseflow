@@ -20,9 +20,15 @@ import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
 import {
   bindProjectAppToolSet,
+  createProjectAppAccess,
+  enableProjectAppAccess,
+  getProjectAppAccess,
   listMcpServers,
   listProjectAppToolSetBindings,
+  resetProjectAppAccessSecret,
+  revokeProjectAppAccess,
   unbindProjectAppToolSet,
+  updateProjectAppAccess,
 } from "@/shared/api/agent-integrations";
 import { listAssistants } from "@/shared/api/assistants";
 import { listDocumentCategoriesTree } from "@/shared/api/document-categories";
@@ -38,9 +44,13 @@ import {
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
-import { isForbiddenError } from "@/shared/utils/error";
+import { AppRequestError, isForbiddenError } from "@/shared/utils/error";
 import type { AssistantSummary } from "@/shared/types/assistant";
-import type { AgentAppToolSetBinding, McpServer } from "@/shared/types/agent-integration";
+import type {
+  AgentAppToolSetBinding,
+  McpServer,
+  ProjectAppAccessCredential,
+} from "@/shared/types/agent-integration";
 import type { DocumentCategoryTreeNode } from "@/shared/types/document-category";
 import type { KnowledgeBaseListItem } from "@/shared/types/knowledge-base";
 import {
@@ -72,6 +82,11 @@ const toolSetSavingId = ref<number | null>(null);
 const activeAppId = ref<number | null>(null);
 const integrationDialogVisible = ref(false);
 const integrationApp = ref<ProjectAppSummary | null>(null);
+const accessCredential = ref<ProjectAppAccessCredential | null>(null);
+const issuedClientSecret = ref("");
+const allowedOriginsText = ref("");
+const accessLoading = ref(false);
+const accessSavingAction = ref<"" | "create" | "update" | "enable" | "reset" | "revoke">("");
 const previewLoading = ref(false);
 const previewEmbedUrl = ref("");
 const previewStoreId = ref("STORE_001");
@@ -84,6 +99,7 @@ const editingApp = ref<ProjectAppSummary | null>(null);
 const appForm = reactive({
   name: "",
   code: "",
+  widget_version: "1.0.0",
   terminal_type: "web" as ProjectAppTerminalType,
   description: "",
 });
@@ -177,6 +193,7 @@ function buildUpdatePayload(
     knowledge_base_id: app.knowledge_base_id,
     category_id: app.category_id,
     default_assistant_id: app.default_assistant_id,
+    widget_version: app.widget_version,
     is_active: app.is_active,
     ...overrides,
   };
@@ -195,6 +212,7 @@ function normalizeCode(value: string) {
 function resetAppForm() {
   appForm.name = "";
   appForm.code = "";
+  appForm.widget_version = "1.0.0";
   appForm.terminal_type = "web";
   appForm.description = "";
   editingApp.value = null;
@@ -302,6 +320,10 @@ async function loadPage() {
     ]);
     project.value = projectResponse;
     apps.value = appResponses.items;
+    const requestedAppId = Number(route.query.appId);
+    if (Number.isInteger(requestedAppId) && apps.value.some((item) => item.id === requestedAppId)) {
+      activeAppId.value = requestedAppId;
+    }
     if (!apps.value.some((item) => item.id === activeAppId.value)) {
       activeAppId.value = apps.value[0]?.id ?? null;
     }
@@ -330,6 +352,7 @@ function openEditApp(app: ProjectAppSummary) {
   editingApp.value = app;
   appForm.name = app.name;
   appForm.code = app.code;
+  appForm.widget_version = app.widget_version;
   appForm.terminal_type = app.terminal_type;
   appForm.description = app.description ?? "";
   appDialogVisible.value = true;
@@ -471,6 +494,10 @@ async function handleSaveAppBasicInfo() {
     ElMessage.warning("请填写应用端名称和编码。");
     return;
   }
+  if (!/^\d+\.\d+\.\d+$/.test(appForm.widget_version)) {
+    ElMessage.warning("Widget 版本必须是精确版本，例如 1.0.0。");
+    return;
+  }
 
   appDialogSaving.value = true;
   try {
@@ -481,6 +508,7 @@ async function handleSaveAppBasicInfo() {
         buildUpdatePayload(editingApp.value, {
           name,
           code,
+          widget_version: appForm.widget_version,
           terminal_type: appForm.terminal_type,
           description: appForm.description.trim() || null,
         }),
@@ -500,6 +528,7 @@ async function handleSaveAppBasicInfo() {
     const created = await createProjectApp(projectId.value, {
       name,
       code,
+      widget_version: appForm.widget_version,
       terminal_type: appForm.terminal_type,
       description: appForm.description.trim() || null,
       knowledge_base_id: null,
@@ -563,7 +592,7 @@ async function handleDeleteApp(app: ProjectAppSummary) {
   }
 }
 
-function openIntegration(app: ProjectAppSummary) {
+async function openIntegration(app: ProjectAppSummary) {
   if (!app.is_active) {
     ElMessage.warning("当前应用端已停用，请先启用后再查看接入说明。");
     return;
@@ -571,6 +600,143 @@ function openIntegration(app: ProjectAppSummary) {
 
   integrationDialogVisible.value = true;
   integrationApp.value = app;
+  accessCredential.value = null;
+  issuedClientSecret.value = "";
+  allowedOriginsText.value = "https://your-business.example.com";
+  accessLoading.value = true;
+  try {
+    const credential = await getProjectAppAccess(projectId.value as number, app.id);
+    accessCredential.value = credential;
+    allowedOriginsText.value = credential.allowed_origins.join("\n");
+  } catch (error) {
+    if (!(error instanceof AppRequestError) || error.status !== 404) {
+      ElMessage.error(error instanceof Error ? error.message : "加载业务接入凭证失败。");
+    }
+  } finally {
+    accessLoading.value = false;
+  }
+}
+
+function getAllowedOrigins() {
+  return [...new Set(allowedOriginsText.value.split(/[\n,]/).map((item) => item.trim().replace(/\/+$/, "")).filter(Boolean))];
+}
+
+function validateAllowedOrigins() {
+  const origins = getAllowedOrigins();
+  const hasInvalidOrigin = origins.some((origin) => {
+    try {
+      const parsed = new URL(origin);
+      return !["http:", "https:"].includes(parsed.protocol) || parsed.origin !== origin;
+    } catch {
+      return true;
+    }
+  });
+  if (!origins.length || hasInvalidOrigin) {
+    ElMessage.warning("请填写不含路径的完整 HTTP 或 HTTPS Origin。");
+    return null;
+  }
+  return origins;
+}
+
+async function handleCreateAccess() {
+  if (!projectId.value || !integrationApp.value || accessSavingAction.value) return;
+  const allowedOrigins = validateAllowedOrigins();
+  if (!allowedOrigins) return;
+  accessSavingAction.value = "create";
+  try {
+    const issued = await createProjectAppAccess(projectId.value, integrationApp.value.id, {
+      allowed_origins: allowedOrigins,
+    });
+    accessCredential.value = issued;
+    issuedClientSecret.value = issued.client_secret;
+    allowedOriginsText.value = issued.allowed_origins.join("\n");
+    ElMessage.success("业务接入已启用，请立即保存 Client Secret。");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "启用业务接入失败。");
+  } finally {
+    accessSavingAction.value = "";
+  }
+}
+
+async function handleUpdateAccess() {
+  if (!projectId.value || !integrationApp.value || !accessCredential.value || accessSavingAction.value) return;
+  const allowedOrigins = validateAllowedOrigins();
+  if (!allowedOrigins) return;
+  accessSavingAction.value = "update";
+  try {
+    accessCredential.value = await updateProjectAppAccess(projectId.value, integrationApp.value.id, {
+      allowed_origins: allowedOrigins,
+    });
+    allowedOriginsText.value = accessCredential.value.allowed_origins.join("\n");
+    ElMessage.success("允许的 Origin 已保存。");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "保存 Origin 失败。");
+  } finally {
+    accessSavingAction.value = "";
+  }
+}
+
+async function handleEnableExistingAccess() {
+  if (!projectId.value || !integrationApp.value || !accessCredential.value || accessSavingAction.value) return;
+  accessSavingAction.value = "enable";
+  try {
+    accessCredential.value = await enableProjectAppAccess(
+      projectId.value,
+      integrationApp.value.id,
+    );
+    ElMessage.success("业务接入已重新启用。");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "重新启用业务接入失败。");
+  } finally {
+    accessSavingAction.value = "";
+  }
+}
+
+async function handleResetAccessSecret() {
+  if (!projectId.value || !integrationApp.value || accessSavingAction.value) return;
+  try {
+    await ElMessageBox.confirm("重置后旧 Client Secret 将立即失效，确定继续吗？", "重置 Secret", {
+      type: "warning",
+      confirmButtonText: "重置",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+  accessSavingAction.value = "reset";
+  try {
+    const issued = await resetProjectAppAccessSecret(projectId.value, integrationApp.value.id);
+    accessCredential.value = issued;
+    issuedClientSecret.value = issued.client_secret;
+    ElMessage.success("Client Secret 已重置，请立即保存新值。");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "重置 Client Secret 失败。");
+  } finally {
+    accessSavingAction.value = "";
+  }
+}
+
+async function handleRevokeAccess() {
+  if (!projectId.value || !integrationApp.value || accessSavingAction.value) return;
+  try {
+    await ElMessageBox.confirm("吊销后当前应用的 Widget Token 将失效，确定继续吗？", "吊销业务接入", {
+      type: "warning",
+      confirmButtonText: "吊销",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+  accessSavingAction.value = "revoke";
+  try {
+    accessCredential.value = await revokeProjectAppAccess(projectId.value, integrationApp.value.id);
+    issuedClientSecret.value = "";
+    ElMessage.success("业务接入已吊销。");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "吊销业务接入失败。");
+  } finally {
+    accessSavingAction.value = "";
+  }
 }
 
 async function generatePreview() {
@@ -607,34 +773,17 @@ async function copyText(value: string, successMessage: string) {
   }
 }
 
-const embedSessionRequestCode = computed(() => {
-  const selectedProject = project.value;
-  const selectedApp = integrationApp.value ?? activeApp.value;
-  const productCode = selectedProject?.product_code || "product_code";
-  const projectCode = selectedProject?.code || "project_code";
-  const appCode = selectedApp?.code || "app_code";
+const agentPublicOrigin = window.location.origin.replace(/\/+$/, "");
 
-  return `POST https://你的LangChain RAG知识库域名/api/v1/embed/sessions
-Authorization: Bearer <平台管理员提供的服务端接入 Token>
-Content-Type: application/json
+const bootstrapEnvironmentCode = computed(() => `AGENT_BASE_URL=${agentPublicOrigin}/api/v1
+AGENT_CLIENT_ID=${accessCredential.value?.client_id || "<启用后生成>"}
+AGENT_CLIENT_SECRET=${issuedClientSecret.value || "<仅在启用或重置后显示>"}`);
 
-{
-  "product_code": "${productCode}",
-  "project_code": "${projectCode}",
-  "app_code": "${appCode}",
-  "external_user_id": "YOUR_USER_ID",
-  "external_user_name": "张三",
-  "store_id": "STORE_ID"
-}`;
-});
-
-const businessIframeCode = `<iframe
-  src="{embed_url}"
-  width="100%"
-  height="720"
-  frameborder="0"
-  allow="microphone"
-></iframe>`;
+const loaderCode = `<script
+  src="${agentPublicOrigin}/agent-static/loader/v1/loader.js"
+  data-bootstrap-endpoint="/api/agent/bootstrap"
+  defer
+>` + "<" + "/script>";
 
 onMounted(() => {
   void loadPage();
@@ -653,6 +802,14 @@ watch(
 watch(previewStoreId, () => {
   if (previewEmbedUrl.value) {
     previewNeedsRefresh.value = true;
+  }
+});
+
+watch(integrationDialogVisible, (visible) => {
+  if (!visible) {
+    issuedClientSecret.value = "";
+    accessCredential.value = null;
+    integrationApp.value = null;
   }
 });
 </script>
@@ -682,19 +839,29 @@ watch(previewStoreId, () => {
       :show-retry="false"
     />
 
-    <AdminListPanel v-else class="project-app-workspace-page__panel">
+    <AdminListPanel
+      v-else
+      class="project-app-workspace-page__panel"
+    >
       <div class="project-app-workspace-page__header">
         <div class="project-app-workspace-page__title-row">
           <div>
             <h2>{{ project?.name || "项目应用端" }}</h2>
           </div>
-          <el-button class="project-app-workspace-page__create-button" type="primary" @click="openCreateApp">
+          <el-button
+            class="project-app-workspace-page__create-button"
+            type="primary"
+            @click="openCreateApp"
+          >
             <el-icon><Plus /></el-icon>
             新建应用端
           </el-button>
         </div>
 
-        <div v-if="apps.length > 0" class="project-app-workspace-page__tabs">
+        <div
+          v-if="apps.length > 0"
+          class="project-app-workspace-page__tabs"
+        >
           <div
             v-for="app in apps"
             :key="app.id"
@@ -707,7 +874,11 @@ watch(previewStoreId, () => {
                 : '',
             ]"
           >
-            <button type="button" class="project-app-workspace-page__tab-main" @click="selectApp(app.id)">
+            <button
+              type="button"
+              class="project-app-workspace-page__tab-main"
+              @click="selectApp(app.id)"
+            >
               <el-icon :class="getTerminalIconClass(app.terminal_type)">
                 <component :is="getTerminalIcon(app.terminal_type)" />
               </el-icon>
@@ -737,10 +908,18 @@ watch(previewStoreId, () => {
         title="当前项目暂无应用端"
         description="可以先创建一个应用端，再绑定助手和知识库。"
       >
-        <el-button type="primary" @click="openCreateApp">新建应用端</el-button>
+        <el-button
+          type="primary"
+          @click="openCreateApp"
+        >
+          新建应用端
+        </el-button>
       </AppEmpty>
 
-      <section v-else-if="activeApp" class="project-app-workspace-page__body">
+      <section
+        v-else-if="activeApp"
+        class="project-app-workspace-page__body"
+      >
         <div class="project-app-workspace-page__inspector">
           <section class="project-app-workspace-page__status-card">
             <div class="project-app-workspace-page__app-identity">
@@ -755,7 +934,13 @@ watch(previewStoreId, () => {
               <div>
                 <div class="project-app-workspace-page__app-title">
                   <h3>{{ activeApp.name }}</h3>
-                  <el-tag size="small" type="info" effect="plain">{{ activeApp.code }}</el-tag>
+                  <el-tag
+                    size="small"
+                    type="info"
+                    effect="plain"
+                  >
+                    {{ activeApp.code }}
+                  </el-tag>
                 </div>
                 <p>{{ activeApp.description?.trim() || "暂无说明" }}</p>
               </div>
@@ -879,12 +1064,18 @@ watch(previewStoreId, () => {
                 <h3>MCP 工具集</h3>
                 <p>绑定 MCP 服务后，助手可使用该工具集中已启用的工具。</p>
               </div>
-              <router-link class="project-app-workspace-page__plain-link" to="/agent-integrations">
+              <router-link
+                class="project-app-workspace-page__plain-link"
+                to="/agent-integrations"
+              >
                 管理 MCP 工具集
               </router-link>
             </div>
 
-            <div v-loading="toolSetLoading" class="project-app-workspace-page__business-tool-body">
+            <div
+              v-loading="toolSetLoading"
+              class="project-app-workspace-page__business-tool-body"
+            >
               <div
                 v-if="toolSetServers.length > 0"
                 class="project-app-workspace-page__binding-list"
@@ -919,7 +1110,10 @@ watch(previewStoreId, () => {
                 </div>
               </div>
 
-              <div v-else class="project-app-workspace-page__binding-empty">
+              <div
+                v-else
+                class="project-app-workspace-page__binding-empty"
+              >
                 <strong>当前团队还没有 MCP 工具集</strong>
                 <span>请先在 Agent 集成页新增并测试 MCP 服务。</span>
               </div>
@@ -932,9 +1126,13 @@ watch(previewStoreId, () => {
                 <h3>接入信息</h3>
                 <p>用于业务系统识别并嵌入当前应用端。</p>
               </div>
-              <el-button class="project-app-workspace-page__link-button" type="primary"  @click="openIntegration(activeApp)">
+              <el-button
+                class="project-app-workspace-page__link-button"
+                type="primary"
+                @click="openIntegration(activeApp)"
+              >
                 <el-icon><Link /></el-icon>
-                接入代码
+                管理业务接入
               </el-button>
             </div>
 
@@ -946,6 +1144,10 @@ watch(previewStoreId, () => {
               <div>
                 <dt>应用编码</dt>
                 <dd>{{ activeApp.code }}</dd>
+              </div>
+              <div>
+                <dt>Widget 版本</dt>
+                <dd>{{ activeApp.widget_version }}</dd>
               </div>
               <div>
                 <dt>运行状态</dt>
@@ -1001,7 +1203,12 @@ watch(previewStoreId, () => {
               description="问答引擎配置已保存，刷新测试后将使用最新知识库、分类和助手。"
             >
               <div class="project-app-workspace-page__suggestions">
-                <button type="button" @click="generatePreview">刷新测试会话</button>
+                <button
+                  type="button"
+                  @click="generatePreview"
+                >
+                  刷新测试会话
+                </button>
               </div>
             </AppEmpty>
             <AppEmpty
@@ -1011,7 +1218,12 @@ watch(previewStoreId, () => {
               description="配置已就绪，可以生成测试会话。"
             >
               <div class="project-app-workspace-page__suggestions">
-                <button type="button" @click="generatePreview">生成测试会话</button>
+                <button
+                  type="button"
+                  @click="generatePreview"
+                >
+                  生成测试会话
+                </button>
               </div>
             </AppEmpty>
             <AppEmpty
@@ -1034,58 +1246,150 @@ watch(previewStoreId, () => {
     <AdminDialog
       v-model="integrationDialogVisible"
       width="720px"
-      :title="integrationApp ? `接入代码：${integrationApp.name}` : '接入代码'"
+      :title="integrationApp ? `业务接入：${integrationApp.name}` : '业务接入'"
     >
-      <div class="project-app-workspace-page__integration-summary">
-        <div>
-          <span>当前应用</span>
-          <strong>{{ integrationApp?.name || "-" }}</strong>
-        </div>
-        <div>
-          <span>终端类型</span>
-          <strong>{{ integrationApp ? formatTerminalType(integrationApp.terminal_type) : "-" }}</strong>
-        </div>
-        <div>
-          <span>应用编码</span>
-          <strong>{{ integrationApp?.code || "-" }}</strong>
-        </div>
-      </div>
-
-      <div class="project-app-workspace-page__integration-alert">
-        服务端接入 Token 由平台管理员提供，只能保存在业务后端，不能写入浏览器、H5 或小程序前端代码。
-      </div>
-
-      <section class="project-app-workspace-page__integration-step">
-        <div class="project-app-workspace-page__integration-step-header">
+      <div v-loading="accessLoading">
+        <div class="project-app-workspace-page__integration-summary">
           <div>
-            <span>步骤 1</span>
-            <h3>业务后端创建嵌入会话</h3>
-            <p>业务后端使用产品、项目和应用编码换取短期 embed_url。</p>
+            <span>当前应用</span>
+            <strong>{{ integrationApp?.name || "-" }}</strong>
           </div>
-          <el-button size="small" @click="copyText(embedSessionRequestCode, '服务端请求示例已复制。')">
-            复制请求示例
-          </el-button>
-        </div>
-        <div class="project-app-workspace-page__code-block">
-          <pre>{{ embedSessionRequestCode }}</pre>
-        </div>
-      </section>
-
-      <section class="project-app-workspace-page__integration-step">
-        <div class="project-app-workspace-page__integration-step-header">
           <div>
-            <span>步骤 2</span>
-            <h3>业务前端嵌入助手</h3>
-            <p>将上一步返回的 embed_url 填入 iframe，页面会使用短期凭证访问助手。</p>
+            <span>Client ID</span>
+            <strong>{{ accessCredential?.client_id || "尚未生成" }}</strong>
           </div>
-          <el-button size="small" @click="copyText(businessIframeCode, 'Iframe 示例已复制。')">
-            复制 iframe 示例
-          </el-button>
+          <div>
+            <span>接入状态</span>
+            <strong>{{ accessCredential?.enabled ? "已启用" : accessCredential ? "已吊销" : "未启用" }}</strong>
+          </div>
         </div>
-        <div class="project-app-workspace-page__code-block">
-          <pre>{{ businessIframeCode }}</pre>
-        </div>
-      </section>
+
+        <el-alert
+          v-if="issuedClientSecret"
+          class="project-app-workspace-page__integration-secret"
+          title="Client Secret 只显示这一次，请立即保存到业务后端的密钥配置。"
+          type="warning"
+          :closable="false"
+          show-icon
+        >
+          <template #default>
+            <div class="project-app-workspace-page__secret-value">
+              <code>{{ issuedClientSecret }}</code>
+              <el-button
+                size="small"
+                @click="copyText(issuedClientSecret, 'Client Secret 已复制。')"
+              >
+                复制
+              </el-button>
+            </div>
+          </template>
+        </el-alert>
+
+        <section class="project-app-workspace-page__integration-step">
+          <div class="project-app-workspace-page__integration-step-header">
+            <div>
+              <span>浏览器来源</span>
+              <h3>允许的 Origin</h3>
+              <p>每行填写一个完整 Origin，例如 https://b2c.example.com。</p>
+            </div>
+          </div>
+          <el-input
+            v-model="allowedOriginsText"
+            type="textarea"
+            :rows="3"
+            placeholder="https://b2c.example.com"
+          />
+          <div class="project-app-workspace-page__integration-actions">
+            <el-button
+              v-if="!accessCredential"
+              type="primary"
+              :loading="accessSavingAction === 'create'"
+              @click="handleCreateAccess"
+            >
+              启用业务接入
+            </el-button>
+            <template v-else>
+              <el-button
+                :loading="accessSavingAction === 'update'"
+                @click="handleUpdateAccess"
+              >
+                保存 Origin
+              </el-button>
+              <el-button
+                :loading="accessSavingAction === 'reset'"
+                @click="handleResetAccessSecret"
+              >
+                重置 Secret
+              </el-button>
+              <el-button
+                v-if="!accessCredential.enabled"
+                type="primary"
+                :loading="accessSavingAction === 'enable'"
+                @click="handleEnableExistingAccess"
+              >
+                重新启用
+              </el-button>
+              <el-button
+                v-else
+                type="danger"
+                plain
+                :loading="accessSavingAction === 'revoke'"
+                @click="handleRevokeAccess"
+              >
+                吊销接入
+              </el-button>
+            </template>
+          </div>
+        </section>
+
+        <section
+          v-if="accessCredential"
+          class="project-app-workspace-page__integration-step"
+        >
+          <div class="project-app-workspace-page__integration-step-header">
+            <div>
+              <span>服务端配置</span>
+              <h3>业务 Bootstrap 环境变量</h3>
+              <p>业务后端验证登录与权限后，使用这组凭证调用 Agent 的 /integration/bootstrap。</p>
+            </div>
+            <el-button
+              size="small"
+              @click="copyText(bootstrapEnvironmentCode, '环境变量模板已复制。')"
+            >
+              复制
+            </el-button>
+          </div>
+          <div class="project-app-workspace-page__code-block">
+            <pre>{{ bootstrapEnvironmentCode }}</pre>
+          </div>
+          <div class="project-app-workspace-page__credential-meta">
+            <span>Secret 尾号：{{ accessCredential.client_secret_last_four }}</span>
+            <span>Token 版本：{{ accessCredential.token_version }}</span>
+          </div>
+        </section>
+
+        <section
+          v-if="accessCredential"
+          class="project-app-workspace-page__integration-step"
+        >
+          <div class="project-app-workspace-page__integration-step-header">
+            <div>
+              <span>浏览器接入</span>
+              <h3>加载 CDN Loader</h3>
+              <p>按钮和权限展示由业务前端负责；Loader 只在用户触发时启动 Widget。</p>
+            </div>
+            <el-button
+              size="small"
+              @click="copyText(loaderCode, 'Loader 代码已复制。')"
+            >
+              复制
+            </el-button>
+          </div>
+          <div class="project-app-workspace-page__code-block">
+            <pre>{{ loaderCode }}</pre>
+          </div>
+        </section>
+      </div>
     </AdminDialog>
 
     <AdminDialog
@@ -1094,15 +1398,28 @@ watch(previewStoreId, () => {
       :loading="appDialogSaving"
       @closed="handleAppDialogClosed"
     >
-      <el-form label-position="top" class="project-app-workspace-page__create-form">
+      <el-form
+        label-position="top"
+        class="project-app-workspace-page__create-form"
+      >
         <el-row :gutter="14">
           <el-col :span="12">
-            <el-form-item label="应用端名称" required>
-              <el-input v-model="appForm.name" maxlength="100" placeholder="例如：Web H5 演示端" />
+            <el-form-item
+              label="应用端名称"
+              required
+            >
+              <el-input
+                v-model="appForm.name"
+                maxlength="100"
+                placeholder="例如：Web H5 演示端"
+              />
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="应用端编码" required>
+            <el-form-item
+              label="应用端编码"
+              required
+            >
               <el-input
                 v-model="appForm.code"
                 maxlength="120"
@@ -1111,9 +1428,12 @@ watch(previewStoreId, () => {
               />
             </el-form-item>
           </el-col>
-          <el-col :span="24">
+          <el-col :span="12">
             <el-form-item label="终端类型">
-              <el-select v-model="appForm.terminal_type" class="project-app-workspace-page__create-full">
+              <el-select
+                v-model="appForm.terminal_type"
+                class="project-app-workspace-page__create-full"
+              >
                 <el-option
                   v-for="(label, value) in PROJECT_APP_TERMINAL_TYPE_LABELS"
                   :key="value"
@@ -1121,6 +1441,18 @@ watch(previewStoreId, () => {
                   :value="value"
                 />
               </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item
+              label="Widget 精确版本"
+              required
+            >
+              <el-input
+                v-model="appForm.widget_version"
+                maxlength="30"
+                placeholder="例如：1.0.0"
+              />
             </el-form-item>
           </el-col>
           <el-col :span="24">
@@ -1138,8 +1470,14 @@ watch(previewStoreId, () => {
         </el-row>
       </el-form>
       <template #footer>
-        <el-button @click="appDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="appDialogSaving" @click="handleSaveAppBasicInfo">
+        <el-button @click="appDialogVisible = false">
+          取消
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="appDialogSaving"
+          @click="handleSaveAppBasicInfo"
+        >
           {{ appDialogSubmitText }}
         </el-button>
       </template>
@@ -1826,6 +2164,37 @@ watch(previewStoreId, () => {
   padding: 12px 14px;
 }
 
+.project-app-workspace-page__integration-secret {
+  margin-top: 14px;
+}
+
+.project-app-workspace-page__secret-value {
+  display: flex;
+  min-width: 0;
+  margin-top: 8px;
+  align-items: center;
+  gap: 10px;
+}
+
+.project-app-workspace-page__secret-value code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #7c2d12;
+}
+
+.project-app-workspace-page__integration-actions,
+.project-app-workspace-page__credential-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.project-app-workspace-page__credential-meta {
+  color: var(--admin-text-muted);
+  font-size: 12px;
+}
+
 .project-app-workspace-page__integration-step {
   display: grid;
   gap: 12px;
@@ -1933,6 +2302,11 @@ watch(previewStoreId, () => {
 
   .project-app-workspace-page__sandbox-store {
     width: 100%;
+  }
+
+  .project-app-workspace-page__secret-value {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .project-app-workspace-page__access-list {

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script setup lang="ts" generic="Row">
 import { ref, useAttrs, useSlots } from "vue";
 
 defineOptions({
@@ -11,7 +11,7 @@ const tableRef = ref();
 
 withDefaults(
   defineProps<{
-    data: unknown[];
+    data: Row[];
     loading?: boolean;
     rowKey?: string;
     tableClass?: string;
@@ -28,7 +28,7 @@ withDefaults(
 );
 
 defineEmits<{
-  selectionChange: [selection: unknown[]];
+  selectionChange: [selection: Row[]];
 }>();
 
 defineExpose({

@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.widget import (
     get_widget_session_context,
-    require_widget_service_token,
 )
 from app.application.widget_chat_service import WidgetChatService, WidgetSessionContext
 from app.db.session import get_db
@@ -18,27 +17,9 @@ from app.models.schemas.kb_chat import (
 from app.models.schemas.widget import (
     WidgetBootstrapResponse,
     WidgetChatRequest,
-    WidgetSessionCreate,
-    WidgetSessionResponse,
 )
 
 router = APIRouter()
-
-
-@router.post(
-    "/session",
-    response_model=WidgetSessionResponse,
-    dependencies=[Depends(require_widget_service_token)],
-)
-async def create_widget_session(
-    body: WidgetSessionCreate,
-    db: AsyncSession = Depends(get_db),
-):
-    credential = await WidgetChatService(db).create_credential(body)
-    return WidgetSessionResponse(
-        token=credential.token,
-        expires_in_seconds=credential.expires_in_seconds,
-    )
 
 
 @router.get("/bootstrap", response_model=WidgetBootstrapResponse)

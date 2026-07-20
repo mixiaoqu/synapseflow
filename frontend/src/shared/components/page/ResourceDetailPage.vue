@@ -4,7 +4,7 @@ import AppError from "@/shared/components/feedback/AppError.vue";
 import AppForbidden from "@/shared/components/feedback/AppForbidden.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     eyebrow?: string;
     title: string;
@@ -28,7 +28,6 @@ const props = withDefaults(
     description: "",
     badge: "",
     loading: false,
-    error: null,
     forbidden: false,
     empty: false,
     loadingTitle: "加载详情中",

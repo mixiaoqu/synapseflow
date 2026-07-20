@@ -1,30 +1,31 @@
 import { createApp, defineComponent, h, nextTick, reactive, ref } from "vue";
-import ElementPlus from "element-plus";
+import ElIcon from "element-plus/es/components/icon/index.mjs";
 
-import type { WidgetPageContext } from "@/shared/api/widget";
-import WidgetChatPanel from "@/widget/WidgetChatPanel.vue";
+import type { WidgetPageContext } from "./client/agent-chat-api";
+import { normalizePageContext, resolvePageContext } from "./context";
+import ChatPanel from "./components/ChatPanel.vue";
 import type {
   AgentChatContext,
   AgentChatGlobal,
   AgentChatInitOptions,
   AgentChatInstance,
   AgentChatTokenResult,
-} from "@/widget/types";
+} from "./types";
 
 interface AgentChatCredential {
   token: string;
   expiresAt: number | null;
 }
 
-type WidgetChatPanelPublic = {
+type ChatPanelPublic = {
   sendMessage: (message: string) => Promise<void>;
 };
 
 const TOKEN_REFRESH_LEEWAY_MS = 60_000;
 const PANEL_VIEWPORT_MARGIN = 16;
 
-function resolveContainer(container?: string | HTMLElement) {
-  if (container instanceof HTMLElement) {
+function resolveContainer(container?: string | HTMLElement | ShadowRoot) {
+  if (container instanceof HTMLElement || container instanceof ShadowRoot) {
     return container;
   }
 
@@ -61,7 +62,8 @@ function normalizeCredential(
 
   const directToken = result.access_token ?? result.accessToken ?? result.token;
   const token = directToken?.trim() ?? "";
-  const expiresInSeconds = result.expires_in_seconds ?? result.expiresInSeconds;
+  const expiresInSeconds =
+    result.expires_in ?? result.expires_in_seconds ?? result.expiresInSeconds;
   const expiresAt =
     typeof expiresInSeconds === "number" && Number.isFinite(expiresInSeconds)
       ? Date.now() + Math.max(0, expiresInSeconds) * 1000
@@ -70,25 +72,8 @@ function normalizeCredential(
   return { token, expiresAt };
 }
 
-function optionalContextValue(value: unknown) {
-  const normalized = typeof value === "string" ? value.trim() : "";
-  return normalized || undefined;
-}
-
 function buildPageContext(context: AgentChatContext): WidgetPageContext {
-  const pageType = String(
-    context.page_type ?? context.pageType ?? context.page ?? "external",
-  ).trim() || "external";
-
-  return {
-    schema_version: 1,
-    page_type: pageType,
-    route_name: optionalContextValue(context.route_name ?? context.routeName),
-    route_path: optionalContextValue(context.route),
-    entity_type: optionalContextValue(context.entity_type ?? context.entityType),
-    entity_id: optionalContextValue(context.entity_id ?? context.entityId),
-    entity_name: optionalContextValue(context.entity_name ?? context.entityName),
-  };
+  return normalizePageContext(context) as WidgetPageContext;
 }
 
 function createHost(options: AgentChatInitOptions) {
@@ -101,7 +86,7 @@ function createHost(options: AgentChatInitOptions) {
   return host;
 }
 
-export function createAgentChat(): AgentChatGlobal {
+export function createChatRuntime(): AgentChatGlobal {
   return {
     init(options: AgentChatInitOptions): AgentChatInstance {
       const host = createHost(options);
@@ -109,7 +94,7 @@ export function createAgentChat(): AgentChatGlobal {
       const credential = ref(normalizeCredential(options.token));
       const shouldMountPanel = ref(Boolean(credential.value.token));
       const context = reactive<AgentChatContext>({ ...(options.context ?? {}) });
-      const pageRef = ref<WidgetChatPanelPublic | null>(null);
+      const pageRef = ref<ChatPanelPublic | null>(null);
       let refreshTimer: number | null = null;
       let refreshPromise: Promise<string> | null = null;
       let activePointerId: number | null = null;
@@ -215,6 +200,14 @@ export function createAgentChat(): AgentChatGlobal {
         );
       }
 
+      async function syncPageContext() {
+        const nextContext = await resolvePageContext(context, options.getContext);
+        (Object.keys(context) as Array<keyof AgentChatContext>).forEach((key) => {
+          delete context[key];
+        });
+        Object.assign(context, nextContext);
+      }
+
       async function refreshToken() {
         if (refreshPromise) {
           return refreshPromise;
@@ -257,9 +250,10 @@ export function createAgentChat(): AgentChatGlobal {
               },
               shouldMountPanel.value
                 ? [
-                    h(WidgetChatPanel, {
+                    h(ChatPanel, {
                       ref: pageRef,
                       token: credential.value.token,
+                      apiBaseUrl: options.apiBaseUrl,
                       pageContext: buildPageContext(context),
                       refreshToken,
                       onClose: close,
@@ -272,7 +266,7 @@ export function createAgentChat(): AgentChatGlobal {
       });
 
       const app = createApp(Root);
-      app.use(ElementPlus);
+      app.use(ElIcon);
       app.mount(host);
 
       window.addEventListener("resize", handleViewportResize);
@@ -286,6 +280,7 @@ export function createAgentChat(): AgentChatGlobal {
       }
 
       async function open() {
+        await syncPageContext();
         if (!hasUsableToken()) {
           await refreshToken();
         }

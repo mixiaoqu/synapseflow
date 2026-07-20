@@ -81,6 +81,8 @@ Current API router prefixes:
 - `/api/v1/ask`: user knowledge-base chat, chat sessions, feedback.
 - `/api/v1/admin/qa`: admin QA preview, logs, and review operations.
 - `/api/v1/embed`: embedded assistant session bootstrap/chat APIs.
+- `/api/v1/integration/bootstrap`: business-backend credential exchange for Agent Loader bootstrap.
+- `/api/v1/widget`: token-protected Web Component bootstrap, chat, history, and feedback APIs.
 - `/api/v1/assistants`: assistant profile CRUD, reorder, bulk action, preview, invoke, stream, and model options.
 - `/api/v1/documents`: upload/import, list/detail, content update, versions, indexing, review, publish/unpublish, and delete operations.
 - `/api/v1/document-categories`: document category CRUD.
@@ -101,6 +103,7 @@ Application/service layer anchors:
 - `backend/app/application/document_service.py`: document lifecycle, content/version operations, review/publish transitions, and indexing triggers.
 - `backend/app/application/indexing_service.py`: indexing job orchestration.
 - `backend/app/application/project_service.py`: project and project app operations.
+- `backend/app/application/integration_bootstrap_service.py`: validates app credentials and issues Loader bootstrap payloads.
 - `backend/app/application/product_service.py`: product CRUD and team-scoped product listing.
 - `backend/app/application/mcp_service.py`: read-only MCP scope resolution plus search/answer proxying.
 - `backend/app/application/business_operations/*`: whitelisted business data operation boundary for agent-triggered business data queries or actions. The current implementation exposes product search through a controlled registry/service/mock gateway.
@@ -192,6 +195,9 @@ Frontend entry points:
 - `frontend/src/app/layouts/AdminLayout.vue`: authenticated admin shell.
 - `frontend/src/app/layouts/AuthLayout.vue`: login shell.
 - `frontend/src/modules/embed/pages/EmbedAssistantPage.vue`: embedded assistant page.
+- `frontend/src/agent-loader/loader.ts`: fixed CDN Loader and the public `EnterpriseAgent` lifecycle API.
+- `frontend/src/widget/`: CDN-delivered Web Component chat runtime.
+- `frontend/vite.loader.config.ts` and `frontend/vite.widget.config.ts`: immutable Loader and exact-version Widget asset builds.
 
 Admin pages currently present:
 
@@ -233,6 +239,7 @@ Only describe these as existing product surfaces unless code changes add more:
 - User login and session restoration.
 - End-user knowledge-base/assistant ask experience with streaming responses and chat history.
 - Embedded assistant experience for project apps.
+- CDN Loader and Web Component Widget integration with business-owned identity and final authorization.
 - Assistant-routed business data query boundary through `business_ops`; the current operation exposed by code is product search.
 - Admin product, project, and project-app management.
 - Admin knowledge-base, document, category, version, indexing, review, and publish management.

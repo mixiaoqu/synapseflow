@@ -1,3 +1,5 @@
+name: synapseflow-test
+
 x-backend-test-image: &backend-test-image
   image: synapseflow-backend:test
   build:
@@ -8,14 +10,41 @@ x-backend-test-image: &backend-test-image
       PYTORCH_CPU_FIND_LINKS: ${SF_PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
 
 services:
+  nginx-test:
+    image: nginx:1.27-alpine
+    container_name: synapseflow-nginx-test
+    restart: unless-stopped
+    environment:
+      SF_NGINX_SERVER_NAME: ${SF_TEST_NGINX_SERVER_NAME:-zsk-test.szsayu.com}
+      SF_CLIENT_MAX_BODY_SIZE: ${SF_CLIENT_MAX_BODY_SIZE:-50m}
+    ports:
+      - "${SF_TEST_NGINX_BIND_HOST:-127.0.0.1}:${SF_TEST_NGINX_PORT:-18080}:80"
+    volumes:
+      - ./deploy/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      frontend-test:
+        condition: service_healthy
+      backend-test:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1/ || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   postgres-test:
     image: pgvector/pgvector:pg16
     container_name: synapseflow-postgres-test
     restart: unless-stopped
-    env_file:
-      - .env.test
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-synapseflow_test}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-synapseflow_test}
     ports:
-      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_POSTGRES_PORT:-5433}:5432"
+      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_POSTGRES_PORT:-15433}:5432"
     volumes:
       - postgres_test_data:/var/lib/postgresql/data
     healthcheck:
@@ -35,7 +64,7 @@ services:
       - --appendonly
       - "yes"
     ports:
-      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_REDIS_PORT:-6380}:6379"
+      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_REDIS_PORT:-16380}:6379"
     volumes:
       - redis_test_data:/data
     healthcheck:
@@ -52,10 +81,10 @@ services:
     container_name: synapseflow-neo4j-test
     restart: unless-stopped
     environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-change-this-test-graph-password}
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
     ports:
-      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_NEO4J_HTTP_PORT:-7475}:7474"
-      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_NEO4J_BOLT_PORT:-7688}:7687"
+      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_NEO4J_HTTP_PORT:-17475}:7474"
+      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_NEO4J_BOLT_PORT:-17688}:7687"
     volumes:
       - neo4j_test_data:/data
     healthcheck:
@@ -74,34 +103,58 @@ services:
     environment: &backend-test-env
       ENV: test
       DEBUG: "false"
+      SECRET_KEY: ${SF_SECRET_KEY:?set SF_SECRET_KEY}
+      ENABLE_PUBLIC_REGISTRATION: ${ENABLE_PUBLIC_REGISTRATION:-false}
+      CORS_ORIGINS: ${SF_CORS_ORIGINS:?set SF_CORS_ORIGINS}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-synapseflow_test}:${POSTGRES_PASSWORD:-change-this-test-db-password}@postgres-test:5432/${POSTGRES_DB:-synapseflow_test}
       REDIS_URL: redis://redis-test:6379/0
       DRAMATIQ_INDEXING_QUEUE: ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing}
       DRAMATIQ_GRAPH_INDEXING_QUEUE: ${SF_DRAMATIQ_GRAPH_INDEXING_QUEUE:-graph_indexing}
-      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
-      MOYU_API_KEY: ${MOYU_API_KEY:-}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DRAMATIQ_EVALUATION_QUEUE: ${SF_DRAMATIQ_EVALUATION_QUEUE:-evaluation}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:?set SILICONFLOW_API_KEY}
+      MOYU_API_KEY: ${MOYU_API_KEY:?set MOYU_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}
       EMBEDDING_PROVIDER: ${SF_EMBEDDING_PROVIDER:-siliconflow}
       EMBEDDING_API_URL: ${SF_EMBEDDING_API_URL:-https://api.siliconflow.cn/v1/embeddings}
       EMBEDDING_MODEL: ${SF_EMBEDDING_MODEL:-BAAI/bge-m3}
       EMBEDDING_DIMENSIONS: ${SF_EMBEDDING_DIMENSIONS:-}
-      GRAPH_ENABLED: "true"
-      GRAPH_INDEXING_ENABLED: "true"
-      GRAPH_URI: bolt://neo4j-test:7687
-      GRAPH_USERNAME: neo4j
-      GRAPH_PASSWORD: ${NEO4J_PASSWORD:-change-this-test-graph-password}
-      GRAPH_DATABASE: neo4j
+      RERANK_ENABLED: ${SF_RERANK_ENABLED:-true}
+      RERANK_PROVIDER: ${SF_RERANK_PROVIDER:-siliconflow}
+      RERANK_MODEL: ${SF_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+      RERANK_TOP_K: ${SF_RERANK_TOP_K:-}
+      RERANK_API_URL: ${SF_RERANK_API_URL:-https://api.siliconflow.cn/v1/rerank}
+      GRAPH_ENABLED: ${GRAPH_ENABLED:-false}
+      GRAPH_INDEXING_ENABLED: ${GRAPH_INDEXING_ENABLED:-false}
+      GRAPH_URI: ${GRAPH_URI:-bolt://neo4j-test:7687}
+      GRAPH_USERNAME: ${GRAPH_USERNAME:-neo4j}
+      GRAPH_PASSWORD: ${GRAPH_PASSWORD:?set GRAPH_PASSWORD}
+      GRAPH_DATABASE: ${GRAPH_DATABASE:-neo4j}
+      PREVIEW_DIR: /app/previews
+      UPLOAD_DIR: /app/uploads
       DOCUMENT_STAGING_DIR: /app/uploaded_documents/staging
+      MAX_UPLOAD_SIZE: ${SF_MAX_UPLOAD_SIZE:-10485760}
       HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
       HF_HOME: /app/.cache/huggingface
       LOG_LEVEL: ${SF_LOG_LEVEL:-INFO}
+      LOG_JSON: ${SF_LOG_JSON:-false}
+      ENTERPRISE_SERVICE_TOKEN: ${SF_ENTERPRISE_SERVICE_TOKEN:?set SF_ENTERPRISE_SERVICE_TOKEN}
+      INTEGRATION_CREDENTIAL_PEPPER: ${SF_INTEGRATION_CREDENTIAL_PEPPER:?set SF_INTEGRATION_CREDENTIAL_PEPPER}
+      EMBED_FRONTEND_BASE_URL: ${SF_EMBED_FRONTEND_BASE_URL:?set SF_EMBED_FRONTEND_BASE_URL}
+      EMBED_TOKEN_EXPIRE_MINUTES: ${SF_EMBED_TOKEN_EXPIRE_MINUTES:-60}
+      WIDGET_TOKEN_EXPIRE_MINUTES: ${SF_WIDGET_TOKEN_EXPIRE_MINUTES:-15}
+      AGENT_PUBLIC_API_BASE_URL: ${SF_AGENT_PUBLIC_API_BASE_URL:?set SF_AGENT_PUBLIC_API_BASE_URL}
+      BOOTSTRAP_ENABLED: ${BOOTSTRAP_ENABLED:-false}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_FULL_NAME: ${BOOTSTRAP_ADMIN_FULL_NAME:-System Administrator}
     ports:
-      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_BACKEND_PORT:-8000}:8000"
+      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_BACKEND_PORT:-18000}:8000"
     volumes:
       - backend_test_hf_cache:/app/.cache/huggingface
       - backend_test_previews:/app/previews
       - backend_test_uploads:/app/uploads
-      - ./backend/uploaded_documents:/app/uploaded_documents
+      - backend_test_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres-test:
         condition: service_healthy
@@ -112,7 +165,7 @@ services:
     command:
       - sh
       - -c
-      - uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+      - uv run python scripts/init_db.py && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
     healthcheck:
       test:
         - CMD
@@ -123,6 +176,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 25s
+    networks:
+      default:
+        aliases:
+          - backend
 
   backend-worker-indexing-test:
     <<: *backend-test-image
@@ -133,11 +190,9 @@ services:
       - backend_test_hf_cache:/app/.cache/huggingface
       - backend_test_previews:/app/previews
       - backend_test_uploads:/app/uploads
-      - ./backend/uploaded_documents:/app/uploaded_documents
+      - backend_test_uploaded_documents:/app/uploaded_documents
     depends_on:
-      postgres-test:
-        condition: service_healthy
-      redis-test:
+      backend-test:
         condition: service_healthy
     command:
       - sh
@@ -153,11 +208,9 @@ services:
       - backend_test_hf_cache:/app/.cache/huggingface
       - backend_test_previews:/app/previews
       - backend_test_uploads:/app/uploads
-      - ./backend/uploaded_documents:/app/uploaded_documents
+      - backend_test_uploaded_documents:/app/uploaded_documents
     depends_on:
-      postgres-test:
-        condition: service_healthy
-      redis-test:
+      backend-test:
         condition: service_healthy
       neo4j-test:
         condition: service_healthy
@@ -166,6 +219,41 @@ services:
       - -c
       - uv run dramatiq --queues ${SF_DRAMATIQ_GRAPH_INDEXING_QUEUE:-graph_indexing} --processes ${SF_DRAMATIQ_GRAPH_PROCESSES:-1} --threads ${SF_DRAMATIQ_GRAPH_THREADS:-1} app.workers.indexing_tasks
 
+  frontend-test:
+    image: synapseflow-frontend:test
+    container_name: synapseflow-frontend-test
+    build:
+      context: ./frontend
+      dockerfile: ../docker/frontend/Dockerfile.prod
+      args:
+        VITE_API_BASE_URL: ${SF_FRONTEND_API_BASE_URL:-/api/v1}
+        VITE_API_TIMEOUT_MS: ${SF_FRONTEND_API_TIMEOUT_MS:-15000}
+        NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmmirror.com}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      VITE_API_BASE_URL: ${SF_FRONTEND_API_BASE_URL:-/api/v1}
+      VITE_API_TIMEOUT_MS: ${SF_FRONTEND_API_TIMEOUT_MS:-15000}
+    ports:
+      - "${SF_TEST_BIND_HOST:-127.0.0.1}:${SF_TEST_FRONTEND_PORT:-15173}:5173"
+    depends_on:
+      backend-test:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - 'fetch("http://127.0.0.1:5173").then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))'
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      default:
+        aliases:
+          - frontend
+
 volumes:
   postgres_test_data:
   redis_test_data:
@@ -173,3 +261,4 @@ volumes:
   backend_test_hf_cache:
   backend_test_previews:
   backend_test_uploads:
+  backend_test_uploaded_documents:

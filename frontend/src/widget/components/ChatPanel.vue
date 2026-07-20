@@ -2,21 +2,21 @@
 import { computed, nextTick, useTemplateRef } from "vue";
 import { ChatDotRound, Close, Opportunity, RefreshRight, Warning } from "@element-plus/icons-vue";
 
-import assistantAvatarUrl from "@/shared/assets/assistant-avatar.png";
-import type { WidgetPageContext } from "@/shared/api/widget";
-import WidgetChatComposer from "@/widget/components/WidgetChatComposer.vue";
-import WidgetMessageItem from "@/widget/components/WidgetMessageItem.vue";
-import WidgetSessionHistory from "@/widget/components/WidgetSessionHistory.vue";
-import WidgetSuggestionChips from "@/widget/components/WidgetSuggestionChips.vue";
-import { useWidgetChat } from "@/widget/useWidgetChat";
+import type { WidgetPageContext } from "../client/agent-chat-api";
+import { useAgentChat } from "../chat";
+import ChatComposer from "./ChatComposer.vue";
+import MessageItem from "./MessageItem.vue";
+import SessionHistory from "./SessionHistory.vue";
+import SuggestionChips from "./SuggestionChips.vue";
 
 const props = defineProps<{
   token: string;
+  apiBaseUrl: string;
   pageContext: WidgetPageContext;
   refreshToken: () => Promise<string>;
 }>();
 const emit = defineEmits<{ close: []; dragStart: [event: PointerEvent] }>();
-const composerRef = useTemplateRef<InstanceType<typeof WidgetChatComposer>>("composerRef");
+const composerRef = useTemplateRef<InstanceType<typeof ChatComposer>>("composerRef");
 
 const {
   assistantName,
@@ -40,7 +40,8 @@ const {
   submitFeedback,
   suggestions,
   workflowRun,
-} = useWidgetChat({
+} = useAgentChat({
+  apiBaseUrl: props.apiBaseUrl,
   token: computed(() => props.token),
   pageContext: computed(() => props.pageContext),
   refreshToken: props.refreshToken,
@@ -75,17 +76,29 @@ defineExpose({ sendMessage: handleSend });
 </script>
 
 <template>
-  <section class="widget-chat" aria-label="智能助手">
-    <div v-if="isInitializing" class="widget-chat__initializing">
+  <section
+    class="widget-chat"
+    aria-label="智能助手"
+  >
+    <div
+      v-if="isInitializing"
+      class="widget-chat__initializing"
+    >
       <span class="widget-chat__loading-icon"><el-icon class="is-loading"><RefreshRight /></el-icon></span>
       <strong>正在初始化助手</strong>
       <span>正在校验访问凭证并加载应用配置</span>
     </div>
 
     <template v-else>
-      <header class="widget-chat__header" @pointerdown="handleHeaderPointerDown">
+      <header
+        class="widget-chat__header"
+        @pointerdown="handleHeaderPointerDown"
+      >
         <div class="widget-chat__identity">
-          <span class="widget-chat__avatar"><img :src="assistantAvatarUrl" :alt="assistantName"></span>
+          <span
+            class="widget-chat__avatar"
+            aria-hidden="true"
+          ><el-icon><ChatDotRound /></el-icon></span>
           <span class="widget-chat__identity-copy">
             <span class="widget-chat__name-row">
               <strong>{{ assistantName }}</strong><small>AI</small>
@@ -94,7 +107,7 @@ defineExpose({ sendMessage: handleSend });
           </span>
         </div>
         <div class="widget-chat__header-actions">
-          <WidgetSessionHistory
+          <SessionHistory
             :current-session-id="currentSessionId"
             :sessions="sessions"
             :loading="isLoadingSessions"
@@ -103,23 +116,44 @@ defineExpose({ sendMessage: handleSend });
             @create="handleNewConversation"
             @delete="deleteSession"
           />
-          <button type="button" title="关闭智能助手" aria-label="关闭智能助手" @click="emit('close')">
+          <button
+            type="button"
+            title="关闭智能助手"
+            aria-label="关闭智能助手"
+            @click="emit('close')"
+          >
             <el-icon><Close /></el-icon>
           </button>
         </div>
       </header>
 
-      <div v-if="contextLabel" class="widget-chat__context">
+      <div
+        v-if="contextLabel"
+        class="widget-chat__context"
+      >
         <span>当前应用</span><strong>{{ contextLabel }}</strong>
       </div>
 
-      <div v-if="error" class="widget-chat__error" role="alert">
+      <div
+        v-if="error"
+        class="widget-chat__error"
+        role="alert"
+      >
         <el-icon><Warning /></el-icon><span>{{ error }}</span>
       </div>
 
-      <main ref="scrollRef" class="widget-chat__messages">
-        <div v-if="messages.length === 0" class="widget-chat__welcome">
-          <span class="widget-chat__welcome-avatar"><img :src="assistantAvatarUrl" :alt="assistantName"></span>
+      <main
+        ref="scrollRef"
+        class="widget-chat__messages"
+      >
+        <div
+          v-if="messages.length === 0"
+          class="widget-chat__welcome"
+        >
+          <span
+            class="widget-chat__welcome-avatar"
+            aria-hidden="true"
+          ><el-icon><ChatDotRound /></el-icon></span>
           <div class="widget-chat__welcome-card">
             <small>欢迎使用</small>
             <strong>{{ assistantName }}</strong>
@@ -127,7 +161,7 @@ defineExpose({ sendMessage: handleSend });
           </div>
         </div>
 
-        <WidgetMessageItem
+        <MessageItem
           v-for="message in messages"
           :key="message.id"
           :message="message"
@@ -140,15 +174,18 @@ defineExpose({ sendMessage: handleSend });
 
       <footer class="widget-chat__footer">
         <div class="widget-chat__composer-shell">
-          <div v-if="messages.length === 0 && suggestions.length" class="widget-chat__suggestion-area">
+          <div
+            v-if="messages.length === 0 && suggestions.length"
+            class="widget-chat__suggestion-area"
+          >
             <span class="widget-chat__suggestion-title"><el-icon><Opportunity /></el-icon>热门问题</span>
-            <WidgetSuggestionChips
+            <SuggestionChips
               :suggestions="suggestions.slice(0, 3)"
               :disabled="isTyping"
               @select="handleSend"
             />
           </div>
-          <WidgetChatComposer
+          <ChatComposer
             ref="composerRef"
             :placeholder="placeholder"
             :is-typing="isTyping"
@@ -156,7 +193,9 @@ defineExpose({ sendMessage: handleSend });
             @stop="stopGenerating"
           />
         </div>
-        <div class="widget-chat__brand"><el-icon><ChatDotRound /></el-icon>Powered by SynapseFlow</div>
+        <div class="widget-chat__brand">
+          <el-icon><ChatDotRound /></el-icon>Powered by SynapseFlow
+        </div>
       </footer>
     </template>
   </section>
@@ -170,9 +209,9 @@ defineExpose({ sendMessage: handleSend });
 .widget-chat__loading-icon { display: grid; width: 48px; height: 48px; place-items: center; border-radius: 8px; background: #e6f7fa; color: #0891b2; font-size: 23px; }
 .widget-chat__header { display: flex; min-height: 62px; padding: 10px 12px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #e5edf0; background: rgba(255, 255, 255, 0.98); }
 .widget-chat__identity { display: flex; min-width: 0; align-items: center; gap: 9px; }
-.widget-chat__avatar, .widget-chat__welcome-avatar { display: inline-flex; overflow: hidden; border-radius: 50%; background: #fff; box-shadow: 0 6px 16px rgba(8, 145, 178, 0.14); }
+.widget-chat__avatar, .widget-chat__welcome-avatar { display: inline-grid; overflow: hidden; place-items: center; border-radius: 50%; background: #e6f7fa; color: #0891b2; box-shadow: 0 6px 16px rgba(8, 145, 178, 0.14); }
 .widget-chat__avatar { width: 36px; height: 36px; flex: 0 0 36px; }
-.widget-chat__avatar img, .widget-chat__welcome-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.widget-chat__avatar .el-icon { font-size: 20px; }
 .widget-chat__identity-copy { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .widget-chat__name-row { display: flex; min-width: 0; align-items: center; gap: 6px; }
 .widget-chat__name-row strong { overflow: hidden; color: #164e63; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
@@ -190,6 +229,7 @@ defineExpose({ sendMessage: handleSend });
 .widget-chat__messages { display: flex; min-height: 0; flex: 1; padding: 16px 14px; flex-direction: column; gap: 14px; overflow-y: auto; background: linear-gradient(180deg, #f8fbfc 0%, #fff 100%); scrollbar-color: #cbdde2 transparent; scrollbar-width: thin; }
 .widget-chat__welcome { display: flex; width: 100%; align-items: flex-end; gap: 9px; }
 .widget-chat__welcome-avatar { width: 30px; height: 30px; flex: 0 0 30px; margin-bottom: 3px; }
+.widget-chat__welcome-avatar .el-icon { font-size: 17px; }
 .widget-chat__welcome-card { display: flex; width: min(88%, 700px); padding: 15px 16px; flex-direction: column; gap: 6px; border: 1px solid #ccecf1; border-radius: 8px 8px 8px 2px; background: #fff; box-shadow: 0 8px 22px rgba(8, 145, 178, 0.06); }
 .widget-chat__welcome-card small { color: #0891b2; font-size: 9px; font-weight: 700; text-transform: uppercase; }
 .widget-chat__welcome-card strong { color: #164e63; font-size: 16px; }

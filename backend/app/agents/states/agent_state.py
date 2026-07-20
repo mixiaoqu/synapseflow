@@ -16,6 +16,7 @@ class AgentState(BaseAgentContext, total=False):
     external_user_id: Optional[str]
     external_user_name: Optional[str]
     store_id: Optional[str]
+    trusted_scope: Dict[str, Any]
     assistant_id: Optional[int]
     assistant_name: Optional[str]
     assistant_welcome_message: Optional[str]

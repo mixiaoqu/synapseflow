@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { ChatLineRound, Clock, Delete, Loading, Plus, Search } from "@element-plus/icons-vue";
 
-import type { WidgetSessionSummary } from "@/shared/api/widget";
+import type { WidgetSessionSummary } from "../client/agent-chat-api";
 
 const props = defineProps<{
   currentSessionId: string | null;
@@ -38,35 +38,77 @@ function create() { emit("create"); isOpen.value = false; }
       title="历史对话"
       :aria-expanded="isOpen"
       @click="isOpen = !isOpen"
-    ><el-icon><Clock /></el-icon></button>
+    >
+      <el-icon><Clock /></el-icon>
+    </button>
 
-    <section v-if="isOpen" class="widget-history__panel" aria-label="历史对话">
+    <section
+      v-if="isOpen"
+      class="widget-history__panel"
+      aria-label="历史对话"
+    >
       <header><strong>历史对话</strong><span>{{ sessions.length }}</span></header>
       <label class="widget-history__search">
         <el-icon><Search /></el-icon>
-        <input v-model="keyword" type="search" placeholder="搜索历史对话" aria-label="搜索历史对话">
+        <input
+          v-model="keyword"
+          type="search"
+          placeholder="搜索历史对话"
+          aria-label="搜索历史对话"
+        >
       </label>
       <div class="widget-history__body">
-        <div v-if="loading" class="widget-history__empty"><el-icon class="is-loading"><Loading /></el-icon>加载中...</div>
-        <div v-else-if="!filtered.length" class="widget-history__empty"><el-icon><ChatLineRound /></el-icon>暂无历史对话</div>
-        <div v-else class="widget-history__list">
+        <div
+          v-if="loading"
+          class="widget-history__empty"
+        >
+          <el-icon class="is-loading">
+            <Loading />
+          </el-icon>加载中...
+        </div>
+        <div
+          v-else-if="!filtered.length"
+          class="widget-history__empty"
+        >
+          <el-icon><ChatLineRound /></el-icon>暂无历史对话
+        </div>
+        <div
+          v-else
+          class="widget-history__list"
+        >
           <div
             v-for="session in filtered"
             :key="session.session_id"
             class="widget-history__item"
             :class="{ 'is-active': session.session_id === currentSessionId }"
           >
-            <button type="button" class="widget-history__main" @click="select(session.session_id)">
+            <button
+              type="button"
+              class="widget-history__main"
+              @click="select(session.session_id)"
+            >
               <strong>{{ session.title || "新对话" }}</strong>
               <span>{{ session.preview || "暂无预览" }}</span>
             </button>
-            <button type="button" class="widget-history__delete" title="删除对话" @click.stop="emit('delete', session.session_id)">
+            <button
+              type="button"
+              class="widget-history__delete"
+              title="删除对话"
+              @click.stop="emit('delete', session.session_id)"
+            >
               <el-icon><Delete /></el-icon>
             </button>
           </div>
         </div>
       </div>
-      <footer><button type="button" @click="create"><el-icon><Plus /></el-icon>新建对话</button></footer>
+      <footer>
+        <button
+          type="button"
+          @click="create"
+        >
+          <el-icon><Plus /></el-icon>新建对话
+        </button>
+      </footer>
     </section>
   </div>
 </template>

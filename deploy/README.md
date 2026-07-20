@@ -10,21 +10,29 @@
 - `.env.prod.example`
   生产环境变量模板，按实际运行链路整理，并统一使用中文注释
 - `deploy/nginx/default.conf.template`
-  反向代理配置，负责前端入口、`/api` 转发、流式接口透传
+  Docker 环境内的反向代理配置，负责前端入口、`/api`、`/agent-static` 和流式接口透传
+- `deploy/nginx/synapseflow.host.conf.example`
+  宿主机统一 Nginx 模板，按 `zsk.szsayu.com` 与 `zsk-test.szsayu.com` 分流生产和测试环境
 - `docker/backend/Dockerfile`
   后端镜像构建
 - `docker/frontend/Dockerfile.prod`
   前端生产镜像构建
+- `frontend/src/agent-loader/`、`frontend/src/widget/`
+  构建固定 CDN Loader 和精确版本的 Web Component Widget，产物统一位于 `/agent-static/`
+- `deploy/AGENT_WIDGET.md`
+  面向业务研发团队的通用 Agent 接入指南，包含 Bootstrap、Loader、MCP、最终业务权限、发布和验收流程
 
 ## 当前推荐拓扑
 
-- 对外只开放 `80/443`
-- `nginx` 作为唯一公网入口
+- 对外只开放宿主机 Nginx 的 `80/443`
+- 宿主机 Nginx 作为唯一公网入口，按域名隔离生产和测试环境
+- 生产 Docker Nginx 仅监听 `127.0.0.1:18081`
+- 测试 Docker Nginx 仅监听 `127.0.0.1:18080`
 - `frontend` 和 `backend` 仅绑定到 `127.0.0.1`
 - `postgres`、`redis` 只在 Docker 内网使用
 - 前端默认走同域名 `/api` 反代，不直接写死后端公网地址
-- 如果 `443` 已由宿主机 Nginx、云负载均衡或 CDN 终结，外层只负责 TLS，HTTP 再转发到当前 Compose 栈的 `nginx:80`
-- 当前仓库内的 `nginx` 继续负责 `/`、`/api`、`/preview` 和流式接口的分流，不建议在外层只做 HTTPS 时直接绕过它
+- 宿主机 Nginx 负责 TLS 和域名分流，再转发到对应 Compose 栈的 Docker Nginx
+- Docker Nginx 继续负责 `/`、`/api`、`/preview`、`/agent-static` 和流式接口的内部路由，不直接绕过它
 
 这套方式最适合国内云服务器，优点是：
 
@@ -73,6 +81,8 @@ cp .env.prod.example .env.prod
 - `DEEPSEEK_API_KEY`
 - `SF_CORS_ORIGINS`
 - `SF_ENTERPRISE_SERVICE_TOKEN`
+- `SF_INTEGRATION_CREDENTIAL_PEPPER`
+- `SF_AGENT_PUBLIC_API_BASE_URL`
 - `SF_EMBED_FRONTEND_BASE_URL`
 - `SF_NGINX_SERVER_NAME`
 
@@ -88,6 +98,8 @@ cp .env.prod.example .env.prod
 
 - `SF_NGINX_SERVER_NAME=你的域名`
   如果还需要保留 `http://服务器IP` 直连备用入口，可写成 `你的域名 你的服务器IP`
+- `SF_NGINX_BIND_HOST=127.0.0.1`
+- `SF_NGINX_PORT=18081`
 - `SF_CORS_ORIGINS=https://你的域名`
   如果还需要保留 `http://服务器IP` 直连备用入口，可补充为 `https://你的域名,http://你的服务器IP`
 - `SF_EMBED_FRONTEND_BASE_URL=https://你的域名`
@@ -99,6 +111,8 @@ cp .env.prod.example .env.prod
 - `GRAPH_USERNAME=neo4j`
 - `GRAPH_DATABASE=neo4j`
 - `SF_ENTERPRISE_SERVICE_TOKEN=` 使用足够长的随机字符串
+- `SF_INTEGRATION_CREDENTIAL_PEPPER=` 使用与其他密钥不同的足够长随机字符串
+- `SF_AGENT_PUBLIC_API_BASE_URL=https://你的域名/api/v1`
 
 `.env.prod.example` 已经显式保留了当前项目常见的连接、寻址、初始化和运维参数。没有列出的变量，通常说明当前项目已经在 `docker-compose.prod.yml` 中提供了稳定默认值。只有你明确需要调整时，才建议再补充这些变量，例如：
 
@@ -146,6 +160,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
 - 让前端走同域名反代，避免把后端地址写死进前端构建产物
 - 前端 `VITE_*` 变量属于构建期参数，不要把它们当成运行时热配置来维护
 - 流式接口必须关闭 Nginx 缓冲，否则聊天/生成流会卡成整包返回
+- `/agent-static/loader/v1/loader.js` 与 `/agent-static/widget/<精确版本>/index.js` 发布后不可覆盖；升级时发布新版本并更新 ProjectApp 的 `widget_version`
 - `postgres_data`、`redis_data`、`backend_previews`、`backend_uploads`、`backend_uploaded_documents` 必须持久化
 - 生产环境把 `.env.prod` 排除出版本控制
 

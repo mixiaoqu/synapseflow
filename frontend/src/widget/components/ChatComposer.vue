@@ -42,10 +42,23 @@ defineExpose({ focus });
       @input="nextTick(resize)"
       @keydown="onKeydown"
     />
-    <button v-if="isTyping" type="button" class="is-stop" title="停止生成" @click="emit('stop')">
+    <button
+      v-if="isTyping"
+      type="button"
+      class="is-stop"
+      title="停止生成"
+      @click="emit('stop')"
+    >
       <span aria-hidden="true">■</span>
     </button>
-    <button v-else type="button" class="is-send" :disabled="!canSend" title="发送" @click="send">
+    <button
+      v-else
+      type="button"
+      class="is-send"
+      :disabled="!canSend"
+      title="发送"
+      @click="send"
+    >
       <el-icon><Promotion /></el-icon><span>发送</span>
     </button>
   </div>

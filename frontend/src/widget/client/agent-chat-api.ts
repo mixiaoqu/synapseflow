@@ -1,9 +1,9 @@
 import {
-  API_BASE_URL,
+  AppRequestError,
   DEFAULT_HTTP_ERROR_MESSAGE,
   DEFAULT_NETWORK_ERROR_MESSAGE,
-} from "@/shared/api/config";
-import { AppRequestError, resolveHttpErrorMessage } from "@/shared/utils/error";
+  resolveHttpErrorMessage,
+} from "../errors";
 
 export interface WidgetPageContext {
   schema_version: 1;
@@ -13,6 +13,7 @@ export interface WidgetPageContext {
   entity_type?: string;
   entity_id?: string;
   entity_name?: string;
+  attributes?: Record<string, unknown>;
 }
 
 export interface WidgetPageConfig {
@@ -81,11 +82,12 @@ async function parsePayload(response: Response): Promise<unknown> {
 }
 
 async function request(
+  apiBaseUrl: string,
   endpoint: string,
   options: { token: string; method?: string; body?: unknown; signal?: AbortSignal },
 ) {
   try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    const response = await fetch(`${apiBaseUrl}${endpoint}`, {
       method: options.method ?? "GET",
       headers: buildHeaders(options.token, options.body !== undefined),
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -111,57 +113,82 @@ async function request(
 }
 
 async function getJson<T>(
+  apiBaseUrl: string,
   endpoint: string,
   options: { token: string; method?: string; body?: unknown },
 ) {
-  const response = await request(endpoint, options);
+  const response = await request(apiBaseUrl, endpoint, options);
   if (response.status === 204) {
     return undefined as T;
   }
   return (await response.json()) as T;
 }
 
-export const widgetApi = {
-  bootstrap(token: string, pageContext: WidgetPageContext) {
-    const query = new URLSearchParams({ page_type: pageContext.page_type });
-    return getJson<WidgetBootstrap>(`/widget/bootstrap?${query.toString()}`, { token });
-  },
+export function createAgentChatApi(apiBaseUrl: string) {
+  const normalizedBaseUrl = apiBaseUrl.trim().replace(/\/+$/, "");
+  if (!normalizedBaseUrl) {
+    throw new Error("AgentChat apiBaseUrl is required.");
+  }
 
-  listSessions(token: string, limit = 30) {
-    return getJson<WidgetSessionSummary[]>(`/widget/sessions?limit=${limit}`, { token });
-  },
+  return {
+    bootstrap(token: string, pageContext: WidgetPageContext) {
+      const query = new URLSearchParams({ page_type: pageContext.page_type });
+      return getJson<WidgetBootstrap>(
+        normalizedBaseUrl,
+        `/widget/bootstrap?${query.toString()}`,
+        { token },
+      );
+    },
 
-  getSession(token: string, sessionId: string) {
-    return getJson<WidgetSessionDetail>(`/widget/sessions/${encodeURIComponent(sessionId)}`, {
-      token,
-    });
-  },
+    listSessions(token: string, limit = 30) {
+      return getJson<WidgetSessionSummary[]>(
+        normalizedBaseUrl,
+        `/widget/sessions?limit=${limit}`,
+        { token },
+      );
+    },
 
-  deleteSession(token: string, sessionId: string) {
-    return getJson<void>(`/widget/sessions/${encodeURIComponent(sessionId)}`, {
-      token,
-      method: "DELETE",
-    });
-  },
+    getSession(token: string, sessionId: string) {
+      return getJson<WidgetSessionDetail>(
+        normalizedBaseUrl,
+        `/widget/sessions/${encodeURIComponent(sessionId)}`,
+        { token },
+      );
+    },
 
-  async stream(token: string, payload: WidgetChatPayload, signal: AbortSignal) {
-    const response = await request("/widget/stream", {
-      token,
-      method: "POST",
-      body: payload,
-      signal,
-    });
-    if (!response.body) {
-      throw new AppRequestError("响应数据为空。");
-    }
-    return response.body;
-  },
+    deleteSession(token: string, sessionId: string) {
+      return getJson<void>(
+        normalizedBaseUrl,
+        `/widget/sessions/${encodeURIComponent(sessionId)}`,
+        { token, method: "DELETE" },
+      );
+    },
 
-  submitFeedback(token: string, logId: number, feedbackValue: string) {
-    return getJson<{ message: string }>(`/widget/feedback/${logId}`, {
-      token,
-      method: "POST",
-      body: { feedback_value: feedbackValue },
-    });
-  },
-};
+    async stream(token: string, payload: WidgetChatPayload, signal: AbortSignal) {
+      const response = await request(normalizedBaseUrl, "/widget/stream", {
+        token,
+        method: "POST",
+        body: payload,
+        signal,
+      });
+      if (!response.body) {
+        throw new AppRequestError("响应数据为空。");
+      }
+      return response.body;
+    },
+
+    submitFeedback(token: string, logId: number, feedbackValue: string) {
+      return getJson<{ message: string }>(
+        normalizedBaseUrl,
+        `/widget/feedback/${logId}`,
+        {
+          token,
+          method: "POST",
+          body: { feedback_value: feedbackValue },
+        },
+      );
+    },
+  };
+}
+
+export type AgentChatApi = ReturnType<typeof createAgentChatApi>;

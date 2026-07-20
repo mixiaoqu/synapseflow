@@ -13,6 +13,7 @@ from app.api.v1.endpoints import (
     embed,
     evaluations,
     health,
+    integration_bootstrap,
     knowledge_bases,
     mcp,
     products,
@@ -30,6 +31,11 @@ api_router.include_router(ask.router, prefix="/ask", tags=["ask"])
 api_router.include_router(ask.admin_router, prefix="/admin/qa", tags=["admin-qa"])
 api_router.include_router(embed.router, prefix="/embed", tags=["embed"])
 api_router.include_router(widget.router, prefix="/widget", tags=["widget"])
+api_router.include_router(
+    integration_bootstrap.router,
+    prefix="/integration",
+    tags=["integration"],
+)
 api_router.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
 api_router.include_router(assistants.router, prefix="/assistants", tags=["assistants"])
 api_router.include_router(agent_integrations.router, prefix="/agent-integrations", tags=["agent-integrations"])

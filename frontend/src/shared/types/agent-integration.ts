@@ -163,6 +163,27 @@ export interface AgentAppToolSetBindingListResponse {
   items: AgentAppToolSetBinding[];
 }
 
+export interface ProjectAppAccessCredential {
+  project_app_id: number;
+  client_id: string;
+  client_secret_last_four: string;
+  allowed_origins: string[];
+  token_version: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectAppAccessIssuedCredential extends ProjectAppAccessCredential {
+  client_secret: string;
+}
+
+export interface ProjectAppAccessCreatePayload {
+  allowed_origins: string[];
+}
+
+export type ProjectAppAccessUpdatePayload = ProjectAppAccessCreatePayload;
+
 export interface AgentToolCallLog {
   id: number;
   team_id: number;

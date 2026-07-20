@@ -1,0 +1,249 @@
+type LoaderStatus = "idle" | "opening" | "ready" | "failed" | "destroyed";
+
+interface PageContext {
+  resourceType?: string;
+  resourceId?: string;
+  [key: string]: unknown;
+}
+
+interface BootstrapResponse {
+  access_token: string;
+  expires_in: number;
+  api_base_url: string;
+  widget: {
+    version: string;
+    protocol_version: "1";
+  };
+}
+
+interface AgentChatElement extends HTMLElement {
+  configure(options: {
+    apiBaseUrl: string;
+    token: { access_token: string; expires_in: number };
+    getToken: () => Promise<{ access_token: string; expires_in: number }>;
+    context: PageContext;
+  }): void;
+  open(): Promise<void>;
+  close(): void;
+  updateContext(context: PageContext): void;
+  destroy(): void;
+}
+
+type LoaderEvent = "ready" | "open" | "close" | "error" | "destroy";
+type LoaderListener = (detail?: unknown) => void;
+
+interface EnterpriseAgentApi {
+  readonly status: LoaderStatus;
+  open(options?: { context?: PageContext }): Promise<void>;
+  close(): void;
+  destroy(): void;
+  setContext(context: PageContext): void;
+  on(event: LoaderEvent, listener: LoaderListener): () => void;
+}
+
+interface EnterpriseAgentWindow extends Window {
+  EnterpriseAgent?: EnterpriseAgentApi;
+}
+
+const VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+const enterpriseWindow = window as EnterpriseAgentWindow;
+const loaderScript = document.currentScript as HTMLScriptElement | null;
+
+if (!loaderScript?.src) {
+  throw new Error("Enterprise Agent Loader must be loaded from a script src.");
+}
+
+const assetOrigin = new URL(loaderScript.src, window.location.href).origin;
+const configuredBootstrapEndpoint =
+  loaderScript.dataset.bootstrapEndpoint?.trim() || "/api/agent/bootstrap";
+const bootstrapUrl = new URL(configuredBootstrapEndpoint, window.location.href);
+
+if (bootstrapUrl.origin !== window.location.origin) {
+  throw new Error("Enterprise Agent bootstrap endpoint must use the business page origin.");
+}
+
+if (enterpriseWindow.EnterpriseAgent) {
+  throw new Error("Enterprise Agent Loader can only be initialized once per page.");
+}
+
+let status: LoaderStatus = "idle";
+let element: AgentChatElement | null = null;
+let openingPromise: Promise<void> | null = null;
+let pageContext: PageContext = {};
+let initializedVersion = "";
+let initializedApiBaseUrl = "";
+let lifecycleVersion = 0;
+const listeners = new Map<LoaderEvent, Set<LoaderListener>>();
+
+function emit(event: LoaderEvent, detail?: unknown) {
+  for (const listener of listeners.get(event) || []) {
+    listener(detail);
+  }
+}
+
+function assertBootstrap(payload: unknown): BootstrapResponse {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Business bootstrap returned an invalid response.");
+  }
+  const value = payload as Partial<BootstrapResponse>;
+  if (!value.access_token || typeof value.access_token !== "string") {
+    throw new Error("Business bootstrap did not return an access token.");
+  }
+  if (!Number.isFinite(value.expires_in) || Number(value.expires_in) <= 0) {
+    throw new Error("Business bootstrap returned an invalid token lifetime.");
+  }
+  if (!value.api_base_url || !/^https?:\/\//.test(value.api_base_url)) {
+    throw new Error("Business bootstrap returned an invalid Agent API URL.");
+  }
+  if (!value.widget || !VERSION_PATTERN.test(String(value.widget.version || ""))) {
+    throw new Error("Business bootstrap returned an invalid Widget version.");
+  }
+  if (value.widget.protocol_version !== "1") {
+    throw new Error("Business bootstrap returned an unsupported Widget protocol.");
+  }
+  return value as BootstrapResponse;
+}
+
+async function requestBootstrap(): Promise<BootstrapResponse> {
+  const response = await fetch(bootstrapUrl, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Requested-With": "EnterpriseAgentLoader",
+    },
+    body: "{}",
+  });
+  if (!response.ok) {
+    throw new Error(`Business bootstrap failed with HTTP ${response.status}.`);
+  }
+  return assertBootstrap(await response.json());
+}
+
+async function refreshToken() {
+  const bootstrap = await requestBootstrap();
+  if (
+    initializedVersion &&
+    (bootstrap.widget.version !== initializedVersion ||
+      bootstrap.api_base_url.replace(/\/+$/, "") !== initializedApiBaseUrl)
+  ) {
+    throw new Error("Agent bootstrap configuration changed; destroy and reopen the Widget.");
+  }
+  return {
+    access_token: bootstrap.access_token,
+    expires_in: bootstrap.expires_in,
+  };
+}
+
+function bindElementEvents(target: AgentChatElement) {
+  target.addEventListener("agent-chat-open", () => emit("open"));
+  target.addEventListener("agent-chat-close", () => emit("close"));
+  target.addEventListener("agent-chat-error", (event) => {
+    emit("error", (event as CustomEvent).detail);
+  });
+}
+
+function requireElement() {
+  if (!element) {
+    throw new Error("Agent Widget initialization did not complete.");
+  }
+  return element;
+}
+
+async function initialize() {
+  const currentLifecycle = lifecycleVersion;
+  const bootstrap = await requestBootstrap();
+  const widgetUrl = new URL(
+    `/agent-static/widget/${bootstrap.widget.version}/index.js`,
+    assetOrigin,
+  );
+  await import(/* @vite-ignore */ widgetUrl.href);
+
+  if (status === "destroyed" || currentLifecycle !== lifecycleVersion) {
+    return;
+  }
+  if (!customElements.get("agent-chat")) {
+    throw new Error("Agent Widget did not register the agent-chat element.");
+  }
+
+  initializedVersion = bootstrap.widget.version;
+  initializedApiBaseUrl = bootstrap.api_base_url.replace(/\/+$/, "");
+  const target = document.createElement("agent-chat") as AgentChatElement;
+  bindElementEvents(target);
+  document.body.appendChild(target);
+  target.configure({
+    apiBaseUrl: initializedApiBaseUrl,
+    token: {
+      access_token: bootstrap.access_token,
+      expires_in: bootstrap.expires_in,
+    },
+    getToken: refreshToken,
+    context: pageContext,
+  });
+  element = target;
+  status = "ready";
+  emit("ready", { version: initializedVersion });
+}
+
+const api: EnterpriseAgentApi = {
+  get status() {
+    return status;
+  },
+  async open(options = {}) {
+    if (status === "destroyed") {
+      throw new Error("Enterprise Agent Loader has been destroyed.");
+    }
+    if (options.context) {
+      pageContext = { ...options.context };
+      element?.updateContext(pageContext);
+    }
+    if (element) {
+      await element.open();
+      return;
+    }
+    if (!openingPromise) {
+      status = "opening";
+      openingPromise = initialize()
+        .catch((error) => {
+          if (status !== "destroyed") {
+            status = "failed";
+            emit("error", error);
+          }
+          throw error;
+        })
+        .finally(() => {
+          openingPromise = null;
+        });
+    }
+    await openingPromise;
+    await requireElement().open();
+  },
+  close() {
+    element?.close();
+  },
+  destroy() {
+    if (status === "destroyed") return;
+    lifecycleVersion += 1;
+    element?.destroy();
+    element?.remove();
+    element = null;
+    pageContext = {};
+    status = "destroyed";
+    emit("destroy");
+    listeners.clear();
+  },
+  setContext(context) {
+    pageContext = { ...context };
+    element?.updateContext(pageContext);
+  },
+  on(event, listener) {
+    const eventListeners = listeners.get(event) || new Set<LoaderListener>();
+    eventListeners.add(listener);
+    listeners.set(event, eventListeners);
+    return () => eventListeners.delete(listener);
+  },
+};
+
+enterpriseWindow.EnterpriseAgent = api;
+
+export {};

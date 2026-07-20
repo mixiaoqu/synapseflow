@@ -5,9 +5,11 @@
   "packageManager": "pnpm@9.15.9",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "dev": "pnpm run build:agent-assets && vite",
+    "build": "vue-tsc --noEmit && pnpm run build:agent-assets && vite build",
     "build:widget": "vite build --config vite.widget.config.ts",
+    "build:loader": "vite build --config vite.loader.config.ts",
+    "build:agent-assets": "pnpm run build:widget && pnpm run build:loader",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "lint": "eslint ."

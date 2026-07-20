@@ -4,14 +4,19 @@ const emit = defineEmits<{ select: [question: string] }>();
 </script>
 
 <template>
-  <div v-if="suggestions.length" class="widget-suggestions">
+  <div
+    v-if="suggestions.length"
+    class="widget-suggestions"
+  >
     <button
       v-for="question in suggestions"
       :key="question"
       type="button"
       :disabled="disabled"
       @click="emit('select', question)"
-    >{{ question }}</button>
+    >
+      {{ question }}
+    </button>
   </div>
 </template>
 

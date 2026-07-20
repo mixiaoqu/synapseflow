@@ -57,6 +57,7 @@ export interface ProjectAppSummary {
   category_name: string | null;
   default_assistant_id: number | null;
   default_assistant_name: string | null;
+  widget_version: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -77,6 +78,7 @@ export interface ProjectAppUpsertPayload {
   knowledge_base_id?: number | null;
   category_id?: number | null;
   default_assistant_id?: number | null;
+  widget_version: string;
   is_active: boolean;
 }
 

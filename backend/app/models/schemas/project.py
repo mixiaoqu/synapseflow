@@ -75,6 +75,7 @@ class ProjectAppCreate(BaseModel):
     knowledge_base_id: int | None = Field(default=None, gt=0)
     category_id: int | None = Field(default=None, gt=0)
     default_assistant_id: int | None = Field(default=None, gt=0)
+    widget_version: str = Field(default="1.0.0", pattern=r"^\d+\.\d+\.\d+$")
     terminal_type: ProjectAppTerminalType = "web"
     is_active: bool = True
 
@@ -86,6 +87,7 @@ class ProjectAppUpdate(BaseModel):
     knowledge_base_id: int | None = Field(default=None, gt=0)
     category_id: int | None = Field(default=None, gt=0)
     default_assistant_id: int | None = Field(default=None, gt=0)
+    widget_version: str = Field(default="1.0.0", pattern=r"^\d+\.\d+\.\d+$")
     terminal_type: ProjectAppTerminalType = "web"
     is_active: bool = True
 
@@ -104,6 +106,7 @@ class ProjectAppResponse(BaseModel):
     category_name: str | None = None
     default_assistant_id: int | None = None
     default_assistant_name: str | None = None
+    widget_version: str
     terminal_type: ProjectAppTerminalType = "web"
     is_active: bool
     created_at: datetime

@@ -3,18 +3,18 @@ import { computed, ref } from "vue";
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 import {
+  ChatDotRound,
   Document,
   Loading,
   User,
 } from "@element-plus/icons-vue";
 
-import assistantAvatarUrl from "@/shared/assets/assistant-avatar.png";
-import type { ChatWorkflowRun } from "@/shared/lib/stream/workflowRun";
-import type { WidgetMessage } from "@/widget/useWidgetChat";
-import WidgetWorkflowProgress from "@/widget/components/WidgetWorkflowProgress.vue";
+import type { AgentChatMessage } from "../chat";
+import type { ChatWorkflowRun } from "../stream/workflow-run";
+import WorkflowProgress from "./WorkflowProgress.vue";
 
 const props = defineProps<{
-  message: WidgetMessage;
+  message: AgentChatMessage;
   assistantName: string;
   isTyping: boolean;
   workflowRun?: ChatWorkflowRun | null;
@@ -50,28 +50,65 @@ async function copy() {
 </script>
 
 <template>
-  <article class="widget-message" :class="`is-${message.role}`">
-    <div class="widget-message__avatar" :class="`is-${message.role}`">
-      <img v-if="message.role === 'assistant'" :src="assistantAvatarUrl" :alt="assistantName">
-      <el-icon v-else><User /></el-icon>
+  <article
+    class="widget-message"
+    :class="`is-${message.role}`"
+  >
+    <div
+      class="widget-message__avatar"
+      :class="`is-${message.role}`"
+    >
+      <el-icon
+        v-if="message.role === 'assistant'"
+        :aria-label="assistantName"
+      >
+        <ChatDotRound />
+      </el-icon>
+      <el-icon v-else>
+        <User />
+      </el-icon>
     </div>
 
     <div class="widget-message__body">
-      <WidgetWorkflowProgress
+      <WorkflowProgress
         v-if="message.role === 'assistant' && workflowRun"
         :run="workflowRun"
       />
 
-      <div v-if="message.content" class="widget-message__bubble" :class="`is-${message.role}`">
-        <div v-if="message.role === 'assistant'" class="widget-message__markdown" v-html="html" />
-        <div v-else>{{ message.content }}</div>
+      <div
+        v-if="message.content"
+        class="widget-message__bubble"
+        :class="`is-${message.role}`"
+      >
+        <!-- Markdown 已经过 DOMPurify 清洗。 -->
+        <!-- eslint-disable vue/no-v-html -->
+        <div
+          v-if="message.role === 'assistant'"
+          class="widget-message__markdown"
+          v-html="html"
+        />
+        <!-- eslint-enable vue/no-v-html -->
+        <div v-else>
+          {{ message.content }}
+        </div>
       </div>
-      <div v-else-if="message.role === 'assistant' && !workflowRun" class="widget-message__typing">
-        <el-icon class="is-loading"><Loading /></el-icon><span>思考中...</span>
+      <div
+        v-else-if="message.role === 'assistant' && !workflowRun"
+        class="widget-message__typing"
+      >
+        <el-icon class="is-loading">
+          <Loading />
+        </el-icon><span>思考中...</span>
       </div>
 
-      <div v-if="message.role === 'assistant' && message.content" class="widget-message__meta">
-        <div v-if="message.retrievedDocs?.length" class="widget-message__sources">
+      <div
+        v-if="message.role === 'assistant' && message.content"
+        class="widget-message__meta"
+      >
+        <div
+          v-if="message.retrievedDocs?.length"
+          class="widget-message__sources"
+        >
           <span
             v-for="(doc, index) in message.retrievedDocs.slice(0, 4)"
             :key="`${message.id}-${index}`"
@@ -91,7 +128,11 @@ async function copy() {
             :disabled="!message.logId || isTyping || message.feedbackSubmitting"
             @click="emit('feedback', 'helpful')"
           >
-            <svg class="widget-message__action-icon" aria-hidden="true" viewBox="0 0 24 24">
+            <svg
+              class="widget-message__action-icon"
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+            >
               <path d="M7 10v12" />
               <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
             </svg>
@@ -103,14 +144,33 @@ async function copy() {
             :disabled="!message.logId || isTyping || message.feedbackSubmitting"
             @click="emit('feedback', 'not_helpful')"
           >
-            <svg class="widget-message__action-icon" aria-hidden="true" viewBox="0 0 24 24">
+            <svg
+              class="widget-message__action-icon"
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+            >
               <path d="M17 14V2" />
               <path d="m9 18.12 1-4.12H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z" />
             </svg>
           </button>
-          <button type="button" :title="copied ? '已复制' : '复制回答'" @click="copy">
-            <svg class="widget-message__action-icon" aria-hidden="true" viewBox="0 0 24 24">
-              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+          <button
+            type="button"
+            :title="copied ? '已复制' : '复制回答'"
+            @click="copy"
+          >
+            <svg
+              class="widget-message__action-icon"
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+            >
+              <rect
+                width="14"
+                height="14"
+                x="8"
+                y="8"
+                rx="2"
+                ry="2"
+              />
               <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
             </svg>
           </button>
@@ -124,8 +184,8 @@ async function copy() {
 .widget-message { display: flex; width: 100%; align-items: flex-start; gap: 10px; }
 .widget-message.is-user { justify-content: flex-end; }
 .widget-message__avatar { display: grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center; overflow: hidden; border-radius: 50%; }
-.widget-message__avatar img { width: 100%; height: 100%; object-fit: cover; }
-.widget-message__avatar.is-assistant { background: #fff; box-shadow: 0 5px 14px rgba(8, 145, 178, 0.14); }
+.widget-message__avatar .el-icon { font-size: 16px; }
+.widget-message__avatar.is-assistant { background: #e6f7fa; color: #0891b2; box-shadow: 0 5px 14px rgba(8, 145, 178, 0.14); }
 .widget-message__avatar.is-user { order: 2; background: #dce7eb; color: #334155; }
 .widget-message__body { display: flex; min-width: 0; max-width: calc(100% - 40px); flex-direction: column; align-items: flex-start; gap: 8px; }
 .widget-message.is-assistant .widget-message__body { width: min(88%, 720px); }

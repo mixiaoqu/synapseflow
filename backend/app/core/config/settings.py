@@ -20,8 +20,10 @@ class Settings(BaseSettings):
     MCP_TOKEN_EXPIRE_MINUTES: int = 30
     ENABLE_PUBLIC_REGISTRATION: bool = False
     ENTERPRISE_SERVICE_TOKEN: str = ""
+    INTEGRATION_CREDENTIAL_PEPPER: str = ""
     EMBED_TOKEN_EXPIRE_MINUTES: int = 60
-    WIDGET_TOKEN_EXPIRE_MINUTES: int = 60
+    WIDGET_TOKEN_EXPIRE_MINUTES: int = 15
+    AGENT_PUBLIC_API_BASE_URL: str = ""
     EMBED_FRONTEND_BASE_URL: str = ""
     CORS_ORIGINS: str = (
         "http://localhost:3000,"

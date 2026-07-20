@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from dataclasses import dataclass
@@ -156,10 +157,14 @@ class McpToolGateway:
             arguments=payload.arguments,
             service_token=service_token,
             trusted_context={
+                "product_id": request.scope.get("product_id"),
                 "store_id": request.scope.get("store_id"),
                 "external_user_id": request.actor.external_user_id,
                 "project_app_id": request.project_app_id or request.scope.get("project_app_id"),
                 "project_id": request.scope.get("project_id"),
+                "session_id": request.session_id,
+                "request_id": request.scope.get("trace_id"),
+                "scope": dict(request.scope),
             },
         )
         result.operation_id = operation.id
@@ -245,16 +250,25 @@ class McpToolGateway:
     @staticmethod
     def _build_context_headers(context: dict[str, Any]) -> dict[str, str]:
         header_map = {
+            "product_id": "X-Agent-Product-Id",
             "store_id": "X-Agent-Store-Id",
             "external_user_id": "X-Agent-User-Id",
             "project_app_id": "X-Agent-Project-App-Id",
             "project_id": "X-Agent-Project-Id",
+            "session_id": "X-Agent-Session-Id",
+            "request_id": "X-Request-Id",
         }
-        return {
+        headers = {
             header_name: str(context[key]).strip()
             for key, header_name in header_map.items()
             if context.get(key) is not None and str(context[key]).strip()
         }
+        scope = context.get("scope")
+        if isinstance(scope, dict) and scope:
+            headers["X-Agent-Scope"] = base64.urlsafe_b64encode(
+                json.dumps(scope, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ).decode("ascii").rstrip("=")
+        return headers
 
     def _build_call_payload(self, *, mcp_tool: McpTool, request: BusinessOperationRequest) -> McpCallPayload:
         tool_name = self._normalize_tool_name(mcp_tool.raw_name)

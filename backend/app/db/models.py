@@ -275,8 +275,31 @@ class ProjectApp(Base):
         nullable=True,
         index=True,
     )
+    widget_version = Column(String(30), nullable=False, default="1.0.0")
     terminal_type = Column(String(40), nullable=False, default="web")
     is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class ProjectAppAccessCredential(Base):
+    """Server-to-server access credential for one project application."""
+
+    __tablename__ = "project_app_access_credentials"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_app_id = Column(
+        Integer,
+        ForeignKey("project_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    client_id = Column(String(80), nullable=False, unique=True)
+    client_secret_digest = Column(String(64), nullable=False)
+    client_secret_last_four = Column(String(4), nullable=False)
+    allowed_origins = Column(JSON, nullable=False, default=list)
+    token_version = Column(Integer, nullable=False, default=1)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

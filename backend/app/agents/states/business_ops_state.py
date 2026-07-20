@@ -20,6 +20,7 @@ class BusinessOpsState(BaseAgentContext, total=False):
     external_user_id: Optional[str]
     external_user_name: Optional[str]
     store_id: Optional[str]
+    trusted_scope: Dict[str, Any]
     page_context: Dict[str, Any]
     page_config: Dict[str, Any]
 

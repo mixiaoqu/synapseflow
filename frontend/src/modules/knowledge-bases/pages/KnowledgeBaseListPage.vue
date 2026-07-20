@@ -758,7 +758,7 @@ watch(
               inline-prompt
               active-text="启用"
               inactive-text="禁用"
-              @change="(value) => handleToggleActive(row.id, row.name, Boolean(value))"
+              @change="handleToggleActive(row.id, row.name, Boolean($event))"
             />
           </template>
         </el-table-column>

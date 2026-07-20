@@ -96,6 +96,7 @@ class ProjectService:
             category_name=record.category_name,
             default_assistant_id=app.default_assistant_id,
             default_assistant_name=record.assistant_name,
+            widget_version=app.widget_version,
             terminal_type=app.terminal_type,
             is_active=app.is_active,
             created_at=app.created_at,
@@ -464,6 +465,7 @@ class ProjectService:
             knowledge_base_id=normalized_knowledge_base_id,
             category_id=normalized_category_id,
             default_assistant_id=payload.default_assistant_id,
+            widget_version=payload.widget_version,
             terminal_type=payload.terminal_type,
             is_active=payload.is_active,
         )
@@ -513,6 +515,7 @@ class ProjectService:
         app.knowledge_base_id = normalized_knowledge_base_id
         app.category_id = normalized_category_id
         app.default_assistant_id = payload.default_assistant_id
+        app.widget_version = payload.widget_version
         app.terminal_type = payload.terminal_type
         app.is_active = payload.is_active
         await self.repository.update_app(app)

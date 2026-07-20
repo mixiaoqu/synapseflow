@@ -94,6 +94,7 @@ def build_business_ops_input(
             "external_user_id": state.get("external_user_id"),
             "external_user_name": state.get("external_user_name"),
             "store_id": state.get("store_id"),
+            "trusted_scope": dict(state.get("trusted_scope") or {}),
             "page_context": dict(state.get("page_context") or {}),
             "page_config": dict(state.get("page_config") or {}),
         }

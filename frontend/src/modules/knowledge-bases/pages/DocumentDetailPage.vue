@@ -67,13 +67,6 @@ const filteredChunks = computed(() => {
   });
 });
 
-const chunkStats = computed(() => [
-  { label: "分块总数", value: String(documentChunks.value.length) },
-  { label: "当前分块", value: activeChunk.value ? `#${activeChunk.value.chunk_index + 1}` : "未选择" },
-  { label: "文档版本", value: documentDetail.value ? `V${documentDetail.value.version}` : "-" },
-  { label: "文档大小", value: documentDetail.value ? formatFileSize(documentDetail.value.size) : "-" },
-]);
-
 const documentContentHtml = computed(() => {
   const content = documentDetail.value?.content ?? "";
   if (!content) {
@@ -180,15 +173,15 @@ function resolveChunkHighlightRange(content: string, chunk: DocumentChunkSummary
 
 function escapeHtml(value: string) {
   return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function escapeHtmlWithBreaks(value: string) {
-  return escapeHtml(value).replaceAll("\n", "<br />");
+  return escapeHtml(value).replace(/\n/g, "<br />");
 }
 
 watch(activeChunkId, async (value) => {

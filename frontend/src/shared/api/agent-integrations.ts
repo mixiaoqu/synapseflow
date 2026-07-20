@@ -16,7 +16,63 @@ import type {
   McpToolListResponse,
   McpTool,
   McpToolSyncResponse,
+  ProjectAppAccessCreatePayload,
+  ProjectAppAccessCredential,
+  ProjectAppAccessIssuedCredential,
+  ProjectAppAccessUpdatePayload,
 } from "@/shared/types/agent-integration";
+
+export function getProjectAppAccess(projectId: number, appId: number) {
+  return request<ProjectAppAccessCredential>({
+    url: `/agent-integrations/project-apps/${projectId}/${appId}/access`,
+    method: "GET",
+  });
+}
+
+export function createProjectAppAccess(
+  projectId: number,
+  appId: number,
+  payload: ProjectAppAccessCreatePayload,
+) {
+  return request<ProjectAppAccessIssuedCredential>({
+    url: `/agent-integrations/project-apps/${projectId}/${appId}/access`,
+    method: "POST",
+    data: payload,
+  });
+}
+
+export function updateProjectAppAccess(
+  projectId: number,
+  appId: number,
+  payload: ProjectAppAccessUpdatePayload,
+) {
+  return request<ProjectAppAccessCredential>({
+    url: `/agent-integrations/project-apps/${projectId}/${appId}/access`,
+    method: "PUT",
+    data: payload,
+  });
+}
+
+export function resetProjectAppAccessSecret(projectId: number, appId: number) {
+  return request<ProjectAppAccessIssuedCredential>({
+    url: `/agent-integrations/project-apps/${projectId}/${appId}/access/reset-secret`,
+    method: "POST",
+  });
+}
+
+export function enableProjectAppAccess(projectId: number, appId: number) {
+  return request<ProjectAppAccessCredential>({
+    url: `/agent-integrations/project-apps/${projectId}/${appId}/access/enable`,
+    method: "POST",
+  });
+}
+
+export function revokeProjectAppAccess(projectId: number, appId: number) {
+  return request<ProjectAppAccessCredential>({
+    url: `/agent-integrations/project-apps/${projectId}/${appId}/access/revoke`,
+    method: "POST",
+  });
+}
 
 export function listMcpServers(params: {
   team_id?: number;

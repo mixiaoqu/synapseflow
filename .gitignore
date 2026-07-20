@@ -81,6 +81,7 @@ frontend/out/
 frontend/build/
 frontend/dist/
 frontend/dist-widget/
+frontend/public/agent-static/
 frontend/.vite/
 frontend/.turbo/
 frontend/tsconfig.tsbuildinfo

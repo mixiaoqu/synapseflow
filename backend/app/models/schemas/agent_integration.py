@@ -218,6 +218,31 @@ class AgentAppToolSetBindingListResponse(BaseModel):
     items: list[AgentAppToolSetBindingResponse] = Field(default_factory=list)
 
 
+class ProjectAppAccessCreate(BaseModel):
+    allowed_origins: list[str] = Field(..., min_length=1, max_length=20)
+
+
+class ProjectAppAccessUpdate(BaseModel):
+    allowed_origins: list[str] = Field(..., min_length=1, max_length=20)
+
+
+class ProjectAppAccessResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    project_app_id: int
+    client_id: str
+    client_secret_last_four: str
+    allowed_origins: list[str] = Field(default_factory=list)
+    token_version: int
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectAppAccessIssuedResponse(ProjectAppAccessResponse):
+    client_secret: str
+
+
 class AgentToolCallLogResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

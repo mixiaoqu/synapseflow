@@ -452,7 +452,7 @@ watch(
             <el-switch
               :model-value="row.is_active"
               :loading="statusLoadingId === row.id"
-              @change="(value) => handleToggleStatus(row, value)"
+              @change="handleToggleStatus(row, $event)"
             />
           </template>
         </el-table-column>

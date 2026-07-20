@@ -6,7 +6,7 @@ import {
   getWorkflowDisplayStages,
   type ChatWorkflowRun,
   type WorkflowDisplayStage,
-} from "@/shared/lib/stream/workflowRun";
+} from "../stream/workflow-run";
 
 const props = defineProps<{ run: ChatWorkflowRun | null }>();
 const isExpanded = ref(false);
@@ -28,12 +28,23 @@ function stageDetail(stage: WorkflowDisplayStage) {
 </script>
 
 <template>
-  <section v-if="run" class="widget-workflow" :class="`is-${run.status}`" aria-live="polite">
+  <section
+    v-if="run"
+    class="widget-workflow"
+    :class="`is-${run.status}`"
+    aria-live="polite"
+  >
     <div class="widget-workflow__summary">
-      <span class="widget-workflow__status" aria-hidden="true">
+      <span
+        class="widget-workflow__status"
+        aria-hidden="true"
+      >
         <el-icon v-if="run.status === 'done'"><Check /></el-icon>
         <el-icon v-else-if="run.status === 'error'"><WarningFilled /></el-icon>
-        <el-icon v-else class="is-loading"><Loading /></el-icon>
+        <el-icon
+          v-else
+          class="is-loading"
+        ><Loading /></el-icon>
       </span>
       <span class="widget-workflow__summary-text">{{ summary }}</span>
       <button
@@ -45,18 +56,34 @@ function stageDetail(stage: WorkflowDisplayStage) {
         :aria-expanded="isExpanded"
         @click="isExpanded = !isExpanded"
       >
-        <el-icon class="widget-workflow__arrow" :class="{ 'is-open': isExpanded }">
+        <el-icon
+          class="widget-workflow__arrow"
+          :class="{ 'is-open': isExpanded }"
+        >
           <ArrowDown />
         </el-icon>
       </button>
     </div>
 
-    <div v-if="isExpanded && stages.length" class="widget-workflow__stages">
-      <div v-for="stage in stages" :key="stage.id" class="widget-workflow__stage">
-        <span class="widget-workflow__stage-mark" :class="`is-${stage.status}`">
+    <div
+      v-if="isExpanded && stages.length"
+      class="widget-workflow__stages"
+    >
+      <div
+        v-for="stage in stages"
+        :key="stage.id"
+        class="widget-workflow__stage"
+      >
+        <span
+          class="widget-workflow__stage-mark"
+          :class="`is-${stage.status}`"
+        >
           <el-icon v-if="stage.status === 'success'"><Check /></el-icon>
           <el-icon v-else-if="stage.status === 'error'"><WarningFilled /></el-icon>
-          <el-icon v-else class="is-loading"><Loading /></el-icon>
+          <el-icon
+            v-else
+            class="is-loading"
+          ><Loading /></el-icon>
         </span>
         <span class="widget-workflow__stage-copy">
           <strong>{{ stage.title }}</strong>

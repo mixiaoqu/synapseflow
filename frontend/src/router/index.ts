@@ -22,7 +22,6 @@ import DashboardPage from "@/modules/platform/pages/DashboardPage.vue";
 import QaLogListPage from "@/modules/qa-logs/pages/QaLogListPage.vue";
 import TeamListPage from "@/modules/organizations/pages/TeamListPage.vue";
 import UserListPage from "@/modules/users/pages/UserListPage.vue";
-import ProjectAppDetailPage from "@/modules/projects/pages/ProjectAppDetailPage.vue";
 import ProjectAppListPage from "@/modules/projects/pages/ProjectAppListPage.vue";
 import ProjectListPage from "@/modules/projects/pages/ProjectListPage.vue";
 // 当前阶段所有一级后台模块先复用统一骨架页，后续再逐个替换成真实业务页面。
@@ -99,7 +98,7 @@ const router = createRouter({
         {
           path: "projects/:projectId/apps/new",
           name: "project-app-create",
-          component: ProjectAppDetailPage,
+          redirect: (to) => ({ name: "project-apps", params: { projectId: to.params.projectId } }),
           meta: {
             parent: "project-apps",
             title: "新建应用端",
@@ -109,7 +108,11 @@ const router = createRouter({
         {
           path: "projects/:projectId/apps/:appId",
           name: "project-app-detail",
-          component: ProjectAppDetailPage,
+          redirect: (to) => ({
+            name: "project-apps",
+            params: { projectId: to.params.projectId },
+            query: { appId: String(to.params.appId) },
+          }),
           meta: {
             parent: "project-apps",
             title: "应用端详情",
