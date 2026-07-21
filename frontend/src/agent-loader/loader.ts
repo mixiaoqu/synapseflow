@@ -1,4 +1,4 @@
-type LoaderStatus = "idle" | "opening" | "ready" | "failed" | "destroyed";
+type LoaderStatus = "idle" | "opening" | "ready" | "failed";
 
 interface PageContext {
   resourceType?: string;
@@ -150,8 +150,7 @@ function requireElement() {
   return element;
 }
 
-async function initialize() {
-  const currentLifecycle = lifecycleVersion;
+async function initialize(currentLifecycle: number) {
   const bootstrap = await requestBootstrap();
   const widgetUrl = new URL(
     `/agent-static/widget/${bootstrap.widget.version}/index.js`,
@@ -159,7 +158,7 @@ async function initialize() {
   );
   await import(/* @vite-ignore */ widgetUrl.href);
 
-  if (status === "destroyed" || currentLifecycle !== lifecycleVersion) {
+  if (currentLifecycle !== lifecycleVersion) {
     return;
   }
   if (!customElements.get("agent-chat")) {
@@ -190,9 +189,6 @@ const api: EnterpriseAgentApi = {
     return status;
   },
   async open(options = {}) {
-    if (status === "destroyed") {
-      throw new Error("Enterprise Agent Loader has been destroyed.");
-    }
     if (options.context) {
       pageContext = { ...options.context };
       element?.updateContext(pageContext);
@@ -202,33 +198,43 @@ const api: EnterpriseAgentApi = {
       return;
     }
     if (!openingPromise) {
+      const currentLifecycle = lifecycleVersion;
       status = "opening";
-      openingPromise = initialize()
+      const currentOpening = initialize(currentLifecycle)
         .catch((error) => {
-          if (status !== "destroyed") {
+          if (currentLifecycle === lifecycleVersion) {
             status = "failed";
             emit("error", error);
           }
           throw error;
         })
         .finally(() => {
-          openingPromise = null;
+          if (openingPromise === currentOpening) {
+            openingPromise = null;
+          }
         });
+      openingPromise = currentOpening;
     }
+    const currentLifecycle = lifecycleVersion;
     await openingPromise;
+    if (currentLifecycle !== lifecycleVersion) {
+      return;
+    }
     await requireElement().open();
   },
   close() {
     element?.close();
   },
   destroy() {
-    if (status === "destroyed") return;
     lifecycleVersion += 1;
     element?.destroy();
     element?.remove();
     element = null;
+    openingPromise = null;
     pageContext = {};
-    status = "destroyed";
+    initializedVersion = "";
+    initializedApiBaseUrl = "";
+    status = "idle";
     emit("destroy");
     listeners.clear();
   },

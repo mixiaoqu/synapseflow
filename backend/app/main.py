@@ -68,11 +68,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS配置（支持SSE）
+# 浏览器跨域只负责传输许可，业务权限由各接口的显式凭证校验负责。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],  # 允许前端访问所有响应头

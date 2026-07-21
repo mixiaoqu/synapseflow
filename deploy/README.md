@@ -79,7 +79,6 @@ cp .env.prod.example .env.prod
 - `SILICONFLOW_API_KEY`
 - `MOYU_API_KEY`
 - `DEEPSEEK_API_KEY`
-- `SF_CORS_ORIGINS`
 - `SF_ENTERPRISE_SERVICE_TOKEN`
 - `SF_INTEGRATION_CREDENTIAL_PEPPER`
 - `SF_AGENT_PUBLIC_API_BASE_URL`
@@ -100,8 +99,6 @@ cp .env.prod.example .env.prod
   如果还需要保留 `http://服务器IP` 直连备用入口，可写成 `你的域名 你的服务器IP`
 - `SF_NGINX_BIND_HOST=127.0.0.1`
 - `SF_NGINX_PORT=18081`
-- `SF_CORS_ORIGINS=https://你的域名`
-  如果还需要保留 `http://服务器IP` 直连备用入口，可补充为 `https://你的域名,http://你的服务器IP`
 - `SF_EMBED_FRONTEND_BASE_URL=https://你的域名`
 - `POSTGRES_USER=synapseflow`
 - `POSTGRES_DB=synapseflow`

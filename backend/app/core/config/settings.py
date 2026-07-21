@@ -1,6 +1,6 @@
 """Application settings loaded from environment variables and .env."""
 
-from typing import List, Optional
+from typing import Optional
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,13 +25,6 @@ class Settings(BaseSettings):
     WIDGET_TOKEN_EXPIRE_MINUTES: int = 15
     AGENT_PUBLIC_API_BASE_URL: str = ""
     EMBED_FRONTEND_BASE_URL: str = ""
-    CORS_ORIGINS: str = (
-        "http://localhost:3000,"
-        "http://127.0.0.1:3000,"
-        "http://localhost:5173,"
-        "http://127.0.0.1:5173"
-    )
-
     DATABASE_URL: str = "postgresql+asyncpg://synapseflow:password@localhost:5432/synapseflow"
     REDIS_URL: str = "redis://localhost:6379/0"
     DRAMATIQ_INDEXING_QUEUE: str = "indexing"
@@ -89,11 +82,6 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
     )
-
-    @property
-    def ALLOWED_ORIGINS(self) -> List[str]:
-        """Return parsed CORS origins."""
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     @field_validator("DEBUG", mode="before")
     @classmethod
