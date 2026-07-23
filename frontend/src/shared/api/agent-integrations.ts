@@ -1,25 +1,22 @@
 import { request } from "@/shared/api/http";
 import type {
-  AgentAppToolSetBinding,
-  AgentAppToolSetBindingListResponse,
-  AgentAppToolSetBindingPayload,
   AgentTool,
-  AgentToolCallLogListResponse,
+  AgentToolGrant,
+  AgentToolGrantListResponse,
+  AgentToolInvocationListResponse,
   AgentToolListResponse,
-  AgentToolPayload,
   AgentToolPublishResponse,
+  AgentToolSyncResponse,
   AgentToolTestResponse,
-  McpServer,
-  McpServerListResponse,
-  McpServerPayload,
-  McpServerTestResponse,
-  McpToolListResponse,
-  McpTool,
-  McpToolSyncResponse,
+  AgentToolUpdatePayload,
   ProjectAppAccessCreatePayload,
   ProjectAppAccessCredential,
   ProjectAppAccessIssuedCredential,
   ProjectAppAccessUpdatePayload,
+  ToolProvider,
+  ToolProviderListResponse,
+  ToolProviderPayload,
+  ToolProviderTestResponse,
 } from "@/shared/types/agent-integration";
 
 export function getProjectAppAccess(projectId: number, appId: number) {
@@ -29,11 +26,7 @@ export function getProjectAppAccess(projectId: number, appId: number) {
   });
 }
 
-export function createProjectAppAccess(
-  projectId: number,
-  appId: number,
-  payload: ProjectAppAccessCreatePayload,
-) {
+export function createProjectAppAccess(projectId: number, appId: number, payload: ProjectAppAccessCreatePayload) {
   return request<ProjectAppAccessIssuedCredential>({
     url: `/agent-integrations/project-apps/${projectId}/${appId}/access`,
     method: "POST",
@@ -41,11 +34,7 @@ export function createProjectAppAccess(
   });
 }
 
-export function updateProjectAppAccess(
-  projectId: number,
-  appId: number,
-  payload: ProjectAppAccessUpdatePayload,
-) {
+export function updateProjectAppAccess(projectId: number, appId: number, payload: ProjectAppAccessUpdatePayload) {
   return request<ProjectAppAccessCredential>({
     url: `/agent-integrations/project-apps/${projectId}/${appId}/access`,
     method: "PUT",
@@ -74,116 +63,114 @@ export function revokeProjectAppAccess(projectId: number, appId: number) {
   });
 }
 
-export function listMcpServers(params: {
+export function listToolProviders(params: {
   team_id?: number;
   keyword?: string;
-  status?: string;
+  health_status?: string;
   page?: number;
   page_size?: number;
 }) {
-  return request<McpServerListResponse>({ url: "/agent-integrations/mcp-servers", method: "GET", params });
+  return request<ToolProviderListResponse>({ url: "/agent-integrations/tool-providers", method: "GET", params });
 }
 
-export function createMcpServer(payload: McpServerPayload) {
-  return request<McpServer>({ url: "/agent-integrations/mcp-servers", method: "POST", data: payload });
+export function createToolProvider(payload: ToolProviderPayload) {
+  return request<ToolProvider>({ url: "/agent-integrations/tool-providers", method: "POST", data: payload });
 }
 
-export function updateMcpServer(serverId: number, payload: McpServerPayload) {
-  return request<McpServer>({ url: `/agent-integrations/mcp-servers/${serverId}`, method: "PUT", data: payload });
-}
-
-export function deleteMcpServer(serverId: number) {
-  return request<{ message: string }>({ url: `/agent-integrations/mcp-servers/${serverId}`, method: "DELETE" });
-}
-
-export function testMcpServer(serverId: number) {
-  return request<McpServerTestResponse>({ url: `/agent-integrations/mcp-servers/${serverId}/test`, method: "POST" });
-}
-
-export function syncMcpTools(serverId: number) {
-  return request<McpToolSyncResponse>({ url: `/agent-integrations/mcp-servers/${serverId}/sync`, method: "POST" });
-}
-
-export function listMcpTools(params: {
-  team_id?: number;
-  server_id?: number;
-  keyword?: string;
-  page?: number;
-  page_size?: number;
-}) {
-  return request<McpToolListResponse>({ url: "/agent-integrations/mcp-tools", method: "GET", params });
-}
-
-export function updateMcpToolEnabled(toolId: number, enabled: boolean) {
-  return request<McpTool>({
-    url: `/agent-integrations/mcp-tools/${toolId}/enabled`,
+export function updateToolProvider(providerId: number, payload: ToolProviderPayload) {
+  return request<ToolProvider>({
+    url: `/agent-integrations/tool-providers/${providerId}`,
     method: "PUT",
-    data: { enabled },
+    data: payload,
+  });
+}
+
+export function deleteToolProvider(providerId: number) {
+  return request<{ message: string }>({
+    url: `/agent-integrations/tool-providers/${providerId}`,
+    method: "DELETE",
+  });
+}
+
+export function testToolProvider(providerId: number) {
+  return request<ToolProviderTestResponse>({
+    url: `/agent-integrations/tool-providers/${providerId}/test`,
+    method: "POST",
+  });
+}
+
+export function syncAgentTools(providerId: number) {
+  return request<AgentToolSyncResponse>({
+    url: `/agent-integrations/tool-providers/${providerId}/sync`,
+    method: "POST",
   });
 }
 
 export function listAgentTools(params: {
   team_id?: number;
+  provider_id?: number;
   keyword?: string;
-  enabled_status?: string;
-  lifecycle_status?: string;
+  publish_status?: string;
+  sync_status?: string;
   page?: number;
   page_size?: number;
 }) {
   return request<AgentToolListResponse>({ url: "/agent-integrations/agent-tools", method: "GET", params });
 }
 
-export function createAgentTool(payload: AgentToolPayload) {
-  return request<AgentTool>({ url: "/agent-integrations/agent-tools", method: "POST", data: payload });
-}
-
-export function updateAgentTool(toolId: number, payload: AgentToolPayload) {
+export function updateAgentTool(toolId: number, payload: AgentToolUpdatePayload) {
   return request<AgentTool>({ url: `/agent-integrations/agent-tools/${toolId}`, method: "PUT", data: payload });
 }
 
-export function testAgentTool(toolId: number, argumentsPayload: Record<string, unknown>) {
+export function testAgentTool(
+  toolId: number,
+  argumentsPayload: Record<string, unknown>,
+  context: Record<string, unknown>,
+) {
   return request<AgentToolTestResponse>({
     url: `/agent-integrations/agent-tools/${toolId}/test`,
     method: "POST",
-    data: { arguments: argumentsPayload },
+    data: { arguments: argumentsPayload, context },
   });
 }
 
 export function publishAgentTool(toolId: number) {
-  return request<AgentToolPublishResponse>({ url: `/agent-integrations/agent-tools/${toolId}/publish`, method: "POST" });
+  return request<AgentToolPublishResponse>({
+    url: `/agent-integrations/agent-tools/${toolId}/publish`,
+    method: "POST",
+  });
 }
 
 export function unpublishAgentTool(toolId: number) {
-  return request<AgentToolPublishResponse>({ url: `/agent-integrations/agent-tools/${toolId}/unpublish`, method: "POST" });
+  return request<AgentToolPublishResponse>({
+    url: `/agent-integrations/agent-tools/${toolId}/unpublish`,
+    method: "POST",
+  });
 }
 
-export function deleteAgentTool(toolId: number) {
-  return request<{ message: string }>({ url: `/agent-integrations/agent-tools/${toolId}`, method: "DELETE" });
-}
-
-export function listProjectAppToolSetBindings(projectId: number, appId: number) {
-  return request<AgentAppToolSetBindingListResponse>({
-    url: `/agent-integrations/project-apps/${projectId}/${appId}/tool-sets`,
+export function listProjectAppToolGrants(projectId: number, appId: number) {
+  return request<AgentToolGrantListResponse>({
+    url: `/agent-integrations/project-apps/${projectId}/${appId}/tool-grants`,
     method: "GET",
   });
 }
 
-export function bindProjectAppToolSet(projectId: number, appId: number, payload: AgentAppToolSetBindingPayload) {
-  return request<AgentAppToolSetBinding>({
-    url: `/agent-integrations/project-apps/${projectId}/${appId}/tool-sets`,
+export function createProjectAppToolGrant(projectId: number, appId: number, agentToolId: number) {
+  return request<AgentToolGrant>({
+    url: `/agent-integrations/project-apps/${projectId}/${appId}/tool-grants`,
     method: "POST",
-    data: payload,
+    data: { agent_tool_id: agentToolId },
   });
 }
 
-export function unbindProjectAppToolSet(projectId: number, appId: number, bindingId: number) {
+export function deleteProjectAppToolGrant(projectId: number, appId: number, grantId: number) {
   return request<{ message: string }>({
-    url: `/agent-integrations/project-apps/${projectId}/${appId}/tool-sets/${bindingId}`,
+    url: `/agent-integrations/project-apps/${projectId}/${appId}/tool-grants/${grantId}`,
     method: "DELETE",
   });
 }
 
-export function listAgentToolCallLogs(params: {
+export function listAgentToolInvocations(params: {
   team_id?: number;
   agent_tool_id?: number;
   project_app_id?: number;
@@ -193,5 +180,9 @@ export function listAgentToolCallLogs(params: {
   page?: number;
   page_size?: number;
 }) {
-  return request<AgentToolCallLogListResponse>({ url: "/agent-integrations/call-logs", method: "GET", params });
+  return request<AgentToolInvocationListResponse>({
+    url: "/agent-integrations/tool-invocations",
+    method: "GET",
+    params,
+  });
 }

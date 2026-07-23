@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     EMBED_TOKEN_EXPIRE_MINUTES: int = 60
     WIDGET_TOKEN_EXPIRE_MINUTES: int = 15
     AGENT_PUBLIC_API_BASE_URL: str = ""
+    TOOL_PROVIDER_ALLOWED_HOSTS: str = ""
     EMBED_FRONTEND_BASE_URL: str = ""
     DATABASE_URL: str = "postgresql+asyncpg://synapseflow:password@localhost:5432/synapseflow"
     REDIS_URL: str = "redis://localhost:6379/0"

@@ -19,15 +19,15 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
 import {
-  bindProjectAppToolSet,
+  createProjectAppToolGrant,
   createProjectAppAccess,
+  deleteProjectAppToolGrant,
   enableProjectAppAccess,
   getProjectAppAccess,
-  listMcpServers,
-  listProjectAppToolSetBindings,
+  listAgentTools,
+  listProjectAppToolGrants,
   resetProjectAppAccessSecret,
   revokeProjectAppAccess,
-  unbindProjectAppToolSet,
   updateProjectAppAccess,
 } from "@/shared/api/agent-integrations";
 import { listAssistants } from "@/shared/api/assistants";
@@ -47,8 +47,8 @@ import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import { AppRequestError, isForbiddenError } from "@/shared/utils/error";
 import type { AssistantSummary } from "@/shared/types/assistant";
 import type {
-  AgentAppToolSetBinding,
-  McpServer,
+  AgentTool,
+  AgentToolGrant,
   ProjectAppAccessCredential,
 } from "@/shared/types/agent-integration";
 import type { DocumentCategoryTreeNode } from "@/shared/types/document-category";
@@ -66,8 +66,8 @@ const route = useRoute();
 const project = ref<ProjectSummary | null>(null);
 const apps = ref<ProjectAppSummary[]>([]);
 const assistants = ref<AssistantSummary[]>([]);
-const toolSetServers = ref<McpServer[]>([]);
-const toolSetBindings = ref<AgentAppToolSetBinding[]>([]);
+const availableTools = ref<AgentTool[]>([]);
+const toolGrants = ref<AgentToolGrant[]>([]);
 const knowledgeBases = ref<KnowledgeBaseListItem[]>([]);
 const categoryTree = ref<DocumentCategoryTreeNode[]>([]);
 const loading = ref(false);
@@ -77,8 +77,8 @@ const statusLoadingId = ref<number | null>(null);
 const deletingAppId = ref<number | null>(null);
 const configSavingKey = ref<"" | "knowledge_base" | "category" | "assistant">("");
 const categoryLoading = ref(false);
-const toolSetLoading = ref(false);
-const toolSetSavingId = ref<number | null>(null);
+const toolGrantLoading = ref(false);
+const toolGrantSavingId = ref<number | null>(null);
 const activeAppId = ref<number | null>(null);
 const integrationDialogVisible = ref(false);
 const integrationApp = ref<ProjectAppSummary | null>(null);
@@ -140,8 +140,8 @@ const previewUnavailableDescription = computed(() => {
 });
 const appDialogTitle = computed(() => (editingApp.value ? "编辑应用端" : "新建应用端"));
 const appDialogSubmitText = computed(() => (editingApp.value ? "保存应用端" : "创建应用端"));
-function getToolSetBinding(serverId: number) {
-  return toolSetBindings.value.find((binding) => binding.mcp_server_id === serverId) ?? null;
+function getToolGrant(toolId: number) {
+  return toolGrants.value.find((grant) => grant.agent_tool_id === toolId) ?? null;
 }
 
 
@@ -258,7 +258,7 @@ async function loadCategories(knowledgeBaseId: number | null, categoryId: number
 }
 
 async function loadOptionData(projectResponse: ProjectSummary) {
-  const [assistantResponses, knowledgeBaseResponses, toolSetResponse] = await Promise.all([
+  const [assistantResponses, knowledgeBaseResponses, toolResponse] = await Promise.all([
     listAssistants({
       team_id: projectResponse.team_id,
       active_only: true,
@@ -271,32 +271,34 @@ async function loadOptionData(projectResponse: ProjectSummary) {
       page: 1,
       page_size: 100,
     }),
-    listMcpServers({
+    listAgentTools({
       team_id: projectResponse.team_id,
+      publish_status: "published",
+      sync_status: "active",
       page: 1,
       page_size: 100,
     }),
   ]);
   assistants.value = assistantResponses.items;
   knowledgeBases.value = knowledgeBaseResponses.items;
-  toolSetServers.value = toolSetResponse.items;
+  availableTools.value = toolResponse.items;
 }
 
-async function loadToolSetBindings(appId: number | null) {
-  toolSetBindings.value = [];
+async function loadToolGrants(appId: number | null) {
+  toolGrants.value = [];
   if (!projectId.value || !appId) {
     return;
   }
 
-  toolSetLoading.value = true;
+  toolGrantLoading.value = true;
   try {
-    const response = await listProjectAppToolSetBindings(projectId.value, appId);
-    toolSetBindings.value = response.items;
+    const response = await listProjectAppToolGrants(projectId.value, appId);
+    toolGrants.value = response.items;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "加载 MCP 工具集绑定失败，请稍后重试。";
+    const message = error instanceof Error ? error.message : "加载工具授权失败，请稍后重试。";
     ElMessage.error(message);
   } finally {
-    toolSetLoading.value = false;
+    toolGrantLoading.value = false;
   }
 }
 
@@ -330,7 +332,7 @@ async function loadPage() {
     if (activeApp.value) {
       await loadCategories(activeApp.value.knowledge_base_id, activeApp.value.category_id);
     }
-    await loadToolSetBindings(activeApp.value?.id ?? null);
+    await loadToolGrants(activeApp.value?.id ?? null);
     hasLoadedData.value = true;
   } catch (error) {
     if (hasLoadedData.value) {
@@ -364,7 +366,7 @@ function selectApp(appId: number) {
   previewNeedsRefresh.value = false;
   const nextApp = apps.value.find((item) => item.id === appId) ?? null;
   void loadCategories(nextApp?.knowledge_base_id ?? null, nextApp?.category_id ?? null);
-  void loadToolSetBindings(nextApp?.id ?? null);
+  void loadToolGrants(nextApp?.id ?? null);
 }
 
 async function handleToggleStatus(app: ProjectAppSummary, nextValue: boolean | string | number) {
@@ -456,31 +458,28 @@ async function handleAssistantChange(value: number | string | null) {
   await saveActiveAppConfig("assistant", { default_assistant_id: nextAssistantId }, "已更新默认助手。");
 }
 
-async function handleToolSetBindingChange(server: McpServer, enabled: boolean) {
-  if (!projectId.value || !activeApp.value || toolSetSavingId.value) {
+async function handleToolGrantChange(tool: AgentTool, enabled: boolean) {
+  if (!projectId.value || !activeApp.value || toolGrantSavingId.value) {
     return;
   }
-  toolSetSavingId.value = server.id;
+  toolGrantSavingId.value = tool.id;
   try {
-    const binding = getToolSetBinding(server.id);
+    const grant = getToolGrant(tool.id);
     if (enabled) {
-      await bindProjectAppToolSet(projectId.value, activeApp.value.id, {
-        mcp_server_id: server.id,
-        enabled: true,
-      });
-    } else if (binding) {
-      await unbindProjectAppToolSet(projectId.value, activeApp.value.id, binding.id);
+      await createProjectAppToolGrant(projectId.value, activeApp.value.id, tool.id);
+    } else if (grant) {
+      await deleteProjectAppToolGrant(projectId.value, activeApp.value.id, grant.id);
     }
-    await loadToolSetBindings(activeApp.value.id);
+    await loadToolGrants(activeApp.value.id);
     if (previewEmbedUrl.value) {
       previewNeedsRefresh.value = true;
     }
-    ElMessage.success(enabled ? "MCP 工具集已绑定。" : "MCP 工具集已解除绑定。");
+    ElMessage.success(enabled ? "工具已授权。" : "工具授权已移除。");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "更新 MCP 工具集绑定失败，请稍后重试。";
+    const message = error instanceof Error ? error.message : "更新工具授权失败，请稍后重试。";
     ElMessage.error(message);
   } finally {
-    toolSetSavingId.value = null;
+    toolGrantSavingId.value = null;
   }
 }
 
@@ -582,7 +581,7 @@ async function handleDeleteApp(app: ProjectAppSummary) {
     activeAppId.value = apps.value[0]?.id ?? null;
     previewEmbedUrl.value = "";
     previewNeedsRefresh.value = false;
-    await loadToolSetBindings(activeAppId.value);
+    await loadToolGrants(activeAppId.value);
     ElMessage.success(`已删除应用端“${app.name}”。`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "删除应用端失败，请稍后重试。";
@@ -1061,50 +1060,50 @@ watch(integrationDialogVisible, (visible) => {
           <section class="project-app-workspace-page__business-tool-card">
             <div class="project-app-workspace-page__config-header">
               <div>
-                <h3>MCP 工具集</h3>
-                <p>绑定 MCP 服务后，助手可使用该工具集中已启用的工具。</p>
+                <h3>Agent 工具授权</h3>
+                <p>按工具控制当前应用端可调用的业务能力。</p>
               </div>
               <router-link
                 class="project-app-workspace-page__plain-link"
                 to="/agent-integrations"
               >
-                管理 MCP 工具集
+                管理 Agent 工具
               </router-link>
             </div>
 
             <div
-              v-loading="toolSetLoading"
+              v-loading="toolGrantLoading"
               class="project-app-workspace-page__business-tool-body"
             >
               <div
-                v-if="toolSetServers.length > 0"
+                v-if="availableTools.length > 0"
                 class="project-app-workspace-page__binding-list"
               >
                 <div
-                  v-for="server in toolSetServers"
-                  :key="server.id"
+                  v-for="tool in availableTools"
+                  :key="tool.id"
                   class="project-app-workspace-page__binding-row"
                 >
                   <div class="project-app-workspace-page__binding-main">
                     <div>
-                      <strong>{{ server.name }}</strong>
-                      <span>{{ server.tool_count }} 个工具 · {{ server.description?.trim() || server.endpoint_url }}</span>
+                      <strong>{{ tool.name }}</strong>
+                      <span>{{ tool.provider_name }} · {{ tool.tool_key }}</span>
                     </div>
-                    <small v-if="server.status === 'error'">MCP 工具集当前不可用</small>
+                    <small v-if="tool.required_context.length">上下文：{{ tool.required_context.join("、") }}</small>
                   </div>
                   <div class="project-app-workspace-page__binding-actions">
                     <el-tag
                       size="small"
-                      :type="getToolSetBinding(server.id) ? 'success' : 'info'"
+                      :type="getToolGrant(tool.id) ? 'success' : 'info'"
                       effect="plain"
                     >
-                      {{ getToolSetBinding(server.id) ? "已绑定" : "未绑定" }}
+                      {{ getToolGrant(tool.id) ? "已授权" : "未授权" }}
                     </el-tag>
                     <el-switch
-                      :model-value="Boolean(getToolSetBinding(server.id))"
-                      :loading="toolSetSavingId === server.id"
-                      aria-label="切换 MCP 工具集绑定"
-                      @change="handleToolSetBindingChange(server, Boolean($event))"
+                      :model-value="Boolean(getToolGrant(tool.id))"
+                      :loading="toolGrantSavingId === tool.id"
+                      aria-label="切换 Agent 工具授权"
+                      @change="handleToolGrantChange(tool, Boolean($event))"
                     />
                   </div>
                 </div>
@@ -1114,8 +1113,8 @@ watch(integrationDialogVisible, (visible) => {
                 v-else
                 class="project-app-workspace-page__binding-empty"
               >
-                <strong>当前团队还没有 MCP 工具集</strong>
-                <span>请先在 Agent 集成页新增并测试 MCP 服务。</span>
+                <strong>当前团队还没有已发布工具</strong>
+                <span>请先在 Agent 工具页同步并发布工具。</span>
               </div>
             </div>
           </section>

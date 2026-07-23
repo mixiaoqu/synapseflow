@@ -9,7 +9,7 @@ from app.application.business_operations.schemas import (
     BusinessOperationDefinition,
     BusinessOperationParamSpec,
 )
-from app.repositories.agent_integration_repository import AgentToolExecutionRecord
+from app.repositories.agent_tool_repository import AgentToolExecutionRecord
 
 AGENT_CONTEXT_PARAM_KEYS = {
     "admin_id",
@@ -20,6 +20,8 @@ AGENT_CONTEXT_PARAM_KEYS = {
     "product_id",
     "project_app_id",
     "project_id",
+    "request_id",
+    "session_id",
     "store_id",
     "user_id",
 }
@@ -87,6 +89,8 @@ class BusinessOperationRegistry:
                     spec = {}
                 schema_type = str(spec.get("type") or "text")
                 param_type = "text" if schema_type == "string" else schema_type
+                if schema_type in {"integer", "number"}:
+                    param_type = "number"
                 if isinstance(spec.get("enum"), list):
                     param_type = "select"
                 if param_type not in {"text", "select", "number", "boolean", "array", "object"}:
@@ -126,16 +130,18 @@ class BusinessOperationRegistry:
     @classmethod
     def from_tool_record(cls, record: AgentToolExecutionRecord) -> BusinessOperationDefinition:
         tool = record.tool
-        input_schema = cls._filter_input_schema(
-            tool.params_schema or record.mcp_tool.input_schema or {}
-        )
+        input_schema = cls._filter_input_schema(tool.input_schema or {})
         return BusinessOperationDefinition(
             id=tool.tool_key,
             name=tool.name,
-            description=tool.agent_description or tool.description or tool.name,
+            description=tool.agent_description or tool.external_description or tool.name,
+            domain=tool.domain or "general",
+            action=tool.action or "execute",
+            read_only=bool(tool.read_only),
+            required_permissions=list(tool.required_permissions or []),
             risk_level=tool.risk_level,
             requires_confirmation=tool.requires_confirmation,
-            required_scope=[],
+            required_scope=list(tool.required_context or []),
             params=cls._params_from_schema(input_schema),
             input_schema=input_schema,
         )

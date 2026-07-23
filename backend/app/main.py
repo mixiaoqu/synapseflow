@@ -55,6 +55,9 @@ async def lifespan(app: FastAPI):
     logger.info("应用就绪，预览目录: {}", settings.PREVIEW_DIR)
     yield
 
+    from app.services.tool_providers.http_client import close_provider_http_client
+
+    await close_provider_http_client()
     logger.info("应用关闭")
 
 

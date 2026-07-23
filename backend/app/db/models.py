@@ -305,103 +305,83 @@ class ProjectAppAccessCredential(Base):
 
 
 
-class McpServer(Base):
-    """One MCP server registered for a team."""
+class ToolProvider(Base):
+    """Team-scoped connection to an external tool provider."""
 
-    __tablename__ = "mcp_servers"
+    __tablename__ = "tool_providers"
     __table_args__ = (
-        UniqueConstraint("team_id", "name", name="uq_mcp_servers_team_name"),
+        UniqueConstraint("team_id", "code", name="uq_tool_providers_team_code"),
     )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(80), nullable=False)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
-    environment = Column(String(30), nullable=False, default="production", index=True)
-    endpoint_url = Column(Text, nullable=False)
-    transport_type = Column(String(30), nullable=False, default="http", index=True)
-    auth_type = Column(String(20), nullable=False, default="none")
+    base_url = Column(Text, nullable=False)
+    transport_type = Column(String(30), nullable=False, default="business_http", index=True)
+    auth_type = Column(String(20), nullable=False, default="bearer")
     auth_header_name = Column(String(100), nullable=True)
     auth_token_encrypted = Column(Text, nullable=True)
     auth_token_last_four = Column(String(4), nullable=True)
     enabled = Column(Boolean, nullable=False, default=True, index=True)
-    status = Column(String(20), nullable=False, default="untested", index=True)
+    health_status = Column(String(20), nullable=False, default="untested", index=True)
     last_checked_at = Column(DateTime(timezone=True), nullable=True)
     last_error = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
-class McpTool(Base):
-    """Raw tool metadata synced from an MCP server."""
-
-    __tablename__ = "mcp_tools"
-    __table_args__ = (
-        UniqueConstraint("mcp_server_id", "raw_name", name="uq_mcp_tools_server_raw_name"),
-    )
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    mcp_server_id = Column(
-        Integer,
-        ForeignKey("mcp_servers.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    raw_name = Column(String(180), nullable=False, index=True)
-    raw_description = Column(Text, nullable=True)
-    input_schema = Column(JSON, nullable=False, default=dict)
-    output_schema = Column(JSON, nullable=False, default=dict)
-    schema_hash = Column(String(64), nullable=False, index=True)
-    sync_status = Column(String(20), nullable=False, default="synced", index=True)
-    raw_payload = Column(JSON, nullable=False, default=dict)
-    last_synced_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utc_now)
-    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-
 
 class AgentTool(Base):
-    """Governed tool exposed to Agent runtime."""
+    """External tool definition plus SynapseFlow governance state."""
 
     __tablename__ = "agent_tools"
     __table_args__ = (
+        UniqueConstraint("provider_id", "external_name", name="uq_agent_tools_provider_external_name"),
         UniqueConstraint("team_id", "tool_key", name="uq_agent_tools_team_key"),
-        UniqueConstraint("mcp_tool_id", name="uq_agent_tools_mcp_tool"),
     )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
-    mcp_tool_id = Column(
+    provider_id = Column(
         Integer,
-        ForeignKey("mcp_tools.id", ondelete="RESTRICT"),
+        ForeignKey("tool_providers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    external_name = Column(String(180), nullable=False, index=True)
+    external_display_name = Column(String(100), nullable=False)
+    external_description = Column(Text, nullable=True)
+    domain = Column(String(50), nullable=False, default="general", index=True)
+    action = Column(String(20), nullable=False, default="execute", index=True)
+    read_only = Column(Boolean, nullable=False, default=False, index=True)
+    required_permissions = Column(JSON, nullable=False, default=list)
+    input_schema = Column(JSON, nullable=False, default=dict)
+    output_schema = Column(JSON, nullable=False, default=dict)
+    required_context = Column(JSON, nullable=False, default=list)
+    raw_manifest = Column(JSON, nullable=False, default=dict)
+    schema_hash = Column(String(64), nullable=False, index=True)
+    sync_status = Column(String(20), nullable=False, default="active", index=True)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
     tool_key = Column(String(120), nullable=False, index=True)
     name = Column(String(100), nullable=False)
-    description = Column(Text, nullable=True)
     agent_description = Column(Text, nullable=True)
-    params_schema = Column(JSON, nullable=False, default=dict)
-    response_schema = Column(JSON, nullable=False, default=dict)
-    tool_type = Column(String(30), nullable=False, default="mcp", index=True)
     risk_level = Column(String(20), nullable=False, default="low", index=True)
     requires_confirmation = Column(Boolean, nullable=False, default=False)
-    enabled = Column(Boolean, nullable=False, default=True, index=True)
-    status = Column(String(20), nullable=False, default="draft", index=True)
+    publish_status = Column(String(20), nullable=False, default="draft", index=True)
+    approved_schema_hash = Column(String(64), nullable=True, index=True)
     last_tested_at = Column(DateTime(timezone=True), nullable=True)
     last_test_error = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
-class AgentAppToolSetBinding(Base):
-    """MCP tool-set authorization for one project application."""
+class AgentAppToolGrant(Base):
+    """Authorization for one project application to use one Agent tool."""
 
-    __tablename__ = "agent_app_tool_set_bindings"
+    __tablename__ = "agent_app_tool_grants"
     __table_args__ = (
-        UniqueConstraint(
-            "project_app_id",
-            "mcp_server_id",
-            name="uq_agent_app_tool_set_bindings_app_server",
-        ),
+        UniqueConstraint("project_app_id", "agent_tool_id", name="uq_agent_app_tool_grants_app_tool"),
     )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
@@ -411,53 +391,41 @@ class AgentAppToolSetBinding(Base):
         nullable=False,
         index=True,
     )
-    mcp_server_id = Column(
+    agent_tool_id = Column(
         Integer,
-        ForeignKey("mcp_servers.id", ondelete="CASCADE"),
+        ForeignKey("agent_tools.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    enabled = Column(Boolean, nullable=False, default=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
-    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
-class AgentToolCallLog(Base):
-    """Redacted runtime audit log for one Agent tool call."""
+class AgentToolInvocation(Base):
+    """Redacted execution audit record for one Agent tool call."""
 
-    __tablename__ = "agent_tool_call_logs"
+    __tablename__ = "agent_tool_invocations"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
-    project_app_id = Column(
-        Integer,
-        ForeignKey("project_apps.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    agent_tool_id = Column(
-        Integer,
-        ForeignKey("agent_tools.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    mcp_server_id = Column(
-        Integer,
-        ForeignKey("mcp_servers.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
+    provider_id = Column(Integer, ForeignKey("tool_providers.id", ondelete="SET NULL"), nullable=True, index=True)
+    agent_tool_id = Column(Integer, ForeignKey("agent_tools.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_app_id = Column(Integer, ForeignKey("project_apps.id", ondelete="SET NULL"), nullable=True, index=True)
+    provider_code = Column(String(80), nullable=False)
+    external_name = Column(String(180), nullable=False)
+    tool_key = Column(String(120), nullable=False, index=True)
+    schema_hash = Column(String(64), nullable=False)
     session_id = Column(String(100), nullable=True, index=True)
     trace_id = Column(String(100), nullable=True, index=True)
+    request_id = Column(String(100), nullable=True, index=True)
     actor_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     external_user_id = Column(String(255), nullable=True)
-    tool_key = Column(String(120), nullable=False, index=True)
-    mcp_tool_name = Column(String(180), nullable=False, index=True)
+    call_source = Column(String(20), nullable=False, default="runtime")
     status = Column(String(30), nullable=False, index=True)
-    duration_ms = Column(Integer, nullable=True)
-    request_payload = Column(JSON, nullable=False, default=dict)
-    response_payload = Column(JSON, nullable=False, default=dict)
+    error_code = Column(String(80), nullable=True)
     error_message = Column(Text, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    request_summary = Column(JSON, nullable=False, default=dict)
+    response_summary = Column(JSON, nullable=False, default=dict)
     confirmed = Column(Boolean, nullable=False, default=False)
     confirmed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now, index=True)

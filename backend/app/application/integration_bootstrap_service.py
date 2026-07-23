@@ -12,7 +12,7 @@ from app.application.project_app_access_service import ProjectAppAccessService
 from app.core.config import settings
 from app.core.security import create_widget_token
 from app.models.schemas.widget import IntegrationBootstrapCreate
-from app.repositories.agent_integration_repository import AgentIntegrationRepository
+from app.repositories.project_app_access_repository import ProjectAppAccessRepository
 from app.repositories.project_repository import ProjectRepository
 
 
@@ -25,7 +25,7 @@ class IssuedIntegrationBootstrap:
 
 class IntegrationBootstrapService:
     def __init__(self, db: AsyncSession) -> None:
-        self.access_repository = AgentIntegrationRepository(db)
+        self.access_repository = ProjectAppAccessRepository(db)
         self.project_repository = ProjectRepository(db)
         self.access_service = ProjectAppAccessService(db)
 
@@ -36,7 +36,7 @@ class IntegrationBootstrapService:
         client_secret: str,
         payload: IntegrationBootstrapCreate,
     ) -> IssuedIntegrationBootstrap:
-        credential = await self.access_repository.get_access_credential_by_client_id(
+        credential = await self.access_repository.get_by_client_id(
             client_id.strip()
         )
         if credential is None or not self.access_service.verify_client_secret(

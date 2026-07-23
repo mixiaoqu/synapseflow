@@ -203,7 +203,7 @@ const router = createRouter({
           component: AgentIntegrationPage,
           meta: {
             title: "Agent 集成",
-            description: "MCP 服务、Agent 工具目录与调用审计。",
+            description: "工具提供方、Agent 工具目录与调用治理。",
           },
         },
         {

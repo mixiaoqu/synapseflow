@@ -6,7 +6,8 @@ from app.api.v1.endpoints import (
     assistants,
     ask,
     auth,
-    agent_integrations,
+    project_app_access,
+    tool_providers,
     content_risk_libraries,
     document_categories,
     documents,
@@ -38,7 +39,8 @@ api_router.include_router(
 )
 api_router.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
 api_router.include_router(assistants.router, prefix="/assistants", tags=["assistants"])
-api_router.include_router(agent_integrations.router, prefix="/agent-integrations", tags=["agent-integrations"])
+api_router.include_router(project_app_access.router, prefix="/agent-integrations", tags=["agent-integrations"])
+api_router.include_router(tool_providers.router, prefix="/agent-integrations", tags=["agent-integrations"])
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
 api_router.include_router(
     document_categories.router,

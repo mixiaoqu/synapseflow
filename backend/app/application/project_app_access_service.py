@@ -15,7 +15,7 @@ from app.application.permission_service import PermissionService
 from app.core.authz import PERMISSION_MANAGE_PROJECT
 from app.core.config import settings
 from app.db.models import ProjectApp, ProjectAppAccessCredential, User
-from app.repositories.agent_integration_repository import AgentIntegrationRepository
+from app.repositories.project_app_access_repository import ProjectAppAccessRepository
 
 
 @dataclass(slots=True)
@@ -34,7 +34,7 @@ class ProjectAppAccessService:
     def __init__(self, db: AsyncSession, *, user: User | None = None) -> None:
         self.db = db
         self.user = user
-        self.repository = AgentIntegrationRepository(db)
+        self.repository = ProjectAppAccessRepository(db)
         self.permission_service = PermissionService(db)
         self.secret_pepper = settings.INTEGRATION_CREDENTIAL_PEPPER.strip()
         if not self.secret_pepper:
@@ -110,7 +110,7 @@ class ProjectAppAccessService:
         allowed_origins: list[str],
     ) -> IssuedProjectAppCredential:
         app = await self._get_managed_app(project_id=project_id, app_id=app_id)
-        if await self.repository.get_access_credential_by_app(app.id) is not None:
+        if await self.repository.get_by_app(app.id) is not None:
             raise HTTPException(status_code=409, detail="Project application access already exists")
         client_secret = self._generate_client_secret()
         credential = ProjectAppAccessCredential(
@@ -122,7 +122,7 @@ class ProjectAppAccessService:
             token_version=1,
             enabled=True,
         )
-        saved = await self.repository.save_access_credential(credential)
+        saved = await self.repository.save(credential)
         return IssuedProjectAppCredential(credential=saved, client_secret=client_secret)
 
     async def reset_secret(
@@ -132,7 +132,7 @@ class ProjectAppAccessService:
         app_id: int,
     ) -> IssuedProjectAppCredential:
         app = await self._get_managed_app(project_id=project_id, app_id=app_id)
-        credential = await self.repository.get_access_credential_by_app(app.id)
+        credential = await self.repository.get_by_app(app.id)
         if credential is None:
             raise HTTPException(status_code=404, detail="Project application access not found")
         client_secret = self._generate_client_secret()
@@ -140,12 +140,12 @@ class ProjectAppAccessService:
         credential.client_secret_last_four = client_secret[-4:]
         credential.token_version = int(credential.token_version or 0) + 1
         credential.enabled = True
-        saved = await self.repository.save_access_credential(credential)
+        saved = await self.repository.save(credential)
         return IssuedProjectAppCredential(credential=saved, client_secret=client_secret)
 
     async def get_access(self, *, project_id: int, app_id: int) -> ProjectAppAccessCredential:
         app = await self._get_managed_app(project_id=project_id, app_id=app_id)
-        credential = await self.repository.get_access_credential_by_app(app.id)
+        credential = await self.repository.get_by_app(app.id)
         if credential is None:
             raise HTTPException(status_code=404, detail="Project application access not found")
         return credential
@@ -159,7 +159,7 @@ class ProjectAppAccessService:
     ) -> ProjectAppAccessCredential:
         credential = await self.get_access(project_id=project_id, app_id=app_id)
         credential.allowed_origins = self._normalize_origins(allowed_origins)
-        return await self.repository.save_access_credential(credential)
+        return await self.repository.save(credential)
 
     async def enable_access(
         self,
@@ -169,7 +169,7 @@ class ProjectAppAccessService:
     ) -> ProjectAppAccessCredential:
         credential = await self.get_access(project_id=project_id, app_id=app_id)
         credential.enabled = True
-        return await self.repository.save_access_credential(credential)
+        return await self.repository.save(credential)
 
     async def revoke_access(
         self,
@@ -180,7 +180,7 @@ class ProjectAppAccessService:
         credential = await self.get_access(project_id=project_id, app_id=app_id)
         credential.enabled = False
         credential.token_version = int(credential.token_version or 0) + 1
-        return await self.repository.save_access_credential(credential)
+        return await self.repository.save(credential)
 
     def verify_client_secret(
         self,

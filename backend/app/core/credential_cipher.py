@@ -30,4 +30,4 @@ class CredentialCipher:
         try:
             return self._fernet.decrypt(str(value or "").encode("ascii")).decode("utf-8")
         except (InvalidToken, UnicodeError, ValueError) as exc:
-            raise ValueError("Stored MCP credential cannot be decrypted") from exc
+            raise ValueError("Stored integration credential cannot be decrypted") from exc

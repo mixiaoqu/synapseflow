@@ -94,6 +94,7 @@ Current API router prefixes:
 - `/api/v1/knowledge-bases`: knowledge-base CRUD.
 - `/api/v1/evaluations`: evaluation dataset, case, run, and report management.
 - `/api/v1/mcp`: bootstrap, scope resolution, search, and answer for read-only KB access.
+- `/api/v1/agent-integrations`: tool provider management, tool synchronization/publishing, per-app grants, invocation audit, and project-app access credentials.
 - health routes are registered without a versioned prefix tag in the router and also exist on the root app.
 
 Application/service layer anchors:
@@ -107,6 +108,8 @@ Application/service layer anchors:
 - `backend/app/application/product_service.py`: product CRUD and team-scoped product listing.
 - `backend/app/application/mcp_service.py`: read-only MCP scope resolution plus search/answer proxying.
 - `backend/app/application/business_operations/*`: whitelisted business data operation boundary for agent-triggered business data queries or actions. The current implementation exposes product search through a controlled registry/service/mock gateway.
+- `backend/app/application/agent_tool_catalog_service.py`: tool provider management, discovery, synchronization, publishing, grants, and invocation queries.
+- `backend/app/application/agent_tool_execution_service.py`: governed tool validation, provider execution, and redacted invocation audit.
 - `backend/app/application/agent_service.py`: base agent context/state helpers.
 - `backend/app/application/stream_events.py`: SSE event envelope helpers.
 - `backend/app/application/workflow_meta.py`: backend-authoritative node labels and display stage metadata for streamed UI.
@@ -120,6 +123,7 @@ Domain services and repositories:
 - `backend/app/services/reranker.py`: reranker integration.
 - `backend/app/services/chat_memory.py`: chat session/message persistence.
 - `backend/app/services/content_risk_detection_service.py`: content-risk rule matching for query and answer interception.
+- `backend/app/services/tool_providers/*`: protocol-neutral provider gateway plus business HTTP and MCP HTTP adapters.
 - `backend/app/services/kb_graph_retrieval.py` and related graph services: graph-based retrieval, summary, indexing, and cleanup helpers.
 - `backend/app/repositories/*`: database access layer for users, teams, documents, knowledge bases, projects, assistants, chat logs, index jobs, categories, and content-risk rules.
 
@@ -131,6 +135,7 @@ Core data models currently include:
 - `IndexJob`, `IndexJobDocument`
 - `AssistantProfile`
 - `Product`, `Project`, `ProjectApp`
+- `ToolProvider`, `AgentTool`, `AgentAppToolGrant`, `AgentToolInvocation`
 - `ChatSession`, `ChatMessage`, `KbChatLog`, `ContentRiskLog`
 - `ContentRiskLibrary`, `ContentRiskRule`
 
@@ -240,7 +245,8 @@ Only describe these as existing product surfaces unless code changes add more:
 - End-user knowledge-base/assistant ask experience with streaming responses and chat history.
 - Embedded assistant experience for project apps.
 - CDN Loader and Web Component Widget integration with business-owned identity and final authorization.
-- Assistant-routed business data query boundary through `business_ops`; the current operation exposed by code is product search.
+- Assistant-routed business data operations through governed, published, per-app Agent tools supplied by registered tool providers.
+- Admin tool provider management, synchronization, publishing, per-app tool grants, and invocation audit APIs.
 - Admin product, project, and project-app management.
 - Admin knowledge-base, document, category, version, indexing, review, and publish management.
 - Admin assistant profile management and assistant preview/testing.

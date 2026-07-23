@@ -32,6 +32,10 @@ class BusinessOperationDefinition(BaseModel):
     id: str
     name: str
     description: str
+    domain: str = "general"
+    action: str = "execute"
+    read_only: bool = False
+    required_permissions: list[str] = Field(default_factory=list)
     risk_level: BusinessOperationRiskLevel = "low"
     requires_confirmation: bool = False
     required_scope: list[str] = Field(default_factory=list)

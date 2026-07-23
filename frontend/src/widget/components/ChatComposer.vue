@@ -13,7 +13,7 @@ function resize() {
   const textarea = textareaRef.value;
   if (!textarea) return;
   textarea.style.height = "auto";
-  textarea.style.height = `${Math.min(textarea.scrollHeight, 118)}px`;
+  textarea.style.height = `${Math.min(textarea.scrollHeight, 96)}px`;
 }
 function send() {
   const text = value.value.trim();
@@ -65,11 +65,11 @@ defineExpose({ focus });
 </template>
 
 <style scoped>
-.widget-composer { display: flex; min-height: 58px; padding: 10px 12px; align-items: flex-end; gap: 10px; }
+.widget-composer { display: flex; box-sizing: border-box; min-height: 48px; padding: 6px 10px; align-items: flex-end; gap: 10px; }
 .widget-composer:focus-within { background: rgba(236, 254, 255, 0.42); }
-.widget-composer textarea { min-width: 0; min-height: 28px; max-height: 118px; flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: #164e63; font: inherit; font-size: 14px; line-height: 1.55; }
+.widget-composer textarea { min-width: 0; min-height: 24px; max-height: 96px; flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: #164e63; font: inherit; font-size: 14px; line-height: 1.55; }
 .widget-composer textarea::placeholder { color: #94a3b8; }
-.widget-composer button { display: inline-flex; height: 38px; min-width: 44px; padding: 0 14px; align-items: center; justify-content: center; gap: 6px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600; transition: background 0.18s ease, color 0.18s ease; }
+.widget-composer button { display: inline-flex; height: 36px; min-width: 44px; padding: 0 14px; align-items: center; justify-content: center; gap: 6px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600; transition: background 0.18s ease, color 0.18s ease; }
 .widget-composer button:focus-visible { outline: 3px solid rgba(8, 145, 178, 0.28); outline-offset: 2px; }
 .widget-composer .is-send { border: 0; background: #0891b2; color: #fff; }
 .widget-composer .is-send:hover:not(:disabled) { background: #0e7490; }

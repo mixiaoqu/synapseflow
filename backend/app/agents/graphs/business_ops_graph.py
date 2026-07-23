@@ -50,6 +50,10 @@ def _serialize_tool_candidates(records) -> list[dict[str, Any]]:
                 "id": operation.id,
                 "name": operation.name,
                 "description": operation.description or "",
+                "domain": operation.domain,
+                "action": operation.action,
+                "read_only": operation.read_only,
+                "required_permissions": list(operation.required_permissions),
                 "typical_queries": list(getattr(record.tool, "typical_queries", None) or []),
                 "risk_level": operation.risk_level,
                 "requires_confirmation": bool(operation.requires_confirmation),
@@ -300,15 +304,15 @@ def create_business_ops_graph(
             reason_summary = _summarize_unavailable_reasons(
                 dict(availability_snapshot.get("unavailable_reason_counts") or {})
             )
-            if availability_snapshot.get("tool_set_count"):
+            if availability_snapshot.get("tool_grant_count"):
                 reason_text = (
-                    f"当前应用端已绑定 {availability_snapshot.get('tool_set_count')} 个 MCP 工具集，"
+                    f"当前应用端已授权 {availability_snapshot.get('tool_grant_count')} 个工具，"
                     f"但没有可直接执行的工具。{reason_summary}"
                     if reason_summary
-                    else "当前应用端已绑定 MCP 工具集，但没有已启用的可执行工具。"
+                    else "当前应用端已授权工具，但没有已发布的可执行工具。"
                 )
             else:
-                reason_text = "当前应用端没有绑定任何 MCP 工具集。"
+                reason_text = "当前应用端没有授权任何业务工具。"
             request_info = {
                 "raw_query": query,
                 "status": "unsupported",
@@ -345,7 +349,7 @@ def create_business_ops_graph(
             node_name="分析请求",
             details={
                 "应用ID": state.get("project_app_id"),
-                "绑定工具集数": availability_snapshot.get("tool_set_count"),
+                "授权工具数": availability_snapshot.get("tool_grant_count"),
                 "候选工具数": len(candidates),
                 "可用工具Key": list(availability_snapshot.get("available_tool_keys") or []),
                 "不可用原因": dict(availability_snapshot.get("unavailable_reason_counts") or {}),

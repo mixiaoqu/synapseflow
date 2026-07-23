@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.widget_chat_service import WidgetSessionContext
 from app.core.security import decode_widget_token
 from app.db.session import get_db
-from app.repositories.agent_integration_repository import AgentIntegrationRepository
+from app.repositories.project_app_access_repository import ProjectAppAccessRepository
 
 widget_bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -45,7 +45,7 @@ async def get_widget_session_context(
             detail=str(exc),
         ) from exc
 
-    credential = await AgentIntegrationRepository(db).get_access_credential_by_app(
+    credential = await ProjectAppAccessRepository(db).get_by_app(
         int(payload["project_app_id"])
     )
     validate_widget_access(

@@ -9,7 +9,7 @@ from jsonschema import exceptions as jsonschema_exceptions
 from jsonschema import validators
 from loguru import logger
 
-from app.application.business_operations.mcp_tool_gateway import McpToolGateway
+from app.application.agent_tool_execution_service import AgentToolExecutionService
 from app.application.business_operations.registry import (
     AGENT_CONTEXT_PARAM_KEYS,
     BusinessOperationRegistry,
@@ -21,28 +21,25 @@ from app.application.business_operations.schemas import (
     BusinessOperationRequest,
     BusinessOperationResult,
 )
-from app.core.credential_cipher import CredentialCipher
 from app.db.session import AsyncSessionLocal
-from app.repositories.agent_integration_repository import (
-    AgentIntegrationRepository,
+from app.repositories.agent_tool_repository import (
     AgentToolExecutionRecord,
+    AgentToolRepository,
 )
 
 
 class BusinessOperationService:
-    """Discover, validate and execute tools from MCP tool sets bound to the current app."""
+    """Discover, validate and execute governed tools granted to the current app."""
 
-    def __init__(self, *, registry: BusinessOperationRegistry | None = None, mcp_tool_gateway: McpToolGateway | None = None) -> None:
+    def __init__(self, *, registry: BusinessOperationRegistry | None = None) -> None:
         self.registry = registry or BusinessOperationRegistry()
-        self.mcp_tool_gateway = mcp_tool_gateway or McpToolGateway()
-        self.credential_cipher = CredentialCipher()
 
     async def list_available_tools(self, project_app_id: int | None) -> list[AgentToolExecutionRecord]:
         if project_app_id is None:
             return []
         async with AsyncSessionLocal() as db:
-            repository = AgentIntegrationRepository(db)
-            return await repository.list_available_project_app_tools(project_app_id=int(project_app_id))
+            repository = AgentToolRepository(db)
+            return await repository.list_available_tools(project_app_id=int(project_app_id))
 
     async def list_available_operations(self, project_app_id: int | None) -> list[BusinessOperationDefinition]:
         records = await self.list_available_tools(project_app_id)
@@ -52,30 +49,38 @@ class BusinessOperationService:
         if project_app_id is None:
             return {
                 "project_app_id": None,
-                "tool_set_count": 0,
+                "tool_grant_count": 0,
                 "available_count": 0,
                 "unavailable_count": 0,
                 "available_tool_keys": [],
                 "unavailable_reason_counts": {},
             }
         async with AsyncSessionLocal() as db:
-            repository = AgentIntegrationRepository(db)
-            tool_set_records = await repository.list_project_app_tool_set_bindings(
+            repository = AgentToolRepository(db)
+            grant_records = await repository.list_grants(
                 project_app_id=int(project_app_id)
             )
-            available_records = await repository.list_available_project_app_tools(
+            available_records = await repository.list_available_tools(
                 project_app_id=int(project_app_id)
             )
         available_tool_keys = [record.tool.tool_key for record in available_records]
         unavailable_reason_counts: dict[str, int] = {}
-        for record in tool_set_records:
-            if record.unavailable_reason:
-                unavailable_reason_counts[record.unavailable_reason] = (
-                    unavailable_reason_counts.get(record.unavailable_reason, 0) + 1
-                )
+        available_ids = {record.tool.id for record in available_records}
+        for record in grant_records:
+            if record.tool.id in available_ids:
+                continue
+            if not record.provider.enabled:
+                reason = "工具提供方已停用"
+            elif record.tool.sync_status != "active":
+                reason = "工具已从提供方移除"
+            elif record.tool.publish_status != "published":
+                reason = "工具尚未发布"
+            else:
+                reason = "工具 Schema 尚未审核"
+            unavailable_reason_counts[reason] = unavailable_reason_counts.get(reason, 0) + 1
         return {
             "project_app_id": int(project_app_id),
-            "tool_set_count": len(tool_set_records),
+            "tool_grant_count": len(grant_records),
             "available_count": len(available_tool_keys),
             "unavailable_count": sum(unavailable_reason_counts.values()),
             "available_tool_keys": available_tool_keys,
@@ -99,10 +104,10 @@ class BusinessOperationService:
             self._without_context_params(request),
         )
         logger.bind(agent_business_ops_log=True).info(
-            "[业务工具参数] 已移除上下文参数 | operation={} | request_params={} | effective_params={}",
+            "[业务工具参数] 已移除上下文参数 | operation={} | request_keys={} | effective_keys={}",
             operation.id,
-            request.params,
-            effective_request.params,
+            sorted(request.params),
+            sorted(effective_request.params),
         )
         missing_fields = self._collect_missing_fields(operation, effective_request)
         if missing_fields:
@@ -150,63 +155,54 @@ class BusinessOperationService:
                 error=BusinessOperationErrorPayload(code="CONFIRMATION_REQUIRED", message=f"Agent 工具“{operation.name}”需要用户确认后才能执行。", retryable=True),
             )
 
-        service_token = None
-        if str(record.mcp_server.auth_type or "none").strip().lower() != "none":
-            if not record.mcp_server.auth_token_encrypted:
-                return BusinessOperationResult(
-                    success=False,
-                    operation_id=operation.id,
-                    message="MCP 服务未配置内部服务 Token。",
-                    error=BusinessOperationErrorPayload(
-                        code="MCP_SERVICE_TOKEN_REQUIRED",
-                        message="MCP 服务未配置内部服务 Token。",
-                    ),
-                )
-            try:
-                service_token = self.credential_cipher.decrypt(
-                    record.mcp_server.auth_token_encrypted
-                )
-            except ValueError:
-                logger.exception(
-                    "[business_ops] failed to decrypt MCP credential. operation={}",
-                    operation.id,
-                )
-                return BusinessOperationResult(
-                    success=False,
-                    operation_id=operation.id,
-                    message="MCP 服务 Token 无法解密，请重新填写。",
-                    error=BusinessOperationErrorPayload(
-                        code="MCP_SERVICE_TOKEN_INVALID",
-                        message="MCP 服务 Token 无法解密，请重新填写。",
-                    ),
-                )
-
-        if not str(request.scope.get("store_id") or "").strip():
-            return BusinessOperationResult(
-                success=False,
-                operation_id=operation.id,
-                message="业务工具调用缺少可信门店上下文。",
-                error=BusinessOperationErrorPayload(
-                    code="BUSINESS_CONTEXT_REQUIRED",
-                    message="业务工具调用缺少可信门店上下文。",
-                ),
+        context = {
+            "subject": {
+                "external_user_id": request.actor.external_user_id,
+            },
+            "scope": dict(request.scope),
+            "source": {
+                "project_id": request.scope.get("project_id"),
+                "project_app_id": project_app_id,
+                "session_id": request.session_id,
+                "request_id": request.scope.get("request_id") or request.scope.get("trace_id"),
+                "trace_id": request.scope.get("trace_id"),
+            },
+        }
+        async with AsyncSessionLocal() as db:
+            result = await AgentToolExecutionService(db).execute(
+                record=record,
+                arguments=effective_request.params,
+                context=context,
+                call_source="runtime",
+                project_app_id=int(project_app_id) if project_app_id is not None else None,
+                actor_user_id=request.actor.user_id,
+                confirmed=request.scope.get("confirmed") is True,
             )
-
-        return await self.mcp_tool_gateway.execute(
-            operation=operation,
-            agent_tool=record.tool,
-            mcp_tool=record.mcp_tool,
-            server=record.mcp_server,
-            request=effective_request,
-            service_token=service_token,
+        message = result.message or ("业务工具执行成功" if result.success else "业务工具执行失败")
+        return BusinessOperationResult(
+            success=result.success,
+            operation_id=operation.id,
+            message=message,
+            data=result.data,
+            error=(
+                None
+                if result.success
+                else BusinessOperationErrorPayload(
+                    code=result.error_code or "UPSTREAM_ERROR",
+                    message=message,
+                    retryable=result.retryable,
+                )
+            ),
+            http_status=result.http_status,
+            duration_ms=result.duration_ms,
         )
 
     async def _get_available_tool(self, *, project_app_id: int | str | None, operation_id: str) -> AgentToolExecutionRecord | None:
         if project_app_id is None:
             return None
         async with AsyncSessionLocal() as db:
-            repository = AgentIntegrationRepository(db)
-            return await repository.get_available_project_app_tool_by_key(project_app_id=int(project_app_id), tool_key=operation_id)
+            repository = AgentToolRepository(db)
+            return await repository.get_available_tool(project_app_id=int(project_app_id), tool_key=operation_id)
 
     @staticmethod
     def _is_blank(value: Any) -> bool:
