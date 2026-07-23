@@ -112,6 +112,12 @@ export interface AgentToolPublishResponse {
   message: string;
 }
 
+export interface AgentToolBatchPublishResponse {
+  published_ids: number[];
+  published_count: number;
+  message: string;
+}
+
 export interface AgentToolGrant {
   id: number;
   project_app_id: number;

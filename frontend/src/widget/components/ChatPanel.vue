@@ -15,7 +15,11 @@ const props = defineProps<{
   pageContext: WidgetPageContext;
   refreshToken: () => Promise<string>;
 }>();
-const emit = defineEmits<{ close: []; dragStart: [event: PointerEvent] }>();
+const emit = defineEmits<{
+  close: [];
+  dragStart: [event: PointerEvent];
+  resizeStart: [event: PointerEvent];
+}>();
 const composerRef = useTemplateRef<InstanceType<typeof ChatComposer>>("composerRef");
 
 const {
@@ -70,6 +74,10 @@ function handleHeaderPointerDown(event: PointerEvent) {
     return;
   }
   emit("dragStart", event);
+}
+
+function handleResizePointerDown(event: PointerEvent) {
+  emit("resizeStart", event);
 }
 
 defineExpose({ sendMessage: handleSend });
@@ -198,6 +206,13 @@ defineExpose({ sendMessage: handleSend });
         </div>
       </footer>
     </template>
+    <button
+      type="button"
+      class="widget-chat__resize-handle"
+      title="调整助手窗口大小"
+      aria-label="调整助手窗口大小"
+      @pointerdown="handleResizePointerDown"
+    />
   </section>
 </template>
 
@@ -240,7 +255,11 @@ defineExpose({ sendMessage: handleSend });
 .widget-chat__suggestion-title { display: flex; margin-bottom: 8px; align-items: center; gap: 5px; color: #64748b; font-size: 10px; font-weight: 700; }
 .widget-chat__suggestion-title .el-icon { color: #059669; }
 .widget-chat__brand { display: flex; margin-top: 7px; align-items: center; justify-content: center; gap: 4px; color: #94a3b8; font-size: 9px; }
-@media (max-width: 640px) { .widget-chat { border: 0; border-radius: 0; box-shadow: none; } .widget-chat__messages { padding: 13px 11px; } .widget-chat__footer { padding: 8px; } }
+.widget-chat__resize-handle { position: absolute; z-index: 4; right: 0; bottom: 0; width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: #94a3b8; cursor: nwse-resize; touch-action: none; }
+.widget-chat__resize-handle::after { position: absolute; right: 4px; bottom: 4px; width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; content: ""; }
+.widget-chat__resize-handle:hover { color: #0891b2; }
+.widget-chat__resize-handle:focus-visible { outline: 2px solid rgba(8, 145, 178, 0.42); outline-offset: -3px; }
+@media (max-width: 640px) { .widget-chat__resize-handle { display: none; } .widget-chat { border: 0; border-radius: 0; box-shadow: none; } .widget-chat__messages { padding: 13px 11px; } .widget-chat__footer { padding: 8px; } }
 @media (min-width: 641px) { .widget-chat__header { cursor: grab; touch-action: none; user-select: none; } .widget-chat__header-actions { cursor: default; } }
 @media (prefers-reduced-motion: reduce) { .widget-chat * { scroll-behavior: auto !important; } }
 </style>

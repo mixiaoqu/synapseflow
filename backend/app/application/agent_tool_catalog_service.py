@@ -16,9 +16,12 @@ from app.db.models import AgentAppToolGrant, AgentTool, ToolProvider
 from app.models.schemas.tool_provider import (
     AgentToolGrantCreate,
     AgentToolGrantListResponse,
+    AgentToolGrantReplace,
     AgentToolGrantResponse,
     AgentToolInvocationListResponse,
     AgentToolInvocationResponse,
+    AgentToolBatchPublishRequest,
+    AgentToolBatchPublishResponse,
     AgentToolListResponse,
     AgentToolPublishResponse,
     AgentToolResponse,
@@ -273,8 +276,15 @@ class AgentToolCatalogService:
                     publish_status="draft",
                 )
                 changed.append(tool)
-            elif tool.schema_hash != item.schema_hash and tool.publish_status == "published":
-                tool.publish_status = "needs_review"
+            else:
+                uses_source_name = tool.name in {
+                    tool.external_name,
+                    tool.external_display_name,
+                }
+                if uses_source_name:
+                    tool.name = item.external_display_name
+                if tool.schema_hash != item.schema_hash and tool.publish_status == "published":
+                    tool.publish_status = "needs_review"
             tool.external_description = item.description
             tool.external_display_name = item.external_display_name
             tool.domain = item.domain
@@ -367,6 +377,26 @@ class AgentToolCatalogService:
         await self.repository.save_tool(record.tool)
         return AgentToolPublishResponse(id=tool_id, publish_status="published", message="工具已发布")
 
+    async def batch_publish_tools(
+        self,
+        payload: AgentToolBatchPublishRequest,
+    ) -> AgentToolBatchPublishResponse:
+        tool_ids = sorted(set(payload.tool_ids))
+        records = await self.repository.get_tool_records_by_ids(tool_ids)
+        if len(records) != len(tool_ids):
+            raise self._not_found("部分工具不存在")
+        if any(record.tool.sync_status != "active" for record in records):
+            raise self._bad_request("只有同步状态正常的工具可以发布")
+        for record in records:
+            record.tool.publish_status = "published"
+            record.tool.approved_schema_hash = record.tool.schema_hash
+        await self.repository.save_tools([record.tool for record in records])
+        return AgentToolBatchPublishResponse(
+            published_ids=tool_ids,
+            published_count=len(tool_ids),
+            message=f"已发布 {len(tool_ids)} 个工具",
+        )
+
     async def unpublish_tool(self, tool_id: int) -> AgentToolPublishResponse:
         record = await self.repository.get_tool_record(tool_id)
         if record is None:
@@ -405,6 +435,38 @@ class AgentToolCatalogService:
         )
         records = await self.repository.list_grants(project_app_id=app.id)
         return self._grant_response(next(record for record in records if record.grant.id == grant.id))
+
+    async def replace_grants(
+        self,
+        *,
+        project_id: int,
+        app_id: int,
+        payload: AgentToolGrantReplace,
+    ) -> AgentToolGrantListResponse:
+        app = await self.repository.get_project_app(project_id=project_id, app_id=app_id)
+        team_id = await self.repository.get_project_app_team_id(project_id=project_id, app_id=app_id)
+        if app is None or team_id is None:
+            raise self._not_found("应用端不存在")
+
+        tool_ids = sorted(set(payload.agent_tool_ids))
+        records = await self.repository.get_tool_records_by_ids(tool_ids)
+        if len(records) != len(tool_ids):
+            raise self._bad_request("包含不存在的 Agent 工具")
+        for record in records:
+            if record.tool.team_id != team_id:
+                raise self._bad_request("只能授权当前团队的工具")
+            if record.tool.publish_status != "published":
+                raise self._bad_request(f"工具“{record.tool.name}”尚未发布")
+            if record.tool.sync_status != "active":
+                raise self._bad_request(f"工具“{record.tool.name}”同步状态正常后才能授权")
+            if record.tool.schema_hash != record.tool.approved_schema_hash:
+                raise self._bad_request(f"工具“{record.tool.name}”的 Schema 尚未批准")
+            if not record.provider.enabled:
+                raise self._bad_request(f"工具“{record.tool.name}”的提供方未启用")
+
+        await self.repository.replace_grants(project_app_id=app.id, agent_tool_ids=tool_ids)
+        grants = await self.repository.list_grants(project_app_id=app.id)
+        return AgentToolGrantListResponse(items=[self._grant_response(record) for record in grants])
 
     async def delete_grant(self, *, project_id: int, app_id: int, grant_id: int) -> None:
         app = await self.repository.get_project_app(project_id=project_id, app_id=app_id)

@@ -1,7 +1,7 @@
 """Schemas for tool providers, governed tools, grants and invocations."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -108,6 +108,16 @@ class AgentToolPublishResponse(BaseModel):
     message: str
 
 
+class AgentToolBatchPublishRequest(BaseModel):
+    tool_ids: list[Annotated[int, Field(gt=0)]] = Field(..., min_length=1, max_length=100)
+
+
+class AgentToolBatchPublishResponse(BaseModel):
+    published_ids: list[int] = Field(default_factory=list)
+    published_count: int = 0
+    message: str
+
+
 class AgentToolResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -152,6 +162,10 @@ class AgentToolListResponse(BaseModel):
 
 class AgentToolGrantCreate(BaseModel):
     agent_tool_id: int = Field(..., gt=0)
+
+
+class AgentToolGrantReplace(BaseModel):
+    agent_tool_ids: list[Annotated[int, Field(gt=0)]] = Field(default_factory=list)
 
 
 class AgentToolGrantResponse(BaseModel):

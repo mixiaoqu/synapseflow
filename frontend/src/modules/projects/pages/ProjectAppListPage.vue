@@ -12,6 +12,7 @@ import {
   Monitor,
   Plus,
   Refresh,
+  Search,
   Setting,
 } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -19,13 +20,12 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
 import {
-  createProjectAppToolGrant,
   createProjectAppAccess,
-  deleteProjectAppToolGrant,
   enableProjectAppAccess,
   getProjectAppAccess,
   listAgentTools,
   listProjectAppToolGrants,
+  replaceProjectAppToolGrants,
   resetProjectAppAccessSecret,
   revokeProjectAppAccess,
   updateProjectAppAccess,
@@ -78,7 +78,12 @@ const deletingAppId = ref<number | null>(null);
 const configSavingKey = ref<"" | "knowledge_base" | "category" | "assistant">("");
 const categoryLoading = ref(false);
 const toolGrantLoading = ref(false);
-const toolGrantSavingId = ref<number | null>(null);
+const toolGrantDialogVisible = ref(false);
+const toolGrantSaving = ref(false);
+const toolGrantKeyword = ref("");
+const toolGrantSelectedOnly = ref(false);
+const draftToolGrantIds = ref<number[]>([]);
+const sandboxDrawerVisible = ref(false);
 const activeAppId = ref<number | null>(null);
 const integrationDialogVisible = ref(false);
 const integrationApp = ref<ProjectAppSummary | null>(null);
@@ -140,9 +145,42 @@ const previewUnavailableDescription = computed(() => {
 });
 const appDialogTitle = computed(() => (editingApp.value ? "编辑应用端" : "新建应用端"));
 const appDialogSubmitText = computed(() => (editingApp.value ? "保存应用端" : "创建应用端"));
-function getToolGrant(toolId: number) {
-  return toolGrants.value.find((grant) => grant.agent_tool_id === toolId) ?? null;
-}
+const grantedToolIdSet = computed(() => new Set(toolGrants.value.map((grant) => grant.agent_tool_id)));
+const grantedProviderCount = computed(
+  () => new Set(toolGrants.value.map((grant) => grant.provider_id)).size,
+);
+const toolGrantHasChanges = computed(() => {
+  const saved = [...grantedToolIdSet.value].sort((a, b) => a - b);
+  const draft = [...new Set(draftToolGrantIds.value)].sort((a, b) => a - b);
+  return saved.length !== draft.length || saved.some((id, index) => id !== draft[index]);
+});
+const groupedAvailableTools = computed(() => {
+  const keyword = toolGrantKeyword.value.trim().toLowerCase();
+  const selectedIds = new Set(draftToolGrantIds.value);
+  const filtered = availableTools.value.filter((tool) => {
+    if (toolGrantSelectedOnly.value && !selectedIds.has(tool.id)) {
+      return false;
+    }
+    if (!keyword) {
+      return true;
+    }
+    return [tool.name, tool.tool_key, tool.provider_name, tool.agent_description, tool.external_description]
+      .some((value) => String(value || "").toLowerCase().includes(keyword));
+  });
+  const groups = new Map<number, { providerId: number; providerName: string; tools: AgentTool[] }>();
+  for (const tool of filtered) {
+    const group = groups.get(tool.provider_id) ?? {
+      providerId: tool.provider_id,
+      providerName: tool.provider_name,
+      tools: [],
+    };
+    group.tools.push(tool);
+    groups.set(tool.provider_id, group);
+  }
+  return [...groups.values()];
+});
+
+let toolGrantRequestSequence = 0;
 
 
 function formatTerminalType(value: ProjectAppTerminalType) {
@@ -257,6 +295,29 @@ async function loadCategories(knowledgeBaseId: number | null, categoryId: number
   }
 }
 
+async function listAllPublishedTools(teamId: number) {
+  const pageSize = 100;
+  const tools: AgentTool[] = [];
+  let page = 1;
+  let total = 0;
+  do {
+    const response = await listAgentTools({
+      team_id: teamId,
+      publish_status: "published",
+      sync_status: "active",
+      page,
+      page_size: pageSize,
+    });
+    tools.push(...response.items);
+    total = response.total;
+    if (response.items.length === 0) {
+      break;
+    }
+    page += 1;
+  } while (tools.length < total);
+  return tools;
+}
+
 async function loadOptionData(projectResponse: ProjectSummary) {
   const [assistantResponses, knowledgeBaseResponses, toolResponse] = await Promise.all([
     listAssistants({
@@ -271,20 +332,15 @@ async function loadOptionData(projectResponse: ProjectSummary) {
       page: 1,
       page_size: 100,
     }),
-    listAgentTools({
-      team_id: projectResponse.team_id,
-      publish_status: "published",
-      sync_status: "active",
-      page: 1,
-      page_size: 100,
-    }),
+    listAllPublishedTools(projectResponse.team_id),
   ]);
   assistants.value = assistantResponses.items;
   knowledgeBases.value = knowledgeBaseResponses.items;
-  availableTools.value = toolResponse.items;
+  availableTools.value = toolResponse;
 }
 
 async function loadToolGrants(appId: number | null) {
+  const requestSequence = ++toolGrantRequestSequence;
   toolGrants.value = [];
   if (!projectId.value || !appId) {
     return;
@@ -293,12 +349,18 @@ async function loadToolGrants(appId: number | null) {
   toolGrantLoading.value = true;
   try {
     const response = await listProjectAppToolGrants(projectId.value, appId);
-    toolGrants.value = response.items;
+    if (requestSequence === toolGrantRequestSequence && activeApp.value?.id === appId) {
+      toolGrants.value = response.items;
+    }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "加载工具授权失败，请稍后重试。";
-    ElMessage.error(message);
+    if (requestSequence === toolGrantRequestSequence) {
+      const message = error instanceof Error ? error.message : "加载工具授权失败，请稍后重试。";
+      ElMessage.error(message);
+    }
   } finally {
-    toolGrantLoading.value = false;
+    if (requestSequence === toolGrantRequestSequence) {
+      toolGrantLoading.value = false;
+    }
   }
 }
 
@@ -458,29 +520,78 @@ async function handleAssistantChange(value: number | string | null) {
   await saveActiveAppConfig("assistant", { default_assistant_id: nextAssistantId }, "已更新默认助手。");
 }
 
-async function handleToolGrantChange(tool: AgentTool, enabled: boolean) {
-  if (!projectId.value || !activeApp.value || toolGrantSavingId.value) {
+function openToolGrantManager() {
+  draftToolGrantIds.value = [...grantedToolIdSet.value];
+  toolGrantKeyword.value = "";
+  toolGrantSelectedOnly.value = false;
+  toolGrantDialogVisible.value = true;
+}
+
+function isProviderFullySelected(tools: AgentTool[]) {
+  const selected = new Set(draftToolGrantIds.value);
+  return tools.length > 0 && tools.every((tool) => selected.has(tool.id));
+}
+
+function isProviderPartiallySelected(tools: AgentTool[]) {
+  const selected = new Set(draftToolGrantIds.value);
+  const selectedCount = tools.filter((tool) => selected.has(tool.id)).length;
+  return selectedCount > 0 && selectedCount < tools.length;
+}
+
+function handleProviderSelection(tools: AgentTool[], selected: boolean | string | number) {
+  const nextIds = new Set(draftToolGrantIds.value);
+  for (const tool of tools) {
+    if (selected === true) {
+      nextIds.add(tool.id);
+    } else {
+      nextIds.delete(tool.id);
+    }
+  }
+  draftToolGrantIds.value = [...nextIds].sort((a, b) => a - b);
+}
+
+function handleToolSelection(toolId: number, selected: boolean | string | number) {
+  const nextIds = new Set(draftToolGrantIds.value);
+  if (selected === true) {
+    nextIds.add(toolId);
+  } else {
+    nextIds.delete(toolId);
+  }
+  draftToolGrantIds.value = [...nextIds].sort((a, b) => a - b);
+}
+
+async function handleSaveToolGrants() {
+  if (!projectId.value || !activeApp.value || toolGrantSaving.value || !toolGrantHasChanges.value) {
     return;
   }
-  toolGrantSavingId.value = tool.id;
+  const appId = activeApp.value.id;
+  toolGrantSaving.value = true;
   try {
-    const grant = getToolGrant(tool.id);
-    if (enabled) {
-      await createProjectAppToolGrant(projectId.value, activeApp.value.id, tool.id);
-    } else if (grant) {
-      await deleteProjectAppToolGrant(projectId.value, activeApp.value.id, grant.id);
+    const response = await replaceProjectAppToolGrants(
+      projectId.value,
+      appId,
+      [...new Set(draftToolGrantIds.value)].sort((a, b) => a - b),
+    );
+    if (activeApp.value?.id !== appId) {
+      return;
     }
-    await loadToolGrants(activeApp.value.id);
+    toolGrantRequestSequence += 1;
+    toolGrants.value = response.items;
+    toolGrantDialogVisible.value = false;
     if (previewEmbedUrl.value) {
       previewNeedsRefresh.value = true;
     }
-    ElMessage.success(enabled ? "工具已授权。" : "工具授权已移除。");
+    ElMessage.success("工具授权已保存。");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "更新工具授权失败，请稍后重试。";
+    const message = error instanceof Error ? error.message : "保存工具授权失败，请稍后重试。";
     ElMessage.error(message);
   } finally {
-    toolGrantSavingId.value = null;
+    toolGrantSaving.value = false;
   }
+}
+
+function openSandbox() {
+  sandboxDrawerVisible.value = true;
 }
 
 async function handleSaveAppBasicInfo() {
@@ -954,6 +1065,13 @@ watch(integrationDialogVisible, (visible) => {
                 title="编辑应用端"
                 @click="openEditApp(activeApp)"
               />
+              <el-button
+                class="project-app-workspace-page__sandbox-button"
+                @click="openSandbox"
+              >
+                <el-icon><Monitor /></el-icon>
+                沙盒测试
+              </el-button>
               <span :class="activeApp.is_active ? 'is-active' : ''">{{ activeApp.is_active ? "在线" : "停用" }}</span>
               <el-switch
                 :model-value="activeApp.is_active"
@@ -1061,14 +1179,24 @@ watch(integrationDialogVisible, (visible) => {
             <div class="project-app-workspace-page__config-header">
               <div>
                 <h3>Agent 工具授权</h3>
-                <p>按工具控制当前应用端可调用的业务能力。</p>
+                <p>控制当前应用端可以调用的业务能力。</p>
               </div>
-              <router-link
-                class="project-app-workspace-page__plain-link"
-                to="/agent-integrations"
-              >
-                管理 Agent 工具
-              </router-link>
+              <div class="project-app-workspace-page__tool-header-actions">
+                <router-link
+                  class="project-app-workspace-page__plain-link"
+                  to="/agent-integrations"
+                >
+                  工具目录
+                </router-link>
+                <el-button
+                  type="primary"
+                  :disabled="toolGrantLoading || availableTools.length === 0"
+                  @click="openToolGrantManager"
+                >
+                  <el-icon><Setting /></el-icon>
+                  管理授权
+                </el-button>
+              </div>
             </div>
 
             <div
@@ -1077,36 +1205,25 @@ watch(integrationDialogVisible, (visible) => {
             >
               <div
                 v-if="availableTools.length > 0"
-                class="project-app-workspace-page__binding-list"
+                class="project-app-workspace-page__tool-summary"
               >
-                <div
-                  v-for="tool in availableTools"
-                  :key="tool.id"
-                  class="project-app-workspace-page__binding-row"
-                >
-                  <div class="project-app-workspace-page__binding-main">
-                    <div>
-                      <strong>{{ tool.name }}</strong>
-                      <span>{{ tool.provider_name }} · {{ tool.tool_key }}</span>
-                    </div>
-                    <small v-if="tool.required_context.length">上下文：{{ tool.required_context.join("、") }}</small>
-                  </div>
-                  <div class="project-app-workspace-page__binding-actions">
-                    <el-tag
-                      size="small"
-                      :type="getToolGrant(tool.id) ? 'success' : 'info'"
-                      effect="plain"
-                    >
-                      {{ getToolGrant(tool.id) ? "已授权" : "未授权" }}
-                    </el-tag>
-                    <el-switch
-                      :model-value="Boolean(getToolGrant(tool.id))"
-                      :loading="toolGrantSavingId === tool.id"
-                      aria-label="切换 Agent 工具授权"
-                      @change="handleToolGrantChange(tool, Boolean($event))"
-                    />
-                  </div>
+                <div>
+                  <strong>{{ toolGrants.length }}</strong>
+                  <span>已授权工具</span>
                 </div>
+                <div>
+                  <strong>{{ availableTools.length }}</strong>
+                  <span>可用工具</span>
+                </div>
+                <div>
+                  <strong>{{ grantedProviderCount }}</strong>
+                  <span>已覆盖提供方</span>
+                </div>
+                <p>
+                  {{ toolGrants.length > 0
+                    ? `当前应用可调用 ${toolGrants.length} 个已发布工具。`
+                    : "当前应用尚未获得业务工具授权。" }}
+                </p>
               </div>
 
               <div
@@ -1161,86 +1278,196 @@ watch(integrationDialogVisible, (visible) => {
             </dl>
           </section>
         </div>
-
-        <section class="project-app-workspace-page__sandbox">
-          <div class="project-app-workspace-page__sandbox-header">
-            <div>
-              <h3>沙盒测试</h3>
-            </div>
-            <div class="project-app-workspace-page__sandbox-actions">
-              <el-input
-                v-model="previewStoreId"
-                clearable
-                maxlength="120"
-                placeholder="门店 ID"
-                class="project-app-workspace-page__sandbox-store"
-              />
-              <el-button
-                link
-                class="project-app-workspace-page__refresh-button"
-                :disabled="!canPreviewActiveApp"
-                :loading="previewLoading"
-                @click="generatePreview"
-              >
-                <el-icon><Refresh /></el-icon>
-                {{ previewEmbedUrl || previewNeedsRefresh ? "刷新测试" : "生成测试" }}
-              </el-button>
-            </div>
-          </div>
-
-          <div class="project-app-workspace-page__sandbox-body">
-            <iframe
-              v-if="hasFreshPreview"
-              :src="previewEmbedUrl"
-              title="沙盒测试"
-              class="project-app-workspace-page__iframe"
-            />
-            <AppEmpty
-              v-else-if="previewNeedsRefresh && canPreviewActiveApp"
-              class="project-app-workspace-page__sandbox-empty"
-              title="配置已更新"
-              description="问答引擎配置已保存，刷新测试后将使用最新知识库、分类和助手。"
-            >
-              <div class="project-app-workspace-page__suggestions">
-                <button
-                  type="button"
-                  @click="generatePreview"
-                >
-                  刷新测试会话
-                </button>
-              </div>
-            </AppEmpty>
-            <AppEmpty
-              v-else-if="canPreviewActiveApp"
-              class="project-app-workspace-page__sandbox-empty"
-              :title="`我是 ${activeApp.default_assistant_name || '默认助手'}`"
-              description="配置已就绪，可以生成测试会话。"
-            >
-              <div class="project-app-workspace-page__suggestions">
-                <button
-                  type="button"
-                  @click="generatePreview"
-                >
-                  生成测试会话
-                </button>
-              </div>
-            </AppEmpty>
-            <AppEmpty
-              v-else-if="activeApp.is_active"
-              class="project-app-workspace-page__sandbox-empty"
-              title="配置未完成"
-              :description="previewUnavailableDescription"
-            />
-            <AppEmpty
-              v-else
-              class="project-app-workspace-page__sandbox-empty"
-              title="应用端已停用"
-              :description="previewUnavailableDescription"
-            />
-          </div>
-        </section>
       </section>
     </AdminListPanel>
+
+    <el-drawer
+      v-model="toolGrantDialogVisible"
+      class="project-app-workspace-page__tool-drawer"
+      size="720px"
+      :show-close="!toolGrantSaving"
+      :close-on-click-modal="!toolGrantSaving"
+      :close-on-press-escape="!toolGrantSaving"
+    >
+      <template #header>
+        <div class="project-app-workspace-page__drawer-title">
+          <h3>管理工具授权</h3>
+          <p>{{ activeApp?.name }} · 已选择 {{ draftToolGrantIds.length }} / {{ availableTools.length }}</p>
+        </div>
+      </template>
+
+      <div class="project-app-workspace-page__tool-drawer-body">
+        <div class="project-app-workspace-page__tool-toolbar">
+          <el-input
+            v-model="toolGrantKeyword"
+            clearable
+            placeholder="搜索工具名称、标识或提供方"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <el-checkbox v-model="toolGrantSelectedOnly">
+            仅看已授权
+          </el-checkbox>
+        </div>
+
+        <div class="project-app-workspace-page__tool-groups">
+          <section
+            v-for="group in groupedAvailableTools"
+            :key="group.providerId"
+            class="project-app-workspace-page__tool-group"
+          >
+            <div class="project-app-workspace-page__tool-group-header">
+              <el-checkbox
+                :model-value="isProviderFullySelected(group.tools)"
+                :indeterminate="isProviderPartiallySelected(group.tools)"
+                @change="handleProviderSelection(group.tools, $event)"
+              >
+                {{ group.providerName }}
+              </el-checkbox>
+              <span>{{ group.tools.length }} 个工具</span>
+            </div>
+            <label
+              v-for="tool in group.tools"
+              :key="tool.id"
+              class="project-app-workspace-page__tool-option"
+            >
+              <el-checkbox
+                :model-value="draftToolGrantIds.includes(tool.id)"
+                @change="handleToolSelection(tool.id, $event)"
+              />
+              <div class="project-app-workspace-page__tool-option-main">
+                <div class="project-app-workspace-page__tool-option-title">
+                  <strong>{{ tool.name }}</strong>
+                  <el-tag
+                    v-if="tool.risk_level !== 'low'"
+                    size="small"
+                    :type="tool.risk_level === 'high' ? 'danger' : 'warning'"
+                    effect="plain"
+                  >
+                    {{ tool.risk_level === "high" ? "高风险" : "中风险" }}
+                  </el-tag>
+                  <el-tag
+                    v-if="tool.requires_confirmation"
+                    size="small"
+                    type="warning"
+                    effect="plain"
+                  >
+                    调用前确认
+                  </el-tag>
+                </div>
+                <p>{{ tool.agent_description || tool.external_description || "暂无工具说明" }}</p>
+                <span>{{ tool.tool_key }}</span>
+              </div>
+            </label>
+          </section>
+        </div>
+
+        <AppEmpty
+          v-if="groupedAvailableTools.length === 0"
+          title="没有匹配的工具"
+          description="请调整搜索词或关闭仅看已授权。"
+        />
+      </div>
+
+      <template #footer>
+        <div class="project-app-workspace-page__drawer-footer">
+          <span>已选择 {{ draftToolGrantIds.length }} 个工具</span>
+          <div>
+            <el-button
+              :disabled="toolGrantSaving"
+              @click="toolGrantDialogVisible = false"
+            >
+              取消
+            </el-button>
+            <el-button
+              type="primary"
+              :loading="toolGrantSaving"
+              :disabled="!toolGrantHasChanges"
+              @click="handleSaveToolGrants"
+            >
+              保存授权
+            </el-button>
+          </div>
+        </div>
+      </template>
+    </el-drawer>
+
+    <el-drawer
+      v-model="sandboxDrawerVisible"
+      class="project-app-workspace-page__sandbox-drawer"
+      size="100%"
+    >
+      <template #header>
+        <div class="project-app-workspace-page__drawer-title">
+          <h3>沙盒测试</h3>
+          <p>{{ activeApp?.name }} · 使用当前已保存配置生成测试会话</p>
+        </div>
+      </template>
+
+      <div class="project-app-workspace-page__sandbox-drawer-content">
+        <div class="project-app-workspace-page__sandbox-actions">
+          <el-input
+            v-model="previewStoreId"
+            clearable
+            maxlength="120"
+            placeholder="门店 ID"
+            class="project-app-workspace-page__sandbox-store"
+          />
+          <el-button
+            type="primary"
+            :disabled="!canPreviewActiveApp"
+            :loading="previewLoading"
+            @click="generatePreview"
+          >
+            <el-icon><Refresh /></el-icon>
+            {{ previewEmbedUrl || previewNeedsRefresh ? "刷新测试" : "生成测试" }}
+          </el-button>
+        </div>
+
+        <div class="project-app-workspace-page__sandbox-body">
+          <iframe
+            v-if="hasFreshPreview"
+            :src="previewEmbedUrl"
+            title="沙盒测试"
+            class="project-app-workspace-page__iframe"
+          />
+          <AppEmpty
+            v-else-if="previewNeedsRefresh && canPreviewActiveApp"
+            class="project-app-workspace-page__sandbox-empty"
+            title="配置已更新"
+            description="应用配置已保存，刷新测试后将使用最新设置。"
+          >
+            <el-button
+              type="primary"
+              @click="generatePreview"
+            >
+              刷新测试会话
+            </el-button>
+          </AppEmpty>
+          <AppEmpty
+            v-else-if="canPreviewActiveApp"
+            class="project-app-workspace-page__sandbox-empty"
+            :title="`我是 ${activeApp?.default_assistant_name || '默认助手'}`"
+            description="配置已就绪，可以生成测试会话。"
+          >
+            <el-button
+              type="primary"
+              @click="generatePreview"
+            >
+              生成测试会话
+            </el-button>
+          </AppEmpty>
+          <AppEmpty
+            v-else
+            class="project-app-workspace-page__sandbox-empty"
+            :title="activeApp?.is_active ? '配置未完成' : '应用端已停用'"
+            :description="previewUnavailableDescription"
+          />
+        </div>
+      </div>
+    </el-drawer>
 
     <AdminDialog
       v-model="integrationDialogVisible"
@@ -1510,8 +1737,7 @@ watch(integrationDialogVisible, (visible) => {
 .project-app-workspace-page__app-title,
 .project-app-workspace-page__status-control,
 .project-app-workspace-page__config-header,
-.project-app-workspace-page__access-header,
-.project-app-workspace-page__sandbox-header {
+.project-app-workspace-page__access-header {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1649,29 +1875,23 @@ watch(integrationDialogVisible, (visible) => {
 }
 
 .project-app-workspace-page__body {
-  display: grid;
   min-height: 0;
-  grid-template-columns: minmax(420px, 460px) minmax(640px, 1fr);
-  gap: 28px;
+  width: min(960px, 100%);
+  margin: 0 auto;
   padding: 32px 8px 0;
 }
 
-.project-app-workspace-page__inspector,
-.project-app-workspace-page__sandbox {
+.project-app-workspace-page__inspector {
   display: flex;
   min-height: 0;
   flex-direction: column;
-}
-
-.project-app-workspace-page__inspector {
   gap: 24px;
 }
 
 .project-app-workspace-page__status-card,
 .project-app-workspace-page__config-card,
 .project-app-workspace-page__business-tool-card,
-.project-app-workspace-page__access-card,
-.project-app-workspace-page__sandbox {
+.project-app-workspace-page__access-card {
   border: 1px solid var(--admin-border);
   border-radius: 18px;
   background: var(--admin-surface);
@@ -1715,7 +1935,6 @@ watch(integrationDialogVisible, (visible) => {
 .project-app-workspace-page__app-title h3,
 .project-app-workspace-page__config-header h3,
 .project-app-workspace-page__access-header h3,
-.project-app-workspace-page__sandbox-header h3,
 .project-app-workspace-page__dialog-title {
   margin: 0;
   color: #020617;
@@ -1726,7 +1945,6 @@ watch(integrationDialogVisible, (visible) => {
 .project-app-workspace-page__app-identity p,
 .project-app-workspace-page__config-header p,
 .project-app-workspace-page__access-header p,
-.project-app-workspace-page__sandbox-header p,
 .project-app-workspace-page__config-row p {
   margin: 4px 0 0;
   color: var(--admin-text-muted);
@@ -1738,6 +1956,10 @@ watch(integrationDialogVisible, (visible) => {
   flex-shrink: 0;
   border-left: 1px solid #eef2f7;
   padding-left: 16px;
+}
+
+.project-app-workspace-page__sandbox-button {
+  margin-left: 0;
 }
 
 .project-app-workspace-page__icon-button {
@@ -1796,6 +2018,12 @@ watch(integrationDialogVisible, (visible) => {
 
 .project-app-workspace-page__plain-link:hover {
   color: var(--admin-primary-strong);
+}
+
+.project-app-workspace-page__tool-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
 .project-app-workspace-page__config-list {
@@ -1880,63 +2108,53 @@ watch(integrationDialogVisible, (visible) => {
 .project-app-workspace-page__business-tool-body {
   display: grid;
   gap: 14px;
-  padding: 16px;
+  padding: 0;
 }
 
-.project-app-workspace-page__binding-list {
+.project-app-workspace-page__tool-summary {
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 0 24px;
 }
 
-.project-app-workspace-page__binding-row {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: var(--admin-radius-md);
-  background: #f8fafc;
-  padding: 12px;
+.project-app-workspace-page__tool-summary > div {
+  border-right: 1px solid #eef2f7;
+  padding: 20px 24px 20px 0;
 }
 
-.project-app-workspace-page__binding-row strong,
-.project-app-workspace-page__binding-row span {
+.project-app-workspace-page__tool-summary > div + div {
+  padding-left: 24px;
+}
+
+.project-app-workspace-page__tool-summary > div:nth-child(3) {
+  border-right: 0;
+}
+
+.project-app-workspace-page__tool-summary strong,
+.project-app-workspace-page__tool-summary span {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.project-app-workspace-page__binding-main {
-  display: grid;
-  min-width: 0;
-  gap: 6px;
-}
-
-.project-app-workspace-page__binding-main small {
-  color: #b45309;
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.project-app-workspace-page__binding-row strong {
+.project-app-workspace-page__tool-summary strong {
   color: #0f172a;
-  font-size: 13px;
+  font-size: 24px;
   font-weight: 800;
 }
 
-.project-app-workspace-page__binding-row span {
+.project-app-workspace-page__tool-summary span {
   margin-top: 4px;
   color: var(--admin-text-muted);
   font-size: 12px;
 }
 
-.project-app-workspace-page__binding-actions {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 8px;
+.project-app-workspace-page__tool-summary p {
+  grid-column: 1 / -1;
+  margin: 0 -24px;
+  border-top: 1px solid #eef2f7;
+  background: #f8fafc;
+  color: var(--admin-text-muted);
+  font-size: 12px;
+  padding: 12px 24px;
 }
 
 .project-app-workspace-page__binding-empty {
@@ -1999,7 +2217,7 @@ watch(integrationDialogVisible, (visible) => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
-  margin: 0;
+  margin: 16px;
 }
 
 .project-app-workspace-page__access-list div {
@@ -2037,35 +2255,149 @@ watch(integrationDialogVisible, (visible) => {
   color: #059669;
 }
 
-.project-app-workspace-page__sandbox {
+.project-app-workspace-page__drawer-title h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.project-app-workspace-page__drawer-title p {
+  margin: 4px 0 0;
+  color: var(--admin-text-muted);
+  font-size: 12px;
+}
+
+.project-app-workspace-page__tool-drawer-body,
+.project-app-workspace-page__sandbox-drawer-content {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.project-app-workspace-page__sandbox-drawer-content {
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+}
+
+.project-app-workspace-page__tool-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  border-bottom: 1px solid #eef2f7;
+  padding-bottom: 18px;
+}
+
+.project-app-workspace-page__tool-groups {
+  display: grid;
+  gap: 22px;
+  padding: 20px 0;
+}
+
+.project-app-workspace-page__tool-group {
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
   overflow: hidden;
 }
 
-.project-app-workspace-page__sandbox-header {
+.project-app-workspace-page__tool-group-header {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #eef2f7;
-  background: #ffffff;
-  padding: 20px 22px;
+  gap: 16px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+  padding: 12px 16px;
+}
+
+.project-app-workspace-page__tool-group-header span {
+  color: var(--admin-text-muted);
+  font-size: 12px;
+}
+
+.project-app-workspace-page__tool-option {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  padding: 15px 16px;
+}
+
+.project-app-workspace-page__tool-option + .project-app-workspace-page__tool-option {
+  border-top: 1px solid #eef2f7;
+}
+
+.project-app-workspace-page__tool-option:hover {
+  background: #f8fafc;
+}
+
+.project-app-workspace-page__tool-option-main {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 5px;
+}
+
+.project-app-workspace-page__tool-option-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.project-app-workspace-page__tool-option-title strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.project-app-workspace-page__tool-option-main p {
+  margin: 0;
+  color: var(--admin-text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.project-app-workspace-page__tool-option-main > span {
+  overflow-wrap: anywhere;
+  color: var(--admin-text-subtle);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+}
+
+.project-app-workspace-page__drawer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.project-app-workspace-page__drawer-footer > span {
+  color: var(--admin-text-muted);
+  font-size: 13px;
 }
 
 .project-app-workspace-page__sandbox-actions {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
+  border-bottom: 1px solid #eef2f7;
+  padding-bottom: 16px;
 }
 
 .project-app-workspace-page__sandbox-store {
   width: 180px;
 }
 
-.project-app-workspace-page__refresh-button {
-  color: #94a3b8;
-}
-
 .project-app-workspace-page__sandbox-body {
   display: flex;
   flex: 1;
-  min-height: clamp(620px, calc(100vh - 285px), 820px);
+  min-height: 0;
+  margin-top: 16px;
   overflow: hidden;
   background: #fafafa;
   padding: 0;
@@ -2088,31 +2420,17 @@ watch(integrationDialogVisible, (visible) => {
 .project-app-workspace-page__sandbox-empty :deep(.app-empty__icon) {
   width: 58px;
   height: 58px;
-  border-radius: 16px;
+  border-radius: 8px;
 }
 
-.project-app-workspace-page__suggestions {
-  display: grid;
-  width: min(280px, 100%);
-  gap: 10px;
-  margin-top: 8px;
+.project-app-workspace-page :deep(.project-app-workspace-page__tool-drawer),
+.project-app-workspace-page :deep(.project-app-workspace-page__sandbox-drawer) {
+  max-width: 100%;
 }
 
-.project-app-workspace-page__suggestions button {
-  width: 100%;
-  border: 1px solid #e5e7eb;
-  border-radius: 16px;
-  background: #ffffff;
-  color: #475569;
-  cursor: pointer;
-  font-size: 13px;
-  padding: 13px 16px;
-  text-align: left;
-}
-
-.project-app-workspace-page__suggestions button:hover {
-  border-color: var(--admin-primary-border);
-  color: var(--admin-primary);
+.project-app-workspace-page :deep(.project-app-workspace-page__sandbox-drawer .el-drawer__body) {
+  display: flex;
+  min-height: 0;
 }
 
 .project-app-workspace-page__integration-summary {
@@ -2255,23 +2573,15 @@ watch(integrationDialogVisible, (visible) => {
   width: 100%;
 }
 
-@media (max-width: 1180px) {
-  .project-app-workspace-page__body {
-    grid-template-columns: 1fr;
-  }
-}
-
 @media (max-width: 760px) {
   .project-app-workspace-page__title-row,
   .project-app-workspace-page__status-card,
-  .project-app-workspace-page__config-header,
-  .project-app-workspace-page__sandbox-header {
+  .project-app-workspace-page__config-header {
     align-items: stretch;
     flex-direction: column;
   }
 
   .project-app-workspace-page__body {
-    grid-template-columns: 1fr;
     padding: 14px;
   }
 
@@ -2280,17 +2590,12 @@ watch(integrationDialogVisible, (visible) => {
     flex-direction: column;
   }
 
-  .project-app-workspace-page__binding-row {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .project-app-workspace-page__config-control {
     width: 100%;
     margin-left: 0;
   }
 
-  .project-app-workspace-page__binding-actions {
+  .project-app-workspace-page__tool-header-actions {
     justify-content: space-between;
   }
 
@@ -2301,6 +2606,27 @@ watch(integrationDialogVisible, (visible) => {
 
   .project-app-workspace-page__sandbox-store {
     width: 100%;
+  }
+
+  .project-app-workspace-page__tool-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .project-app-workspace-page__tool-summary > div,
+  .project-app-workspace-page__tool-summary > div + div {
+    border-right: 0;
+    border-bottom: 1px solid #eef2f7;
+    padding: 14px 0;
+  }
+
+  .project-app-workspace-page__tool-toolbar {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .project-app-workspace-page__drawer-footer {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .project-app-workspace-page__secret-value {

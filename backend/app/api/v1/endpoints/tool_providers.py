@@ -10,8 +10,11 @@ from app.application.agent_tool_catalog_service import AgentToolCatalogService
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.tool_provider import (
+    AgentToolBatchPublishRequest,
+    AgentToolBatchPublishResponse,
     AgentToolGrantCreate,
     AgentToolGrantListResponse,
+    AgentToolGrantReplace,
     AgentToolGrantResponse,
     AgentToolInvocationListResponse,
     AgentToolListResponse,
@@ -133,6 +136,15 @@ async def get_agent_tool(
     return await _service(db).get_tool(tool_id)
 
 
+@router.post("/agent-tools/batch-publish", response_model=AgentToolBatchPublishResponse)
+async def batch_publish_agent_tools(
+    body: AgentToolBatchPublishRequest,
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(require_content_roles),
+):
+    return await _service(db).batch_publish_tools(body)
+
+
 @router.put("/agent-tools/{tool_id}", response_model=AgentToolResponse)
 async def update_agent_tool(
     tool_id: int,
@@ -182,6 +194,24 @@ async def list_agent_tool_grants(
     _current_user: User = Depends(require_content_roles),
 ):
     return await _service(db).list_grants(project_id=project_id, app_id=app_id)
+
+
+@router.put(
+    "/project-apps/{project_id}/{app_id}/tool-grants",
+    response_model=AgentToolGrantListResponse,
+)
+async def replace_agent_tool_grants(
+    project_id: int,
+    app_id: int,
+    body: AgentToolGrantReplace,
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(require_content_roles),
+):
+    return await _service(db).replace_grants(
+        project_id=project_id,
+        app_id=app_id,
+        payload=body,
+    )
 
 
 @router.post(

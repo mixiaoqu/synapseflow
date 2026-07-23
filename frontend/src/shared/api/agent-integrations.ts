@@ -1,6 +1,7 @@
 import { request } from "@/shared/api/http";
 import type {
   AgentTool,
+  AgentToolBatchPublishResponse,
   AgentToolGrant,
   AgentToolGrantListResponse,
   AgentToolInvocationListResponse,
@@ -141,6 +142,14 @@ export function publishAgentTool(toolId: number) {
   });
 }
 
+export function batchPublishAgentTools(toolIds: number[]) {
+  return request<AgentToolBatchPublishResponse>({
+    url: "/agent-integrations/agent-tools/batch-publish",
+    method: "POST",
+    data: { tool_ids: toolIds },
+  });
+}
+
 export function unpublishAgentTool(toolId: number) {
   return request<AgentToolPublishResponse>({
     url: `/agent-integrations/agent-tools/${toolId}/unpublish`,
@@ -152,6 +161,14 @@ export function listProjectAppToolGrants(projectId: number, appId: number) {
   return request<AgentToolGrantListResponse>({
     url: `/agent-integrations/project-apps/${projectId}/${appId}/tool-grants`,
     method: "GET",
+  });
+}
+
+export function replaceProjectAppToolGrants(projectId: number, appId: number, agentToolIds: number[]) {
+  return request<AgentToolGrantListResponse>({
+    url: `/agent-integrations/project-apps/${projectId}/${appId}/tool-grants`,
+    method: "PUT",
+    data: { agent_tool_ids: agentToolIds },
   });
 }
 

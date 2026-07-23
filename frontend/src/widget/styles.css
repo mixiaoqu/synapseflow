@@ -39,6 +39,11 @@
   cursor: grabbing;
 }
 
+.agent-chat-widget-host--resizing .agent-chat-widget {
+  cursor: nwse-resize;
+  user-select: none;
+}
+
 @media (max-width: 640px) {
   .agent-chat-widget-host {
     inset: 0;

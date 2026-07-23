@@ -23,6 +23,39 @@ type ChatPanelPublic = {
 
 const TOKEN_REFRESH_LEEWAY_MS = 60_000;
 const PANEL_VIEWPORT_MARGIN = 16;
+const PANEL_MIN_WIDTH = 340;
+const PANEL_MIN_HEIGHT = 420;
+const PANEL_SIZE_STORAGE_KEY = "synapseflow.agent-chat.panel-size.v1";
+
+interface StoredPanelSize {
+  width: number;
+  height: number;
+}
+
+function readStoredPanelSize(): StoredPanelSize | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(PANEL_SIZE_STORAGE_KEY) || "null");
+    if (
+      Number.isFinite(value?.width) &&
+      Number.isFinite(value?.height) &&
+      value.width >= PANEL_MIN_WIDTH &&
+      value.height >= PANEL_MIN_HEIGHT
+    ) {
+      return { width: value.width, height: value.height };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function storePanelSize(size: StoredPanelSize) {
+  try {
+    localStorage.setItem(PANEL_SIZE_STORAGE_KEY, JSON.stringify(size));
+  } catch {
+    // 浏览器禁用站点存储时，缩放仍在当前会话内生效。
+  }
+}
 
 function resolveContainer(container?: string | HTMLElement | ShadowRoot) {
   if (container instanceof HTMLElement || container instanceof ShadowRoot) {
@@ -78,10 +111,17 @@ function buildPageContext(context: AgentChatContext): WidgetPageContext {
 
 function createHost(options: AgentChatInitOptions) {
   const container = resolveContainer(options.container);
+  const storedSize = readStoredPanelSize();
   const host = document.createElement("div");
   host.className = "agent-chat-widget-host";
-  host.style.setProperty("--agent-chat-width", normalizeSize(options.width, "420px"));
-  host.style.setProperty("--agent-chat-height", normalizeSize(options.height, "680px"));
+  host.style.setProperty(
+    "--agent-chat-width",
+    normalizeSize(options.width, storedSize ? `${storedSize.width}px` : "420px"),
+  );
+  host.style.setProperty(
+    "--agent-chat-height",
+    normalizeSize(options.height, storedSize ? `${storedSize.height}px` : "680px"),
+  );
   container.appendChild(host);
   return host;
 }
@@ -97,11 +137,16 @@ export function createChatRuntime(): AgentChatGlobal {
       const pageRef = ref<ChatPanelPublic | null>(null);
       let refreshTimer: number | null = null;
       let refreshPromise: Promise<string> | null = null;
-      let activePointerId: number | null = null;
+      let dragPointerId: number | null = null;
+      let resizePointerId: number | null = null;
       let dragStartX = 0;
       let dragStartY = 0;
       let panelStartLeft = 0;
       let panelStartTop = 0;
+      let resizeStartX = 0;
+      let resizeStartY = 0;
+      let panelStartWidth = 0;
+      let panelStartHeight = 0;
 
       function resetPanelPosition() {
         host.style.removeProperty("left");
@@ -121,7 +166,7 @@ export function createChatRuntime(): AgentChatGlobal {
       }
 
       function handlePointerMove(event: PointerEvent) {
-        if (event.pointerId !== activePointerId) {
+        if (event.pointerId !== dragPointerId) {
           return;
         }
         movePanel(
@@ -131,10 +176,10 @@ export function createChatRuntime(): AgentChatGlobal {
       }
 
       function stopDragging(event?: PointerEvent) {
-        if (event && event.pointerId !== activePointerId) {
+        if (event && event.pointerId !== dragPointerId) {
           return;
         }
-        activePointerId = null;
+        dragPointerId = null;
         host.classList.remove("agent-chat-widget-host--dragging");
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", stopDragging);
@@ -146,6 +191,7 @@ export function createChatRuntime(): AgentChatGlobal {
           return;
         }
         event.preventDefault();
+        stopResizing();
         const rect = host.getBoundingClientRect();
         host.style.left = `${rect.left}px`;
         host.style.top = `${rect.top}px`;
@@ -153,11 +199,77 @@ export function createChatRuntime(): AgentChatGlobal {
         dragStartY = event.clientY;
         panelStartLeft = rect.left;
         panelStartTop = rect.top;
-        activePointerId = event.pointerId;
+        dragPointerId = event.pointerId;
         host.classList.add("agent-chat-widget-host--dragging");
         window.addEventListener("pointermove", handlePointerMove);
         window.addEventListener("pointerup", stopDragging);
         window.addEventListener("pointercancel", stopDragging);
+      }
+
+      function resizePanel(width: number, height: number) {
+        host.style.setProperty("--agent-chat-width", `${width}px`);
+        host.style.setProperty("--agent-chat-height", `${height}px`);
+      }
+
+      function handleResizePointerMove(event: PointerEvent) {
+        if (event.pointerId !== resizePointerId) {
+          return;
+        }
+        const maxWidth = document.documentElement.clientWidth - panelStartLeft - PANEL_VIEWPORT_MARGIN;
+        const maxHeight = document.documentElement.clientHeight - panelStartTop - PANEL_VIEWPORT_MARGIN;
+        resizePanel(
+          clamp(
+            panelStartWidth + event.clientX - resizeStartX,
+            Math.min(PANEL_MIN_WIDTH, maxWidth),
+            maxWidth,
+          ),
+          clamp(
+            panelStartHeight + event.clientY - resizeStartY,
+            Math.min(PANEL_MIN_HEIGHT, maxHeight),
+            maxHeight,
+          ),
+        );
+      }
+
+      function stopResizing(event?: PointerEvent) {
+        if (event && event.pointerId !== resizePointerId) {
+          return;
+        }
+        const wasResizing = resizePointerId !== null;
+        resizePointerId = null;
+        host.classList.remove("agent-chat-widget-host--resizing");
+        window.removeEventListener("pointermove", handleResizePointerMove);
+        window.removeEventListener("pointerup", stopResizing);
+        window.removeEventListener("pointercancel", stopResizing);
+        if (wasResizing) {
+          const rect = host.getBoundingClientRect();
+          storePanelSize({
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          });
+        }
+      }
+
+      function startResizing(event: PointerEvent) {
+        if (event.button !== 0 || window.innerWidth <= 640) {
+          return;
+        }
+        event.preventDefault();
+        stopDragging();
+        const rect = host.getBoundingClientRect();
+        host.style.left = `${rect.left}px`;
+        host.style.top = `${rect.top}px`;
+        panelStartLeft = rect.left;
+        panelStartTop = rect.top;
+        panelStartWidth = rect.width;
+        panelStartHeight = rect.height;
+        resizeStartX = event.clientX;
+        resizeStartY = event.clientY;
+        resizePointerId = event.pointerId;
+        host.classList.add("agent-chat-widget-host--resizing");
+        window.addEventListener("pointermove", handleResizePointerMove);
+        window.addEventListener("pointerup", stopResizing);
+        window.addEventListener("pointercancel", stopResizing);
       }
 
       function handleViewportResize() {
@@ -258,6 +370,7 @@ export function createChatRuntime(): AgentChatGlobal {
                       refreshToken,
                       onClose: close,
                       onDragStart: startDragging,
+                      onResizeStart: startResizing,
                     }),
                   ]
                 : [],
@@ -290,6 +403,7 @@ export function createChatRuntime(): AgentChatGlobal {
 
       function close() {
         stopDragging();
+        stopResizing();
         isOpen.value = false;
         resetPanelPosition();
       }
@@ -318,6 +432,7 @@ export function createChatRuntime(): AgentChatGlobal {
         refreshToken,
         destroy() {
           stopDragging();
+          stopResizing();
           clearRefreshTimer();
           window.removeEventListener("resize", handleViewportResize);
           app.unmount();

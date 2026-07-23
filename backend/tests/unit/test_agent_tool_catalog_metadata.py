@@ -119,3 +119,40 @@ async def test_sync_uses_source_display_name_for_new_tool():
     tool = service.repository.saved[0]
     assert tool.name == "业务端订单查询"
     assert tool.external_display_name == "业务端订单查询"
+
+
+@pytest.mark.asyncio
+async def test_sync_upgrades_legacy_machine_name_to_source_display_name():
+    provider = ToolProvider(
+        id=1,
+        team_id=2,
+        code="medical_center",
+        name="医疗中心",
+        base_url="https://example.test/agent-tools",
+        transport_type="business_http",
+        auth_type="none",
+    )
+    tool = AgentTool(
+        provider_id=1,
+        team_id=2,
+        external_name="query_orders",
+        external_display_name="query_orders",
+        external_description="旧描述",
+        input_schema={},
+        output_schema={},
+        required_context=[],
+        raw_manifest={},
+        schema_hash="old-hash",
+        sync_status="active",
+        tool_key="medical_center_query_orders",
+        name="query_orders",
+        agent_description="旧描述",
+        risk_level="low",
+        requires_confirmation=False,
+        publish_status="draft",
+    )
+    service = _service(provider, [tool], [_discovered(display_name="查询订单")])
+
+    await service.sync_tools(provider.id)
+
+    assert tool.name == "查询订单"

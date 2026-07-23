@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { onMounted, reactive, ref, watch } from "vue";
 import { Connection, Delete, EditPen, Plus, Refresh, Search, Upload } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
 import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import {
+  batchPublishAgentTools,
   createToolProvider,
   deleteToolProvider,
   listAgentTools,
@@ -37,6 +38,11 @@ const providerError = ref<unknown>(null);
 const toolError = ref<unknown>(null);
 const providerKeyword = ref("");
 const toolKeyword = ref("");
+const toolPage = ref(1);
+const toolPageSize = ref(10);
+const toolTotal = ref(0);
+const selectedTools = ref<AgentTool[]>([]);
+const batchPublishing = ref(false);
 const providerDialogVisible = ref(false);
 const providerSaving = ref(false);
 const editingProvider = ref<ToolProvider | null>(null);
@@ -69,8 +75,6 @@ const toolForm = reactive<AgentToolUpdatePayload>({
   risk_level: "low",
   requires_confirmation: false,
 });
-
-const publishedCount = computed(() => tools.value.filter((tool) => tool.publish_status === "published").length);
 
 watch(
   () => providerForm.transport_type,
@@ -124,6 +128,8 @@ async function loadProviders(preferredId?: number | null) {
 
 async function loadTools() {
   tools.value = [];
+  selectedTools.value = [];
+  toolTotal.value = 0;
   toolError.value = null;
   if (!selectedProvider.value) return;
   loadingTools.value = true;
@@ -131,10 +137,11 @@ async function loadTools() {
     const response = await listAgentTools({
       provider_id: selectedProvider.value.id,
       keyword: toolKeyword.value.trim() || undefined,
-      page: 1,
-      page_size: 100,
+      page: toolPage.value,
+      page_size: toolPageSize.value,
     });
     tools.value = response.items;
+    toolTotal.value = response.total;
   } catch (error) {
     toolError.value = error;
   } finally {
@@ -146,7 +153,45 @@ function selectProvider(provider: ToolProvider) {
   if (selectedProvider.value?.id === provider.id) return;
   selectedProvider.value = provider;
   toolKeyword.value = "";
+  toolPage.value = 1;
   void loadTools();
+}
+
+function searchTools() {
+  toolPage.value = 1;
+  void loadTools();
+}
+
+function changeToolPageSize() {
+  toolPage.value = 1;
+  void loadTools();
+}
+
+function handleToolSelectionChange(rows: AgentTool[]) {
+  selectedTools.value = rows;
+}
+
+function canSelectTool(tool: AgentTool) {
+  return tool.sync_status === "active" && tool.publish_status !== "published";
+}
+
+async function publishSelectedTools() {
+  if (selectedTools.value.length === 0) return;
+  await ElMessageBox.confirm(
+    `确定发布选中的 ${selectedTools.value.length} 个工具吗？`,
+    "批量发布工具",
+    { type: "warning" },
+  );
+  batchPublishing.value = true;
+  try {
+    const result = await batchPublishAgentTools(selectedTools.value.map((tool) => tool.id));
+    ElMessage.success(result.message);
+    await loadTools();
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "批量发布工具失败。"));
+  } finally {
+    batchPublishing.value = false;
+  }
 }
 
 function resetProviderForm() {
@@ -384,150 +429,166 @@ onMounted(() => void loadProviders());
           description=""
         />
         <template v-else>
-          <div class="tool-panel__provider">
-            <div>
-              <div class="tool-panel__title">
-                <h2>{{ selectedProvider.name }}</h2>
-                <el-tag
-                  size="small"
-                  effect="plain"
-                >
-                  {{ selectedProvider.transport_type }}
-                </el-tag>
-              </div>
-              <p>{{ selectedProvider.base_url }}</p>
-            </div>
-            <div class="provider-actions">
-              <el-button
-                :icon="Connection"
-                :loading="activeProviderAction === selectedProvider.id"
-                @click="runProviderAction(selectedProvider, 'test')"
-              >
-                测试
-              </el-button>
-              <el-button
-                :icon="Refresh"
-                :loading="activeProviderAction === selectedProvider.id"
-                @click="runProviderAction(selectedProvider, 'sync')"
-              >
-                同步
-              </el-button>
-              <el-button
-                :icon="EditPen"
-                circle
-                aria-label="编辑提供方"
-                @click="openEditProvider(selectedProvider)"
-              />
-              <el-button
-                :icon="Delete"
-                circle
-                type="danger"
-                plain
-                aria-label="删除提供方"
-                @click="removeProvider(selectedProvider)"
-              />
-            </div>
-          </div>
-
           <div class="panel-toolbar tool-toolbar">
             <el-input
               v-model="toolKeyword"
               :prefix-icon="Search"
               clearable
               placeholder="搜索工具"
-              @keyup.enter="loadTools"
+              @keyup.enter="searchTools"
             />
-            <span>{{ publishedCount }} / {{ tools.length }} 已发布</span>
-          </div>
-
-          <AppLoading
-            v-if="loadingTools"
-            title="正在加载工具"
-          />
-          <AppError
-            v-else-if="toolError"
-            title="工具加载失败"
-            @retry="loadTools"
-          />
-          <AppEmpty
-            v-else-if="tools.length === 0"
-            title="暂无已同步工具"
-            description=""
-          />
-          <el-table
-            v-else
-            :data="tools"
-            row-key="id"
-            class="tool-table"
-          >
-            <el-table-column
-              label="工具"
-              min-width="230"
-            >
-              <template #default="{ row }">
-                <div class="tool-name">
-                  <strong>{{ row.name }}</strong>
-                  <code>{{ row.tool_key }}</code>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column
-              label="外部名称"
-              prop="external_name"
-              min-width="170"
-            />
-            <el-table-column
-              label="上下文"
-              min-width="150"
-            >
-              <template #default="{ row }">
-                {{ row.required_context.join(", ") || "无" }}
-              </template>
-            </el-table-column>
-            <el-table-column
-              label="状态"
-              width="110"
-            >
-              <template #default="{ row }">
-                <el-tag
-                  :type="publishType(row.publish_status)"
-                  size="small"
-                >
-                  {{ publishLabel(row.publish_status) }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column
-              label="操作"
-              width="250"
-              fixed="right"
-            >
-              <template #default="{ row }">
+            <div class="tool-toolbar__actions">
+              <div class="provider-actions">
                 <el-button
-                  link
-                  type="primary"
-                  @click="openToolEditor(row)"
-                >
-                  编辑
-                </el-button>
-                <el-button
-                  link
-                  type="primary"
-                  @click="openToolTest(row)"
+                  :icon="Connection"
+                  :loading="activeProviderAction === selectedProvider.id"
+                  @click="runProviderAction(selectedProvider, 'test')"
                 >
                   测试
                 </el-button>
                 <el-button
-                  link
-                  :type="row.publish_status === 'published' ? 'warning' : 'success'"
-                  :disabled="row.sync_status !== 'active'"
-                  @click="togglePublish(row)"
+                  :icon="Refresh"
+                  :loading="activeProviderAction === selectedProvider.id"
+                  @click="runProviderAction(selectedProvider, 'sync')"
                 >
-                  {{ row.publish_status === "published" ? "下线" : "发布" }}
+                  同步
                 </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+                <el-button
+                  :icon="EditPen"
+                  circle
+                  aria-label="编辑提供方"
+                  @click="openEditProvider(selectedProvider)"
+                />
+                <el-button
+                  :icon="Delete"
+                  circle
+                  type="danger"
+                  plain
+                  aria-label="删除提供方"
+                  @click="removeProvider(selectedProvider)"
+                />
+              </div>
+              <span>已选择 {{ selectedTools.length }} 项 · 共 {{ toolTotal }} 项</span>
+              <el-button
+                type="primary"
+                :icon="Upload"
+                :disabled="selectedTools.length === 0"
+                :loading="batchPublishing"
+                @click="publishSelectedTools"
+              >
+                批量发布
+              </el-button>
+            </div>
+          </div>
+
+          <div class="tool-table-area">
+            <AppLoading
+              v-if="loadingTools"
+              title="正在加载工具"
+            />
+            <AppError
+              v-else-if="toolError"
+              title="工具加载失败"
+              @retry="loadTools"
+            />
+            <AppEmpty
+              v-else-if="tools.length === 0"
+              title="暂无已同步工具"
+              description=""
+            />
+            <el-table
+              v-else
+              :data="tools"
+              row-key="id"
+              height="100%"
+              class="tool-table"
+              @selection-change="handleToolSelectionChange"
+            >
+              <el-table-column
+                type="selection"
+                width="48"
+                :selectable="canSelectTool"
+              />
+              <el-table-column
+                label="工具"
+                min-width="230"
+              >
+                <template #default="{ row }">
+                  <div class="tool-name">
+                    <strong>{{ row.name }}</strong>
+                    <code>{{ row.tool_key }}</code>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="外部名称"
+                prop="external_name"
+                min-width="170"
+              />
+              <el-table-column
+                label="上下文"
+                min-width="150"
+              >
+                <template #default="{ row }">
+                  {{ row.required_context.join(", ") || "无" }}
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="状态"
+                width="110"
+              >
+                <template #default="{ row }">
+                  <el-tag
+                    :type="publishType(row.publish_status)"
+                    size="small"
+                  >
+                    {{ publishLabel(row.publish_status) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="操作"
+                width="250"
+                fixed="right"
+              >
+                <template #default="{ row }">
+                  <el-button
+                    link
+                    type="primary"
+                    @click="openToolEditor(row)"
+                  >
+                    编辑
+                  </el-button>
+                  <el-button
+                    link
+                    type="primary"
+                    @click="openToolTest(row)"
+                  >
+                    测试
+                  </el-button>
+                  <el-button
+                    link
+                    :type="row.publish_status === 'published' ? 'warning' : 'success'"
+                    :disabled="row.sync_status !== 'active'"
+                    @click="togglePublish(row)"
+                  >
+                    {{ row.publish_status === "published" ? "下线" : "发布" }}
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <el-pagination
+            v-if="toolTotal > 0"
+            v-model:current-page="toolPage"
+            v-model:page-size="toolPageSize"
+            :total="toolTotal"
+            :page-sizes="[10, 20, 50, 100]"
+            layout="total, sizes, prev, pager, next"
+            class="tool-pagination"
+            @current-change="loadTools"
+            @size-change="changeToolPageSize"
+          />
         </template>
       </main>
     </div>
@@ -721,32 +782,36 @@ onMounted(() => void loadProviders());
 </template>
 
 <style scoped>
-.agent-integration-page { display: grid; gap: 16px; min-width: 0; }
-.agent-integration-page__header, .tool-panel__provider, .panel-toolbar, .provider-row { display: flex; align-items: center; }
-.agent-integration-page__header, .tool-panel__provider { justify-content: space-between; gap: 16px; }
-.agent-integration-page__header h1, .tool-panel__title h2 { margin: 0; }
-.agent-integration-page__header p, .tool-panel__provider p { margin: 4px 0 0; color: var(--el-text-color-secondary); }
-.agent-integration-page__layout { display: grid; grid-template-columns: minmax(250px, 310px) minmax(0, 1fr); min-height: 620px; border: 1px solid var(--el-border-color-light); border-radius: 8px; overflow: hidden; background: var(--el-bg-color); }
-.provider-panel { border-right: 1px solid var(--el-border-color-light); padding: 14px; }
+.agent-integration-page { display: flex; height: calc(100vh - 112px); min-width: 0; flex-direction: column; gap: 16px; overflow: hidden; }
+.agent-integration-page__header, .panel-toolbar, .provider-row { display: flex; align-items: center; }
+.agent-integration-page__header { justify-content: space-between; gap: 16px; }
+.agent-integration-page__header h1 { margin: 0; }
+.agent-integration-page__header p { margin: 4px 0 0; color: var(--el-text-color-secondary); }
+.agent-integration-page__layout { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(250px, 310px) minmax(0, 1fr); border: 1px solid var(--el-border-color-light); border-radius: 8px; overflow: hidden; background: var(--el-bg-color); }
+.provider-panel { min-height: 0; overflow-y: auto; border-right: 1px solid var(--el-border-color-light); padding: 14px; }
 .panel-toolbar { gap: 8px; }
 .provider-list { display: grid; gap: 6px; margin-top: 12px; }
 .provider-row { width: 100%; justify-content: space-between; gap: 12px; padding: 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .provider-row:hover, .provider-row.is-active { border-color: var(--el-color-primary-light-5); background: var(--el-color-primary-light-9); }
 .provider-row__main, .tool-name { display: grid; gap: 3px; min-width: 0; }
 .provider-row small, .tool-name code { overflow: hidden; color: var(--el-text-color-secondary); text-overflow: ellipsis; white-space: nowrap; }
-.tool-panel { min-width: 0; padding: 18px; }
-.tool-panel__title, .provider-actions { display: flex; align-items: center; gap: 8px; }
-.tool-panel__provider p { overflow-wrap: anywhere; }
-.tool-toolbar { justify-content: space-between; margin: 20px 0 12px; }
+.tool-panel { display: flex; min-height: 0; min-width: 0; flex-direction: column; padding: 18px; }
+.provider-actions { display: flex; align-items: center; gap: 8px; }
+.tool-toolbar { justify-content: space-between; margin-bottom: 12px; }
 .tool-toolbar .el-input { max-width: 320px; }
 .tool-toolbar span { color: var(--el-text-color-secondary); }
+.tool-toolbar__actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
+.tool-table-area { min-height: 0; flex: 1; }
 .tool-table { width: 100%; }
+.tool-pagination { justify-content: flex-end; margin-top: 16px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 900px) {
-  .agent-integration-page__layout { grid-template-columns: 1fr; }
+  .agent-integration-page { height: auto; overflow: visible; }
+  .agent-integration-page__layout { min-height: 620px; grid-template-columns: 1fr; }
   .provider-panel { border-right: 0; border-bottom: 1px solid var(--el-border-color-light); }
-  .tool-panel__provider, .agent-integration-page__header { align-items: flex-start; flex-direction: column; }
+  .agent-integration-page__header { align-items: flex-start; flex-direction: column; }
   .provider-actions { flex-wrap: wrap; }
+  .tool-toolbar, .tool-toolbar__actions { align-items: flex-start; flex-direction: column; }
   .form-grid { grid-template-columns: 1fr; }
 }
 </style>

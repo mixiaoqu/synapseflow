@@ -195,6 +195,19 @@ class AgentToolRepository:
         row = (await self.db.execute(stmt)).first()
         return AgentToolRecord(tool=row[0], provider=row[1], team_name=row[2]) if row else None
 
+    async def get_tool_records_by_ids(self, tool_ids: list[int]) -> list[AgentToolRecord]:
+        if not tool_ids:
+            return []
+        stmt = (
+            select(AgentTool, ToolProvider, Team.name)
+            .join(ToolProvider, ToolProvider.id == AgentTool.provider_id)
+            .join(Team, Team.id == AgentTool.team_id)
+            .where(AgentTool.id.in_(tool_ids))
+            .order_by(AgentTool.id)
+        )
+        rows = (await self.db.execute(stmt)).all()
+        return [AgentToolRecord(tool=row[0], provider=row[1], team_name=row[2]) for row in rows]
+
     async def get_tool_by_key(self, *, team_id: int, tool_key: str) -> AgentTool | None:
         stmt = select(AgentTool).where(AgentTool.team_id == team_id, AgentTool.tool_key == tool_key)
         return (await self.db.execute(stmt)).scalar_one_or_none()
@@ -251,6 +264,19 @@ class AgentToolRepository:
 
     async def delete_grant(self, grant: AgentAppToolGrant) -> None:
         await self.db.delete(grant)
+        await self.db.commit()
+
+    async def replace_grants(self, *, project_app_id: int, agent_tool_ids: list[int]) -> None:
+        stmt = select(AgentAppToolGrant).where(AgentAppToolGrant.project_app_id == project_app_id)
+        existing = list((await self.db.scalars(stmt)).all())
+        target_ids = set(agent_tool_ids)
+        existing_ids = {grant.agent_tool_id for grant in existing}
+
+        for grant in existing:
+            if grant.agent_tool_id not in target_ids:
+                await self.db.delete(grant)
+        for tool_id in sorted(target_ids - existing_ids):
+            self.db.add(AgentAppToolGrant(project_app_id=project_app_id, agent_tool_id=tool_id))
         await self.db.commit()
 
     async def list_available_tools(self, *, project_app_id: int) -> list[AgentToolExecutionRecord]:
