@@ -58,10 +58,6 @@ const configuredBootstrapEndpoint =
   loaderScript.dataset.bootstrapEndpoint?.trim() || "/api/agent/bootstrap";
 const bootstrapUrl = new URL(configuredBootstrapEndpoint, window.location.href);
 
-if (bootstrapUrl.origin !== window.location.origin) {
-  throw new Error("Enterprise Agent bootstrap endpoint must use the business page origin.");
-}
-
 if (enterpriseWindow.EnterpriseAgent) {
   throw new Error("Enterprise Agent Loader can only be initialized once per page.");
 }
@@ -107,7 +103,7 @@ function assertBootstrap(payload: unknown): BootstrapResponse {
 async function requestBootstrap(): Promise<BootstrapResponse> {
   const response = await fetch(bootstrapUrl, {
     method: "POST",
-    credentials: "same-origin",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       "X-Requested-With": "EnterpriseAgentLoader",
