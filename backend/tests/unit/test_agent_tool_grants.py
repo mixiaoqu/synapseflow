@@ -10,6 +10,11 @@ from app.models.schemas.tool_provider import AgentToolGrantReplace
 from app.repositories.agent_tool_repository import AgentToolRecord
 
 
+class FakePermissionService:
+    async def can_access_team(self, user, team_id):
+        return True
+
+
 class FakeGrantRepository:
     def __init__(self, records: list[AgentToolRecord]) -> None:
         self.records = records
@@ -63,6 +68,8 @@ def _tool_record(
 
 def _service(records: list[AgentToolRecord]):
     service = AgentToolCatalogService.__new__(AgentToolCatalogService)
+    service.user = SimpleNamespace(id=1, role="operator")
+    service.permission_service = FakePermissionService()
     service.repository = FakeGrantRepository(records)
     return service
 

@@ -31,6 +31,8 @@ class BusinessOpsState(BaseAgentContext, total=False):
     business_result: Dict[str, Any]
     business_retry_count: int
     business_retry_error: Dict[str, Any]
+    business_call_count: int
+    business_call_history: list[Dict[str, Any]]
     sub_agent_result: Dict[str, Any]
 
     answer: str

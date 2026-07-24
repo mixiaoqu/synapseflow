@@ -147,7 +147,7 @@ Registered workflows:
 
 - `agent`: top-level workflow defined by `backend/app/agents/graphs/agent_graph.py`; path is `intake -> classify -> route -> respond` for direct responses, or `intake -> classify -> route -> orchestrate_plan -> dispatch -> collect -> synthesize -> respond` for delegated execution.
 - `knowledge_qa`: reusable knowledge-base QA subgraph defined by `backend/app/agents/graphs/knowledge_qa_graph.py`; path is `plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result`.
-- `business_ops`: controlled business data operation subgraph defined by `backend/app/agents/graphs/business_ops_graph.py`; path is `analyze_request -> match_operation -> execute_operation -> compose_result`, with one optional `execute_operation -> replan_operation_params -> execute_operation` retry when tool parameters are invalid.
+- `business_ops`: controlled read-only business data operation subgraph defined by `backend/app/agents/graphs/business_ops_graph.py`; it performs up to three sequential tool calls, loops from `execute_operation` back to `analyze_request` only when another call is required, and retains one optional parameter-correction retry per call.
 - `backend/langgraph.json` currently exposes `agent` and `knowledge_qa` for LangGraph tooling. `business_ops` is registered in the runtime factory and executed as a subgraph through `agent`.
 
 `backend/tests/unit/test_workflow_registry_consistency.py` guards workflow documentation metadata: every compiled graph node must match its `GraphDefinition.node_ids` entry and `workflow_meta.py` metadata, while every `backend/langgraph.json` graph entry must point to the registered factory. Update these declarations together whenever a graph node changes.

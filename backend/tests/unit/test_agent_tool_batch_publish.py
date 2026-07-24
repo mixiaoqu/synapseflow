@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
@@ -5,6 +7,11 @@ from app.application.agent_tool_catalog_service import AgentToolCatalogService
 from app.db.models import AgentTool, ToolProvider
 from app.models.schemas.tool_provider import AgentToolBatchPublishRequest
 from app.repositories.agent_tool_repository import AgentToolRecord
+
+
+class FakePermissionService:
+    async def can_access_team(self, user, team_id):
+        return True
 
 
 class FakeRepository:
@@ -39,6 +46,8 @@ def _record(tool_id, *, sync_status="active", publish_status="draft"):
 
 def _service(records):
     service = AgentToolCatalogService.__new__(AgentToolCatalogService)
+    service.user = SimpleNamespace(id=1, role="operator")
+    service.permission_service = FakePermissionService()
     service.repository = FakeRepository(records)
     return service
 

@@ -11,8 +11,9 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.agent_tool_execution_service import AgentToolExecutionService
+from app.application.permission_service import PermissionService
 from app.core.credential_cipher import CredentialCipher
-from app.db.models import AgentAppToolGrant, AgentTool, ToolProvider
+from app.db.models import AgentAppToolGrant, AgentTool, ToolProvider, User
 from app.models.schemas.tool_provider import (
     AgentToolGrantCreate,
     AgentToolGrantListResponse,
@@ -52,10 +53,13 @@ class AgentToolCatalogService:
         self,
         db: AsyncSession,
         *,
+        user: User,
         gateway: ToolProviderGateway | None = None,
     ) -> None:
         self.db = db
+        self.user = user
         self.repository = AgentToolRepository(db)
+        self.permission_service = PermissionService(db)
         self.gateway = gateway or ToolProviderGateway()
         self.execution_service = AgentToolExecutionService(db, gateway=self.gateway)
         self.credential_cipher = CredentialCipher()
@@ -67,6 +71,28 @@ class AgentToolCatalogService:
     @staticmethod
     def _bad_request(message: str) -> HTTPException:
         return HTTPException(status_code=400, detail=message)
+
+    async def _ensure_team_access(self, team_id: int) -> None:
+        if not await self.permission_service.can_access_team(self.user, team_id):
+            raise HTTPException(status_code=403, detail="Team access denied")
+
+    async def _provider_for_access(self, provider_id: int) -> ToolProvider:
+        provider = await self.repository.get_provider(provider_id)
+        if provider is None:
+            raise self._not_found("工具提供方不存在")
+        await self._ensure_team_access(provider.team_id)
+        return provider
+
+    async def _tool_record_for_access(self, tool_id: int) -> AgentToolRecord:
+        record = await self.repository.get_tool_record(tool_id)
+        if record is None:
+            raise self._not_found("Agent 工具不存在")
+        await self._ensure_team_access(record.tool.team_id)
+        return record
+
+    async def _ensure_tool_records_access(self, records: list[AgentToolRecord]) -> None:
+        for team_id in dict.fromkeys(record.tool.team_id for record in records):
+            await self._ensure_team_access(team_id)
 
     @staticmethod
     def _validate_provider_auth(transport_type: str, auth_type: str, header_name: str | None) -> None:
@@ -179,6 +205,10 @@ class AgentToolCatalogService:
         )
 
     async def list_providers(self, **filters: Any) -> ToolProviderListResponse:
+        team_id = filters.get("team_id")
+        if team_id is None:
+            raise self._bad_request("team_id is required")
+        await self._ensure_team_access(team_id)
         records, total = await self.repository.list_providers(**filters)
         return ToolProviderListResponse(
             items=[self._provider_response(record) for record in records],
@@ -188,6 +218,7 @@ class AgentToolCatalogService:
         )
 
     async def create_provider(self, payload: ToolProviderCreate) -> ToolProviderResponse:
+        await self._ensure_team_access(payload.team_id)
         self._validate_provider_auth(payload.transport_type, payload.auth_type, payload.auth_header_name)
         if await self.repository.get_provider_by_code(team_id=payload.team_id, code=payload.code):
             raise self._bad_request("同一团队下 Provider code 不能重复")
@@ -199,9 +230,9 @@ class AgentToolCatalogService:
         return self._provider_response(await self.repository.save_provider(provider))
 
     async def update_provider(self, provider_id: int, payload: ToolProviderUpdate) -> ToolProviderResponse:
-        provider = await self.repository.get_provider(provider_id)
-        if provider is None:
-            raise self._not_found("工具提供方不存在")
+        provider = await self._provider_for_access(provider_id)
+        if payload.team_id != provider.team_id:
+            raise self._bad_request("工具提供方不能迁移到其他团队")
         self._validate_provider_auth(payload.transport_type, payload.auth_type, payload.auth_header_name)
         for key, value in payload.model_dump(exclude={"auth_token"}).items():
             setattr(provider, key, value)
@@ -213,15 +244,11 @@ class AgentToolCatalogService:
         return self._provider_response(await self.repository.save_provider(provider))
 
     async def delete_provider(self, provider_id: int) -> None:
-        provider = await self.repository.get_provider(provider_id)
-        if provider is None:
-            raise self._not_found("工具提供方不存在")
+        provider = await self._provider_for_access(provider_id)
         await self.repository.delete_provider(provider)
 
     async def test_provider(self, provider_id: int) -> ToolProviderTestResponse:
-        provider = await self.repository.get_provider(provider_id)
-        if provider is None:
-            raise self._not_found("工具提供方不存在")
+        provider = await self._provider_for_access(provider_id)
         started = time.perf_counter()
         try:
             tools = await self.gateway.discover_tools(self._provider_config(provider))
@@ -246,9 +273,7 @@ class AgentToolCatalogService:
         )
 
     async def sync_tools(self, provider_id: int) -> AgentToolSyncResponse:
-        provider = await self.repository.get_provider(provider_id)
-        if provider is None:
-            raise self._not_found("工具提供方不存在")
+        provider = await self._provider_for_access(provider_id)
         try:
             discovered = await self.gateway.discover_tools(self._provider_config(provider))
         except (ToolProviderError, ValueError) as exc:
@@ -320,6 +345,15 @@ class AgentToolCatalogService:
         return candidate
 
     async def list_tools(self, **filters: Any) -> AgentToolListResponse:
+        team_id = filters.get("team_id")
+        provider_id = filters.get("provider_id")
+        if team_id is None:
+            raise self._bad_request("team_id is required")
+        await self._ensure_team_access(team_id)
+        if provider_id is not None:
+            provider = await self._provider_for_access(provider_id)
+            if provider.team_id != team_id:
+                raise self._bad_request("工具提供方不属于当前团队")
         records, total = await self.repository.list_tools(**filters)
         return AgentToolListResponse(
             items=[self._tool_response(record) for record in records],
@@ -329,15 +363,11 @@ class AgentToolCatalogService:
         )
 
     async def get_tool(self, tool_id: int) -> AgentToolResponse:
-        record = await self.repository.get_tool_record(tool_id)
-        if record is None:
-            raise self._not_found("Agent 工具不存在")
+        record = await self._tool_record_for_access(tool_id)
         return self._tool_response(record)
 
     async def update_tool(self, tool_id: int, payload: AgentToolUpdate) -> AgentToolResponse:
-        record = await self.repository.get_tool_record(tool_id)
-        if record is None:
-            raise self._not_found("Agent 工具不存在")
+        record = await self._tool_record_for_access(tool_id)
         for key, value in payload.model_dump().items():
             setattr(record.tool, key, value)
         await self.repository.save_tool(record.tool)
@@ -345,9 +375,7 @@ class AgentToolCatalogService:
         return self._tool_response(refreshed)
 
     async def test_tool(self, tool_id: int, payload: AgentToolTestRequest) -> AgentToolTestResponse:
-        record = await self.repository.get_tool_record(tool_id)
-        if record is None:
-            raise self._not_found("Agent 工具不存在")
+        record = await self._tool_record_for_access(tool_id)
         result = await self.execution_service.execute(
             record=AgentToolExecutionRecord(tool=record.tool, provider=record.provider),
             arguments=payload.arguments,
@@ -367,9 +395,7 @@ class AgentToolCatalogService:
         )
 
     async def publish_tool(self, tool_id: int) -> AgentToolPublishResponse:
-        record = await self.repository.get_tool_record(tool_id)
-        if record is None:
-            raise self._not_found("Agent 工具不存在")
+        record = await self._tool_record_for_access(tool_id)
         if record.tool.sync_status != "active":
             raise self._bad_request("只有同步状态正常的工具可以发布")
         record.tool.publish_status = "published"
@@ -385,6 +411,7 @@ class AgentToolCatalogService:
         records = await self.repository.get_tool_records_by_ids(tool_ids)
         if len(records) != len(tool_ids):
             raise self._not_found("部分工具不存在")
+        await self._ensure_tool_records_access(records)
         if any(record.tool.sync_status != "active" for record in records):
             raise self._bad_request("只有同步状态正常的工具可以发布")
         for record in records:
@@ -398,17 +425,17 @@ class AgentToolCatalogService:
         )
 
     async def unpublish_tool(self, tool_id: int) -> AgentToolPublishResponse:
-        record = await self.repository.get_tool_record(tool_id)
-        if record is None:
-            raise self._not_found("Agent 工具不存在")
+        record = await self._tool_record_for_access(tool_id)
         record.tool.publish_status = "draft"
         await self.repository.save_tool(record.tool)
         return AgentToolPublishResponse(id=tool_id, publish_status="draft", message="工具已下线")
 
     async def list_grants(self, *, project_id: int, app_id: int) -> AgentToolGrantListResponse:
         app = await self.repository.get_project_app(project_id=project_id, app_id=app_id)
-        if app is None:
+        team_id = await self.repository.get_project_app_team_id(project_id=project_id, app_id=app_id)
+        if app is None or team_id is None:
             raise self._not_found("应用端不存在")
+        await self._ensure_team_access(team_id)
         records = await self.repository.list_grants(project_app_id=app.id)
         return AgentToolGrantListResponse(items=[self._grant_response(record) for record in records])
 
@@ -424,6 +451,7 @@ class AgentToolCatalogService:
         tool_record = await self.repository.get_tool_record(payload.agent_tool_id)
         if app is None or team_id is None:
             raise self._not_found("应用端不存在")
+        await self._ensure_team_access(team_id)
         if tool_record is None or tool_record.tool.team_id != team_id:
             raise self._bad_request("只能授权当前团队的工具")
         existing = await self.repository.get_grant_by_tool(
@@ -447,6 +475,7 @@ class AgentToolCatalogService:
         team_id = await self.repository.get_project_app_team_id(project_id=project_id, app_id=app_id)
         if app is None or team_id is None:
             raise self._not_found("应用端不存在")
+        await self._ensure_team_access(team_id)
 
         tool_ids = sorted(set(payload.agent_tool_ids))
         records = await self.repository.get_tool_records_by_ids(tool_ids)
@@ -470,12 +499,18 @@ class AgentToolCatalogService:
 
     async def delete_grant(self, *, project_id: int, app_id: int, grant_id: int) -> None:
         app = await self.repository.get_project_app(project_id=project_id, app_id=app_id)
+        team_id = await self.repository.get_project_app_team_id(project_id=project_id, app_id=app_id)
         grant = await self.repository.get_grant(grant_id)
-        if app is None or grant is None or grant.project_app_id != app.id:
+        if app is None or team_id is None or grant is None or grant.project_app_id != app.id:
             raise self._not_found("工具授权不存在")
+        await self._ensure_team_access(team_id)
         await self.repository.delete_grant(grant)
 
     async def list_invocations(self, **filters: Any) -> AgentToolInvocationListResponse:
+        team_id = filters.get("team_id")
+        if team_id is None:
+            raise self._bad_request("team_id is required")
+        await self._ensure_team_access(team_id)
         records, total = await self.repository.list_invocations(**filters)
         return AgentToolInvocationListResponse(
             items=[self._invocation_response(record) for record in records],

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { Connection, Delete, EditPen, Plus, Refresh, Search, Upload } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
@@ -28,6 +28,10 @@ import type {
   ToolProviderPayload,
 } from "@/shared/types/agent-integration";
 import { getErrorMessage } from "@/shared/utils/error";
+import { useTeamScopeStore } from "@/stores/team-scope";
+
+const teamScopeStore = useTeamScopeStore();
+const selectedTeamName = computed(() => teamScopeStore.selectedTeam?.name ?? "未选择团队");
 
 const providers = ref<ToolProvider[]>([]);
 const selectedProvider = ref<ToolProvider | null>(null);
@@ -55,9 +59,11 @@ const testingTool = ref(false);
 const testToolTarget = ref<AgentTool | null>(null);
 const testArguments = ref("{}");
 const testContext = ref('{\n  "scope": {\n    "store_id": ""\n  }\n}');
+let providerRequestSequence = 0;
+let toolRequestSequence = 0;
 
 const providerForm = reactive<ToolProviderPayload>({
-  team_id: 1,
+  team_id: 0,
   code: "",
   name: "",
   description: "",
@@ -107,45 +113,78 @@ function publishType(status: string) {
 }
 
 async function loadProviders(preferredId?: number | null) {
+  const teamId = teamScopeStore.selectedTeamId;
+  const requestSequence = ++providerRequestSequence;
+  if (!teamId) {
+    providers.value = [];
+    selectedProvider.value = null;
+    tools.value = [];
+    toolTotal.value = 0;
+    providerError.value = null;
+    loadingProviders.value = false;
+    return;
+  }
   loadingProviders.value = true;
   providerError.value = null;
   try {
     const response = await listToolProviders({
+      team_id: teamId,
       keyword: providerKeyword.value.trim() || undefined,
       page: 1,
       page_size: 100,
     });
+    if (requestSequence !== providerRequestSequence || teamScopeStore.selectedTeamId !== teamId) return;
     providers.value = response.items;
     const targetId = preferredId ?? selectedProvider.value?.id ?? null;
     selectedProvider.value = providers.value.find((provider) => provider.id === targetId) ?? providers.value[0] ?? null;
     await loadTools();
   } catch (error) {
-    providerError.value = error;
+    if (requestSequence === providerRequestSequence) {
+      providerError.value = error;
+    }
   } finally {
-    loadingProviders.value = false;
+    if (requestSequence === providerRequestSequence) {
+      loadingProviders.value = false;
+    }
   }
 }
 
 async function loadTools() {
+  const requestSequence = ++toolRequestSequence;
+  const teamId = teamScopeStore.selectedTeamId;
+  const providerId = selectedProvider.value?.id ?? null;
   tools.value = [];
   selectedTools.value = [];
   toolTotal.value = 0;
   toolError.value = null;
-  if (!selectedProvider.value) return;
+  if (!teamId || !providerId) {
+    loadingTools.value = false;
+    return;
+  }
   loadingTools.value = true;
   try {
     const response = await listAgentTools({
-      provider_id: selectedProvider.value.id,
+      team_id: teamId,
+      provider_id: providerId,
       keyword: toolKeyword.value.trim() || undefined,
       page: toolPage.value,
       page_size: toolPageSize.value,
     });
+    if (
+      requestSequence !== toolRequestSequence
+      || teamScopeStore.selectedTeamId !== teamId
+      || selectedProvider.value?.id !== providerId
+    ) return;
     tools.value = response.items;
     toolTotal.value = response.total;
   } catch (error) {
-    toolError.value = error;
+    if (requestSequence === toolRequestSequence) {
+      toolError.value = error;
+    }
   } finally {
-    loadingTools.value = false;
+    if (requestSequence === toolRequestSequence) {
+      loadingTools.value = false;
+    }
   }
 }
 
@@ -196,7 +235,7 @@ async function publishSelectedTools() {
 
 function resetProviderForm() {
   Object.assign(providerForm, {
-    team_id: 1,
+    team_id: teamScopeStore.selectedTeamId ?? 0,
     code: "",
     name: "",
     description: "",
@@ -210,6 +249,10 @@ function resetProviderForm() {
 }
 
 function openCreateProvider() {
+  if (!teamScopeStore.selectedTeamId) {
+    ElMessage.warning("请先选择团队。");
+    return;
+  }
   editingProvider.value = null;
   resetProviderForm();
   providerDialogVisible.value = true;
@@ -233,6 +276,11 @@ function openEditProvider(provider: ToolProvider) {
 }
 
 async function saveProvider() {
+  const teamId = teamScopeStore.selectedTeamId;
+  if (!teamId || providerForm.team_id !== teamId) {
+    ElMessage.warning("团队已切换，请重新打开工具提供方表单。");
+    return;
+  }
   if (!providerForm.name.trim() || !providerForm.base_url.trim() || !providerForm.code?.trim()) {
     ElMessage.warning("请填写 Provider code、名称和服务地址。");
     return;
@@ -346,6 +394,28 @@ async function togglePublish(tool: AgentTool) {
 }
 
 onMounted(() => void loadProviders());
+
+watch(
+  () => teamScopeStore.selectedTeamId,
+  () => {
+    providerRequestSequence += 1;
+    toolRequestSequence += 1;
+    providers.value = [];
+    selectedProvider.value = null;
+    tools.value = [];
+    selectedTools.value = [];
+    toolTotal.value = 0;
+    providerKeyword.value = "";
+    toolKeyword.value = "";
+    toolPage.value = 1;
+    providerError.value = null;
+    toolError.value = null;
+    providerDialogVisible.value = false;
+    toolDialogVisible.value = false;
+    testDialogVisible.value = false;
+    void loadProviders();
+  },
+);
 </script>
 
 <template>
@@ -353,18 +423,22 @@ onMounted(() => void loadProviders());
     <header class="agent-integration-page__header">
       <div>
         <h1>Agent 工具</h1>
-        <p>工具提供方、发布状态与 Schema 审核</p>
+        <p>当前团队：{{ selectedTeamName }} · 工具提供方、发布状态与 Schema 审核</p>
       </div>
       <el-button
         type="primary"
         :icon="Plus"
+        :disabled="!teamScopeStore.selectedTeamId"
         @click="openCreateProvider"
       >
         新增提供方
       </el-button>
     </header>
 
-    <div class="agent-integration-page__layout">
+    <div
+      v-if="teamScopeStore.selectedTeamId"
+      class="agent-integration-page__layout"
+    >
       <aside class="provider-panel">
         <div class="panel-toolbar">
           <el-input
@@ -592,27 +666,28 @@ onMounted(() => void loadProviders());
         </template>
       </main>
     </div>
+    <AppEmpty
+      v-else
+      title="请先选择团队"
+      description="选择具体团队后，可管理该团队的 Agent 工具。"
+    />
 
     <AdminDialog
       v-model="providerDialogVisible"
       :title="editingProvider ? '编辑工具提供方' : '新增工具提供方'"
       width="620px"
     >
+      <div class="admin-dialog__scope">
+        <span class="admin-dialog__scope-label">所属团队</span>
+        <span class="admin-dialog__scope-value">{{ selectedTeamName }}</span>
+      </div>
       <el-form label-position="top">
-        <div class="form-grid">
-          <el-form-item label="团队 ID">
-            <el-input-number
-              v-model="providerForm.team_id"
-              :min="1"
-            />
-          </el-form-item>
-          <el-form-item label="Provider code">
-            <el-input
-              v-model.trim="providerForm.code"
-              :disabled="Boolean(editingProvider)"
-            />
-          </el-form-item>
-        </div>
+        <el-form-item label="Provider code">
+          <el-input
+            v-model.trim="providerForm.code"
+            :disabled="Boolean(editingProvider)"
+          />
+        </el-form-item>
         <el-form-item label="名称">
           <el-input v-model.trim="providerForm.name" />
         </el-form-item>
@@ -804,7 +879,6 @@ onMounted(() => void loadProviders());
 .tool-table-area { min-height: 0; flex: 1; }
 .tool-table { width: 100%; }
 .tool-pagination { justify-content: flex-end; margin-top: 16px; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 900px) {
   .agent-integration-page { height: auto; overflow: visible; }
   .agent-integration-page__layout { min-height: 620px; grid-template-columns: 1fr; }
@@ -812,6 +886,5 @@ onMounted(() => void loadProviders());
   .agent-integration-page__header { align-items: flex-start; flex-direction: column; }
   .provider-actions { flex-wrap: wrap; }
   .tool-toolbar, .tool-toolbar__actions { align-items: flex-start; flex-direction: column; }
-  .form-grid { grid-template-columns: 1fr; }
 }
 </style>

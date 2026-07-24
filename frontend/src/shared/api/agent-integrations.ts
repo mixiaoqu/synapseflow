@@ -65,7 +65,7 @@ export function revokeProjectAppAccess(projectId: number, appId: number) {
 }
 
 export function listToolProviders(params: {
-  team_id?: number;
+  team_id: number;
   keyword?: string;
   health_status?: string;
   page?: number;
@@ -108,7 +108,7 @@ export function syncAgentTools(providerId: number) {
 }
 
 export function listAgentTools(params: {
-  team_id?: number;
+  team_id: number;
   provider_id?: number;
   keyword?: string;
   publish_status?: string;
@@ -188,7 +188,7 @@ export function deleteProjectAppToolGrant(projectId: number, appId: number, gran
 }
 
 export function listAgentToolInvocations(params: {
-  team_id?: number;
+  team_id: number;
   agent_tool_id?: number;
   project_app_id?: number;
   status?: string;

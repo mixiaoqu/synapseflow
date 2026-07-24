@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, TypedDict
 
+from app.agents.business_tools.results import build_tool_run_result
+from app.agents.business_tools.schemas import ToolDecision, ToolStep
+
 
 class SubAgentSummary(TypedDict, total=False):
     """Human-meaningful result summary for orchestration and final response."""
@@ -173,8 +176,34 @@ def build_business_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
     success = bool(operation_result.get("success"))
     error = dict(operation_result.get("error") or {})
     retryable = bool(error.get("retryable"))
-    status = "success" if success else ("needs_input" if retryable else "failed")
-    answer_status = "answered" if success else ("clarification_needed" if retryable else "failed")
+    request_status = str(business_request.get("status") or "unsupported")
+    decision = ToolDecision(
+        action={
+            "complete": "complete",
+            "clarification_required": "clarify",
+            "limit_reached": "limit_reached",
+        }.get(request_status, "unsupported"),
+        message=str(operation_result.get("message") or "").strip() or None,
+    )
+    steps = [
+        ToolStep(
+            index=int(item.get("index") or index),
+            tool_id=str(item.get("tool_id") or ""),
+            arguments=dict(item.get("arguments") or {}),
+            status=str(item.get("status") or "failed"),
+            data=dict(item.get("data") or {}),
+            error=item.get("error"),
+            duration_ms=item.get("duration_ms"),
+        )
+        for index, item in enumerate(state.get("business_call_history") or [], start=1)
+    ]
+    run_result = build_tool_run_result(decision=decision, steps=steps)
+    status = run_result.status
+    answer_status = {
+        "success": "answered",
+        "partial_success": "partial",
+        "needs_input": "clarification_needed",
+    }.get(status, "failed")
     message = (
         str(operation_result.get("message") or "").strip()
         or str(error.get("message") or "").strip()
@@ -212,7 +241,7 @@ def build_business_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
             }
         ],
     }
-    if retryable:
+    if status == "needs_input":
         result["actions"]["required_user_input"] = [
             {
                 "kind": "clarification",
@@ -220,7 +249,7 @@ def build_business_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
                 "message": message,
             }
         ]
-    if not success:
+    if status not in {"success"}:
         result["errors"] = [
             {
                 "code": str(error.get("code") or business_request.get("status") or "FAILED"),

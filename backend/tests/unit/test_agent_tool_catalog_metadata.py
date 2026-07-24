@@ -1,8 +1,15 @@
+from types import SimpleNamespace
+
 import pytest
 
 from app.application.agent_tool_catalog_service import AgentToolCatalogService
 from app.db.models import AgentTool, ToolProvider
 from app.services.tool_providers.schemas import DiscoveredTool
+
+
+class FakePermissionService:
+    async def can_access_team(self, user, team_id):
+        return True
 
 
 class FakeRepository:
@@ -51,6 +58,8 @@ def _discovered(display_name="业务端订单查询", schema_hash="new-hash"):
 
 def _service(provider, tools, discovered):
     service = AgentToolCatalogService.__new__(AgentToolCatalogService)
+    service.user = SimpleNamespace(id=1, role="operator")
+    service.permission_service = FakePermissionService()
     service.repository = FakeRepository(provider, tools)
     service.gateway = FakeGateway(discovered)
     return service
