@@ -26,6 +26,17 @@ from app.agents.states import AgentState
 from app.services.chat_memory import format_chat_history
 
 
+def _build_trusted_runtime_context_block(state: dict[str, Any]) -> str:
+    return f"""
+可信运行时上下文：
+{json_block(dict(state.get("runtime_context") or {}))}
+
+运行时上下文使用规则：
+- 涉及当前环境的事实只能使用可信运行时上下文，不得自行猜测。
+- 可信运行时上下文未提供的事实，应明确说明无法确定。
+""".strip()
+
+
 def build_direct_response_prompt(state: dict[str, Any]) -> str:
     classification = dict(state.get("classification") or {})
     intent = dict(classification.get("intent") or {})
@@ -57,6 +68,8 @@ def build_direct_response_prompt(state: dict[str, Any]) -> str:
     page_context=dict(state.get("page_context") or {}),
 )}
 
+{_build_trusted_runtime_context_block(state)}
+
 最近 8 条对话：
 {history or "(none)"}
 
@@ -79,7 +92,7 @@ def build_synthesized_response_prompt(state: dict[str, Any]) -> str:
 你是面向用户的最终回答节点。请根据助手配置和下方平台级结果回答用户。
 
 核心规则：
-- 只能使用“平台级结果”中的事实回答，不得补造知识、业务对象、字段值、排名、统计结果或接口返回值。
+- 只能使用“平台级结果”和“可信运行时上下文”中的事实回答，不得补造知识、业务对象、字段值、排名、统计结果或接口返回值。
 - 当结果显示知识库无命中时，明确说明当前知识库没有找到相关内容，不要自行扩展。
 - 当结果显示业务子智能体失败、参数不足、未绑定工具或请求不支持时，准确说明业务查询未完成的原因或需要补充的信息。
 - 当业务工具参数自动校验或修正失败时，只说明业务查询暂时未完成，不要暴露内部参数名、枚举值或建议用户按内部字段重新提问。
@@ -102,6 +115,8 @@ def build_synthesized_response_prompt(state: dict[str, Any]) -> str:
     page_config=dict(state.get("page_config") or {}),
     page_context=dict(state.get("page_context") or {}),
 )}
+
+{_build_trusted_runtime_context_block(state)}
 
 用户原始问题：
 {state.get("normalized_query") or state.get("query") or ""}

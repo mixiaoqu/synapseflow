@@ -55,3 +55,11 @@ def test_kb_chat_prompt_keeps_readable_chinese_constraints_and_page_context_labe
     assert "助手入口说明：可咨询账号相关问题" in prompt
     assert "do not use it alone to answer “作用 / 用途 / 流程 / 影响 / 规则” questions" in prompt
     assert "Use clear Chinese formatting appropriate to the content." in prompt
+
+
+def test_kb_chat_answer_prompt_preserves_business_routes():
+    context = "请进入处方列表（prescription/list）审核待处理处方。"
+
+    prompt = build_kb_chat_answer_prompt("在哪里审核处方单", primary_context=context)
+
+    assert context in prompt

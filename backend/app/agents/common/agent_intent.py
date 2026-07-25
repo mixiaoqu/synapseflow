@@ -26,22 +26,6 @@ ALLOWED_TASK_SHAPES = {
 }
 ALLOWED_GOAL_CLARITY = {"clear", "unclear"}
 ALLOWED_RISK_HINTS = {"none", "approval", "safe_block"}
-BUSINESS_OPS_HINT_PATTERN = re.compile(
-    r"(?:查询|查一下|搜索|查找|获取|读取|查看|统计|列出|创建|更新|提交|取消|同步)"
-    r".*(?:订单|会员|门店|客户|用户|记录|数据|商品|库存|价格|物流|账户|工单|状态)"
-    r"|(?:订单|会员|门店|客户|用户|记录|数据|商品|库存|价格|物流|账户|工单|状态)"
-    r".*(?:查询|查一下|搜索|查找|获取|读取|查看|统计|列表|明细|数量|创建|更新|提交|取消|同步)"
-)
-KNOWLEDGE_QA_HINT_PATTERN = re.compile(
-    r"(能否|是否|能不能|可不可以|有没有权限|权限|允许|规则|限制|流程|如何|怎么|怎样|说明|手册|文档)"
-    r".*(会员|门店负责人|负责人|角色|岗位|员工|账号|资料|页面|列表|功能|操作|配置|冻结|解冻|编辑|新增|删除|审核|条件|筛选|搜索)"
-    r"|(?:会员|门店负责人|负责人|角色|岗位|员工|账号|资料|页面|列表|功能|操作|配置|冻结|解冻|编辑|新增|删除|审核)"
-    r".*(能否|是否|能不能|可不可以|有没有权限|权限|允许|规则|限制|流程|如何|怎么|怎样|说明|手册|文档|条件|筛选|搜索条件|字段|关系)"
-    r"|(?:条件|筛选|搜索条件|筛选条件|查询条件|字段|页面行为|系统如何|系统怎么|同时设置)"
-    r".*(关系|如何|怎么|怎样|规则|逻辑|查询|筛选|搜索|生效)"
-)
-
-
 def _coerce_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -74,15 +58,6 @@ def _coerce_string_list(value: Any, *, item_limit: int = 80) -> list[str]:
     ]
 
 
-def _resolve_sub_agent_hints(query: str) -> list[str]:
-    hints: list[str] = []
-    if KNOWLEDGE_QA_HINT_PATTERN.search(query):
-        hints.append("knowledge_qa")
-    if BUSINESS_OPS_HINT_PATTERN.search(query):
-        hints.append("business_ops")
-    return hints
-
-
 def _sub_agent_catalog(
     sub_agents: Iterable[SubAgentDefinition],
 ) -> list[dict[str, str]]:
@@ -111,7 +86,6 @@ def _build_prompt(
         max_message_chars=6000,
     )
     sub_agent_catalog = _sub_agent_catalog(sub_agents)
-    sub_agent_hints = _resolve_sub_agent_hints(query)
     return f"""
 You classify one enterprise agent request. Do not route, plan, call tools, or answer.
 
@@ -172,13 +146,9 @@ Rules:
 - Use approval only for requests that should require human confirmation before execution.
 - Use safe_block only for requests that should be blocked by policy or safety.
 - Do not create tool argument objects, filters, retrieval strategies, or execution steps. Exact identifiers resolved from history may appear in the standalone goal.
-- Prefer keyword hints only when consistent with the user goal.
 
 Sub-agent catalog:
 {json.dumps(sub_agent_catalog, ensure_ascii=False, indent=2)}
-
-Keyword hints:
-{json.dumps(sub_agent_hints, ensure_ascii=False)}
 
 Page context:
 {json.dumps(page_context, ensure_ascii=False, default=str)}
@@ -243,10 +213,6 @@ def _normalize_classification(
         domain_hints = domain_hints[:1]
     if task_shape in {"direct", "non_executable"}:
         domain_hints = []
-    keyword_hints = _resolve_sub_agent_hints(query)
-    if len(keyword_hints) > 1:
-        domain_hints = [item for item in keyword_hints if item in available_ids]
-        task_shape = "multi_sub_agent"
     sub_tasks = []
     for item in list(parsed.get("sub_tasks") or []):
         if not isinstance(item, dict):
@@ -289,7 +255,6 @@ def _normalize_classification(
         "risk_hint": risk_hint,
         "reason": _compact_text(str(parsed.get("reason") or ""), limit=240)
         or "已完成请求类型识别。",
-        "keyword_hints": keyword_hints,
     }
 
 
@@ -317,7 +282,6 @@ async def build_agent_classification(
             "intent": {"kind": "unclear", "goal": ""},
             "risk_hint": "none",
             "reason": "用户问题为空，需要补齐问题内容。",
-            "keyword_hints": [],
         }
 
     llm = (

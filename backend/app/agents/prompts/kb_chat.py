@@ -1,7 +1,5 @@
 """Prompt builders for end-user knowledge-base chat."""
 
-from app.agents.prompts.common import sanitize_user_kb_context
-
 
 def build_page_context_block(
     page_config: dict | None = None,
@@ -63,8 +61,8 @@ def build_kb_chat_answer_prompt(
     summary_block = memory_summary.strip() or "(none)"
     history_block = chat_history_text.strip() or "(none)"
     evidence_status_block = evidence_status.strip() or "sufficient"
-    primary_block = sanitize_user_kb_context(primary_context).strip() or "(none)"
-    supporting_block = sanitize_user_kb_context(supporting_context).strip() or "(none)"
+    primary_block = primary_context.strip() or "(none)"
+    supporting_block = supporting_context.strip() or "(none)"
 
     return f"""
 You are a knowledge-base assistant for end users.
