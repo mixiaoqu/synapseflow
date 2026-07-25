@@ -22,6 +22,7 @@ class BaseAgentContext(TypedDict, total=False):
     request_id: Optional[str]
     run_id: Optional[str]
     metadata: dict[str, Any]
+    runtime_context: dict[str, Any]
 
 
 def build_base_agent_context(

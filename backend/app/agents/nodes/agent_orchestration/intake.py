@@ -6,6 +6,7 @@ from time import perf_counter
 from typing import Any
 
 from app.agents.common.node_logging import log_node_info
+from app.agents.common.runtime_context import build_runtime_context
 from app.agents.common.streaming import emit_activity, get_optional_stream_writer
 from app.agents.nodes.agent_orchestration.utils import normalize_query
 from app.agents.states import AgentState
@@ -48,6 +49,7 @@ async def intake_node(state: AgentState) -> dict[str, Any]:
         "channel": (state.get("metadata") or {}).get("channel"),
         "source_surface": (state.get("metadata") or {}).get("source_surface"),
     }
+    runtime_context = build_runtime_context()
     trace = {
         **dict(state.get("trace") or {}),
         "workflow_id": "agent",
@@ -86,5 +88,6 @@ async def intake_node(state: AgentState) -> dict[str, Any]:
         "scope": scope,
         "session_context": session_context,
         "channel_context": channel_context,
+        "runtime_context": runtime_context,
         "trace": trace,
     }

@@ -36,6 +36,7 @@ def build_classify_node(
             chat_history=list(state.get("chat_history") or []),
             memory_summary=state.get("memory_summary"),
             page_context=dict(state.get("page_context") or {}),
+            runtime_context=dict(state.get("runtime_context") or {}),
             llm_factory=planner_llm_factory,
         )
         log_node_info(

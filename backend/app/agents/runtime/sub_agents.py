@@ -48,6 +48,7 @@ def _build_shared_input(
         "messages": list(state.get("messages") or []),
         "chat_history": list(state.get("chat_history") or []),
         "memory_summary": state.get("memory_summary"),
+        "runtime_context": dict(state.get("runtime_context") or {}),
         "user_id": state.get("user_id"),
         "team_id": state.get("team_id"),
         "original_query": original_query,

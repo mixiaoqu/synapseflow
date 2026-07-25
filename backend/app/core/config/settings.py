@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     ENV: str = "development"
     DEBUG: bool = True
+    BUSINESS_TIMEZONE: str = "Asia/Shanghai"
 
     SECRET_KEY: str = "change-this-secret-key-in-production"
     ALGORITHM: str = "HS256"
