@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 
+
 def build_runtime_context() -> dict[str, str]:
     """Capture one trusted time reference for the entire workflow run."""
 

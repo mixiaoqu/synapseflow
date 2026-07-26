@@ -1,7 +1,5 @@
 from types import SimpleNamespace
 
-import httpx
-
 from app.services import embedding
 
 

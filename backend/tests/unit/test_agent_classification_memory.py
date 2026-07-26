@@ -1,9 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
-from app.agents.common.agent_intent import build_agent_classification
+from app.agents.main.intent import build_agent_classification
 from app.agents.runtime.sub_agents import get_sub_agent_definitions
-
 
 TARGET_ORDER_NUMBER = "1649210480789511"
 
@@ -53,4 +52,4 @@ def test_classification_can_resolve_late_ordinal_reference_from_recent_history()
 
     assert result["goal_clarity"] == "clear"
     assert result["intent"]["goal"] == f"查询订单号{TARGET_ORDER_NUMBER}的订单详情"
-    assert result["sub_tasks"][0]["goal"] == f"查询订单号{TARGET_ORDER_NUMBER}的订单详情"
+    assert result["domain_hints"] == ["business_ops"]

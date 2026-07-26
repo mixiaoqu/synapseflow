@@ -8,7 +8,6 @@ import type {
   AssistantModelOption,
   AssistantPreviewPayload,
   AssistantPreviewResponse,
-  AssistantSummary,
   AssistantUpsertPayload,
 } from "@/shared/types/assistant";
 

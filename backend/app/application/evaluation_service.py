@@ -7,7 +7,8 @@ import re
 from time import perf_counter
 from typing import Any
 
-from app.application.agent_chat_service import get_agent_chat_service
+from app.application.agent.input_builder import prepare_agent_input
+from app.application.agent.runner import get_agent_runner
 from app.core.llm.factory import get_llm_for_analysis
 from app.db.models import EvalCase, EvalDataset, EvalRun, KnowledgeBase, User
 from app.models.schemas.evaluation import (
@@ -19,7 +20,6 @@ from app.models.schemas.evaluation import (
     EvalDatasetUpdate,
     EvalRunCreate,
 )
-from app.models.schemas.kb_chat import KbChatRequest
 from app.repositories.evaluation_repository import EvaluationRepository
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
@@ -236,7 +236,7 @@ class EvaluationService:
                 "dataset_version": dataset.version,
             },
             model_config={
-                "chat_chain": "kb_chat.preview",
+                "agent_workflow": "agent",
                 "judge_model_role": "analysis",
                 "answer_passing_score": ANSWER_PASSING_SCORE,
             },
@@ -351,15 +351,18 @@ class EvaluationService:
         status = "failed"
 
         try:
-            response = await get_agent_chat_service().preview(
-                KbChatRequest(
-                    query=case.question,
-                    knowledge_base_id=int(dataset.knowledge_base_id),
-                ),
+            agent_input = prepare_agent_input(
+                query=case.question,
                 user_id=current_user.id,
+                team_id=int(dataset.team_id) if getattr(dataset, "team_id", None) else None,
+                knowledge_base_id=int(dataset.knowledge_base_id),
+                chat_history=[],
+                metadata={"source_surface": "evaluation"},
             )
-            actual_answer = response.answer_text or response.answer
-            retrieved_docs = list(response.retrieved_docs or [])
+            agent_state = await get_agent_runner().invoke(agent_input)
+            response = agent_state["response"]
+            actual_answer = response["answer"]
+            retrieved_docs = list(response["sources"])
             judge_result = await self._judge_answer(
                 question=case.question,
                 expected_answer=case.expected_answer,

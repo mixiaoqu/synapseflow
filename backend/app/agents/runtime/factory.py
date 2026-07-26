@@ -22,24 +22,19 @@ class GraphDefinition:
 
 
 def _build_registry() -> dict[str, GraphDefinition]:
-    from app.agents.graphs import (
-        create_agent_graph,
-        create_business_ops_graph,
-        create_knowledge_qa_graph,
-    )
+    from app.agents.business_ops.graph import create_business_ops_graph
+    from app.agents.knowledge_qa.graph import create_knowledge_qa_graph
+    from app.agents.main.graph import create_agent_graph
 
     return {
         "agent": GraphDefinition(
             graph_id="agent",
             factory=create_agent_graph,
             node_ids=(
-                "intake",
-                "classify",
                 "route",
-                "orchestrate_plan",
-                "dispatch",
-                "collect",
-                "synthesize",
+                "plan",
+                "execute",
+                "aggregate",
                 "respond",
             ),
             expose_in_langgraph=True,

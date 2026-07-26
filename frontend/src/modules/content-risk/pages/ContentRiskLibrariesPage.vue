@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Delete, Plus, Search } from "@element-plus/icons-vue";
+import { Plus, Search } from "@element-plus/icons-vue";
 
 import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
 import AdminDialog from "@/app/components/admin/AdminDialog.vue";

@@ -9,6 +9,7 @@ import {
   Search,
 } from "@element-plus/icons-vue";
 
+import AdminPageHeader from "@/app/components/admin/AdminPageHeader.vue";
 import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
 import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
@@ -307,6 +308,11 @@ watch(
 
 <template>
   <section class="assistant-list-page">
+    <AdminPageHeader
+      title="助手"
+      description="管理助手配置、模型设置和预览调试。"
+    />
+
     <AppLoading
       v-if="loading && !hasLoadedData"
       title="助手列表加载中"

@@ -1,7 +1,7 @@
-"""Project and embedded application schemas."""
+"""Project and project-application schemas."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -129,60 +129,3 @@ class ProjectAppBulkActionResponse(BaseModel):
     action: Literal["enable", "disable", "delete"]
     affected_ids: list[int] = Field(default_factory=list)
     affected_count: int = 0
-
-
-class EmbedSessionCreate(BaseModel):
-    product_code: str = Field(..., min_length=1, max_length=120)
-    project_code: str = Field(..., min_length=1, max_length=120)
-    app_code: str = Field(..., min_length=1, max_length=120)
-    external_user_id: str = Field(..., min_length=1, max_length=255)
-    external_user_name: str | None = Field(default=None, max_length=255)
-    store_id: str | None = Field(default=None, max_length=120)
-    initial_page_type: str | None = Field(default=None, max_length=120)
-
-
-class ProjectAppEmbedPreviewCreate(BaseModel):
-    store_id: str | None = Field(default=None, max_length=120)
-
-
-class EmbedSessionResponse(BaseModel):
-    embed_url: str
-    expires_in_seconds: int
-
-
-class EmbedPageConfigResponse(BaseModel):
-    page_type: str
-    page_name: str
-    page_description: str = ""
-    assistant_intro: str = ""
-    suggested_questions: list[str] = Field(default_factory=list)
-
-
-class EmbedAssistantBootstrapResponse(BaseModel):
-    product_id: int
-    product_code: str
-    product_name: str
-    project_id: int
-    project_code: str
-    project_name: str
-    project_app_id: int
-    app_code: str
-    app_name: str
-    assistant_id: int
-    assistant_name: str
-    welcome_message: str | None = None
-    placeholder_text: str | None = None
-    suggested_prompts: list[str] = Field(default_factory=list)
-    page_config: EmbedPageConfigResponse | None = None
-
-
-class EmbedPageContext(BaseModel):
-    app_id: str | None = Field(default=None, max_length=120)
-    page_type: str = Field(..., min_length=1, max_length=120)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class EmbedAssistantChatRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=4000)
-    session_id: str | None = Field(default=None, max_length=64)
-    page_context: EmbedPageContext | None = None

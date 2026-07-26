@@ -6,7 +6,7 @@ import {
   getWorkflowDisplayStages,
   type ChatWorkflowRun,
   type WorkflowDisplayStage,
-} from "../stream/workflow-run";
+} from "../../shared/lib/stream/workflowRun";
 
 const props = defineProps<{ run: ChatWorkflowRun | null }>();
 const isExpanded = ref(false);

@@ -9,7 +9,13 @@ from typing import Any, Protocol
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AssistantProfile, ChatMessage, ChatSession, DocumentCategory, KnowledgeBase
+from app.db.models import (
+    AssistantProfile,
+    ChatMessage,
+    ChatSession,
+    DocumentCategory,
+    KnowledgeBase,
+)
 from app.db.session import AsyncSessionLocal
 from app.utils.time import utc_now
 

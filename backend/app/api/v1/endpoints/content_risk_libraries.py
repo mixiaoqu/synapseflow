@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import get_current_user, require_system_admin
+from app.application.content_risk_library_service import ContentRiskLibraryService
 from app.application.permission_service import PermissionService
 from app.core.authz import PERMISSION_VIEW_QA_LOG
-from app.application.content_risk_library_service import ContentRiskLibraryService
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.content_risk_library import (

@@ -8,10 +8,10 @@ from app.api.dependencies.mcp_auth import McpAuthContext, get_mcp_auth_context
 from app.application.mcp_service import McpService
 from app.db.session import get_db
 from app.models.schemas.mcp import (
-    McpBootstrapRequest,
-    McpBootstrapResponse,
     McpAnswerRequest,
     McpAnswerResponse,
+    McpBootstrapRequest,
+    McpBootstrapResponse,
     McpScopeResolveRequest,
     McpScopeResolveResponse,
     McpSearchRequest,

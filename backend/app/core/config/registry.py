@@ -12,8 +12,8 @@ from .loader import (
     load_embedding_raw,
     load_logging_raw,
     load_models_raw,
-    load_rerank_raw,
     load_repositories_raw,
+    load_rerank_raw,
 )
 from .schemas import (
     AppConfig,

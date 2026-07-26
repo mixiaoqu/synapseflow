@@ -16,6 +16,7 @@ import {
   Warning,
 } from "@element-plus/icons-vue";
 
+import AdminPageHeader from "@/app/components/admin/AdminPageHeader.vue";
 import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
 import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
 import AdminDialog from "@/app/components/admin/AdminDialog.vue";
@@ -595,6 +596,11 @@ watch(
 
 <template>
   <section class="kb-list-page">
+    <AdminPageHeader
+      title="知识库"
+      description="管理企业知识、文档生命周期和索引状态。"
+    />
+
     <AppLoading
       v-if="loading && !hasLoadedData"
       title="知识库列表加载中"

@@ -3,8 +3,8 @@
     "."
   ],
   "graphs": {
-    "agent": "./app/agents/graphs/agent_graph.py:create_agent_graph",
-    "knowledge_qa": "./app/agents/graphs/knowledge_qa_graph.py:create_knowledge_qa_graph"
+    "agent": "./app/agents/main/graph.py:create_agent_graph",
+    "knowledge_qa": "./app/agents/knowledge_qa/graph.py:create_knowledge_qa_graph"
   },
   "env": "langgraph.env"
 }

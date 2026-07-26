@@ -38,7 +38,7 @@
 ```text
 synapseflow/
 ├─ backend/      FastAPI + LangGraph 服务
-├─ frontend/     Vue 3 管理后台与嵌入助手页面
+├─ frontend/     Vue 3 管理后台、Agent Loader 与 Widget
 ├─ mcp_server/   MCP stdio 工具服务
 ├─ docker/       Docker 构建配置
 ├─ deploy/       部署与 nginx 配置
@@ -54,15 +54,15 @@ synapseflow/
 - 知识库、应用接入、助手、团队、用户管理：`frontend/src/modules/*`
 - 问答日志：`frontend/src/modules/qa-logs`
 - 内容风控中心：`frontend/src/modules/content-risk`
-- 嵌入助手页面：`frontend/src/modules/embed`
+- 业务端 Agent Widget：`frontend/src/widget`
+- CDN 接入 Loader：`frontend/src/agent-loader`
 - API 封装：`frontend/src/shared/api`
 
 ### 后端保留能力
 
 - 鉴权与用户体系：`/api/v1/auth`
-- 问答接口：`/api/v1/ask`
 - 后台问答质检：`/api/v1/admin/qa`
-- 嵌入助手会话与问答：`/api/v1/embed`
+- 业务端 Agent Widget：`/api/v1/widget`
 - 文档管理：`/api/v1/documents`
 - 文档分类：`/api/v1/document-categories`
 - 知识库管理：`/api/v1/knowledge-bases`
@@ -90,10 +90,13 @@ synapseflow/
 
 ### 当前图谱能力
 
-`backend/langgraph.json` 当前只暴露 `kb_chat`。注册位置是 `backend/app/agents/runtime/factory.py`，实际图谱路径为：
+`backend/langgraph.json` 当前暴露顶层 `agent` 与 `knowledge_qa`。注册位置是 `backend/app/agents/runtime/factory.py`。
 
 ```text
-analyze -> rewrite_query -> retrieve -> evaluate -> answer
+agent: route -> respond
+       route -> plan -> execute -> aggregate -> respond
+
+knowledge_qa: plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result
 ```
 
 ## 快速开始
@@ -147,15 +150,11 @@ MCP server 使用 stdio transport，通常由编辑器或 MCP 客户端拉起；
 - `POST /api/v1/auth/register`
 - `POST /api/v1/auth/login`
 - `GET /api/v1/auth/me`
-- `POST /api/v1/ask/invoke`
-- `POST /api/v1/ask/stream`
-- `GET /api/v1/ask/sessions`
-- `GET /api/v1/ask/sessions/{session_id}`
-- `DELETE /api/v1/ask/sessions/{session_id}`
-- `POST /api/v1/embed/session`
-- `GET /api/v1/embed/assistant/bootstrap`
-- `POST /api/v1/embed/assistant/invoke`
-- `POST /api/v1/embed/assistant/stream`
+- `GET /api/v1/widget/bootstrap`
+- `POST /api/v1/widget/stream`
+- `GET /api/v1/widget/sessions`
+- `GET /api/v1/widget/sessions/{session_id}`
+- `DELETE /api/v1/widget/sessions/{session_id}`
 - `POST /api/v1/admin/qa/preview`
 - `GET /api/v1/admin/qa/logs`
 - `GET /api/v1/admin/qa/logs/{log_id}`

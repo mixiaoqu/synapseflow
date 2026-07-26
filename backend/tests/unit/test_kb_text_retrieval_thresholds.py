@@ -7,8 +7,7 @@ from app.core.config.schemas import (
     RagRetrievalConfig,
     RagRetrievalProfileConfig,
 )
-from app.services import kb_text_retrieval
-from app.services import vector_store
+from app.services import kb_text_retrieval, vector_store
 
 
 def _rag_config(

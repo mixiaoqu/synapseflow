@@ -5,8 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.agents.runtime.factory import _build_registry
-from app.application.workflow_meta import WORKFLOW_NODE_META
-
+from app.application.agent.workflow_meta import WORKFLOW_NODE_META
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY_ROOT = BACKEND_ROOT.parent

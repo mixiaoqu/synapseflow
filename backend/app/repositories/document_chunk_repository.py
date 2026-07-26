@@ -247,7 +247,6 @@ def _resolve_parent_window_expansion(
 ) -> dict[str, object]:
     parent_text = (getattr(parent_row, "content", "") or "").strip() or None
     parent_metadata = dict(getattr(parent_row, "metadata_", None) or {})
-    row_metadata = dict(getattr(row, "metadata_", None) or {})
     if _is_structured_parent(parent_metadata):
         focused_rows = _focused_structure_rows(
             row=row,

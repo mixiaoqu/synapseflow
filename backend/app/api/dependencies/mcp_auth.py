@@ -2,37 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import bearer_scheme
 from app.core.security import decode_access_token, decode_mcp_token
-from app.db.models import User
 from app.db.session import get_db
+from app.models.schemas.mcp import McpAuthContext, McpTokenContext
 from app.repositories.user_repository import UserRepository
-
-
-@dataclass(frozen=True, slots=True)
-class McpTokenContext:
-    product_id: int
-    project_id: int
-    project_app_id: int
-    product_code: str
-    project_code: str
-    app_code: str
-    client_user_id: str
-    client_user_name: str | None
-    client_editor: str | None
-    client_host: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class McpAuthContext:
-    user: User | None
-    mcp_token: McpTokenContext | None
 
 
 def _build_mcp_token_context(payload: dict) -> McpTokenContext:

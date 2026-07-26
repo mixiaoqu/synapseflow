@@ -139,6 +139,7 @@ class BusinessOperationRegistry:
             action=tool.action or "execute",
             read_only=bool(tool.read_only),
             required_permissions=list(tool.required_permissions or []),
+            typical_queries=[],
             risk_level=tool.risk_level,
             requires_confirmation=tool.requires_confirmation,
             required_scope=list(tool.required_context or []),

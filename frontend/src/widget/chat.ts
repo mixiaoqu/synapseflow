@@ -16,12 +16,12 @@ import {
   type WidgetSessionMessage,
   type WidgetSessionSummary,
 } from "./client/agent-chat-api";
-import { consumeSseStream } from "./stream/sse";
+import { consumeSseStream } from "../shared/lib/stream/sse";
 import {
   createWorkflowRun,
   reduceWorkflowRunEvent,
   type ChatWorkflowRun,
-} from "./stream/workflow-run";
+} from "../shared/lib/stream/workflowRun";
 import { AppRequestError, resolveDisplayErrorMessage } from "./errors";
 
 export interface AgentChatMessage {

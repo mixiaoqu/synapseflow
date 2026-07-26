@@ -100,12 +100,3 @@ export interface ProjectAppBulkActionResponse {
   affected_ids: number[];
   affected_count: number;
 }
-
-export interface ProjectAppEmbedPreviewResponse {
-  embed_url: string;
-  expires_in_seconds: number;
-}
-
-export interface ProjectAppEmbedPreviewPayload {
-  store_id?: string | null;
-}

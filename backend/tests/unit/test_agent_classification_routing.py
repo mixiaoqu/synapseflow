@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from app.agents.common.agent_intent import build_agent_classification
+from app.agents.main.intent import build_agent_classification
 from app.agents.runtime.sub_agents import get_sub_agent_definitions
 
 
@@ -35,5 +35,4 @@ def test_classification_keeps_valid_llm_domain_selection():
 
     assert result["task_shape"] == "single_sub_agent"
     assert result["domain_hints"] == ["business_ops"]
-    assert [item["sub_agent_id"] for item in result["sub_tasks"]] == ["business_ops"]
     assert "keyword_hints" not in result

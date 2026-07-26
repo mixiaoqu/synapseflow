@@ -2,23 +2,31 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import {
-  Collection,
+  Bell,
   Connection,
+  CircleCheck,
+  CircleClose,
+  Clock,
+  Document,
+  InfoFilled,
   MagicStick,
   RefreshRight,
-  Warning,
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 
+import AdminPageHeader from "@/app/components/admin/AdminPageHeader.vue";
+import AdminStatusTag from "@/app/components/admin/AdminStatusTag.vue";
+import { listQaLogs } from "@/modules/qa-logs/api";
+import type { QaLogSummary } from "@/modules/qa-logs/types";
 import { listAssistants } from "@/shared/api/assistants";
 import { listKnowledgeBases } from "@/shared/api/knowledge-bases";
 import { listProjects } from "@/shared/api/projects";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
-import { useTeamScopeStore } from "@/stores/team-scope";
 import type { AssistantSummary } from "@/shared/types/assistant";
 import type { KnowledgeBaseListItem } from "@/shared/types/knowledge-base";
 import type { ProjectSummary } from "@/shared/types/project";
+import { useTeamScopeStore } from "@/stores/team-scope";
 
 const router = useRouter();
 const teamScopeStore = useTeamScopeStore();
@@ -27,102 +35,90 @@ const loading = ref(false);
 const loadError = ref<unknown>(null);
 const hasLoadedData = ref(false);
 const knowledgeBases = ref<KnowledgeBaseListItem[]>([]);
-const knowledgeBaseTotal = ref(0);
 const assistants = ref<AssistantSummary[]>([]);
+const projects = ref<ProjectSummary[]>([]);
+const qaLogs = ref<QaLogSummary[]>([]);
+const knowledgeBaseTotal = ref(0);
+const projectTotal = ref(0);
 const activeAssistantTotal = ref(0);
 const inactiveAssistantTotal = ref(0);
-const projects = ref<ProjectSummary[]>([]);
-const projectTotal = ref(0);
 
-const projectAppTotal = computed(() =>
-  projects.value.reduce((total, item) => total + item.app_count, 0),
+const indexedDocumentTotal = computed(() =>
+  knowledgeBases.value.reduce((total, item) => total + item.indexed_document_count, 0),
 );
 const pendingDocumentTotal = computed(() =>
   knowledgeBases.value.reduce(
-    (total, item) =>
-      total +
-      item.queued_document_count +
-      item.processing_document_count +
-      item.pending_review_document_count,
+    (total, item) => total + item.queued_document_count + item.processing_document_count + item.pending_review_document_count,
     0,
   ),
 );
 const failedDocumentTotal = computed(() =>
   knowledgeBases.value.reduce((total, item) => total + item.failed_document_count, 0),
 );
-const recentKnowledgeBases = computed(() =>
-  [...knowledgeBases.value]
-    .sort((a, b) => getTimestamp(b.last_document_updated_at ?? b.updated_at) - getTimestamp(a.last_document_updated_at ?? a.updated_at))
-    .slice(0, 5),
+const projectAppTotal = computed(() =>
+  projects.value.reduce((total, item) => total + item.app_count, 0),
 );
-const recentProjects = computed(() =>
-  [...projects.value]
-    .sort((a, b) => getTimestamp(b.updated_at) - getTimestamp(a.updated_at))
-    .slice(0, 5),
+const failedQaTotal = computed(() =>
+  qaLogs.value.filter((item) => item.answerStatus === "blocked" || item.answerStatus === "insufficient").length,
 );
-
-function getTimestamp(value: string | null) {
-  if (!value) {
-    return 0;
-  }
-
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
-}
+const delayedQaTotal = computed(() =>
+  qaLogs.value.filter((item) => (item.latencyMs ?? 0) >= 3000).length,
+);
 
 function formatDateTime(value: string | null) {
-  if (!value) {
-    return "暂无更新";
-  }
-
+  if (!value) return "暂无时间";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(date);
+}
 
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+function formatLatency(value: number | null) {
+  if (value === null) return "-";
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${value}ms`;
+}
+
+function answerStatus(status: string) {
+  if (status === "answered") return "success";
+  if (status === "partial") return "warning";
+  if (status === "blocked" || status === "insufficient") return "failed";
+  return "info";
+}
+
+function answerStatusLabel(status: string) {
+  if (status === "answered") return "正常";
+  if (status === "partial") return "部分回答";
+  if (status === "blocked" || status === "insufficient") return "失败";
+  return status || "未知";
 }
 
 async function loadDashboard() {
-  if (loading.value) {
-    return;
-  }
-
+  if (loading.value) return;
   loading.value = true;
   loadError.value = null;
 
   try {
     const teamId = teamScopeStore.selectedTeamId ?? undefined;
-    const [
-      knowledgeBaseResult,
-      assistantResult,
-      activeAssistantResult,
-      inactiveAssistantResult,
-      projectResult,
-    ] = await Promise.all([
+    const [knowledgeBaseResult, assistantResult, activeResult, inactiveResult, projectResult, qaResult] = await Promise.all([
       listKnowledgeBases({ team_id: teamId, page: 1, page_size: 100 }),
-      listAssistants({ team_id: teamId, status: "all", page: 1, page_size: 5 }),
+      listAssistants({ team_id: teamId, status: "all", page: 1, page_size: 100 }),
       listAssistants({ team_id: teamId, status: "active", page: 1, page_size: 1 }),
       listAssistants({ team_id: teamId, status: "inactive", page: 1, page_size: 1 }),
       listProjects({ team_id: teamId, page: 1, page_size: 100 }),
+      listQaLogs({ team_id: teamId, page: 1, page_size: 7 }),
     ]);
 
     knowledgeBases.value = knowledgeBaseResult.items;
     knowledgeBaseTotal.value = knowledgeBaseResult.total;
     assistants.value = assistantResult.items;
-    activeAssistantTotal.value = activeAssistantResult.total;
-    inactiveAssistantTotal.value = inactiveAssistantResult.total;
+    activeAssistantTotal.value = activeResult.total;
+    inactiveAssistantTotal.value = inactiveResult.total;
     projects.value = projectResult.items;
     projectTotal.value = projectResult.total;
+    qaLogs.value = qaResult.items;
     hasLoadedData.value = true;
   } catch (error) {
     if (hasLoadedData.value) {
-      ElMessage.error(error instanceof Error ? error.message : "控制台刷新失败，请稍后重试。");
+      ElMessage.error(error instanceof Error ? error.message : "刷新工作台失败，请稍后重试。");
     } else {
       loadError.value = error;
     }
@@ -131,227 +127,101 @@ async function loadDashboard() {
   }
 }
 
-function openKnowledgeBase(knowledgeBaseId: number) {
-  void router.push(`/knowledge-bases/${knowledgeBaseId}`);
+function openQaLog() {
+  void router.push("/qa-logs");
 }
 
-function openProjectApps(projectId: number) {
-  void router.push(`/projects/${projectId}/apps`);
-}
-
-function openAssistant(assistantId: number) {
-  void router.push(`/assistants/${assistantId}`);
-}
-
-onMounted(() => {
-  void loadDashboard();
-});
-
-watch(
-  () => teamScopeStore.selectedTeamId,
-  () => {
-    void loadDashboard();
-  },
-);
+onMounted(() => void loadDashboard());
+watch(() => teamScopeStore.selectedTeamId, () => void loadDashboard());
 </script>
 
 <template>
   <section class="dashboard-page">
-    <AppLoading
-      v-if="loading && !hasLoadedData"
-      title="控制台加载中"
-      description="正在汇总当前团队的知识库、助手和发布入口。"
-      :blocks="4"
-    />
-
-    <AppError
-      v-else-if="loadError && !hasLoadedData"
-      title="控制台加载失败"
-      description="暂时无法获取控制台数据，请稍后重试。"
-      :error="loadError"
-      @retry="loadDashboard"
-    />
-
-    <template v-else>
-      <div class="dashboard-page__actions">
-        <el-button
-          :loading="loading"
-          @click="loadDashboard"
-        >
+    <AdminPageHeader title="工作台" description="Agent 运行与系统健康概览。">
+      <template #actions>
+        <span class="dashboard-updated">最后更新：{{ formatDateTime(qaLogs[0]?.createdAt ?? null) }}</span>
+        <el-button :loading="loading" @click="loadDashboard">
           <el-icon><RefreshRight /></el-icon>
           刷新
         </el-button>
-      </div>
+      </template>
+    </AdminPageHeader>
 
-      <section
-        v-loading="loading"
-        class="dashboard-page__metrics"
-        element-loading-text="正在更新控制台"
-      >
-        <article class="dashboard-metric">
-          <span class="dashboard-metric__label">待处理文档</span>
-          <strong>{{ pendingDocumentTotal }}</strong>
-          <span>失败 {{ failedDocumentTotal }}</span>
+    <AppLoading v-if="loading && !hasLoadedData" title="工作台加载中" description="正在汇总团队运行数据。" :blocks="3" />
+    <AppError v-else-if="loadError && !hasLoadedData" title="工作台加载失败" description="暂时无法获取工作台数据，请稍后重试。" :error="loadError" @retry="loadDashboard" />
+
+    <template v-else>
+      <section class="dashboard-health" v-loading="loading">
+        <article class="dashboard-health__item">
+          <span class="dashboard-health__icon dashboard-health__icon--green"><Document /></span>
+          <div>
+            <div class="dashboard-health__title"><strong>知识库索引</strong><AdminStatusTag :status="failedDocumentTotal > 0 ? 'failed' : 'ok'" /></div>
+            <div class="dashboard-health__stats"><span>已索引文档 <b>{{ indexedDocumentTotal }}</b></span><span>待处理 <b>{{ pendingDocumentTotal }}</b></span></div>
+          </div>
         </article>
-        <article class="dashboard-metric">
-          <span class="dashboard-metric__label">知识库</span>
-          <strong>{{ knowledgeBaseTotal }}</strong>
-          <span>按当前团队范围统计</span>
+        <article class="dashboard-health__item">
+          <span class="dashboard-health__icon dashboard-health__icon--blue"><MagicStick /></span>
+          <div>
+            <div class="dashboard-health__title"><strong>智能体（Assistants）</strong><AdminStatusTag :status="activeAssistantTotal > 0 ? 'ok' : 'pending'" /></div>
+            <div class="dashboard-health__stats"><span>运行中 <b>{{ activeAssistantTotal }}</b></span><span>停用 <b>{{ inactiveAssistantTotal }}</b></span></div>
+          </div>
         </article>
-        <article class="dashboard-metric">
-          <span class="dashboard-metric__label">助手状态</span>
-          <strong>{{ activeAssistantTotal }}</strong>
-          <span>启用 {{ activeAssistantTotal }} / 停用 {{ inactiveAssistantTotal }}</span>
-        </article>
-        <article class="dashboard-metric">
-          <span class="dashboard-metric__label">接入应用</span>
-          <strong>{{ projectAppTotal }}</strong>
-          <span>{{ projectTotal }} 个项目下的应用端</span>
+        <article class="dashboard-health__item">
+          <span class="dashboard-health__icon dashboard-health__icon--purple"><Connection /></span>
+          <div>
+            <div class="dashboard-health__title"><strong>已接入应用</strong><AdminStatusTag :status="projectAppTotal > 0 ? 'ok' : 'pending'" /></div>
+            <div class="dashboard-health__stats"><span>应用端 <b>{{ projectAppTotal }}</b></span><span>项目 <b>{{ projectTotal }}</b></span></div>
+          </div>
         </article>
       </section>
 
-      <section class="dashboard-page__grid">
+      <section class="dashboard-main-grid">
         <article class="dashboard-panel">
-          <div class="dashboard-panel__header">
-            <div>
-              <h2>待处理知识库</h2>
-              <p>优先查看索引中、待审核和失败文档。</p>
-            </div>
-            <el-button
-              link
-              type="primary"
-              @click="router.push('/knowledge-bases')"
-            >
-              查看全部
-            </el-button>
-          </div>
-
-          <div
-            v-if="recentKnowledgeBases.length === 0"
-            class="dashboard-panel__empty"
-          >
-            当前团队暂无知识库。
-          </div>
-          <template v-else>
-            <button
-              v-for="item in recentKnowledgeBases"
-              :key="item.id"
-              type="button"
-              class="dashboard-list-row"
-              @click="openKnowledgeBase(item.id)"
-            >
-              <el-icon><Collection /></el-icon>
-              <span class="dashboard-list-row__main">
-                <strong>{{ item.name }}</strong>
-                <span>
-                  待处理 {{ item.queued_document_count + item.processing_document_count + item.pending_review_document_count }}
-                  · 已发布 {{ item.published_document_count }}
-                </span>
+          <header class="dashboard-panel__header">
+            <div><span class="dashboard-panel__eyebrow">QA LOGS</span><h2>运行状态</h2></div>
+            <el-button link type="primary" @click="router.push('/qa-logs')">查看全部</el-button>
+          </header>
+          <div class="dashboard-filter-hint"><span><Clock /> 最近 7 条应用请求</span><span>请求来源：应用端</span></div>
+          <div v-if="qaLogs.length > 0" class="dashboard-run-list">
+            <button v-for="item in qaLogs" :key="item.id" class="dashboard-run-row" type="button" @click="openQaLog()">
+              <span class="dashboard-run-row__time">{{ formatDateTime(item.createdAt) }}</span>
+              <span class="dashboard-run-row__dot" :class="`dashboard-run-row__dot--${answerStatus(item.answerStatus)}`" />
+              <span class="dashboard-run-row__main">
+                <strong>{{ item.assistantName || "默认助手" }}</strong>
+                <small>请求来源：应用端 · {{ item.projectAppName || "未标记应用" }} · 耗时 {{ formatLatency(item.latencyMs) }}</small>
               </span>
-              <span class="dashboard-list-row__time">
-                {{ formatDateTime(item.last_document_updated_at ?? item.updated_at) }}
-              </span>
+              <AdminStatusTag :status="answerStatus(item.answerStatus)" :label="answerStatusLabel(item.answerStatus)" />
+              <span class="dashboard-run-row__link">查看日志</span>
             </button>
-          </template>
+          </div>
+          <AppEmpty v-else title="暂无运行记录" description="应用产生问答请求后，运行状态会显示在这里。" compact />
+          <footer class="dashboard-panel__footer"><el-button link type="primary" @click="router.push('/qa-logs')">查看更多运行记录</el-button></footer>
         </article>
 
         <article class="dashboard-panel">
-          <div class="dashboard-panel__header">
-            <div>
-              <h2>助手状态</h2>
-              <p>检查当前团队可用助手和最近配置。</p>
+          <header class="dashboard-panel__header">
+            <div><span class="dashboard-panel__eyebrow">QUALITY</span><h2>质量观察</h2></div>
+            <el-button link type="primary" @click="router.push('/qa-logs')">查看全部</el-button>
+          </header>
+          <div class="dashboard-quality-list">
+            <div class="dashboard-quality-row">
+              <span class="dashboard-quality-row__icon dashboard-quality-row__icon--danger"><CircleClose /></span>
+              <div><strong>失败回答</strong><small>最近 7 条应用请求</small></div>
+              <b>{{ failedQaTotal }}</b>
             </div>
-            <el-button
-              link
-              type="primary"
-              @click="router.push('/assistants')"
-            >
-              管理助手
-            </el-button>
-          </div>
-
-          <div
-            v-if="assistants.length === 0"
-            class="dashboard-panel__empty"
-          >
-            当前团队暂无助手。
-          </div>
-          <template v-else>
-            <button
-              v-for="item in assistants"
-              :key="item.id"
-              type="button"
-              class="dashboard-list-row"
-              @click="openAssistant(item.id)"
-            >
-              <el-icon><MagicStick /></el-icon>
-              <span class="dashboard-list-row__main">
-                <strong>{{ item.name }}</strong>
-                <span>{{ item.llm_model_key || "未指定模型" }}</span>
-              </span>
-              <el-tag
-                :type="item.is_active ? 'success' : 'info'"
-                effect="plain"
-              >
-                {{ item.is_active ? "启用" : "停用" }}
-              </el-tag>
-            </button>
-          </template>
-        </article>
-
-        <article class="dashboard-panel dashboard-panel--wide">
-          <div class="dashboard-panel__header">
-            <div>
-              <h2>接入应用</h2>
-              <p>进入项目应用端，检查嵌入入口、默认助手和绑定知识库。</p>
+            <div class="dashboard-quality-row">
+              <span class="dashboard-quality-row__icon dashboard-quality-row__icon--warning"><Bell /></span>
+              <div><strong>响应较慢</strong><small>耗时超过 3 秒</small></div>
+              <b>{{ delayedQaTotal }}</b>
             </div>
-            <el-button
-              link
-              type="primary"
-              @click="router.push('/projects')"
-            >
-              管理项目
-            </el-button>
-          </div>
-
-          <div
-            v-if="recentProjects.length === 0"
-            class="dashboard-panel__empty"
-          >
-            当前团队暂无项目。
-          </div>
-          <template v-else>
-            <button
-              v-for="item in recentProjects"
-              :key="item.id"
-              type="button"
-              class="dashboard-list-row"
-              @click="openProjectApps(item.id)"
-            >
-              <el-icon><Connection /></el-icon>
-              <span class="dashboard-list-row__main">
-                <strong>{{ item.name }}</strong>
-                <span>{{ item.product_name || "未设置产品" }} · {{ item.code }}</span>
-              </span>
-              <span class="dashboard-list-row__badge">{{ item.app_count }} 个应用端</span>
-            </button>
-          </template>
-        </article>
-
-        <article class="dashboard-panel">
-          <div class="dashboard-panel__header">
-            <div>
-              <h2>处理提醒</h2>
-              <p>根据当前知识库状态生成的入口提示。</p>
+            <div class="dashboard-quality-row">
+              <span class="dashboard-quality-row__icon dashboard-quality-row__icon--success"><CircleCheck /></span>
+              <div><strong>正常回答</strong><small>应用请求已完成</small></div>
+              <b>{{ Math.max(qaLogs.length - failedQaTotal, 0) }}</b>
             </div>
           </div>
-
-          <div class="dashboard-alert">
-            <el-icon><Warning /></el-icon>
-            <span>
-              当前有 {{ pendingDocumentTotal }} 个文档等待索引或审核，{{ failedDocumentTotal }} 个文档索引失败。
-            </span>
-          </div>
+          <div class="dashboard-quality-note"><InfoFilled /> 质量观察基于当前 QA 日志，不代表独立告警服务。</div>
+          <footer class="dashboard-panel__footer"><el-button type="primary" @click="router.push('/evaluations')">查看评测</el-button></footer>
         </article>
       </section>
     </template>
@@ -359,185 +229,54 @@ watch(
 </template>
 
 <style scoped>
-.dashboard-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.dashboard-page__actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 16px;
-}
-
-.dashboard-page__metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.dashboard-metric,
-.dashboard-panel {
-  border: 1px solid var(--admin-border);
-  border-radius: var(--admin-radius-lg);
-  background: var(--admin-surface);
-  box-shadow: var(--admin-shadow-panel);
-}
-
-.dashboard-metric {
-  display: flex;
-  min-height: 112px;
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
-  padding: 16px;
-}
-
-.dashboard-metric__label,
-.dashboard-metric span {
-  color: var(--admin-text-muted);
-  font-size: 13px;
-}
-
-.dashboard-metric strong {
-  color: var(--admin-text);
-  font-size: 30px;
-  line-height: 1;
-}
-
-.dashboard-page__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.dashboard-panel {
-  overflow: hidden;
-}
-
-.dashboard-panel--wide {
-  grid-column: span 1;
-}
-
-.dashboard-panel__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  border-bottom: 1px solid var(--admin-border-soft);
-  background: var(--admin-surface-muted);
-  padding: 14px 16px;
-}
-
-.dashboard-panel__header h2 {
-  margin: 0 0 4px;
-  color: var(--admin-text);
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.dashboard-panel__header p {
-  margin: 0;
-  color: var(--admin-text-muted);
-  font-size: 13px;
-}
-
-.dashboard-list-row {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 12px;
-  border: 0;
-  border-bottom: 1px solid var(--admin-border-soft);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  padding: 12px 16px;
-  text-align: left;
-}
-
-.dashboard-list-row:hover {
-  background: var(--admin-surface-muted);
-}
-
-.dashboard-list-row:last-child {
-  border-bottom: 0;
-}
-
-.dashboard-list-row .el-icon {
-  color: var(--admin-primary);
-}
-
-.dashboard-list-row__main {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.dashboard-list-row__main strong {
-  overflow: hidden;
-  color: var(--admin-text);
-  font-size: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dashboard-list-row__main span,
-.dashboard-list-row__time,
-.dashboard-list-row__badge {
-  color: var(--admin-text-muted);
-  font-size: 12px;
-}
-
-.dashboard-list-row__badge {
-  border: 1px solid var(--admin-border-soft);
-  border-radius: var(--admin-radius-sm);
-  background: var(--admin-surface-muted);
-  padding: 4px 8px;
-  white-space: nowrap;
-}
-
-.dashboard-panel__empty {
-  color: var(--admin-text-muted);
-  font-size: 13px;
-  padding: 24px 16px;
-}
-
-.dashboard-alert {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  color: var(--admin-text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-  padding: 16px;
-}
-
-.dashboard-alert .el-icon {
-  margin-top: 3px;
-  color: var(--admin-warning);
-}
-
-@media (max-width: 1180px) {
-  .dashboard-page__metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 860px) {
-  .dashboard-page__actions,
-  .dashboard-panel__header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .dashboard-page__grid,
-  .dashboard-page__metrics {
-    grid-template-columns: 1fr;
-  }
-}
+.dashboard-page { display: flex; flex-direction: column; gap: 16px; }
+.dashboard-updated { align-self: center; color: var(--admin-text-muted); font-size: 12px; }
+.dashboard-health, .dashboard-panel { border: 1px solid var(--admin-border); border-radius: var(--admin-radius-lg); background: var(--admin-surface); box-shadow: var(--admin-shadow-panel); }
+.dashboard-health { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
+.dashboard-health__item { display: flex; min-width: 0; align-items: center; gap: 14px; padding: 22px 20px; }
+.dashboard-health__item + .dashboard-health__item { border-left: 1px solid var(--admin-border-soft); }
+.dashboard-health__icon { display: grid; width: 44px; height: 44px; flex: 0 0 44px; place-items: center; border-radius: 50%; font-size: 22px; }
+.dashboard-health__icon--green { background: #ecfdf5; color: #16a34a; }
+.dashboard-health__icon--blue { background: #eff6ff; color: #2563eb; }
+.dashboard-health__icon--purple { background: #f5f3ff; color: #7c3aed; }
+.dashboard-health__title { display: flex; align-items: center; gap: 8px; color: var(--admin-text); }
+.dashboard-health__title strong { font-size: 14px; }
+.dashboard-health__stats { display: flex; gap: 24px; margin-top: 10px; color: var(--admin-text-muted); font-size: 12px; }
+.dashboard-health__stats b { margin-left: 4px; color: var(--admin-text); font-size: 18px; font-weight: 500; }
+.dashboard-main-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr); gap: 16px; }
+.dashboard-panel { min-width: 0; overflow: hidden; }
+.dashboard-panel__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--admin-border-soft); background: var(--admin-surface-muted); padding: 16px 18px; }
+.dashboard-panel__eyebrow { color: var(--admin-primary); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.dashboard-panel h2 { margin: 5px 0 0; color: var(--admin-text); font-size: 17px; }
+.dashboard-filter-hint { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--admin-border-soft); color: var(--admin-text-muted); font-size: 12px; padding: 11px 18px; }
+.dashboard-filter-hint span:first-child { display: inline-flex; align-items: center; gap: 6px; }
+.dashboard-run-list { display: flex; flex-direction: column; }
+.dashboard-run-row { display: flex; min-height: 68px; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid var(--admin-border-soft); background: transparent; cursor: pointer; padding: 10px 18px; text-align: left; }
+.dashboard-run-row:hover { background: var(--admin-surface-muted); }
+.dashboard-run-row__time { width: 84px; flex: 0 0 84px; color: var(--admin-text-muted); font-size: 11px; }
+.dashboard-run-row__dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; }
+.dashboard-run-row__dot--success { background: #16a34a; }
+.dashboard-run-row__dot--warning { background: #f59e0b; }
+.dashboard-run-row__dot--failed { background: #dc2626; }
+.dashboard-run-row__dot--info { background: #64748b; }
+.dashboard-run-row__main { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; }
+.dashboard-run-row__main strong { overflow: hidden; color: var(--admin-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-run-row__main small, .dashboard-run-row__link { color: var(--admin-text-muted); font-size: 11px; }
+.dashboard-run-row__link { color: var(--admin-primary); }
+.dashboard-panel__footer { display: flex; justify-content: center; border-top: 1px solid var(--admin-border-soft); padding: 12px 18px; }
+.dashboard-quality-list { display: flex; flex-direction: column; padding: 6px 18px; }
+.dashboard-quality-row { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--admin-border-soft); padding: 16px 0; }
+.dashboard-quality-row:last-child { border-bottom: 0; }
+.dashboard-quality-row__icon { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border-radius: 10px; }
+.dashboard-quality-row__icon--danger { background: #fef2f2; color: #dc2626; }
+.dashboard-quality-row__icon--warning { background: #fff7ed; color: #ea580c; }
+.dashboard-quality-row__icon--success { background: #ecfdf5; color: #16a34a; }
+.dashboard-quality-row div { display: flex; flex: 1; flex-direction: column; gap: 3px; }
+.dashboard-quality-row strong { color: var(--admin-text); font-size: 14px; }
+.dashboard-quality-row small { color: var(--admin-text-muted); font-size: 12px; }
+.dashboard-quality-row b { color: var(--admin-text); font-size: 24px; font-weight: 600; }
+.dashboard-quality-note { display: flex; align-items: flex-start; gap: 7px; margin: 8px 18px 16px; border: 1px solid var(--admin-primary-border); border-radius: 10px; background: var(--admin-primary-soft); color: var(--admin-text-secondary); font-size: 11px; line-height: 1.5; padding: 10px; }
+.dashboard-quality-note .el-icon { color: var(--admin-primary); }
+@media (max-width: 980px) { .dashboard-health, .dashboard-main-grid { grid-template-columns: 1fr; } .dashboard-health__item + .dashboard-health__item { border-top: 1px solid var(--admin-border-soft); border-left: 0; } }
+@media (max-width: 680px) { .dashboard-updated { display: none; } .dashboard-filter-hint { flex-direction: column; } .dashboard-run-row__time { display: none; } .dashboard-run-row__link { display: none; } }
 </style>

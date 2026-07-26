@@ -10,7 +10,6 @@ import AssistantListPage from "@/modules/assistants/pages/AssistantListPage.vue"
 import AgentIntegrationPage from "@/modules/agent-integrations/pages/AgentIntegrationPage.vue";
 import ContentRiskLibrariesPage from "@/modules/content-risk/pages/ContentRiskLibrariesPage.vue";
 import ContentRiskLogsPage from "@/modules/content-risk/pages/ContentRiskLogsPage.vue";
-import EmbedAssistantPage from "@/modules/embed/pages/EmbedAssistantPage.vue";
 import EvaluationDatasetDetailPage from "@/modules/evaluations/pages/EvaluationDatasetDetailPage.vue";
 import EvaluationKnowledgeBasePage from "@/modules/evaluations/pages/EvaluationKnowledgeBasePage.vue";
 import EvaluationOverviewPage from "@/modules/evaluations/pages/EvaluationOverviewPage.vue";
@@ -45,16 +44,6 @@ const router = createRouter({
           },
         },
       ],
-    },
-    {
-      path: "/embed/assistant",
-      name: "embed-assistant",
-      component: EmbedAssistantPage,
-      meta: {
-        public: true,
-        bypassAdminCheck: true,
-        title: "嵌入助手",
-      },
     },
     {
       path: "/",

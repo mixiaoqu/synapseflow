@@ -1,5 +1,5 @@
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import app.core.logging_config as logging_config
 from app.core.config import config_registry

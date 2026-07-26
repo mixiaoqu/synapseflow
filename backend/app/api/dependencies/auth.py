@@ -8,10 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.permission_service import PermissionService
 from app.core.authz import SYSTEM_ADMIN_ROLES, has_any_role
+from app.core.security import decode_access_token
 from app.db.models import User
 from app.db.session import get_db
 from app.repositories.user_repository import UserRepository
-from app.core.security import decode_access_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
 

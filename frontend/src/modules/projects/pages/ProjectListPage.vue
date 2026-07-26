@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { CopyDocument, Delete, EditPen, Folder, Grid, MoreFilled, Plus, Search } from "@element-plus/icons-vue";
 
+import AdminPageHeader from "@/app/components/admin/AdminPageHeader.vue";
 import AdminBulkActions from "@/app/components/admin/AdminBulkActions.vue";
 import AdminDataTable from "@/app/components/admin/AdminDataTable.vue";
 import AdminDialog from "@/app/components/admin/AdminDialog.vue";
@@ -499,6 +500,11 @@ watch(keyword, () => {
 
 <template>
   <section class="project-list-page">
+    <AdminPageHeader
+      title="应用与项目"
+      description="管理产品、项目和业务应用端接入配置。"
+    />
+
     <AppLoading
       v-if="loading && !hasLoadedData"
       title="项目列表加载中"

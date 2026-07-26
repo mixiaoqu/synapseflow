@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.widget_chat_service import WidgetSessionContext
+from app.application.agent.embedded_service import EmbeddedAgentContext
 from app.core.security import decode_widget_token
 from app.db.session import get_db
 from app.repositories.project_app_access_repository import ProjectAppAccessRepository
@@ -31,7 +31,7 @@ async def get_widget_session_context(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(widget_bearer_scheme),
     db: AsyncSession = Depends(get_db),
-) -> WidgetSessionContext:
+) -> EmbeddedAgentContext:
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -55,7 +55,7 @@ async def get_widget_session_context(
     )
     trusted_scope = dict(payload.get("trusted_scope") or {})
 
-    return WidgetSessionContext(
+    return EmbeddedAgentContext(
         team_id=int(payload["team_id"]),
         product_id=int(payload["product_id"]),
         project_id=int(payload["project_id"]),

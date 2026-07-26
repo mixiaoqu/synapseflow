@@ -7,17 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.permission_service import PermissionService
 from app.core.authz import PERMISSION_MANAGE_PROJECT, PERMISSION_VIEW_TEAM_RESOURCE
-from app.db.models import AssistantProfile, DocumentCategory, Product, Project, ProjectApp
-from app.db.models import User
+from app.db.models import AssistantProfile, DocumentCategory, Product, Project, ProjectApp, User
 from app.models.schemas.project import (
-    ProjectBulkActionRequest,
-    ProjectBulkActionResponse,
     ProjectAppBulkActionRequest,
     ProjectAppBulkActionResponse,
     ProjectAppCreate,
     ProjectAppListResponse,
     ProjectAppResponse,
     ProjectAppUpdate,
+    ProjectBulkActionRequest,
+    ProjectBulkActionResponse,
     ProjectCopy,
     ProjectCreate,
     ProjectListResponse,

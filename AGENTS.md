@@ -79,17 +79,15 @@ Backend entry points:
 Current API router prefixes:
 
 - `/api/v1/auth`: registration, login, current user.
-- `/api/v1/ask`: user knowledge-base chat, chat sessions, feedback.
 - `/api/v1/admin/qa`: admin QA preview, logs, and review operations.
-- `/api/v1/embed`: embedded assistant session bootstrap/chat APIs.
 - `/api/v1/integration/bootstrap`: business-backend credential exchange for Agent Loader bootstrap.
 - `/api/v1/widget`: token-protected Web Component bootstrap, chat, history, and feedback APIs.
-- `/api/v1/assistants`: assistant profile CRUD, reorder, bulk action, preview, invoke, stream, and model options.
+- `/api/v1/assistants`: assistant profile CRUD, reorder, bulk action, preview, and model options.
 - `/api/v1/documents`: upload/import, list/detail, content update, versions, indexing, review, publish/unpublish, and delete operations.
 - `/api/v1/document-categories`: document category CRUD.
 - `/api/v1/teams`: team and team member CRUD.
 - `/api/v1/products`: product CRUD.
-- `/api/v1/projects`: project CRUD, project-app CRUD, and embed preview.
+- `/api/v1/projects`: project and project-app CRUD.
 - `/api/v1/users`: admin user management.
 - `/api/v1/content-risk`: content-risk rule library CRUD, rule CRUD, and test check.
 - `/api/v1/knowledge-bases`: knowledge-base CRUD.
@@ -100,7 +98,13 @@ Current API router prefixes:
 
 Application/service layer anchors:
 
-- `backend/app/application/agent_chat_service.py`: orchestrates user/admin/embed agent chat, content-risk checks, memory persistence, logs, and SSE streaming.
+- `backend/app/application/agent/input_builder.py`: defines the transport-neutral run request and prepares trusted graph input.
+- `backend/app/application/agent/runner.py`: isolates LangGraph invoke/stream execution from product use cases.
+- `backend/app/application/agent/run_service.py`: orchestrates one Agent run, including safety and persistence.
+- `backend/app/application/agent/run_recorder.py`: persists completed turns and refreshes conversation summaries.
+- `backend/app/application/agent/run_trace.py`: builds structured run diagnostics and retrieval review logs without persistence.
+- `backend/app/application/agent/conversation_service.py`: queries and deletes persisted Agent conversations.
+- `backend/app/application/agent/embedded_service.py`: orchestrates the production embedded-agent use case.
 - `backend/app/application/assistant_service.py`: assistant profile operations and assistant preview support.
 - `backend/app/application/document_service.py`: document lifecycle, content/version operations, review/publish transitions, and indexing triggers.
 - `backend/app/application/indexing_service.py`: indexing job orchestration.
@@ -111,9 +115,8 @@ Application/service layer anchors:
 - `backend/app/application/business_operations/*`: whitelisted business data operation boundary for agent-triggered business data queries or actions. The current implementation exposes product search through a controlled registry/service/mock gateway.
 - `backend/app/application/agent_tool_catalog_service.py`: tool provider management, discovery, synchronization, publishing, grants, and invocation queries.
 - `backend/app/application/agent_tool_execution_service.py`: governed tool validation, provider execution, and redacted invocation audit.
-- `backend/app/application/agent_service.py`: base agent context/state helpers.
-- `backend/app/application/stream_events.py`: SSE event envelope helpers.
-- `backend/app/application/workflow_meta.py`: backend-authoritative node labels and display stage metadata for streamed UI.
+- `backend/app/application/agent/sse_events.py`: SSE event envelope helpers.
+- `backend/app/application/agent/workflow_meta.py`: backend-authoritative node labels and display stage metadata for streamed UI.
 
 Domain services and repositories:
 
@@ -146,35 +149,38 @@ The current graph registry is `backend/app/agents/runtime/factory.py`.
 
 Registered workflows:
 
-- `agent`: top-level workflow defined by `backend/app/agents/graphs/agent_graph.py`; path is `intake -> classify -> route -> respond` for direct responses, or `intake -> classify -> route -> orchestrate_plan -> dispatch -> collect -> synthesize -> respond` for delegated execution.
-- `knowledge_qa`: reusable knowledge-base QA subgraph defined by `backend/app/agents/graphs/knowledge_qa_graph.py`; path is `plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result`.
-- `business_ops`: controlled read-only business data operation subgraph defined by `backend/app/agents/graphs/business_ops_graph.py`; it performs up to three sequential tool calls, loops from `execute_operation` back to `analyze_request` only when another call is required, and retains one optional parameter-correction retry per call.
+- `agent`: top-level workflow defined by `backend/app/agents/main/graph.py`; path is `route -> respond` for direct responses, or `route -> plan -> execute -> aggregate -> respond` for delegated execution.
+- `knowledge_qa`: reusable knowledge-base QA subgraph defined by `backend/app/agents/knowledge_qa/graph.py`; path is `plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result`.
+- `business_ops`: controlled read-only business data operation subgraph defined by `backend/app/agents/business_ops/graph.py`; it performs up to three sequential tool calls, loops from `execute_operation` back to `analyze_request` only when another call is required, and retains one optional parameter-correction retry per call.
 - `backend/langgraph.json` currently exposes `agent` and `knowledge_qa` for LangGraph tooling. `business_ops` is registered in the runtime factory and executed as a subgraph through `agent`.
 
-`backend/tests/unit/test_workflow_registry_consistency.py` guards workflow documentation metadata: every compiled graph node must match its `GraphDefinition.node_ids` entry and `workflow_meta.py` metadata, while every `backend/langgraph.json` graph entry must point to the registered factory. Update these declarations together whenever a graph node changes.
+`backend/tests/unit/test_workflow_registry_consistency.py` guards workflow documentation metadata: every compiled graph node must match its `GraphDefinition.node_ids` entry and `application/agent/workflow_meta.py` metadata, while every `backend/langgraph.json` graph entry must point to the registered factory. Update these declarations together whenever a graph node changes.
 
 <!-- workflow-node-ids:start -->
-- `agent` nodes: `intake`, `classify`, `route`, `orchestrate_plan`, `dispatch`, `collect`, `synthesize`, `respond`
+- `agent` nodes: `route`, `plan`, `execute`, `aggregate`, `respond`
 - `knowledge_qa` nodes: `plan_query`, `plan_retrieval`, `retrieve_knowledge`, `compose_result`
 - `business_ops` nodes: `analyze_request`, `match_operation`, `execute_operation`, `replan_operation_params`, `compose_result`
 <!-- workflow-node-ids:end -->
 
 Important workflow files:
 
-- `backend/app/agents/states/agent_state.py`: top-level agent state shape.
-- `backend/app/agents/states/knowledge_qa_state.py`: knowledge QA subgraph state shape.
-- `backend/app/agents/states/business_ops_state.py`: business data operation subgraph state shape.
-- `backend/app/agents/common/agent_intent.py`: top-level intent classification and fallback rules.
-- `backend/app/agents/common/knowledge_query_plan.py`: one-call structured knowledge query planning, with conditional HyDE for complex questions.
-- `backend/app/agents/nodes/knowledge_qa/plan_retrieval.py`: knowledge retrieval planning.
-- `backend/app/agents/nodes/kb_chat/retrieve.py`: text/graph retrieval, evidence deduplication, unified reranking, and compact retrieval result assembly reused by `knowledge_qa`.
-- `backend/app/agents/nodes/kb_chat/answer.py`: answer generation and streamed token output.
-- `backend/app/agents/prompts/kb_chat.py`: KB chat prompts.
+- `backend/app/agents/main/state.py`: top-level Agent input and state contracts.
+- `backend/app/agents/main/nodes/*`: top-level routing, planning, execution, aggregation, and response nodes.
+- `backend/app/agents/knowledge_qa/state.py`: knowledge QA subgraph state contract.
+- `backend/app/agents/business_ops/state.py`: business data operation subgraph state contract.
+- `backend/app/agents/business_ops/decision.py`: tool-candidate serialization, LLM decisions, normalization, and parameter correction.
+- `backend/app/agents/business_ops/nodes.py`: business operation node implementations and routing decisions.
+- `backend/app/agents/main/intent.py`: top-level intent classification and fallback rules.
+- `backend/app/agents/knowledge_qa/query_plan.py`: one-call structured knowledge query planning, with conditional HyDE for complex questions.
+- `backend/app/agents/knowledge_qa/nodes/plan_retrieval.py`: knowledge retrieval planning.
+- `backend/app/agents/knowledge_qa/nodes/retrieve.py`: text/graph retrieval, evidence deduplication, unified reranking, and compact retrieval result assembly.
+- `backend/app/agents/main/nodes/respond.py`: top-level final answer generation and streamed token output.
+- `backend/app/agents/main/prompt.py`: top-level page-context prompt formatting.
 - `backend/app/agents/common/*`: shared retrieval, JSON LLM, document analysis, and streaming helpers.
 
 The chat application service always uses the top-level `agent` workflow. Do not reintroduce a configurable workflow selector unless there is a verified runtime need and a tested caller contract.
 
-Workflow display metadata is backend-authoritative. Backend SSE events should provide `display_stages`, `display_stage`, `display_title`, `activity_text`, `workflow_id`, `node_id`, and `node_name` through `backend/app/application/workflow_meta.py` and node activity events; frontend code should consume those fields instead of maintaining local workflow or node label maps.
+Workflow display metadata is backend-authoritative. Backend SSE events should provide `display_stages`, `display_stage`, `display_title`, `activity_text`, `workflow_id`, `node_id`, and `node_name` through `backend/app/application/agent/workflow_meta.py` and node activity events; frontend code should consume those fields instead of maintaining local workflow or node label maps.
 
 When changing streamed chat behavior, keep backend events compatible with the frontend SSE parser in `frontend/src/shared/lib/stream/sse.ts` and reducer in `frontend/src/shared/lib/stream/workflowRun.ts`.
 
@@ -200,7 +206,6 @@ Frontend entry points:
 - `frontend/src/router/index.ts`: route definitions and auth guard registration.
 - `frontend/src/app/layouts/AdminLayout.vue`: authenticated admin shell.
 - `frontend/src/app/layouts/AuthLayout.vue`: login shell.
-- `frontend/src/modules/embed/pages/EmbedAssistantPage.vue`: embedded assistant page.
 - `frontend/src/agent-loader/loader.ts`: fixed CDN Loader and the public `EnterpriseAgent` lifecycle API.
 - `frontend/src/widget/`: CDN-delivered Web Component chat runtime.
 - `frontend/vite.loader.config.ts` and `frontend/vite.widget.config.ts`: immutable Loader and exact-version Widget asset builds.
@@ -228,7 +233,6 @@ Frontend integration anchors:
 
 - `frontend/src/shared/api/http.ts`: Axios wrapper, bearer auth, and normalized API errors.
 - `frontend/src/shared/api/*`: admin API integrations.
-- `frontend/src/modules/embed/composables/useEmbeddedAssistant.ts`: embedded assistant chat state.
 - `frontend/src/shared/lib/stream/sse.ts`: manual SSE parsing over fetch streams; the app does not use `EventSource`.
 - `frontend/src/shared/lib/stream/workflowRun.ts`: workflow progress reducer; display names and stage plans should come from backend SSE metadata.
 
@@ -243,14 +247,12 @@ Auth and role helpers:
 Only describe these as existing product surfaces unless code changes add more:
 
 - User login and session restoration.
-- End-user knowledge-base/assistant ask experience with streaming responses and chat history.
-- Embedded assistant experience for project apps.
 - CDN Loader and Web Component Widget integration with business-owned identity and final authorization.
 - Assistant-routed business data operations through governed, published, per-app Agent tools supplied by registered tool providers.
 - Admin tool provider management, synchronization, publishing, per-app tool grants, and invocation audit APIs.
 - Admin product, project, and project-app management.
 - Admin knowledge-base, document, category, version, indexing, review, and publish management.
-- Admin assistant profile management and assistant preview/testing.
+- Admin assistant profile management and preview/testing.
 - Admin team, member, user, and role management.
 - Admin QA log review and feedback flow.
 - Content-risk rule library management, rule testing, and query/answer interception.

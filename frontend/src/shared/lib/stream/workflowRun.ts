@@ -111,7 +111,7 @@ function resolveWorkflowName(workflowId: string) {
   return workflowId || "workflow";
 }
 
-function resolveNodeWorkflowId(event: SseEnvelope, nodeId: string) {
+function resolveNodeWorkflowId(event: SseEnvelope) {
   const data = eventData(event);
   const explicitWorkflowId = normalizeText(event.workflow_id) || normalizeText(data.workflow_id);
   return explicitWorkflowId || "agent";
@@ -372,7 +372,7 @@ export function reduceWorkflowRunEvent(
     return run;
   }
 
-  const workflowId = resolveNodeWorkflowId(event, nodeId);
+  const workflowId = resolveNodeWorkflowId(event);
   const workflow = ensureWorkflow(run, workflowId, at);
   const nodeName = resolveNodeName(nodeId, event.node_name);
   const node = ensureNode(workflow, nodeId, nodeName, at);

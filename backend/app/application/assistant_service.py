@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.agent.input_builder import AgentRunRequest
+from app.application.agent.run_service import get_agent_run_service
 from app.application.permission_service import PermissionService
-from app.application.agent_chat_service import get_agent_chat_service
-from app.core.config import config_registry
 from app.core.authz import PERMISSION_MANAGE_ASSISTANT, PERMISSION_VIEW_TEAM_RESOURCE
+from app.core.config import config_registry
 from app.db.models import AssistantProfile, User
 from app.models.schemas.assistant import (
     AssistantAvailabilityResponse,
@@ -338,24 +337,21 @@ class AssistantService:
             if payload.include_unpublished
             else list(VISIBLE_ASK_DOCUMENT_STATUSES)
         )
-        runtime_request = SimpleNamespace(
+        runtime_request = AgentRunRequest(
             query=payload.query.strip(),
             team_id=payload.current_team_id,
             knowledge_base_id=None,
-            knowledge_base_ids=[],
             category_id=None,
             assistant_id=None,
             assistant_name=self._normalize_optional_text(payload.name) or "预览助手",
-            assistant_welcome_message=self._normalize_optional_text(payload.welcome_message),
-            assistant_placeholder_text=self._normalize_optional_text(payload.placeholder_text),
             assistant_llm_model_key=self._validate_model_key(payload.llm_model_key),
             assistant_persona_prompt=self._normalize_optional_text(payload.persona_prompt),
             assistant_rule_template=self._normalize_optional_text(payload.rule_template),
-            assistant_suggested_prompts=self._normalize_prompt_list(payload.suggested_prompts),
             allowed_document_statuses=allowed_statuses,
             session_id=None,
+            source_surface="assistant_preview",
         )
-        return await get_agent_chat_service().preview(runtime_request, user_id=self.user_id)
+        return await get_agent_run_service().preview(runtime_request, user_id=self.user_id)
 
     async def delete_profile(self, assistant_id: int, *, force: bool = False) -> None:
         record = await self.repository.get_by_id(assistant_id)

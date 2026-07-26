@@ -25,14 +25,15 @@ def _build_shared_input(
     *,
     workflow_id: str,
 ) -> dict[str, Any]:
-    classification = dict(state.get("classification") or {})
-    intent = dict(classification.get("intent") or {})
+    agent_input = dict(state.get("input") or {})
+    routing = dict(state.get("routing") or {})
+    intent = dict(routing.get("intent") or {})
     step_goal = str(step.get("goal") or "").strip()
     goal = step_goal or str(intent.get("goal") or "").strip()
-    original_query = str(state.get("normalized_query") or state.get("query") or "").strip()
-    metadata = dict(state.get("metadata") or {})
+    original_query = str(agent_input.get("query") or "").strip()
+    metadata = dict(agent_input.get("metadata") or {})
     metadata["workflow"] = workflow_id
-    metadata["parent_step_id"] = step.get("step_id")
+    metadata["parent_task_id"] = step.get("task_id")
     dependency_results = {
         str(step_id): dict(result)
         for step_id, result in dict(step.get("dependency_results") or {}).items()
@@ -41,16 +42,16 @@ def _build_shared_input(
     metadata["dependency_step_ids"] = list(dependency_results)
     return {
         "workflow_id": workflow_id,
-        "request_id": state.get("request_id"),
-        "run_id": state.get("run_id"),
-        "session_id": state.get("session_id"),
+        "request_id": agent_input.get("request_id"),
+        "run_id": agent_input.get("run_id"),
+        "session_id": dict(agent_input.get("conversation") or {}).get("session_id"),
         "metadata": metadata,
-        "messages": list(state.get("messages") or []),
-        "chat_history": list(state.get("chat_history") or []),
-        "memory_summary": state.get("memory_summary"),
-        "runtime_context": dict(state.get("runtime_context") or {}),
-        "user_id": state.get("user_id"),
-        "team_id": state.get("team_id"),
+        "messages": list(dict(agent_input.get("conversation") or {}).get("history") or []),
+        "chat_history": list(dict(agent_input.get("conversation") or {}).get("history") or []),
+        "memory_summary": dict(agent_input.get("conversation") or {}).get("summary"),
+        "runtime_context": dict(agent_input.get("runtime_context") or {}),
+        "user_id": dict(agent_input.get("identity") or {}).get("user_id"),
+        "team_id": dict(agent_input.get("identity") or {}).get("team_id"),
         "original_query": original_query,
         "query": goal or original_query,
         "intent": intent,
@@ -65,16 +66,15 @@ def build_knowledge_qa_input(
     """Build the field-limited input accepted by knowledge_qa."""
 
     child_input = _build_shared_input(state, step, workflow_id="knowledge_qa")
-    knowledge_base_id = state.get("knowledge_base_id")
-    if knowledge_base_id is None:
-        knowledge_base_ids = list(state.get("knowledge_base_ids") or [])
-        knowledge_base_id = knowledge_base_ids[0] if knowledge_base_ids else None
+    agent_input = dict(state.get("input") or {})
+    resources = dict(agent_input.get("resources") or {})
+    knowledge_base_id = resources.get("knowledge_base_id")
     child_input.update(
         {
             "knowledge_base_id": knowledge_base_id,
-            "category_id": state.get("category_id"),
-            "page_context": dict(state.get("page_context") or {}),
-            "allowed_document_statuses": list(state.get("allowed_document_statuses") or []),
+            "category_id": resources.get("category_id"),
+            "page_context": dict(agent_input.get("page_context") or {}),
+            "allowed_document_statuses": list(resources.get("allowed_document_statuses") or []),
         }
     )
     return child_input
@@ -87,17 +87,20 @@ def build_business_ops_input(
     """Build the field-limited input accepted by business_ops."""
 
     child_input = _build_shared_input(state, step, workflow_id="business_ops")
+    agent_input = dict(state.get("input") or {})
+    resources = dict(agent_input.get("resources") or {})
+    identity = dict(agent_input.get("identity") or {})
     child_input.update(
         {
-            "product_id": state.get("product_id"),
-            "project_id": state.get("project_id"),
-            "project_app_id": state.get("project_app_id"),
-            "external_user_id": state.get("external_user_id"),
-            "external_user_name": state.get("external_user_name"),
-            "store_id": state.get("store_id"),
-            "trusted_scope": dict(state.get("trusted_scope") or {}),
-            "page_context": dict(state.get("page_context") or {}),
-            "page_config": dict(state.get("page_config") or {}),
+            "product_id": resources.get("product_id"),
+            "project_id": resources.get("project_id"),
+            "project_app_id": resources.get("project_app_id"),
+            "external_user_id": identity.get("external_user_id"),
+            "external_user_name": identity.get("external_user_name"),
+            "store_id": resources.get("store_id"),
+            "trusted_scope": dict(resources.get("trusted_scope") or {}),
+            "page_context": dict(agent_input.get("page_context") or {}),
+            "page_config": dict(agent_input.get("page_config") or {}),
         }
     )
     return child_input

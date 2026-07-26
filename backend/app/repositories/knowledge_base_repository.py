@@ -15,7 +15,6 @@ from app.db.models import (
 )
 from app.repositories.access_scope import accessible_knowledge_base_condition
 from app.repositories.index_job_repository import IndexJobRepository
-from app.services.graph_store import get_graph_store
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
     INDEX_STATUS_INDEXED,
@@ -28,6 +27,7 @@ from app.services.document_lifecycle import (
     DOC_STATUS_PENDING_REVIEW,
     DOC_STATUS_PUBLISHED,
 )
+from app.services.graph_store import get_graph_store
 
 
 @dataclass(slots=True)

@@ -3,11 +3,12 @@ from types import SimpleNamespace
 
 import pytest
 
-import app.agents.graphs.business_ops_graph as business_ops_graph
-from app.agents.business_tools.execution import build_tool_step
-from app.agents.business_tools.results import build_tool_run_result
-from app.agents.business_tools.schemas import ToolDecision, ToolStep
-from app.agents.graphs.business_ops_graph import _serialize_tool_candidates
+import app.agents.business_ops.decision as business_ops_decision
+import app.agents.business_ops.graph as business_ops_graph
+from app.agents.business_ops.decision import serialize_tool_candidates
+from app.agents.business_ops.tools.execution import build_tool_step
+from app.agents.business_ops.tools.results import build_tool_run_result
+from app.agents.business_ops.tools.schemas import ToolDecision, ToolStep
 from app.application.business_operations.registry import BusinessOperationRegistry
 from app.application.business_operations.schemas import BusinessOperationResult
 from app.db.models import AgentTool, ToolProvider
@@ -54,7 +55,9 @@ def test_runtime_definition_and_candidate_include_source_metadata():
     assert operation.read_only is True
     assert operation.required_permissions == ["order:read"]
 
-    candidate = _serialize_tool_candidates([record])[0]
+    candidate = serialize_tool_candidates(
+        [BusinessOperationRegistry().from_tool_record(record)]
+    )[0]
     assert candidate["domain"] == "order"
     assert candidate["action"] == "query"
     assert candidate["read_only"] is True
@@ -62,9 +65,11 @@ def test_runtime_definition_and_candidate_include_source_metadata():
 
 
 def test_business_request_accepts_current_call_action():
-    candidates = _serialize_tool_candidates([_record()])
+    candidates = serialize_tool_candidates(
+        [BusinessOperationRegistry().from_tool_record(_record())]
+    )
 
-    request = business_ops_graph._normalize_business_request(
+    request = business_ops_decision.normalize_business_request(
         {
             "action": "call_tool",
             "tool_id": "medical_center_query_orders",
@@ -76,15 +81,17 @@ def test_business_request_accepts_current_call_action():
         call_history=[],
     )
 
-    assert business_ops_graph.MAX_BUSINESS_TOOL_CALLS == 3
+    assert business_ops_decision.MAX_BUSINESS_TOOL_CALLS == 3
     assert request["status"] == "ready"
     assert request["operation_id"] == "medical_center_query_orders"
 
 
 def test_business_request_prompt_redecides_after_each_call():
-    prompt = business_ops_graph._build_business_request_analysis_prompt(
+    prompt = business_ops_decision.build_business_request_analysis_prompt(
         "查询最新订单",
-        _serialize_tool_candidates([_record()]),
+        serialize_tool_candidates(
+            [BusinessOperationRegistry().from_tool_record(_record())]
+        ),
         {},
         [],
     )
@@ -95,9 +102,11 @@ def test_business_request_prompt_redecides_after_each_call():
 
 
 def test_business_request_rejects_duplicate_serial_call():
-    candidates = _serialize_tool_candidates([_record()])
+    candidates = serialize_tool_candidates(
+        [BusinessOperationRegistry().from_tool_record(_record())]
+    )
 
-    request = business_ops_graph._normalize_business_request(
+    request = business_ops_decision.normalize_business_request(
         {
             "action": "call_tool",
             "tool_id": "medical_center_query_orders",
@@ -126,7 +135,7 @@ def test_combined_business_result_preserves_ordered_calls():
         {"tool_id": "sales_2025", "arguments": {}, "status": "success", "data": {"sales": 20}},
     ]
 
-    result = business_ops_graph._build_combined_business_result(history)
+    result = business_ops_decision.build_combined_business_result(history)
 
     assert [item["operation_id"] for item in result["tool_calls"]] == ["sales_2024", "sales_2025"]
     assert result["tool_calls"][1]["data"]["sales"] == 20
@@ -144,8 +153,8 @@ async def test_business_ops_graph_executes_two_read_only_calls_in_order(monkeypa
                 "unavailable_reason_counts": {},
             }
 
-        async def list_available_tools(self, project_app_id):
-            return [record]
+        async def list_available_operations(self, project_app_id):
+            return [BusinessOperationRegistry().from_tool_record(record)]
 
         async def execute(self, request):
             return BusinessOperationResult(
@@ -260,8 +269,8 @@ async def test_business_ops_redecides_after_each_success_without_follow_up_flag(
                 "unavailable_reason_counts": {},
             }
 
-        async def list_available_tools(self, project_app_id):
-            return [record]
+        async def list_available_operations(self, project_app_id):
+            return [BusinessOperationRegistry().from_tool_record(record)]
 
         async def execute(self, request):
             return BusinessOperationResult(
@@ -315,8 +324,8 @@ async def test_business_ops_stops_before_a_fourth_tool_call(monkeypatch):
                 "unavailable_reason_counts": {},
             }
 
-        async def list_available_tools(self, project_app_id):
-            return [record]
+        async def list_available_operations(self, project_app_id):
+            return [BusinessOperationRegistry().from_tool_record(record)]
 
         async def execute(self, request):
             self.executions += 1
@@ -374,8 +383,8 @@ async def test_business_ops_reports_partial_success_after_a_later_failure(monkey
                 "unavailable_reason_counts": {},
             }
 
-        async def list_available_tools(self, project_app_id):
-            return [record]
+        async def list_available_operations(self, project_app_id):
+            return [BusinessOperationRegistry().from_tool_record(record)]
 
         async def execute(self, request):
             self.executions += 1

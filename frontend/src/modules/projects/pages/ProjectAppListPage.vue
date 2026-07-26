@@ -11,7 +11,6 @@ import {
   Link,
   Monitor,
   Plus,
-  Refresh,
   Search,
   Setting,
 } from "@element-plus/icons-vue";
@@ -35,7 +34,6 @@ import { listDocumentCategoriesTree } from "@/shared/api/document-categories";
 import { listKnowledgeBases } from "@/shared/api/knowledge-bases";
 import {
   createProjectApp,
-  createProjectAppEmbedPreview,
   deleteProjectApp,
   getProject,
   listProjectApps,
@@ -83,7 +81,6 @@ const toolGrantSaving = ref(false);
 const toolGrantKeyword = ref("");
 const toolGrantSelectedOnly = ref(false);
 const draftToolGrantIds = ref<number[]>([]);
-const sandboxDrawerVisible = ref(false);
 const activeAppId = ref<number | null>(null);
 const integrationDialogVisible = ref(false);
 const integrationApp = ref<ProjectAppSummary | null>(null);
@@ -92,10 +89,6 @@ const issuedClientSecret = ref("");
 const allowedOriginsText = ref("");
 const accessLoading = ref(false);
 const accessSavingAction = ref<"" | "create" | "update" | "enable" | "reset" | "revoke">("");
-const previewLoading = ref(false);
-const previewEmbedUrl = ref("");
-const previewStoreId = ref("STORE_001");
-const previewNeedsRefresh = ref(false);
 const categoryPath = ref<number[]>([]);
 const appDialogVisible = ref(false);
 const appDialogSaving = ref(false);
@@ -124,25 +117,6 @@ const projectId = computed(() => {
 
 const isForbidden = computed(() => Boolean(loadError.value) && isForbiddenError(loadError.value));
 const activeApp = computed(() => apps.value.find((item) => item.id === activeAppId.value) ?? apps.value[0] ?? null);
-const canPreviewActiveApp = computed(
-  () => Boolean(activeApp.value?.is_active && activeApp.value.knowledge_base_id && activeApp.value.default_assistant_id),
-);
-const hasFreshPreview = computed(() => Boolean(previewEmbedUrl.value && !previewNeedsRefresh.value));
-const previewUnavailableDescription = computed(() => {
-  if (!activeApp.value?.is_active) {
-    return "启用后才能生成沙盒测试链接。";
-  }
-  const missingItems = [];
-  if (!activeApp.value.knowledge_base_id) {
-    missingItems.push("知识库");
-  }
-  if (!activeApp.value.default_assistant_id) {
-    missingItems.push("默认助手");
-  }
-  return missingItems.length > 0
-    ? `请先选择${missingItems.join("和")}后再生成沙盒测试。`
-    : "配置已就绪，可以生成测试会话。";
-});
 const appDialogTitle = computed(() => (editingApp.value ? "编辑应用端" : "新建应用端"));
 const appDialogSubmitText = computed(() => (editingApp.value ? "保存应用端" : "创建应用端"));
 const grantedToolIdSet = computed(() => new Set(toolGrants.value.map((grant) => grant.agent_tool_id)));
@@ -424,8 +398,6 @@ function openEditApp(app: ProjectAppSummary) {
 
 function selectApp(appId: number) {
   activeAppId.value = appId;
-  previewEmbedUrl.value = "";
-  previewNeedsRefresh.value = false;
   const nextApp = apps.value.find((item) => item.id === appId) ?? null;
   void loadCategories(nextApp?.knowledge_base_id ?? null, nextApp?.category_id ?? null);
   void loadToolGrants(nextApp?.id ?? null);
@@ -448,9 +420,6 @@ async function handleToggleStatus(app: ProjectAppSummary, nextValue: boolean | s
       apps.value[index] = updated;
     }
     activeAppId.value = updated.id;
-    if (previewEmbedUrl.value) {
-      previewNeedsRefresh.value = true;
-    }
     ElMessage.success(`已${updated.is_active ? "启用" : "停用"}应用端“${updated.name}”。`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "更新应用端状态失败，请稍后重试。";
@@ -478,9 +447,6 @@ async function saveActiveAppConfig(
       apps.value[index] = updated;
     }
     activeAppId.value = updated.id;
-    if (previewEmbedUrl.value) {
-      previewNeedsRefresh.value = true;
-    }
     ElMessage.success(successMessage);
   } catch (error) {
     const message = error instanceof Error ? error.message : "保存应用端配置失败，请稍后重试。";
@@ -578,9 +544,6 @@ async function handleSaveToolGrants() {
     toolGrantRequestSequence += 1;
     toolGrants.value = response.items;
     toolGrantDialogVisible.value = false;
-    if (previewEmbedUrl.value) {
-      previewNeedsRefresh.value = true;
-    }
     ElMessage.success("工具授权已保存。");
   } catch (error) {
     const message = error instanceof Error ? error.message : "保存工具授权失败，请稍后重试。";
@@ -588,10 +551,6 @@ async function handleSaveToolGrants() {
   } finally {
     toolGrantSaving.value = false;
   }
-}
-
-function openSandbox() {
-  sandboxDrawerVisible.value = true;
 }
 
 async function handleSaveAppBasicInfo() {
@@ -628,8 +587,6 @@ async function handleSaveAppBasicInfo() {
         apps.value[index] = updated;
       }
       activeAppId.value = updated.id;
-      previewEmbedUrl.value = "";
-      previewNeedsRefresh.value = false;
       appDialogVisible.value = false;
       ElMessage.success(`已保存应用端“${updated.name}”。`);
       return;
@@ -648,8 +605,6 @@ async function handleSaveAppBasicInfo() {
     });
     apps.value = [created, ...apps.value];
     activeAppId.value = created.id;
-    previewEmbedUrl.value = "";
-    previewNeedsRefresh.value = false;
     appDialogVisible.value = false;
     ElMessage.success(`已创建应用端“${created.name}”。`);
   } catch (error) {
@@ -690,8 +645,6 @@ async function handleDeleteApp(app: ProjectAppSummary) {
     await deleteProjectApp(projectId.value, app.id);
     apps.value = apps.value.filter((item) => item.id !== app.id);
     activeAppId.value = apps.value[0]?.id ?? null;
-    previewEmbedUrl.value = "";
-    previewNeedsRefresh.value = false;
     await loadToolGrants(activeAppId.value);
     ElMessage.success(`已删除应用端“${app.name}”。`);
   } catch (error) {
@@ -849,31 +802,6 @@ async function handleRevokeAccess() {
   }
 }
 
-async function generatePreview() {
-  if (!projectId.value || !activeApp.value || previewLoading.value) {
-    return;
-  }
-  if (!canPreviewActiveApp.value) {
-    ElMessage.warning("请先启用应用端，并绑定知识库和助手后再生成沙盒测试。");
-    return;
-  }
-
-  previewLoading.value = true;
-  try {
-    const response = await createProjectAppEmbedPreview(projectId.value, activeApp.value.id, {
-      store_id: previewStoreId.value.trim() || null,
-    });
-    previewEmbedUrl.value = response.embed_url;
-    previewNeedsRefresh.value = false;
-    ElMessage.success("已生成沙盒测试链接。");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "生成沙盒测试失败，请稍后重试。";
-    ElMessage.error(message);
-  } finally {
-    previewLoading.value = false;
-  }
-}
-
 async function copyText(value: string, successMessage: string) {
   try {
     await navigator.clipboard.writeText(value);
@@ -903,17 +831,9 @@ watch(
   () => route.params.projectId,
   () => {
     activeAppId.value = null;
-    previewEmbedUrl.value = "";
-    previewNeedsRefresh.value = false;
     void loadPage();
   },
 );
-
-watch(previewStoreId, () => {
-  if (previewEmbedUrl.value) {
-    previewNeedsRefresh.value = true;
-  }
-});
 
 watch(integrationDialogVisible, (visible) => {
   if (!visible) {
@@ -1065,13 +985,6 @@ watch(integrationDialogVisible, (visible) => {
                 title="编辑应用端"
                 @click="openEditApp(activeApp)"
               />
-              <el-button
-                class="project-app-workspace-page__sandbox-button"
-                @click="openSandbox"
-              >
-                <el-icon><Monitor /></el-icon>
-                沙盒测试
-              </el-button>
               <span :class="activeApp.is_active ? 'is-active' : ''">{{ activeApp.is_active ? "在线" : "停用" }}</span>
               <el-switch
                 :model-value="activeApp.is_active"
@@ -1392,81 +1305,6 @@ watch(integrationDialogVisible, (visible) => {
           </div>
         </div>
       </template>
-    </el-drawer>
-
-    <el-drawer
-      v-model="sandboxDrawerVisible"
-      class="project-app-workspace-page__sandbox-drawer"
-      size="100%"
-    >
-      <template #header>
-        <div class="project-app-workspace-page__drawer-title">
-          <h3>沙盒测试</h3>
-          <p>{{ activeApp?.name }} · 使用当前已保存配置生成测试会话</p>
-        </div>
-      </template>
-
-      <div class="project-app-workspace-page__sandbox-drawer-content">
-        <div class="project-app-workspace-page__sandbox-actions">
-          <el-input
-            v-model="previewStoreId"
-            clearable
-            maxlength="120"
-            placeholder="门店 ID"
-            class="project-app-workspace-page__sandbox-store"
-          />
-          <el-button
-            type="primary"
-            :disabled="!canPreviewActiveApp"
-            :loading="previewLoading"
-            @click="generatePreview"
-          >
-            <el-icon><Refresh /></el-icon>
-            {{ previewEmbedUrl || previewNeedsRefresh ? "刷新测试" : "生成测试" }}
-          </el-button>
-        </div>
-
-        <div class="project-app-workspace-page__sandbox-body">
-          <iframe
-            v-if="hasFreshPreview"
-            :src="previewEmbedUrl"
-            title="沙盒测试"
-            class="project-app-workspace-page__iframe"
-          />
-          <AppEmpty
-            v-else-if="previewNeedsRefresh && canPreviewActiveApp"
-            class="project-app-workspace-page__sandbox-empty"
-            title="配置已更新"
-            description="应用配置已保存，刷新测试后将使用最新设置。"
-          >
-            <el-button
-              type="primary"
-              @click="generatePreview"
-            >
-              刷新测试会话
-            </el-button>
-          </AppEmpty>
-          <AppEmpty
-            v-else-if="canPreviewActiveApp"
-            class="project-app-workspace-page__sandbox-empty"
-            :title="`我是 ${activeApp?.default_assistant_name || '默认助手'}`"
-            description="配置已就绪，可以生成测试会话。"
-          >
-            <el-button
-              type="primary"
-              @click="generatePreview"
-            >
-              生成测试会话
-            </el-button>
-          </AppEmpty>
-          <AppEmpty
-            v-else
-            class="project-app-workspace-page__sandbox-empty"
-            :title="activeApp?.is_active ? '配置未完成' : '应用端已停用'"
-            :description="previewUnavailableDescription"
-          />
-        </div>
-      </div>
     </el-drawer>
 
     <AdminDialog

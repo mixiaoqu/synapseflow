@@ -1,4 +1,4 @@
-from app.application.workflow_meta import (
+from app.application.agent.workflow_meta import (
     build_node_summary,
     get_node_label,
     get_node_progress_message,
@@ -6,8 +6,8 @@ from app.application.workflow_meta import (
 
 
 def test_workflow_meta_exposes_agent_node_progress_message():
-    assert get_node_label("agent", "classify") == "识别任务"
-    assert get_node_progress_message("agent", "classify") == "正在识别任务类型..."
+    assert get_node_label("agent", "route") == "理解与路由"
+    assert get_node_progress_message("agent", "route") == "正在理解需求并选择处理路径..."
 
 
 def test_workflow_meta_returns_empty_node_complete_payload():

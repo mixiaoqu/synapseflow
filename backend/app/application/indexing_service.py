@@ -15,8 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config.registry import config_registry
 from app.db.models import Document, KnowledgeBase
 from app.db.session import AsyncSessionLocal
-from app.repositories.document_repository import DocumentRepository
 from app.repositories.document_chunk_repository import DocumentChunkRepository
+from app.repositories.document_repository import DocumentRepository
 from app.repositories.index_job_repository import IndexJobRepository
 from app.services.document_index_state import (
     ACTIVE_INDEX_STATUSES,
@@ -24,6 +24,14 @@ from app.services.document_index_state import (
     INDEX_STATUS_INDEXED,
     INDEX_STATUS_PROCESSING,
     INDEX_STATUS_QUEUED,
+)
+from app.services.document_indexer import (
+    finalize_document_graph,
+    index_document,
+    index_document_graph,
+    index_document_graph_chunk,
+    index_document_graph_chunks,
+    index_prepared_documents_batch,
 )
 from app.services.graph_index_state import (
     GRAPH_INDEX_STATUS_FAILED,
@@ -33,21 +41,13 @@ from app.services.graph_index_state import (
     GRAPH_INDEX_STATUS_QUEUED,
     GRAPH_INDEX_STATUS_SKIPPED,
 )
-from app.services.document_indexer import (
-    index_document,
-    index_document_graph,
-    index_document_graph_chunk,
-    index_document_graph_chunks,
-    finalize_document_graph,
-    index_prepared_documents_batch,
-)
+from app.services.graph_store import get_graph_store
 from app.services.index_job_state import (
     INDEX_JOB_DOCUMENT_STATUS_FAILED,
     INDEX_JOB_DOCUMENT_STATUS_INDEXED,
     INDEX_JOB_DOCUMENT_STATUS_PROCESSING,
 )
 from app.services.vector_store import delete_by_document_id
-from app.services.graph_store import get_graph_store
 from app.utils.time import utc_now
 
 MAX_INDEX_ERROR_LENGTH = 1000

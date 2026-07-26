@@ -5,9 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, TypedDict
 
-from app.agents.business_tools.results import build_tool_run_result
-from app.agents.business_tools.schemas import ToolDecision, ToolStep
-
 
 class SubAgentSummary(TypedDict, total=False):
     """Human-meaningful result summary for orchestration and final response."""
@@ -87,7 +84,7 @@ def _result_id(state: dict[str, Any], sub_agent_id: str) -> str:
     return f"{sub_agent_id}:{run_id}:{step_id}"
 
 
-def _base_result(
+def build_sub_agent_result(
     state: dict[str, Any],
     *,
     sub_agent_id: str,
@@ -118,152 +115,6 @@ def _base_result(
     }
 
 
-def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
-    retrieval_result = dict(state.get("retrieval_result") or {})
-    retrieval_status = str(retrieval_result.get("status") or "failed")
-    evidence_items = [
-        dict(item)
-        for item in list(retrieval_result.get("evidence_items") or [])
-        if isinstance(item, dict)
-    ]
-    primary_count = len([item for item in evidence_items if item.get("role") == "primary"])
-    status = "success" if retrieval_status == "found" and primary_count else "failed"
-    answer_status = "answered" if status == "success" else "no_answer"
-    message = (
-        f"已找到 {primary_count} 条主要知识证据。"
-        if status == "success"
-        else "当前知识库没有找到可用于回答的相关内容。"
-    )
-    result = _base_result(
-        state,
-        sub_agent_id="knowledge_qa",
-        status=status,
-        answer_status=answer_status,
-        title="知识问答子智能体结果",
-        message=message,
-    )
-    result["data"] = {
-        "kind": "document",
-        "content": {
-            "knowledge_context": evidence_items,
-        },
-        "normalized": {
-            "retrieval_status": retrieval_status,
-            "reason_code": retrieval_result.get("reason_code"),
-            "budget": dict(retrieval_result.get("budget") or {}),
-            "metrics": dict(retrieval_result.get("metrics") or {}),
-            "warnings": list(retrieval_result.get("warnings") or []),
-        },
-    }
-    result["evidence"] = {
-        "citations": [
-            {
-                "ref_id": item.get("ref_id"),
-                "role": item.get("role"),
-                "kind": item.get("kind"),
-                **dict(item.get("source") or {}),
-            }
-            for item in evidence_items
-            if item.get("role") == "primary"
-        ],
-    }
-    return result
-
-
-def build_business_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
-    operation_result = dict(state.get("business_operation_result") or {})
-    business_request = dict(state.get("business_request") or {})
-    success = bool(operation_result.get("success"))
-    error = dict(operation_result.get("error") or {})
-    retryable = bool(error.get("retryable"))
-    request_status = str(business_request.get("status") or "unsupported")
-    decision = ToolDecision(
-        action={
-            "complete": "complete",
-            "clarification_required": "clarify",
-            "limit_reached": "limit_reached",
-        }.get(request_status, "unsupported"),
-        message=str(operation_result.get("message") or "").strip() or None,
-    )
-    steps = [
-        ToolStep(
-            index=int(item.get("index") or index),
-            tool_id=str(item.get("tool_id") or ""),
-            arguments=dict(item.get("arguments") or {}),
-            status=str(item.get("status") or "failed"),
-            data=dict(item.get("data") or {}),
-            error=item.get("error"),
-            duration_ms=item.get("duration_ms"),
-        )
-        for index, item in enumerate(state.get("business_call_history") or [], start=1)
-    ]
-    run_result = build_tool_run_result(decision=decision, steps=steps)
-    status = run_result.status
-    answer_status = {
-        "success": "answered",
-        "partial_success": "partial",
-        "needs_input": "clarification_needed",
-    }.get(status, "failed")
-    message = (
-        str(operation_result.get("message") or "").strip()
-        or str(error.get("message") or "").strip()
-        or str(business_request.get("reason") or "").strip()
-        or "业务操作子智能体执行完成。"
-    )
-    result = _base_result(
-        state,
-        sub_agent_id="business_ops",
-        status=status,
-        answer_status=answer_status,
-        title="业务操作子智能体结果",
-        message=message,
-    )
-    result["data"] = {
-        "kind": "action_result",
-        "content": dict(state.get("business_result") or {}),
-        "normalized": {
-            "business_request": business_request,
-            "business_operation": dict(state.get("business_operation") or {}),
-            "business_operation_result": operation_result,
-        },
-    }
-    result["evidence"] = {
-        "citations": [],
-        "sources": [],
-        "reasoning_trace": [
-            {
-                "stage": "business_operation",
-                "status": status,
-                "data": {
-                    "operation_id": operation_result.get("operation_id"),
-                    "success": success,
-                },
-            }
-        ],
-    }
-    if status == "needs_input":
-        result["actions"]["required_user_input"] = [
-            {
-                "kind": "clarification",
-                "operation_id": operation_result.get("operation_id"),
-                "message": message,
-            }
-        ]
-    if status not in {"success"}:
-        result["errors"] = [
-            {
-                "code": str(error.get("code") or business_request.get("status") or "FAILED"),
-                "message": message,
-                "retryable": retryable,
-                "details": {
-                    "operation_id": operation_result.get("operation_id"),
-                    "raw_error": error,
-                },
-            }
-        ]
-    return result
-
-
 def build_failed_sub_agent_result(
     *,
     sub_agent_id: str,
@@ -275,7 +126,7 @@ def build_failed_sub_agent_result(
         "run_id": run_id,
         "metadata": {"parent_step_id": step_id},
     }
-    result = _base_result(
+    result = build_sub_agent_result(
         state,
         sub_agent_id=sub_agent_id,
         status="failed",

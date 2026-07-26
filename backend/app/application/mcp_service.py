@@ -3,25 +3,26 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from types import SimpleNamespace
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies.mcp_auth import McpAuthContext, McpTokenContext
-from app.application.agent_chat_service import get_agent_chat_service
+from app.application.agent.input_builder import AgentRunRequest
+from app.application.agent.run_service import get_agent_run_service
 from app.core.config import settings
 from app.core.security import create_mcp_token
 from app.models.schemas.mcp import (
-    McpBootstrapRequest,
-    McpBootstrapResponse,
     McpAnswerRequest,
     McpAnswerResponse,
+    McpAuthContext,
     McpBindingItem,
-    McpScopeSummary,
+    McpBootstrapRequest,
+    McpBootstrapResponse,
     McpScopeResolveResponse,
+    McpScopeSummary,
     McpSearchRequest,
     McpSearchResponse,
+    McpTokenContext,
 )
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.team_repository import TeamRepository
@@ -237,7 +238,7 @@ class McpService:
                 status_code=400,
                 detail="MCP answer requires one bound knowledge base",
             )
-        runtime_request = SimpleNamespace(
+        runtime_request = AgentRunRequest(
             query=request.query,
             session_id=None,
             team_id=scope.team_id,
@@ -245,11 +246,10 @@ class McpService:
             project_id=scope.project_id,
             project_app_id=scope.project_app_id,
             knowledge_base_id=scope.knowledge_base_ids[0],
-            knowledge_base_ids=list(scope.knowledge_base_ids),
-            knowledge_base_branch_ids=[],
             category_id=scope.category_id,
+            source_surface="mcp",
         )
-        response = await get_agent_chat_service().preview(runtime_request, user_id=self.user_id)
+        response = await get_agent_run_service().preview(runtime_request, user_id=self.user_id)
         return McpAnswerResponse(
             answer=response.answer,
             answer_status=response.answer_status,

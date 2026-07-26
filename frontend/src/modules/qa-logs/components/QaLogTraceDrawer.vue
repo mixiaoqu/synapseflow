@@ -112,17 +112,6 @@ function sourceTagType(doc: QaLogDiagnosticDoc) {
   return "info";
 }
 
-function evidenceLabel(doc: QaLogDiagnosticDoc) {
-  const source = asString(doc.source_type);
-  if (source === "graph") {
-    return { text: "图谱证据", type: "success" as const };
-  }
-  if (source === "hybrid") {
-    return { text: "混合证据", type: "info" as const };
-  }
-  return { text: "文本片段", type: "warning" as const };
-}
-
 const tracePayload = computed<QaLogTracePayload | null>(() => props.detail?.tracePayload ?? null);
 const queryClues = computed(() => tracePayload.value?.query_clues ?? null);
 const sourceSummary = computed(() => tracePayload.value?.source_summary ?? null);

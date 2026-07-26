@@ -49,7 +49,7 @@ import {
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
-import StatusTag from "@/shared/components/page/StatusTag.vue";
+import StatusTag from "@/app/components/admin/AdminStatusTag.vue";
 import { useAdminBreadcrumbStore } from "@/stores/admin-breadcrumb";
 import { useTeamScopeStore } from "@/stores/team-scope";
 import { isForbiddenError } from "@/shared/utils/error";

@@ -4,22 +4,21 @@ from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
     assistants,
-    ask,
     auth,
-    project_app_access,
-    tool_providers,
     content_risk_libraries,
     document_categories,
     documents,
-    embed,
     evaluations,
     health,
     integration_bootstrap,
     knowledge_bases,
     mcp,
     products,
+    project_app_access,
     projects,
+    qa_review,
     teams,
+    tool_providers,
     users,
     widget,
 )
@@ -28,9 +27,7 @@ api_router = APIRouter()
 
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
-api_router.include_router(ask.router, prefix="/ask", tags=["ask"])
-api_router.include_router(ask.admin_router, prefix="/admin/qa", tags=["admin-qa"])
-api_router.include_router(embed.router, prefix="/embed", tags=["embed"])
+api_router.include_router(qa_review.router, prefix="/admin/qa", tags=["admin-qa"])
 api_router.include_router(widget.router, prefix="/widget", tags=["widget"])
 api_router.include_router(
     integration_bootstrap.router,

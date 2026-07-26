@@ -29,6 +29,7 @@ class _FakeApp:
     code: str
     name: str
     knowledge_base_id: int | None = None
+    category_id: int | None = None
 
 
 @dataclass
@@ -44,6 +45,7 @@ class _FakeRuntime:
     app: _FakeApp
     assistant: _FakeAssistant | None
     knowledge_base_name: str | None = None
+    category_name: str | None = None
 
 
 @dataclass
@@ -273,7 +275,7 @@ async def test_mcp_service_answer_uses_stateless_preview_response(
 
     captured: dict[str, object] = {}
 
-    class _FakeAgentChatService:
+    class _FakeAgentRunService:
         async def preview(self, request, *, user_id: int):
             captured["method"] = "preview"
             captured["user_id"] = user_id
@@ -289,8 +291,8 @@ async def test_mcp_service_answer_uses_stateless_preview_response(
 
     monkeypatch.setattr(
         mcp_service_module,
-        "get_agent_chat_service",
-        lambda: _FakeAgentChatService(),
+        "get_agent_run_service",
+        lambda: _FakeAgentRunService(),
     )
 
     result = await service.answer(

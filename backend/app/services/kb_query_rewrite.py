@@ -8,7 +8,7 @@ from typing import Any, Callable
 from loguru import logger
 
 from app.core.llm import get_llm_for_analysis
-from app.utils import extract_json_from_llm_response
+from app.utils.json_utils import extract_json_from_llm_response
 
 _FALLBACK_RETRIEVAL_QUERY_LIMIT = 4
 _MAX_QUERY_LENGTH = 160

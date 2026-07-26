@@ -10,7 +10,7 @@ import {
 } from "@element-plus/icons-vue";
 
 import type { AgentChatMessage } from "../chat";
-import type { ChatWorkflowRun } from "../stream/workflow-run";
+import type { ChatWorkflowRun } from "../../shared/lib/stream/workflowRun";
 import WorkflowProgress from "./WorkflowProgress.vue";
 
 const props = defineProps<{

@@ -1,22 +1,30 @@
 import pytest
 
-from app.agents.nodes.agent_orchestration.respond import (
-    build_direct_response_prompt,
-    build_synthesized_response_prompt,
+from app.agents.main.nodes.respond import (
+    _direct_prompt,
+    _execution_prompt,
 )
 
 
 @pytest.mark.parametrize(
     "prompt_builder",
-    [build_direct_response_prompt, build_synthesized_response_prompt],
+    [_direct_prompt, _execution_prompt],
 )
 def test_response_prompts_include_trusted_runtime_context(prompt_builder):
     state = {
-        "query": "今天是什么时候",
-        "runtime_context": {
-            "current_datetime": "2026-07-25T10:30:00+08:00",
-            "timezone": "Asia/Shanghai",
+        "input": {
+            "query": "今天是什么时候",
+            "assistant": {},
+            "page_config": {},
+            "page_context": {},
+            "conversation": {"history": []},
+            "runtime_context": {
+                "current_datetime": "2026-07-25T10:30:00+08:00",
+                "timezone": "Asia/Shanghai",
+            },
         },
+        "routing": {"intent": {"goal": "查询当前时间"}},
+        "result": {},
     }
 
     prompt = prompt_builder(state)

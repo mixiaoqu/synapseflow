@@ -10,16 +10,18 @@ const props = withDefaults(
     error?: unknown;
     retryText?: string;
     showRetry?: boolean;
+    compact?: boolean;
   }>(),
   {
     title: "加载失败",
     description: "页面内容暂时无法获取，请稍后重试。",
     retryText: "重新加载",
     showRetry: true,
+    compact: false,
   },
 );
 
-defineEmits<{
+const emit = defineEmits<{
   retry: [];
 }>();
 
@@ -27,31 +29,39 @@ const resolvedMessage = computed(() => getErrorMessage(props.error, props.descri
 </script>
 
 <template>
-  <section class="app-error">
-    <el-result
-      icon="error"
-      :title="title"
-      :sub-title="resolvedMessage"
-    >
-      <template
-        v-if="showRetry"
-        #extra
-      >
-        <el-button
-          type="primary"
-          @click="$emit('retry')"
-        >
-          {{ retryText }}
-        </el-button>
+  <section class="app-state app-state--error" :class="{ 'app-state--compact': compact }">
+    <el-result icon="error" :title="title" :sub-title="resolvedMessage">
+      <template #extra>
+        <slot name="actions">
+          <el-button v-if="showRetry" type="primary" @click="emit('retry')">
+            {{ retryText }}
+          </el-button>
+        </slot>
       </template>
     </el-result>
   </section>
 </template>
 
 <style scoped>
-.app-error {
-  border: 1px solid rgba(239, 68, 68, 0.18);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.9);
+.app-state {
+  border-radius: var(--admin-radius-lg, 20px);
+  background: var(--admin-surface, #fff);
+}
+
+.app-state--error {
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.app-state--compact {
+  border: 0;
+  background: transparent;
+}
+
+.app-state :deep(.el-result) {
+  padding: 36px 24px;
+}
+
+.app-state--compact :deep(.el-result) {
+  padding: 24px 12px;
 }
 </style>

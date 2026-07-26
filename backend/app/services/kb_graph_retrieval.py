@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from time import perf_counter
 from collections.abc import Sequence
+from time import perf_counter
 from typing import Any
 
 from loguru import logger
