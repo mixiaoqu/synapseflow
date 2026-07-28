@@ -206,7 +206,7 @@ class DocumentUploadService:
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             source_path=source_path,
-            source_storage_provider=settings.OSS_PROVIDER.strip() or "aliyun_oss",
+            source_storage_provider=settings.OSS_PROVIDER.strip() or "volcengine_tos",
             source_bucket_name=str(session.bucket_name),
             source_object_key=str(session.object_key),
             source_file_name=str(session.original_filename),

@@ -60,9 +60,10 @@ class Settings(BaseSettings):
     DOCUMENT_STAGING_DIR: str = "./uploaded_documents/staging"
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024
     OSS_ENABLED: bool = False
-    OSS_PROVIDER: str = "aliyun_oss"
+    OSS_PROVIDER: str = "volcengine_tos"
     OSS_BUCKET: str = ""
     OSS_ENDPOINT: str = ""
+    OSS_REGION: str = ""
     OSS_PUBLIC_ENDPOINT: str = ""
     OSS_ACCESS_KEY_ID: str = ""
     OSS_ACCESS_KEY_SECRET: str = ""

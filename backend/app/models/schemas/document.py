@@ -54,7 +54,7 @@ class DocumentUploadInitResponse(BaseModel):
 
     upload_session_id: int
     provider: str
-    method: str = "POST"
+    method: str = "PUT"
     bucket_name: str
     object_key: str
     upload_url: str

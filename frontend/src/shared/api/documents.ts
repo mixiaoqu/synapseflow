@@ -69,6 +69,20 @@ export function abortDocumentUpload(uploadSessionId: number) {
 }
 
 async function uploadFileToObjectStorage(policy: DocumentUploadInitResponse, file: File) {
+  if ((policy.method || "POST").toUpperCase() === "PUT") {
+    const response = await fetch(policy.upload_url, {
+      method: "PUT",
+      body: file,
+      headers: policy.form_fields,
+      mode: "cors",
+    });
+    if (response.ok) {
+      return;
+    }
+    const errorText = (await response.text()).trim();
+    throw new Error(errorText || `TOS 上传失败（HTTP ${response.status}）`);
+  }
+
   const form = new FormData();
   Object.entries(policy.form_fields).forEach(([key, value]) => {
     form.append(key, value);

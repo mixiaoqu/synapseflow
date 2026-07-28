@@ -75,6 +75,8 @@ def build_route_node(
             node_id="route",
             stage="route",
             message="正在理解需求并选择处理路径",
+            display_stage="understand",
+            display_title="🤔 思考您的问题",
             activity_text="理解需求并选择主处理分支",
         )
         understanding = await build_agent_classification(
