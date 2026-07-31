@@ -899,12 +899,17 @@ class EvalRun(Base):
     status = Column(String(20), nullable=False, default="pending", index=True)
     model_config = Column(JSON, nullable=False, default=dict)
     kb_snapshot = Column(JSON, nullable=False, default=dict)
+    assistant_snapshot = Column(JSON, nullable=False, default=dict)
+    case_snapshot = Column(JSON, nullable=False, default=dict)
+    policy_snapshot = Column(JSON, nullable=False, default=dict)
     total_cases = Column(Integer, nullable=False, default=0)
     passed_cases = Column(Integer, nullable=False, default=0)
     failed_cases = Column(Integer, nullable=False, default=0)
     average_score = Column(Integer, nullable=False, default=0)
     started_at = Column(DateTime(timezone=True), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    error_message = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
 
@@ -923,10 +928,11 @@ class EvalCaseResult(Base):
     )
     case_id = Column(
         Integer,
-        ForeignKey("eval_cases.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("eval_cases.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
+    case_snapshot = Column(JSON, nullable=False, default=dict)
     status = Column(String(20), nullable=False, default="failed", index=True)
     score = Column(Integer, nullable=False, default=0)
     actual_answer = Column(Text, nullable=False, default="")

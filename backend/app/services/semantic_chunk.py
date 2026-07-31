@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 from app.core.config.registry import config_registry
 from app.utils.document_parse import ParsedBlock, ParsedDocument, ParsedNode, render_parsed_document
 
+CHUNKING_VERSION = "structure_aware_v2"
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[。！？!?；;\.])")
 
 
@@ -247,7 +249,10 @@ def _build_tree_chunk_plan(
 
     for parent_index, unit in enumerate(parent_units):
         parent_local_id = f"parent-{parent_index}"
-        parent_content = _fit_tree_content(unit.content, chunk_settings.parent_target_max)
+        # Parent chunks are context containers and are not embedded directly. Keep
+        # the complete structured unit here; retrieval applies its own context
+        # budget and can focus on the matching children when the parent is large.
+        parent_content = unit.content.strip()
         parent_start, text_cursor = _resolve_chunk_offsets(
             full_text, parent_content, text_cursor
         )
@@ -264,12 +269,18 @@ def _build_tree_chunk_plan(
                 start_offset=parent_start,
                 end_offset=text_cursor,
                 content=parent_content,
-                search_text=_build_search_text(document_title, unit.section_path, parent_content),
+                search_text=_build_search_text(
+                    document_title,
+                    unit.section_path,
+                    parent_content,
+                    structure_path=unit.tree_path,
+                ),
                 metadata={
                     "node_type": unit.node_type,
                     "numbering": unit.numbering,
                     "tree_path": list(unit.tree_path),
                     "block_count": max(1, len(unit.children)),
+                    "exceeds_parent_target": len(parent_content) > chunk_settings.parent_target_max,
                 },
             )
         )
@@ -285,35 +296,43 @@ def _build_tree_chunk_plan(
         ]
         child_cursor = parent_start
         for child_index, child in enumerate(child_units):
-            child_content = _fit_tree_content(child.content, chunk_settings.child_target_max)
-            child_start, child_cursor = _resolve_chunk_offsets(
-                full_text, child_content, child_cursor
-            )
-            child_chunks.append(
-                PlannedChunk(
-                    local_id=f"child-{len(child_chunks)}",
-                    chunk_kind="child",
-                    chunk_index=len(child_chunks),
-                    parent_local_id=parent_local_id,
-                    prev_local_id=None,
-                    next_local_id=None,
-                    section_path=unit.section_path,
-                    block_types=list(child.block_types),
-                    start_offset=child_start,
-                    end_offset=child_cursor,
-                    content=child_content,
-                    search_text=_build_search_text(document_title, unit.section_path, child_content),
-                    metadata={
-                        "node_type": child.node_type,
-                        "numbering": child.numbering,
-                        "tree_path": list(child.tree_path),
-                        "block_count": 1,
-                        "hit_window_hint": {"prev": 0, "next": 0},
-                        "parent_chunk_index": parent_index,
-                        "child_index_within_parent": child_index,
-                    },
+            child_segments = _split_tree_content(child.content, chunk_settings.child_target_max)
+            for segment_index, child_content in enumerate(child_segments):
+                child_start, child_cursor = _resolve_chunk_offsets(
+                    full_text, child_content, child_cursor
                 )
-            )
+                child_chunks.append(
+                    PlannedChunk(
+                        local_id=f"child-{len(child_chunks)}",
+                        chunk_kind="child",
+                        chunk_index=len(child_chunks),
+                        parent_local_id=parent_local_id,
+                        prev_local_id=None,
+                        next_local_id=None,
+                        section_path=unit.section_path,
+                        block_types=list(child.block_types),
+                        start_offset=child_start,
+                        end_offset=child_cursor,
+                        content=child_content,
+                        search_text=_build_search_text(
+                            document_title,
+                            unit.section_path,
+                            child_content,
+                            structure_path=child.tree_path,
+                        ),
+                        metadata={
+                            "node_type": child.node_type,
+                            "numbering": child.numbering,
+                            "tree_path": list(child.tree_path),
+                            "block_count": 1,
+                            "hit_window_hint": {"prev": 0, "next": 0},
+                            "parent_chunk_index": parent_index,
+                            "child_index_within_parent": child_index,
+                            "segment_index": segment_index,
+                            "segment_count": len(child_segments),
+                        },
+                    )
+                )
 
     return DocumentChunkPlan(
         full_text=full_text,
@@ -341,8 +360,21 @@ def _collect_tree_units_for_node(
 ) -> list[_TreeParentUnit]:
     if node.node_type == "heading":
         next_heading = heading_path + (node.text.strip(),)
-        units: list[_TreeParentUnit] = []
-        for child in node.children:
+        direct_children = [child for child in node.children if child.node_type != "heading"]
+        nested_headings = [child for child in node.children if child.node_type == "heading"]
+        units = (
+            [
+                _build_heading_parent_unit(
+                    node,
+                    direct_children,
+                    heading_path,
+                    chunk_settings=chunk_settings,
+                )
+            ]
+            if direct_children
+            else []
+        )
+        for child in nested_headings:
             units.extend(
                 _collect_tree_units_for_node(
                     child,
@@ -371,6 +403,108 @@ def _collect_tree_units_for_node(
             )
         )
     return units
+
+
+def _build_heading_parent_unit(
+    node: ParsedNode,
+    direct_children: list[ParsedNode],
+    heading_path: tuple[str, ...],
+    *,
+    chunk_settings: _ChunkSettings,
+) -> _TreeParentUnit:
+    section_path = " > ".join([*heading_path, node.text.strip()])
+    tree_path = [*heading_path, node.text.strip()]
+    heading_prefix = "#" * max(1, min(node.level or 1, 6))
+    rendered_children: list[str] = []
+    for child in direct_children:
+        rendered_child = _render_tree_node(child).strip()
+        if rendered_child:
+            rendered_children.append(rendered_child)
+    content = "\n\n".join(
+        [f"{heading_prefix} {node.text.strip()}", *rendered_children]
+    ).strip()
+    child_units = _heading_child_units(
+        direct_children,
+        tree_path,
+        chunk_settings=chunk_settings,
+    )
+    block_types = list(
+        dict.fromkeys(child.node_type for child in direct_children if child.node_type)
+    )
+    return _TreeParentUnit(
+        node_type="heading",
+        numbering=None,
+        section_path=section_path,
+        block_types=block_types or ["heading"],
+        tree_path=tree_path,
+        content=content,
+        children=child_units,
+    )
+
+
+def _heading_child_units(
+    children: list[ParsedNode],
+    tree_path: list[str],
+    *,
+    chunk_settings: _ChunkSettings,
+) -> list[_TreeChildUnit]:
+    rendered: list[tuple[ParsedNode, str]] = []
+    for child in children:
+        child_content = _render_tree_node(child).strip()
+        if child_content:
+            rendered.append((child, child_content))
+    if not rendered:
+        return []
+
+    if len(rendered) == 1 and rendered[0][0].node_type == "clause":
+        clause = rendered[0][0]
+        if any(child.node_type == "clause" for child in clause.children):
+            return _build_clause_parent_unit(
+                clause,
+                tuple(tree_path),
+                chunk_settings=chunk_settings,
+            ).children
+
+    combined = "\n\n".join(text for _, text in rendered).strip()
+    if len(combined) <= chunk_settings.child_target_max:
+        only_type = rendered[0][0].node_type if len(rendered) == 1 else None
+        node_type = only_type or ("qa_pair" if _looks_like_qa_group(rendered) else "semantic_group")
+        return [
+            _TreeChildUnit(
+                node_type=node_type,
+                numbering=rendered[0][0].numbering if len(rendered) == 1 else None,
+                block_types=list(dict.fromkeys(child.node_type for child, _ in rendered)),
+                tree_path=list(tree_path),
+                content=combined,
+            )
+        ]
+
+    units: list[_TreeChildUnit] = []
+    for child, child_content in rendered:
+        if child.node_type == "table":
+            units.extend(_table_child_units(child, tree_path, chunk_settings.child_target_max))
+            continue
+        units.append(
+            _TreeChildUnit(
+                node_type=child.node_type,
+                numbering=child.numbering,
+                block_types=[child.node_type],
+                tree_path=[*tree_path, _node_label(child)] if _node_label(child) else list(tree_path),
+                content=child_content,
+            )
+        )
+    return units
+
+
+def _looks_like_qa_group(rendered: list[tuple[ParsedNode, str]]) -> bool:
+    if len(rendered) < 2:
+        return False
+    question = rendered[0][1].lstrip("*# \t")
+    answer = rendered[1][1].lstrip("*# \t")
+    return bool(
+        re.match(r"(?i)^q(?:\d+)?\s*[:：]", question)
+        and re.match(r"(?i)^a\s*[:：]", answer)
+    )
 
 
 def _build_clause_parent_unit(
@@ -617,26 +751,51 @@ def _node_label(node: ParsedNode) -> str:
     # document_parse._render_node so that chunk content matches
     # render_parsed_document output and offsets can be resolved exactly.
     if node.node_type == "clause" and node.numbering:
-        return f"{node.numbering} {node.text}".strip()
+        numbering = f"{node.numbering}." if node.numbering.isdigit() else node.numbering
+        return f"{numbering} {node.text}".strip()
     return node.text.strip()
 
 
-def _fit_tree_content(content: str, target_max: int) -> str:
+def _split_tree_content(content: str, target_max: int) -> list[str]:
+    """Split one structured leaf without dropping source text.
+
+    Structural units are already the preferred semantic boundaries. This helper
+    only handles an individual unit that still exceeds the child budget, choosing
+    the latest paragraph, line, or sentence boundary before a hard cut.
+    """
     content = content.strip()
+    if not content:
+        return []
     if len(content) <= target_max:
-        return content
-    lines = [line.strip() for line in content.split("\n") if line.strip()]
-    if len(lines) <= 1:
-        return content[:target_max].strip()
-    kept: list[str] = []
-    used = 0
-    for line in lines:
-        gap = 2 if kept else 0
-        if kept and used + gap + len(line) > target_max:
-            break
-        kept.append(line)
-        used += gap + len(line)
-    return "\n\n".join(kept).strip() or content[:target_max].strip()
+        return [content]
+
+    minimum_boundary = max(1, target_max // 2)
+    segments: list[str] = []
+    cursor = 0
+    while cursor < len(content):
+        hard_end = min(len(content), cursor + target_max)
+        end = hard_end
+        if hard_end < len(content):
+            window = content[cursor:hard_end]
+            candidates = [
+                window.rfind("\n\n", minimum_boundary),
+                window.rfind("\n", minimum_boundary),
+            ]
+            sentence_matches = list(_SENTENCE_BOUNDARY_RE.finditer(window))
+            if sentence_matches:
+                candidates.append(sentence_matches[-1].end())
+            boundary = max(candidates, default=-1)
+            if boundary > 0:
+                end = cursor + boundary
+
+        segment = content[cursor:end].strip()
+        if segment:
+            segments.append(segment)
+        cursor = end
+        while cursor < len(content) and content[cursor].isspace():
+            cursor += 1
+
+    return segments or [content]
 
 
 def plan_text_chunks(
@@ -1206,10 +1365,26 @@ def _join_fragments(payload: list[_Fragment] | list[_RenderedBlock]) -> str:
     return "\n\n".join(fragment.text.strip() for fragment in payload if fragment.text.strip()).strip()
 
 
-def _build_search_text(document_title: str | None, section_path: str | None, content: str) -> str:
-    titles = [value.strip() for value in (document_title, section_path) if value and value.strip()]
-    if titles:
-        return ("\n".join(titles) + "\n\n" + content).strip()
+def _build_search_text(
+    document_title: str | None,
+    section_path: str | None,
+    content: str,
+    *,
+    structure_path: list[str] | None = None,
+) -> str:
+    context_lines: list[str] = []
+    seen: set[str] = set()
+    resolved_structure_path = " > ".join(
+        item.strip() for item in (structure_path or []) if item and item.strip()
+    )
+    for value in [document_title, resolved_structure_path or section_path]:
+        normalized = str(value or "").strip()
+        if not normalized or normalized in seen or normalized == content.strip():
+            continue
+        context_lines.append(normalized)
+        seen.add(normalized)
+    if context_lines:
+        return ("\n".join(context_lines) + "\n\n" + content).strip()
     return content.strip()
 
 
@@ -1249,6 +1424,11 @@ def _shares_lineage(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
 def _link_chunks(chunks: list[PlannedChunk]) -> list[PlannedChunk]:
     out: list[PlannedChunk] = []
     for index, chunk in enumerate(chunks):
+        metadata = {
+            "chunking_version": CHUNKING_VERSION,
+            "content_fingerprint": hashlib.sha256(chunk.content.encode("utf-8")).hexdigest()[:32],
+            **dict(chunk.metadata or {}),
+        }
         out.append(
             PlannedChunk(
                 local_id=chunk.local_id,
@@ -1263,7 +1443,7 @@ def _link_chunks(chunks: list[PlannedChunk]) -> list[PlannedChunk]:
                 end_offset=chunk.end_offset,
                 content=chunk.content,
                 search_text=chunk.search_text,
-                metadata=dict(chunk.metadata or {}),
+                metadata=metadata,
             )
         )
     return out

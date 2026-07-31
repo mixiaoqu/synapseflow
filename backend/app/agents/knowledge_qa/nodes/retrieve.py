@@ -6,23 +6,22 @@ import asyncio
 import hashlib
 import json
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 
+import httpx
 from loguru import logger
 
 from app.agents.common.streaming import emit_activity, get_optional_stream_writer
+from app.agents.knowledge_qa.evidence_coverage import assess_subtask_coverage
 from app.agents.knowledge_qa.state import KnowledgeQaState
 from app.core.config.registry import config_registry
 from app.core.config.settings import settings
-from app.services.chat_memory import format_chat_history
-from app.services.graph_document_scope import resolve_graph_category_document_ids
-from app.services.graph_entity_candidate_service import resolve_graph_candidate_entities
-from app.services.kb_graph_retrieval import GraphRetriever
 from app.services.kb_text_retrieval import run_kb_channel_text_retrieval
 from app.services.reranker import rerank
 
-FINAL_RERANK_CANDIDATE_MULTIPLIER = 2
+FINAL_RERANK_CANDIDATE_MULTIPLIER = 3
 FINAL_RERANK_TEXT_MAX_CHARS = 1200
+FINAL_RERANK_CONTEXT_MAX_CHARS = 600
 GRAPH_RERANK_SOURCE_PREFIX = "graph"
 TEXT_GRAPH_RERANK_SOURCE = "text_graph"
 
@@ -287,20 +286,83 @@ def _dedupe_queries(items: list[str]) -> list[str]:
     return queries
 
 
+def _normalized_rerank_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _rerank_evidence_texts(metadata: dict[str, Any]) -> list[str]:
+    additional_values = metadata.get("evidence_texts")
+    if not isinstance(additional_values, list):
+        additional_values = []
+    values = [
+        metadata.get("evidence_text"),
+        *additional_values,
+    ]
+    evidence_texts: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _normalized_rerank_text(value)
+        key = text.casefold()
+        if not text or key in seen:
+            continue
+        evidence_texts.append(text)
+        seen.add(key)
+    return evidence_texts
+
+
+def _centered_rerank_context(
+    content: str,
+    *,
+    evidence_texts: list[str],
+    limit: int = FINAL_RERANK_CONTEXT_MAX_CHARS,
+) -> str:
+    normalized_content = _normalized_rerank_text(content)
+    if not normalized_content or limit <= 0:
+        return ""
+    if len(normalized_content) <= limit:
+        return normalized_content
+
+    matched_evidence: list[tuple[int, str]] = []
+    for evidence_text in evidence_texts:
+        position = normalized_content.find(evidence_text)
+        if position >= 0:
+            matched_evidence.append((position, evidence_text))
+    if not matched_evidence:
+        return normalized_content[:limit]
+
+    anchor_start, anchor_text = min(matched_evidence, key=lambda item: item[0])
+    anchor_center = anchor_start + len(anchor_text) // 2
+    start = max(0, anchor_center - limit // 2)
+    end = min(len(normalized_content), start + limit)
+    start = max(0, end - limit)
+    return normalized_content[start:end]
+
+
 def _build_rerank_text(doc: dict[str, Any]) -> str:
     metadata = dict(doc.get("metadata") or {})
     title = str(metadata.get("document_title") or "").strip()
     section_path = str(metadata.get("section_path") or "").strip()
     content = str(doc.get("content") or "").strip()
     graph_evidence = str(metadata.get("graph_evidence") or "").strip()
+    evidence_texts = _rerank_evidence_texts(metadata)
 
     lines: list[str] = []
     if title:
         lines.append(f"[标题] {title}")
     if section_path:
         lines.append(f"[位置] {section_path}")
-    if content:
-        lines.append(f"[原文] {content}")
+    lines.extend(f"[命中片段] {text}" for text in evidence_texts)
+    context = _centered_rerank_context(
+        content,
+        evidence_texts=evidence_texts,
+        limit=(
+            FINAL_RERANK_CONTEXT_MAX_CHARS
+            if evidence_texts
+            else FINAL_RERANK_TEXT_MAX_CHARS
+        ),
+    )
+    if context and context.casefold() not in {text.casefold() for text in evidence_texts}:
+        lines.append(f"[父级上下文] {context}")
     if graph_evidence:
         lines.append(f"[图谱关系] {graph_evidence}")
     return "\n".join(lines).strip() or content
@@ -388,6 +450,13 @@ async def rerank_retrieved_docs(
         "candidate_count": len(docs),
         "candidate_limit": candidate_limit,
         "input_count": len(candidate_docs),
+        "hit_text_input_count": len(
+            [
+                doc
+                for doc in candidate_docs
+                if _rerank_evidence_texts(dict(doc.get("metadata") or {}))
+            ]
+        ),
         "text_input_count": len(candidate_docs) - graph_input_count,
         "graph_input_count": graph_input_count,
         "output_count": 0,
@@ -527,6 +596,7 @@ def _build_evidence_item(doc: dict[str, Any], *, role: str) -> dict[str, Any] | 
             "document_title": metadata.get("document_title"),
             "section_path": metadata.get("section_path"),
             "source_type": metadata.get("source") or "text",
+            "subtask_id": metadata.get("subtask_id"),
         },
     }
 
@@ -704,6 +774,7 @@ async def knowledge_qa_retrieve_node(
     state: KnowledgeQaState,
     *,
     node_id: str = "retrieve_knowledge",
+    coverage_llm_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
     stream_writer = get_optional_stream_writer()
     if str(state.get("retrieval_strategy") or "").strip().lower() == "skip":
@@ -741,249 +812,258 @@ async def knowledge_qa_retrieve_node(
         activity_text="查找知识库资料",
     )
     query = str(state.get("query") or "").strip()
-    semantic_queries = _dedupe_queries(
-        [
-            str(item).strip()
-            for item in list(state.get("semantic_queries") or [])
-            if str(item or "").strip()
-        ]
-    ) or [query]
-    lexical_terms = _dedupe_terms(
-        [
-            *[
-                str(item).strip()
-                for item in list(state.get("lexical_terms") or [])
-                if str(item or "").strip()
-            ],
-            *[
-                str(item).strip()
-                for item in list(state.get("target_attributes") or [])
-                if str(item or "").strip()
-            ],
-        ]
-    )
-    candidate_entities = [
-        str(item).strip()
-        for item in list(state.get("candidate_entities") or [])
-        if str(item or "").strip()
+    ambiguity = dict(state.get("ambiguity") or {})
+    if ambiguity.get("needs_clarification"):
+        question = str(ambiguity.get("clarification_question") or "").strip()
+        return {
+            "retrieval_result": {
+                "status": "needs_clarification",
+                "reason_code": "ambiguous_query",
+                "clarification_question": question,
+                "evidence_items": [],
+                "subtask_results": [],
+                "coverage_complete": False,
+                "budget": {
+                    "max_chars": 0,
+                    "used_chars": 0,
+                    "truncated": False,
+                    "dropped_count": 0,
+                },
+                "metrics": {
+                    "primary_count": 0,
+                    "supporting_count": 0,
+                    "text_hit_count": 0,
+                    "graph_hit_count": 0,
+                    "rerank_input_count": 0,
+                    "rerank_output_count": 0,
+                },
+                "warnings": [],
+            }
+        }
+
+    subtasks = [
+        dict(item)
+        for item in list(state.get("retrieval_subtasks") or [])
+        if isinstance(item, dict)
     ]
+    if not subtasks:
+        raise ValueError("知识库检索缺少 retrieval_subtasks")
 
     execution_plan = dict(state.get("retrieval_execution_plan") or {})
     channels = dict(execution_plan.get("channels") or {})
     vector_plan = dict(channels.get("vector") or {})
     lexical_plan = dict(channels.get("lexical") or {})
-    graph_plan = dict(channels.get("graph") or {})
     rerank_plan = dict(execution_plan.get("rerank") or {})
     context_plan = dict(execution_plan.get("context") or {})
-    retrieval_strategy = str(
-        execution_plan.get("mode") or state.get("retrieval_strategy") or "parallel_fusion"
-    ).strip().lower()
-    text_enabled = bool(vector_plan.get("enabled", True)) or bool(lexical_plan.get("enabled", True))
     final_top_k = int(context_plan.get("final_top_k") or 8)
     llm_reference_top_k = int(context_plan.get("llm_reference_top_k") or final_top_k)
     final_primary_limit = max(1, min(final_top_k, llm_reference_top_k))
-    recall_k = int(vector_plan.get("recall_k") or final_top_k)
-    lexical_k = int(lexical_plan.get("lexical_k") or final_top_k)
-    graph_limit = int(graph_plan.get("limit") or final_top_k)
-    graph_enabled = bool(graph_plan.get("enabled", True))
-    graph_mode = _resolve_graph_mode_from_plan(graph_plan)
-    graph_max_hops = int(graph_plan.get("max_hops") or 1)
     context_budget = int(context_plan.get("budget_chars") or 9000)
+    recall_k = max(8, int(vector_plan.get("recall_k") or final_top_k) // len(subtasks))
+    lexical_k = max(6, int(lexical_plan.get("lexical_k") or final_top_k) // len(subtasks))
+    candidate_limit = max(8, min(recall_k + lexical_k, final_primary_limit * 3))
+    per_subtask_top_k = max(2, (final_primary_limit + len(subtasks) - 1) // len(subtasks))
     rerank_enabled = bool(settings.RERANK_ENABLED) and bool(rerank_plan.get("enabled"))
-    text_candidate_limit = max(final_top_k, min(recall_k + lexical_k, final_top_k * 4))
-    question_type = str(state.get("question_type") or "definition_lookup").strip().lower()
-    resolved_graph_candidates = {
-        "candidate_entities": list(candidate_entities[:graph_limit]),
-        "matched_entities": [],
-        "trace": {
-            "lookup_terms": [],
-            "resolved_entities": list(candidate_entities[:graph_limit]),
-            "unmatched_terms": [],
-            "match_count": 0,
-            "fallback_used": True,
-            "skipped": not graph_enabled,
-        },
-    }
-    graph_candidate_entities = list(candidate_entities[:graph_limit])
-    graph_allowed_document_ids = (
-        await resolve_graph_category_document_ids(
-            team_id=int(state.get("team_id")) if state.get("team_id") is not None else None,
-            knowledge_base_id=int(state.get("knowledge_base_id") or 0),
-            category_id=int(state.get("category_id")) if state.get("category_id") is not None else None,
-            user_id=int(state.get("user_id")) if state.get("user_id") is not None else None,
-            document_statuses=state.get("allowed_document_statuses"),
+    standalone_query = str(state.get("standalone_query") or query).strip()
+
+    async def _retrieve_subtask(subtask: dict[str, Any]) -> dict[str, Any]:
+        subtask_id = str(subtask.get("id") or "").strip()
+        goal = str(subtask.get("goal") or "").strip()
+        planned_semantic_queries = list(subtask.get("semantic_queries") or [])
+        parameter_abstract_queries = list(
+            subtask.get("parameter_abstract_queries") or []
         )
-        if graph_enabled and int(state.get("knowledge_base_id") or 0) > 0 and state.get("category_id") is not None
-        else None
-    )
-
-    async def _resolve_graph_candidates(seed_entities: list[str]) -> tuple[list[str], dict[str, Any]]:
-        fallback = {
-            "candidate_entities": list(seed_entities[:graph_limit]),
-            "matched_entities": [],
-            "trace": {
-                "lookup_terms": [],
-                "resolved_entities": list(seed_entities[:graph_limit]),
-                "unmatched_terms": [],
-                "match_count": 0,
-                "fallback_used": True,
-                "skipped": not graph_enabled,
-            },
-        }
-        if not graph_enabled or int(state.get("knowledge_base_id") or 0) <= 0 or int(state.get("team_id") or 0) <= 0:
-            return list(fallback.get("candidate_entities") or []), fallback
-        resolved = await resolve_graph_candidate_entities(
-            knowledge_base_id=int(state.get("knowledge_base_id") or 0),
-            team_id=int(state.get("team_id") or 0),
-            query=query,
-            candidate_entities=seed_entities,
-            lexical_terms=lexical_terms,
-            page_context=dict(state.get("page_context") or {}),
-            limit=graph_limit,
-            allowed_document_ids=graph_allowed_document_ids,
-        )
-        return list(resolved.get("candidate_entities") or []), resolved
-
-    if graph_enabled and retrieval_strategy != "text_then_graph":
-        graph_candidate_entities, resolved_graph_candidates = await _resolve_graph_candidates(candidate_entities)
-
-    common_kwargs = {
-        "team_id": state.get("team_id"),
-        "knowledge_base_id": state.get("knowledge_base_id"),
-        "category_id": state.get("category_id"),
-        "log_prefix": "[User KB Retrieval]",
-        "user_id": state.get("user_id"),
-        "result_limit": text_candidate_limit,
-        "llm_reference_top_k": text_candidate_limit,
-        "context_budget": 0,
-        "document_statuses": state.get("allowed_document_statuses"),
-        "recall_k": recall_k,
-        "lexical_k": lexical_k,
-        "rerank_enabled": False,
-    }
-
-    async def _run_text_retrieval(
-        *,
-        search_queries: list[str] | None = None,
-        search_terms: list[str] | None = None,
-    ) -> dict[str, Any]:
-        if not text_enabled:
-            return _empty_text_result()
-        return await run_kb_channel_text_retrieval(
-            query=query,
-            semantic_queries=search_queries or semantic_queries,
-            lexical_terms=search_terms or lexical_terms,
-            **common_kwargs,
-        )
-
-    async def _run_graph_retrieval(seed_entities: list[str] | None = None) -> dict[str, Any]:
-        if not graph_enabled:
-            return _empty_graph_result(graph_mode=graph_mode)
-        return await GraphRetriever(enabled=graph_enabled).retrieve(
-            knowledge_base_id=int(state.get("knowledge_base_id") or 0),
-            team_id=int(state.get("team_id") or 0),
-            candidate_entities=seed_entities or graph_candidate_entities,
-            relation_pairs=list(state.get("relation_pairs") or []),
-            relation_queries=list(state.get("relation_queries") or []),
-            question_type=question_type,
-            graph_mode=graph_mode,
-            max_hops=graph_max_hops,
-            limit=graph_limit,
-            allowed_document_ids=graph_allowed_document_ids,
-        )
-
-    text_result: dict[str, Any]
-    graph_result: dict[str, Any]
-    if retrieval_strategy == "text_only":
-        text_result = await _run_text_retrieval()
-        graph_result = _empty_graph_result(graph_mode=graph_mode)
-    elif retrieval_strategy == "graph_only":
-        graph_result = await _run_graph_retrieval()
-        text_result = _empty_text_result()
-    elif retrieval_strategy == "text_then_graph":
-        text_result = await _run_text_retrieval()
-        text_seed_entities = list(candidate_entities)
-        if not text_seed_entities:
-            text_seed_entities = _dedupe_queries(
-                _extract_seed_terms_from_docs(
-                    list(text_result.get("retrieved_docs") or []),
-                    limit=graph_limit,
-                )
-            )
-        graph_candidate_entities, resolved_graph_candidates = await _resolve_graph_candidates(text_seed_entities)
-        graph_result = await _run_graph_retrieval(graph_candidate_entities)
-    elif retrieval_strategy == "graph_then_text":
-        graph_result = await _run_graph_retrieval()
-        graph_seed_terms = _extract_seed_terms_from_docs(
+        semantic_queries = _dedupe_queries(
             [
-                *_build_graph_docs_from_facts(dict(graph_result.get("graph_facts") or {}))[0],
-                *_build_graph_docs_from_facts(dict(graph_result.get("graph_facts") or {}))[1],
-            ],
-            limit=graph_limit,
-        )
-        semantic_queries = _dedupe_queries([*semantic_queries, *graph_seed_terms])
-        lexical_terms = _dedupe_terms([*lexical_terms, *graph_seed_terms])
-        text_result = await _run_text_retrieval(
-            search_queries=semantic_queries,
-            search_terms=lexical_terms,
-        )
-    else:
-        text_result, graph_result = await asyncio.gather(_run_text_retrieval(), _run_graph_retrieval())
-
-    text_docs = list(text_result.get("retrieved_docs") or [])
-    graph_facts = dict(graph_result.get("graph_facts") or {})
-    graph_text_docs, graph_supporting_context_docs = _build_graph_docs_from_facts(graph_facts)
-    merge_started_at = perf_counter()
-    merged_docs = _merge_text_and_graph_docs(
-        text_docs,
-        graph_text_docs,
-        final_top_k=max(final_top_k, len(text_docs) + len(graph_text_docs)),
-    )
-    duplicates_folded = max(0, len(text_docs) + len(graph_text_docs) - len(merged_docs))
-    primary_docs: list[dict[str, Any]] = []
-    supporting_text_docs: list[dict[str, Any]] = []
-    for doc in merged_docs:
-        layer = _classify_evidence(doc)
-        if layer == "primary":
-            primary_docs.append(doc)
+                query,
+                standalone_query,
+                goal,
+                *planned_semantic_queries[:1],
+                *parameter_abstract_queries[:1],
+                *planned_semantic_queries[1:],
+                *parameter_abstract_queries[1:],
+            ]
+        )[:5]
+        lexical_terms = _dedupe_terms(
+            [
+                *list(subtask.get("lexical_terms") or []),
+                *list(state.get("business_objects") or []),
+            ]
+        )[:8]
+        try:
+            text_result = await run_kb_channel_text_retrieval(
+                query=goal,
+                semantic_queries=semantic_queries,
+                lexical_terms=lexical_terms,
+                team_id=state.get("team_id"),
+                knowledge_base_id=state.get("knowledge_base_id"),
+                category_id=state.get("category_id"),
+                log_prefix=f"[User KB Retrieval][{subtask_id}]",
+                user_id=state.get("user_id"),
+                result_limit=candidate_limit,
+                llm_reference_top_k=candidate_limit,
+                context_budget=0,
+                document_statuses=state.get("allowed_document_statuses"),
+                recall_k=recall_k,
+                lexical_k=lexical_k,
+                rerank_enabled=False,
+            )
+        except (httpx.HTTPError, OSError, TimeoutError) as exc:
+            logger.warning(
+                "[KB Retrieval] provider failure | subtask_id={} error_type={}",
+                subtask_id,
+                type(exc).__name__,
+            )
+            return {
+                "id": subtask_id,
+                "goal": goal,
+                "evidence_requirement": subtask.get("evidence_requirement"),
+                "semantic_queries": semantic_queries,
+                "parameter_abstract_queries": parameter_abstract_queries,
+                "lexical_terms": lexical_terms,
+                "retrieved_docs": [],
+                "supporting_docs": [],
+                "raw_hit_count": 0,
+                "covered": False,
+                "top_score": None,
+                "rerank": {},
+                "retrieval_trace": {},
+                "empty_reason": "provider_error",
+                "provider_error": {
+                    "code": "RETRIEVAL_PROVIDER_ERROR",
+                    "type": type(exc).__name__,
+                },
+            }
+        retrieved_docs = list(text_result.get("retrieved_docs") or [])
+        primary_docs = [doc for doc in retrieved_docs if _classify_evidence(doc) == "primary"]
+        supporting_docs = [doc for doc in retrieved_docs if _classify_evidence(doc) != "primary"]
+        if rerank_enabled:
+            ranked_docs, rerank_trace = await rerank_retrieved_docs(
+                goal,
+                primary_docs,
+                per_subtask_top_k,
+            )
         else:
-            supporting_text_docs.append(doc)
-    if rerank_enabled:
-        emit_activity(
-            stream_writer,
-            workflow_id="knowledge_qa",
-            node_id=node_id,
-            stage="rerank",
-            message="正在对融合证据统一精排",
-            display_stage="execute",
-            display_title="🔍 查阅相关资料",
-            activity_text="筛选更相关的资料",
-            candidate_count=len(primary_docs),
-            top_k=final_primary_limit,
-        )
-        reranked_primary_docs, final_rerank_trace = await rerank_retrieved_docs(
-            query,
-            primary_docs,
-            final_primary_limit,
-        )
-    else:
-        reranked_primary_docs = primary_docs[:final_primary_limit]
-        final_rerank_trace = {
-            "enabled": False,
-            "candidate_count": len(primary_docs),
-            "input_count": len(primary_docs),
-            "output_count": len(reranked_primary_docs),
-            "latency_ms": 0,
-            "truncated": False,
-            "max_text_chars": FINAL_RERANK_TEXT_MAX_CHARS,
-            "rerank_threshold": None,
-            "threshold_filtered_count": 0,
+            ranked_docs = primary_docs[:per_subtask_top_k]
+            rerank_trace = {
+                "enabled": False,
+                "input_count": len(primary_docs),
+                "output_count": len(ranked_docs),
+                "latency_ms": 0,
+                "rerank_threshold": None,
+                "threshold_filtered_count": 0,
+            }
+        empty_reason = None
+        if not ranked_docs:
+            if (
+                primary_docs
+                and int(rerank_trace.get("threshold_filtered_count") or 0) > 0
+            ):
+                empty_reason = "below_rerank_threshold"
+            else:
+                empty_reason = text_result.get("kb_retrieval_status") or "no_hits"
+        annotated_docs: list[dict[str, Any]] = []
+        for doc in ranked_docs:
+            annotated = dict(doc)
+            annotated["metadata"] = {
+                **dict(doc.get("metadata") or {}),
+                "subtask_id": subtask_id,
+                "subtask_goal": goal,
+                "evidence_requirement": subtask.get("evidence_requirement"),
+            }
+            annotated_docs.append(annotated)
+        trace = dict(text_result.get("retrieval_trace") or {})
+        return {
+            "id": subtask_id,
+            "goal": goal,
+            "evidence_requirement": subtask.get("evidence_requirement"),
+            "semantic_queries": semantic_queries,
+            "parameter_abstract_queries": parameter_abstract_queries,
+            "lexical_terms": lexical_terms,
+            "retrieved_docs": annotated_docs,
+            "supporting_docs": supporting_docs,
+            "raw_hit_count": len(retrieved_docs),
+            "covered": bool(annotated_docs),
+            "top_score": (
+                (annotated_docs[0].get("metadata") or {}).get("rerank_score")
+                if annotated_docs
+                else None
+            ),
+            "rerank": rerank_trace,
+            "retrieval_trace": trace,
+            "empty_reason": empty_reason,
         }
-    supporting_docs = supporting_text_docs + graph_supporting_context_docs
-    evidence_candidates = [
+
+    emit_activity(
+        stream_writer,
+        workflow_id="knowledge_qa",
+        node_id=node_id,
+        stage="retrieve",
+        message="正在按子任务并行检索知识库",
+        display_stage="execute",
+        display_title="🔍 查阅相关资料",
+        activity_text=f"并行查找 {len(subtasks)} 个检索子任务",
+        subtask_count=len(subtasks),
+    )
+    subtask_results = await asyncio.gather(
+        *[_retrieve_subtask(subtask) for subtask in subtasks]
+    )
+    coverage_audit = await assess_subtask_coverage(
+        subtask_results,
+        llm_factory=coverage_llm_factory,
+    )
+    audit_by_id = {
+        str(item.get("id") or "").strip(): dict(item)
+        for item in list(coverage_audit.get("subtasks") or [])
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    provider_errors = [
+        dict(result.get("provider_error") or {})
+        for result in subtask_results
+        if result.get("provider_error")
+    ]
+
+    selected_docs: list[dict[str, Any]] = []
+    seen_refs: set[str] = set()
+    for rank_index in range(per_subtask_top_k):
+        for result in subtask_results:
+            audit = audit_by_id.get(str(result.get("id") or ""), {})
+            audit_status = str(audit.get("status") or "missed")
+            if audit_status not in {"covered", "partial", "weak"}:
+                continue
+            docs = list(result.get("retrieved_docs") or [])
+            if rank_index >= len(docs):
+                continue
+            supported_indices = {
+                int(index)
+                for index in list(audit.get("supported_evidence_indices") or [])
+                if str(index).strip().isdigit()
+            }
+            if audit_status == "covered" and not supported_indices:
+                supported_indices = set(range(1, len(docs) + 1))
+            if rank_index + 1 not in supported_indices:
+                continue
+            doc = docs[rank_index]
+            ref_id = _evidence_ref_id(doc)
+            if ref_id in seen_refs:
+                continue
+            seen_refs.add(ref_id)
+            selected_docs.append(doc)
+            if len(selected_docs) >= final_primary_limit:
+                break
+        if len(selected_docs) >= final_primary_limit:
+            break
+
+    supporting_docs = [
+        doc
+        for result in subtask_results
+        if audit_by_id.get(str(result.get("id") or ""), {}).get("status") == "covered"
+        for doc in list(result.get("supporting_docs") or [])
+    ]
+    current_evidence_candidates = [
         *[
             item
-            for doc in reranked_primary_docs
+            for doc in selected_docs
             if (item := _build_evidence_item(doc, role="primary")) is not None
         ],
         *[
@@ -992,184 +1072,288 @@ async def knowledge_qa_retrieve_node(
             if (item := _build_evidence_item(doc, role="supporting")) is not None
         ],
     ]
-    deduped_evidence_items = _dedupe_evidence_items(evidence_candidates)
+    accumulated_evidence_items = [
+        dict(item)
+        for item in list(state.get("accumulated_evidence_items") or [])
+        if isinstance(item, dict)
+    ]
     evidence_items, budget = _apply_evidence_budget(
-        deduped_evidence_items,
-        max_chars=context_budget,
-    )
-    merge_latency_ms = int((perf_counter() - merge_started_at) * 1000)
-    if format_chat_history(state.get("chat_history") or [], max_messages=4):
-        text_result["chat_history"] = state.get("chat_history") or []
-
-    final_hits = len([item for item in evidence_items if item.get("role") == "primary"])
-    supporting_hits = len(evidence_items) - final_hits
-    text_trace = dict(text_result.get("retrieval_trace") or {})
-    graph_trace = dict(graph_result.get("trace") or {})
-    text_rerank_trace = dict(text_trace.get("rerank") or {})
-    rerank_trace = {
-        "text_stage": text_rerank_trace,
-        "final_stage": final_rerank_trace,
-        "enabled": rerank_enabled,
-        "input_count": final_rerank_trace.get("input_count"),
-        "output_count": final_rerank_trace.get("output_count"),
-        "latency_ms": final_rerank_trace.get("latency_ms"),
-        "rerank_threshold": final_rerank_trace.get("rerank_threshold"),
-        "threshold_filtered_count": final_rerank_trace.get("threshold_filtered_count"),
-    }
-    trace = {
-        "retrieval_strategy": retrieval_strategy,
-        "text": {
-            "skipped": not text_enabled,
-            "semantic_query_count": len(semantic_queries),
-            "lexical_term_count": len(lexical_terms),
-            "text_hits": len(text_docs),
-            "empty_reason": (
-                None if text_docs else text_result.get("kb_retrieval_status") or "no_hits"
-            ),
-            "funnel": text_result.get("retrieval_funnel"),
-            "latency_ms": text_trace.get("text_retrieval_latency_ms"),
-            "raw_candidate_count": text_trace.get("raw_candidate_count"),
-            "merged_candidate_count": text_trace.get("merged_candidate_count"),
-            "recall_k": recall_k,
-            "lexical_k": lexical_k,
-        },
-        "graph": graph_trace,
-        "graph_candidate_resolution": dict(resolved_graph_candidates.get("trace") or {}),
-        "rerank": rerank_trace,
-        "final_hits": final_hits,
-        "empty_reason": None if final_hits else "no_hits",
-        "retrieval_complexity": state.get("retrieval_complexity"),
-        "execution_plan": execution_plan,
-        "total_latency_ms": text_trace.get("total_latency_ms"),
-        "merge_latency_ms": merge_latency_ms,
-        "primary_count": final_hits,
-        "supporting_count": supporting_hits,
-        "merged_pool_count": len(primary_docs) + len(supporting_text_docs),
-        "duplicates_folded": duplicates_folded,
-        "graph_primary_count": len(graph_text_docs),
-        "graph_supporting_count": len(supporting_docs),
-        "supporting_sections": [
-            str((doc.get("metadata") or {}).get("supporting_section") or "").strip()
-            for doc in supporting_docs
-            if str((doc.get("metadata") or {}).get("supporting_section") or "").strip()
-        ],
-        "text_evidence_count": len(
-            [doc for doc in reranked_primary_docs if (doc.get("metadata") or {}).get("source") != "graph"]
-        ),
-        "graph_evidence_count": len(
+        _dedupe_evidence_items(
             [
-                doc
-                for doc in reranked_primary_docs
-                if (doc.get("metadata") or {}).get("source")
-                in {"graph", "text_graph", "graph_relation", "graph_relation_evidence", "graph_path"}
+                *accumulated_evidence_items,
+                *current_evidence_candidates,
             ]
         ),
-        "final_context_docs": len(evidence_items),
+        max_chars=context_budget,
+    )
+    primary_ref_ids = {
+        str(item.get("ref_id") or "")
+        for item in evidence_items
+        if item.get("role") == "primary"
     }
-    graph_evidence_log_items = _build_graph_evidence_log_items(graph_facts)
+    current_subtask_results: list[dict[str, Any]] = []
+    for result in subtask_results:
+        subtask_id = str(result.get("id") or "")
+        audit = audit_by_id.get(subtask_id, {})
+        evidence_refs = [
+            _evidence_ref_id(doc)
+            for doc in list(result.get("retrieved_docs") or [])
+            if _evidence_ref_id(doc) in primary_ref_ids
+        ]
+        coverage_status = str(audit.get("status") or "missed")
+        if coverage_status == "weak":
+            coverage_status = "partial"
+        is_answerable = bool(evidence_refs) and coverage_status in {
+            "covered",
+            "partial",
+        }
+        current_subtask_results.append(
+            {
+                "id": subtask_id,
+                "goal": result.get("goal"),
+                "evidence_requirement": result.get("evidence_requirement"),
+                "covered": coverage_status == "covered" and bool(evidence_refs),
+                "answerable": is_answerable,
+                "coverage_status": coverage_status,
+                "failure_reason": audit.get("failure_reason") or result.get("empty_reason"),
+                "coverage_reason": audit.get("reason"),
+                "supported_claims": list(audit.get("supported_claims") or []),
+                "discovered_terms": list(audit.get("discovered_terms") or []),
+                "evidence_refs": evidence_refs,
+                "top_score": result.get("top_score"),
+                "raw_hit_count": result.get("raw_hit_count"),
+                "empty_reason": result.get("empty_reason"),
+                "provider_error": dict(result.get("provider_error") or {}),
+            }
+        )
+
+    coverage_by_id = {
+        str(item.get("id") or ""): dict(item)
+        for item in list(state.get("subtask_coverage") or [])
+        if isinstance(item, dict) and str(item.get("id") or "")
+    }
+    for item in current_subtask_results:
+        coverage_by_id[str(item.get("id") or "")] = item
+    compact_subtask_results = list(coverage_by_id.values())
+    uncovered = [item for item in compact_subtask_results if not item["covered"]]
+    retryable_subtasks = [
+        item
+        for item in compact_subtask_results
+        if not item.get("answerable") and not item.get("provider_error")
+    ]
+    final_hits = len(primary_ref_ids)
+    supporting_hits = len(evidence_items) - final_hits
+    coverage_complete = not uncovered
+    warnings = (
+        []
+        if coverage_complete
+        else [
+            {
+                "code": "PARTIAL_SUBTASK_COVERAGE",
+                "message": "部分检索子任务证据覆盖不完整，仅用于检索诊断。",
+                "subtask_ids": [item["id"] for item in uncovered],
+            }
+        ]
+    )
+    current_text_hits = sum(int(item.get("raw_hit_count") or 0) for item in subtask_results)
+    current_rerank_inputs = sum(
+        int((item.get("rerank") or {}).get("input_count") or 0)
+        for item in subtask_results
+    )
+    current_rerank_outputs = sum(
+        int((item.get("rerank") or {}).get("output_count") or 0)
+        for item in subtask_results
+    )
+    previous_attempts = [
+        dict(item)
+        for item in list(state.get("retrieval_attempts") or [])
+        if isinstance(item, dict)
+    ]
+    attempt_number = max(1, int(state.get("query_plan_attempt") or 1))
+    used_queries = _dedupe_queries(
+        [
+            *[
+                str(query)
+                for attempt in previous_attempts
+                for query in list(attempt.get("used_queries") or [])
+            ],
+            *[
+                str(query)
+                for result in subtask_results
+                for query in [
+                    *list(result.get("semantic_queries") or []),
+                    *list(result.get("lexical_terms") or []),
+                ]
+            ],
+        ]
+    )
+    attempt_record = {
+        "attempt": attempt_number,
+        "used_queries": used_queries,
+        "subtask_results": current_subtask_results,
+        "coverage_audit": dict(coverage_audit),
+        "metrics": {
+            "text_hit_count": current_text_hits,
+            "rerank_input_count": current_rerank_inputs,
+            "rerank_output_count": current_rerank_outputs,
+        },
+    }
+    retrieval_attempts = [*previous_attempts, attempt_record]
+    total_text_hits = sum(
+        int((item.get("metrics") or {}).get("text_hit_count") or 0)
+        for item in retrieval_attempts
+    )
+    total_rerank_inputs = sum(
+        int((item.get("metrics") or {}).get("rerank_input_count") or 0)
+        for item in retrieval_attempts
+    )
+    total_rerank_outputs = sum(
+        int((item.get("metrics") or {}).get("rerank_output_count") or 0)
+        for item in retrieval_attempts
+    )
+    should_replan = (
+        bool(retryable_subtasks)
+        and final_hits == 0
+        and attempt_number < 2
+        and not provider_errors
+    )
+    subtask_by_id = {
+        str(item.get("id") or ""): dict(item)
+        for item in subtasks
+        if str(item.get("id") or "")
+    }
+    failed_subtasks: list[dict[str, Any]] = []
+    for item in current_subtask_results:
+        if item.get("answerable") or item.get("provider_error"):
+            continue
+        subtask = subtask_by_id.get(str(item.get("id") or ""), {})
+        result = next(
+            (
+                candidate
+                for candidate in subtask_results
+                if candidate.get("id") == item.get("id")
+            ),
+            {},
+        )
+        candidate_clues = [
+            {
+                "document_title": (doc.get("metadata") or {}).get("document_title"),
+                "section_path": (doc.get("metadata") or {}).get("section_path"),
+                "content": " ".join(str(doc.get("content") or "").split())[:500],
+            }
+            for doc in list(result.get("retrieved_docs") or [])[:4]
+        ]
+        failed_subtasks.append(
+            {
+                **subtask,
+                "failure_reason": item.get("failure_reason"),
+                "coverage_reason": item.get("coverage_reason"),
+                "discovered_terms": list(item.get("discovered_terms") or []),
+                "candidate_clues": candidate_clues,
+            }
+        )
+    retrieval_feedback = {
+        "failed_subtasks": failed_subtasks,
+        "used_queries": used_queries,
+        "attempt": attempt_number,
+    }
     _write_retrieval_log(
         {
             "日志类型": "知识库检索",
             "阶段": "检索完成",
-            "范围": {
-                "团队ID": state.get("team_id"),
-                "知识库ID": state.get("knowledge_base_id"),
-                "分类ID": state.get("category_id"),
-                "用户ID": state.get("user_id"),
-            },
             "问题": {
                 "原始问题": query,
-                "问题类型": question_type,
-                "检索复杂度": state.get("retrieval_complexity"),
-                "检索策略": retrieval_strategy,
+                "独立问题": standalone_query,
+                "业务对象": list(state.get("business_objects") or []),
+                "用户动作": state.get("action"),
+                "参数": dict(state.get("query_parameters") or {}),
             },
-            "检索输入": {
-                "语义查询": semantic_queries,
-                "关键词": lexical_terms,
-                "原始候选实体": candidate_entities,
-                "图谱候选实体": graph_candidate_entities,
-                "关系对条件": list(state.get("relation_pairs") or []),
-                "关系查询条件": list(state.get("relation_queries") or []),
-            },
-            "图谱实体解析": dict(resolved_graph_candidates.get("trace") or {}),
-            "文本检索": {
-                "是否跳过": not text_enabled,
-                "命中数": len(text_docs),
-                "空结果原因": None if text_docs else text_result.get("kb_retrieval_status") or "no_hits",
-                "向量召回数": recall_k,
-                "关键词召回数": lexical_k,
-                "原始候选数": text_trace.get("raw_candidate_count"),
-                "合并候选数": text_trace.get("merged_candidate_count"),
-                "文本阶段精排": False,
-                "耗时毫秒": text_trace.get("text_retrieval_latency_ms"),
-            },
-            "图谱检索": {
-                "是否启用": graph_enabled,
-                "图谱模式": graph_trace.get("graph_mode"),
-                "图谱命中总数": graph_trace.get("graph_hits"),
-                "图谱主证据数": len(graph_text_docs),
-                "图谱辅助证据数": len(supporting_docs),
-                "空结果原因": graph_trace.get("empty_reason"),
-                "错误": graph_trace.get("error"),
-                "耗时毫秒": graph_trace.get("latency_ms"),
-            },
-            "证据融合": {
+            "子任务检索": [
+                {
+                    "子任务ID": item.get("id"),
+                    "目标": item.get("goal"),
+                    "证据要求": item.get("evidence_requirement"),
+                    "语义查询": item.get("semantic_queries"),
+                    "参数抽象查询": item.get("parameter_abstract_queries"),
+                    "精确关键词": item.get("lexical_terms"),
+                    "原始命中数": item.get("raw_hit_count"),
+                    "最终覆盖": next(
+                        (
+                            compact["covered"]
+                            for compact in compact_subtask_results
+                            if compact["id"] == item.get("id")
+                        ),
+                        False,
+                    ),
+                    "精排": item.get("rerank"),
+                    "证据审计": audit_by_id.get(str(item.get("id") or "")),
+                    "空结果原因": item.get("empty_reason"),
+                }
+                for item in subtask_results
+            ],
+            "证据覆盖": {
+                "是否完整": coverage_complete,
+                "已覆盖子任务数": len(compact_subtask_results) - len(uncovered),
+                "总子任务数": len(compact_subtask_results),
                 "最终主证据数": final_hits,
                 "最终辅助证据数": supporting_hits,
-                "最终返回数": final_hits,
-                "文本证据数": trace["text_evidence_count"],
-                "图谱证据数": trace["graph_evidence_count"],
-                "折叠重复数": duplicates_folded,
-                "辅助证据分组": trace["supporting_sections"],
-                "最终精排启用": rerank_trace["enabled"],
-                "最终精排输入数": rerank_trace["input_count"],
-                "最终精排输出数": rerank_trace["output_count"],
-                "最终精排阈值": rerank_trace["rerank_threshold"],
-                "最终精排阈值过滤数": rerank_trace["threshold_filtered_count"],
-            },
-            "图谱关系证据": {
-                "样例数量": len(graph_evidence_log_items),
-                "总数": len(list(graph_facts.get("relations") or [])),
-                "样例": graph_evidence_log_items,
-            },
-            "性能": {
-                "合并耗时毫秒": merge_latency_ms,
-                "最终精排耗时毫秒": rerank_trace["latency_ms"],
-                "文本总耗时毫秒": text_trace.get("total_latency_ms"),
+                "是否触发二次规划": should_replan,
             },
         }
     )
-    warnings: list[dict[str, Any]] = []
-    if graph_trace.get("error"):
+    empty_reasons = {
+        str(item.get("empty_reason") or "").strip()
+        for item in subtask_results
+        if str(item.get("empty_reason") or "").strip()
+    }
+    if provider_errors and not final_hits:
+        reason_code = "provider_error"
+    elif final_hits:
+        reason_code = None
+    elif "empty_knowledge_base" in empty_reasons:
+        reason_code = "empty_knowledge_base"
+    elif "below_rerank_threshold" in empty_reasons:
+        reason_code = "below_rerank_threshold"
+    else:
+        reason_code = "no_hits"
+    status = (
+        "replan_required"
+        if should_replan
+        else "provider_error"
+        if provider_errors and not final_hits
+        else "found"
+        if final_hits
+        else "no_hits"
+    )
+    if provider_errors:
         warnings.append(
             {
-                "code": "GRAPH_RETRIEVAL_FAILED",
-                "message": "图谱通道检索失败，已使用其他可用证据继续处理。",
+                "code": "RETRIEVAL_PROVIDER_ERROR",
+                "message": "部分知识库检索服务暂时不可用。",
             }
         )
-    reason_code: str | None = None
-    if not final_hits:
-        if text_result.get("kb_retrieval_status") == "empty_knowledge_base":
-            reason_code = "empty_knowledge_base"
-        elif graph_trace.get("empty_reason") == "category_scope_empty":
-            reason_code = "scope_empty"
-        elif final_rerank_trace.get("threshold_filtered_count") and primary_docs:
-            reason_code = "below_rerank_threshold"
-        else:
-            reason_code = "no_hits"
     return {
+        "should_replan": should_replan,
+        "retrieval_feedback": retrieval_feedback,
+        "retrieval_attempts": retrieval_attempts,
+        "accumulated_evidence_items": evidence_items,
+        "subtask_coverage": compact_subtask_results,
         "retrieval_result": {
-            "status": "found" if final_hits else "no_hits",
+            "status": status,
             "reason_code": reason_code,
             "evidence_items": evidence_items,
+            "subtask_results": compact_subtask_results,
+            "coverage_complete": coverage_complete,
+            "coverage_audit": dict(coverage_audit),
+            "attempt_count": len(retrieval_attempts),
             "budget": budget,
             "metrics": {
                 "primary_count": final_hits,
                 "supporting_count": supporting_hits,
-                "text_hit_count": len(text_docs),
-                "graph_hit_count": int(graph_trace.get("graph_hits") or 0),
-                "rerank_input_count": int(final_rerank_trace.get("input_count") or 0),
-                "rerank_output_count": int(final_rerank_trace.get("output_count") or 0),
+                "text_hit_count": total_text_hits,
+                "graph_hit_count": 0,
+                "rerank_input_count": total_rerank_inputs,
+                "rerank_output_count": total_rerank_outputs,
             },
             "warnings": warnings,
         }

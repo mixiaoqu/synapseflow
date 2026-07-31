@@ -1,7 +1,7 @@
 import type { KnowledgeBaseListResponse, KnowledgeBaseSummary } from "@/shared/types/knowledge-base";
 
 export type EvalDatasetStatus = "draft" | "active" | "archived";
-export type EvalRunStatus = "pending" | "running" | "completed" | "failed";
+export type EvalRunStatus = "pending" | "running" | "completed" | "failed" | "canceled";
 export type EvalCaseResultStatus = "passed" | "failed";
 
 export interface EvaluationKnowledgeBasePayload {
@@ -93,12 +93,17 @@ export interface EvalRun {
   status: EvalRunStatus;
   model_config: Record<string, unknown>;
   kb_snapshot: Record<string, unknown>;
+  assistant_snapshot: Record<string, unknown>;
+  case_snapshot: Record<string, unknown>;
+  policy_snapshot: Record<string, unknown>;
   total_cases: number;
   passed_cases: number;
   failed_cases: number;
   average_score: number;
   started_at: string | null;
   finished_at: string | null;
+  heartbeat_at: string | null;
+  error_message: string | null;
   created_by: number | null;
   created_at: string;
 }
@@ -111,6 +116,7 @@ export interface EvalRunListItem extends EvalRun {
 
 export interface EvalRunPayload {
   run_name?: string | null;
+  assistant_id: number;
 }
 
 export interface EvalDatasetBulkRunResponse {
@@ -135,6 +141,7 @@ export interface EvalCaseResult {
   retrieved_doc_ids: number[];
   retrieved_chunk_ids: number[];
   judge_result: Record<string, unknown>;
+  case_snapshot: Record<string, unknown>;
   latency_ms: number | null;
   error_message: string | null;
   created_at: string;

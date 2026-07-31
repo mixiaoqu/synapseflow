@@ -375,7 +375,7 @@ async def list_eval_run_tasks(
     normalized_page = max(1, int(page))
     normalized_page_size = min(100, max(1, int(page_size)))
     normalized_status = status.strip() if status and status.strip() else None
-    if normalized_status and normalized_status not in {"pending", "running", "completed", "failed"}:
+    if normalized_status and normalized_status not in {"pending", "running", "completed", "failed", "canceled"}:
         raise HTTPException(status_code=400, detail="评测任务状态无效")
 
     total = await repo.count_runs(
@@ -427,8 +427,9 @@ async def execute_eval_datasets(
         runs = await evaluation_service.submit_dataset_runs(
             db=db,
             current_user=current_user,
-            dataset_ids=body.dataset_ids,
-            run_name=body.run_name,
+        dataset_ids=body.dataset_ids,
+        run_name=body.run_name,
+        assistant_id=body.assistant_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -438,6 +439,22 @@ async def execute_eval_datasets(
         items=[EvalRunResponse.model_validate(run) for run in runs],
         total=len(runs),
     )
+
+
+@router.post("/runs/{run_id}/cancel", response_model=EvalRunResponse)
+async def cancel_eval_run(
+    run_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    repo = EvaluationRepository(db, current_user.id, current_user)
+    run = await repo.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="评测运行不存在")
+    canceled = await repo.cancel_run(run)
+    if canceled is None:
+        raise HTTPException(status_code=409, detail="当前评测运行不能取消")
+    return canceled
 
 
 @router.get("/runs/{run_id}", response_model=EvalRunDetailResponse)

@@ -24,7 +24,12 @@ _ALLOWED_CONTEXT = {
     "session_id",
     "store_id",
 }
-_RESERVED_ARGUMENTS = _ALLOWED_CONTEXT | {"role", "permission", "tenant_id", "user_id"}
+_RESERVED_ARGUMENTS = (_ALLOWED_CONTEXT - {"store_id"}) | {
+    "role",
+    "permission",
+    "tenant_id",
+    "user_id",
+}
 _ALLOWED_ACTIONS = {"query", "create", "update", "delete", "approve", "cancel", "refund", "execute"}
 _DOMAIN_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,49}$")
 

@@ -6,8 +6,6 @@ export interface AdminNavItem {
     | "assistants"
     | "agent-integrations"
     | "evaluations"
-    | "evaluation-knowledge-bases"
-    | "evaluation-reports"
     | "organizations"
     | "roles-permissions"
     | "qa-logs"
@@ -67,18 +65,8 @@ export const adminNavGroups: AdminNavGroup[] = [
     items: [
       {
         key: "evaluations",
-        label: "评测集管理",
+        label: "评测中心",
         to: "/evaluations",
-      },
-      {
-        key: "evaluation-reports",
-        label: "评测任务 / 报告",
-        to: "/evaluations/reports",
-      },
-      {
-        key: "evaluation-knowledge-bases",
-        label: "测试基准库",
-        to: "/evaluations/knowledge-bases",
       },
     ],
   },

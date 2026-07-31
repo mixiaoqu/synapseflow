@@ -10,6 +10,7 @@ import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
 import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
+  createEvaluationKnowledgeBase,
   createEvalDataset,
   listEvalDatasets,
   listEvaluationKnowledgeBases,
@@ -47,6 +48,8 @@ const evaluationKnowledgeBases = ref<KnowledgeBaseListItem[]>([]);
 const searchKeyword = ref("");
 const dialogVisible = ref(false);
 const dialogLoading = ref(false);
+const knowledgeBaseDialogVisible = ref(false);
+const knowledgeBaseCreating = ref(false);
 const dialogMode = ref<"create" | "edit">("create");
 const editingDatasetId = ref<number | null>(null);
 const selectedDatasetIds = ref<Set<number>>(new Set());
@@ -64,6 +67,10 @@ const form = reactive({
   knowledgeBaseId: null as number | null,
   version: "v1",
   status: "draft" as EvalDatasetStatus,
+});
+const knowledgeBaseForm = reactive({
+  name: "",
+  description: "",
 });
 
 const knowledgeBaseNameById = computed(() => {
@@ -215,6 +222,38 @@ function openEditDialog(row: EvalDatasetRow) {
   dialogVisible.value = true;
 }
 
+function openCreateKnowledgeBaseDialog() {
+  if (!teamScopeStore.selectedTeamId) {
+    ElMessage.warning("请先选择团队。");
+    return;
+  }
+  knowledgeBaseForm.name = "";
+  knowledgeBaseForm.description = "";
+  knowledgeBaseDialogVisible.value = true;
+}
+
+async function submitKnowledgeBaseForm() {
+  const name = knowledgeBaseForm.name.trim();
+  if (!name || !teamScopeStore.selectedTeamId) {
+    ElMessage.warning(name ? "请先选择团队。" : "请输入测试知识库名称。");
+    return;
+  }
+  knowledgeBaseCreating.value = true;
+  try {
+    const knowledgeBase = await createEvaluationKnowledgeBase({
+      name,
+      description: knowledgeBaseForm.description.trim() || null,
+      team_id: teamScopeStore.selectedTeamId,
+    });
+    await loadEvaluationKnowledgeBases();
+    form.knowledgeBaseId = knowledgeBase.id;
+    knowledgeBaseDialogVisible.value = false;
+    ElMessage.success("已创建并绑定测试知识库。");
+  } finally {
+    knowledgeBaseCreating.value = false;
+  }
+}
+
 async function submitDatasetForm() {
   const name = form.name.trim();
   const description = form.description.trim();
@@ -228,7 +267,7 @@ async function submitDatasetForm() {
     return;
   }
   if (!form.knowledgeBaseId) {
-    ElMessage.warning("请选择绑定的评测基准库。");
+    ElMessage.warning("请选择绑定的测试知识库。");
     return;
   }
 
@@ -456,8 +495,8 @@ onMounted(() => {
       <el-alert
         class="evaluation-list-page__dialog-alert"
         :title="dialogMode === 'create'
-          ? '评测集创建后会绑定一个评测基准库。用例中的期望文档和切片 ID 都基于该基准库生成。'
-          : '这里只修改评测集名称、说明、版本和状态；绑定的评测基准库保持不变。'"
+          ? '评测集创建后会绑定一个测试知识库。用例中的期望证据均来自该知识库。'
+          : '这里只修改评测集名称、说明、版本和状态；绑定的测试知识库保持不变。'"
         type="info"
         show-icon
         :closable="false"
@@ -488,7 +527,7 @@ onMounted(() => {
           />
         </el-form-item>
         <el-form-item
-          label="绑定评测基准库"
+          label="测试知识库"
           required
         >
           <el-select
@@ -496,7 +535,7 @@ onMounted(() => {
             class="w-full"
             filterable
             :disabled="dialogMode === 'edit'"
-            placeholder="请选择评测基准库"
+            placeholder="请选择测试知识库"
           >
             <el-option
               v-for="item in evaluationKnowledgeBases"
@@ -505,6 +544,16 @@ onMounted(() => {
               :value="item.id"
             />
           </el-select>
+          <el-button
+            v-if="dialogMode === 'create'"
+            link
+            type="primary"
+            :icon="Plus"
+            class="evaluation-list-page__create-knowledge-base"
+            @click="openCreateKnowledgeBaseDialog"
+          >
+            新建测试知识库
+          </el-button>
         </el-form-item>
         <div class="evaluation-list-page__form-grid">
           <el-form-item
@@ -552,6 +601,27 @@ onMounted(() => {
         >
           {{ dialogActionText }}
         </el-button>
+      </template>
+    </AdminDialog>
+
+    <AdminDialog
+      v-model="knowledgeBaseDialogVisible"
+      title="新建测试知识库"
+      width="520px"
+      :loading="knowledgeBaseCreating"
+      :close-on-click-modal="!knowledgeBaseCreating"
+    >
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="名称" required>
+          <el-input v-model="knowledgeBaseForm.name" maxlength="100" show-word-limit placeholder="例如：客服测试知识库 v1" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="knowledgeBaseForm.description" type="textarea" :rows="4" maxlength="500" show-word-limit placeholder="说明该知识库覆盖的文档范围" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button :disabled="knowledgeBaseCreating" @click="knowledgeBaseDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="knowledgeBaseCreating" @click="submitKnowledgeBaseForm">创建并选择</el-button>
       </template>
     </AdminDialog>
   </div>
@@ -613,6 +683,11 @@ onMounted(() => {
 
 .evaluation-list-page__dialog-alert {
   margin-bottom: 16px;
+}
+
+.evaluation-list-page__create-knowledge-base {
+  margin-top: 6px;
+  padding-left: 0;
 }
 
 .evaluation-list-page__form-grid {

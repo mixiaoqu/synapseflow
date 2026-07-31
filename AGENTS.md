@@ -150,7 +150,7 @@ The current graph registry is `backend/app/agents/runtime/factory.py`.
 Registered workflows:
 
 - `agent`: top-level workflow defined by `backend/app/agents/main/graph.py`; path is `route -> respond` for direct responses, or `route -> plan -> execute -> aggregate -> respond` for delegated execution.
-- `knowledge_qa`: reusable knowledge-base QA subgraph defined by `backend/app/agents/knowledge_qa/graph.py`; path is `plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result`.
+- `knowledge_qa`: reusable knowledge-base QA subgraph defined by `backend/app/agents/knowledge_qa/graph.py`; its normal path is `plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result`, with at most one feedback-driven loop from `retrieve_knowledge` to `plan_query` when evidence auditing marks a subtask as weak or missed. If that retry produces no executable new query, `plan_query` exits directly to `compose_result`.
 - `business_ops`: controlled read-only business data operation subgraph defined by `backend/app/agents/business_ops/graph.py`; it performs up to three sequential tool calls, loops from `execute_operation` back to `analyze_request` only when another call is required, and retains one optional parameter-correction retry per call.
 - `backend/langgraph.json` currently exposes `agent` and `knowledge_qa` for LangGraph tooling. `business_ops` is registered in the runtime factory and executed as a subgraph through `agent`.
 

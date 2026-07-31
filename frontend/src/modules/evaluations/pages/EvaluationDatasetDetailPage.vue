@@ -30,6 +30,7 @@ import {
   searchEvalChunks,
   updateEvalCase,
 } from "@/shared/api/evaluations";
+import { listAssistants } from "@/shared/api/assistants";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
@@ -40,6 +41,7 @@ import type {
   EvalDataset,
   EvalRetrievedDocumentEvidence,
 } from "@/modules/evaluations/types";
+import type { AssistantSummary } from "@/shared/types/assistant";
 
 interface EvalCaseRow {
   id: number;
@@ -68,6 +70,9 @@ const editingCaseId = ref<number | null>(null);
 const runDialogVisible = ref(false);
 const runLoading = ref(false);
 const runName = ref("");
+const runAssistantId = ref<number | null>(null);
+const runAssistantLoading = ref(false);
+const runAssistants = ref<AssistantSummary[]>([]);
 const chunkDialogVisible = ref(false);
 const chunkSearchKeyword = ref("");
 const chunkSearchLoading = ref(false);
@@ -544,6 +549,12 @@ function openRunDialog() {
     return;
   }
   runName.value = `${dataset.value?.name ?? "评测集"} ${formatDateTime(new Date().toISOString())}`;
+  if (runAssistants.value.length === 0) {
+    runAssistantLoading.value = true;
+    void listAssistants({ active_only: true, page: 1, page_size: 100 })
+      .then((result) => { runAssistants.value = result.items; })
+      .finally(() => { runAssistantLoading.value = false; });
+  }
   runDialogVisible.value = true;
 }
 
@@ -551,10 +562,15 @@ async function submitRunEvaluation() {
   if (!datasetId.value) {
     return;
   }
+  if (!runAssistantId.value) {
+    ElMessage.warning("请选择 Assistant。");
+    return;
+  }
   runLoading.value = true;
   try {
     const result = await executeEvalDataset(datasetId.value, {
       run_name: runName.value.trim() || null,
+      assistant_id: runAssistantId.value,
     });
     runDialogVisible.value = false;
     ElMessage.success(`已提交后台运行：共 ${result.total_cases} 条用例。`);
@@ -566,6 +582,14 @@ async function submitRunEvaluation() {
 
 function openReportsPage() {
   void router.push("/evaluations/reports");
+}
+
+function openKnowledgeBaseDocuments() {
+  if (!dataset.value?.knowledge_base_id) {
+    ElMessage.warning("当前评测集尚未绑定测试知识库。");
+    return;
+  }
+  void router.push(`/evaluations/knowledge-bases/${dataset.value.knowledge_base_id}`);
 }
 
 async function openChunkDialog() {
@@ -733,7 +757,13 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
             :icon="DataAnalysis"
             @click="openReportsPage"
           >
-            评测任务/报告
+            运行记录
+          </el-button>
+          <el-button
+            :icon="FolderOpened"
+            @click="openKnowledgeBaseDocuments"
+          >
+            管理文档
           </el-button>
           <el-button
             :icon="VideoPlay"
@@ -1135,6 +1165,11 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
             show-word-limit
             placeholder="例如：回归验证 2026-06-09"
           />
+        </el-form-item>
+        <el-form-item label="Assistant" required>
+          <el-select v-model="runAssistantId" :loading="runAssistantLoading" placeholder="选择本次评测使用的 Assistant" style="width: 100%">
+            <el-option v-for="item in runAssistants" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>

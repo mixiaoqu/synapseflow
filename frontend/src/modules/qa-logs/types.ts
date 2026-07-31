@@ -150,6 +150,45 @@ export interface QaLogTraceBranchSummary {
 }
 
 export interface QaLogTracePayload {
+  knowledge_plan?: {
+    attempt_count?: number;
+    standalone_query?: string;
+    business_objects?: string[];
+    action?: string;
+    parameters?: Record<string, unknown>;
+    ambiguity?: {
+      needs_clarification?: boolean;
+      clarification_question?: string;
+      candidates?: string[];
+    };
+    subtasks?: Array<{
+      id?: string;
+      goal?: string;
+      semantic_queries?: string[];
+      parameter_abstract_queries?: string[];
+      lexical_terms?: string[];
+      evidence_requirement?: string;
+    }>;
+    retrieval_attempts?: Array<Record<string, unknown>>;
+    retrieval_feedback?: Record<string, unknown>;
+  } | null;
+  subtask_results?: Array<{
+    id?: string;
+    goal?: string;
+    evidence_requirement?: string;
+    covered?: boolean;
+    evidence_refs?: string[];
+    answerable?: boolean;
+    supported_claims?: string[];
+    top_score?: number | null;
+    raw_hit_count?: number;
+    empty_reason?: string | null;
+    coverage_status?: "covered" | "partial" | "weak" | "missed";
+    failure_reason?: string | null;
+    coverage_reason?: string | null;
+    discovered_terms?: string[];
+    provider_error?: Record<string, unknown>;
+  }>;
   query_clues?: {
     semantic_queries?: string[];
     lexical_terms?: string[];

@@ -84,7 +84,7 @@ class RagRetrievalProfileConfig:
 @dataclass(frozen=True)
 class RagRetrievalConfig:
     k_first: int
-    distance_threshold: float
+    distance_threshold: float | None
     rrf_score_threshold: float | None
     rerank_threshold: float | None
     final_top_k: int

@@ -33,7 +33,7 @@ def test_final_rerank_limits_candidate_count_and_text_size(monkeypatch):
     result, trace = asyncio.run(retrieve_module.rerank_retrieved_docs("如何删除记录", docs, top_k=8))
 
     rerank_inputs = captured["chunks"]
-    assert len(rerank_inputs) <= 16
+    assert len(rerank_inputs) <= 24
     assert all(len(item["search_text"]) <= 1200 for item in rerank_inputs)
     assert trace["candidate_count"] == 40
     assert trace["input_count"] == len(rerank_inputs)
@@ -85,7 +85,42 @@ def test_final_rerank_keeps_graph_candidates_when_text_candidates_overflow(monke
 
     rerank_inputs = captured["chunks"]
     rerank_chunk_ids = [item["document_chunk_id"] for item in rerank_inputs]
-    assert len(rerank_inputs) <= 16
+    assert len(rerank_inputs) <= 24
     assert any(chunk_id >= 100 for chunk_id in rerank_chunk_ids)
     assert trace["graph_input_count"] == 3
     assert trace["truncated"] is True
+
+
+def test_final_rerank_prioritizes_child_hit_and_centers_parent_context(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_rerank(query, chunks, top_k):
+        captured["chunks"] = chunks
+        return [{"_index": 0, "rerank_score": 1.0}]
+
+    monkeypatch.setattr(retrieve_module, "rerank", fake_rerank)
+    hit_text = "员工内购模式在会员类型页面的 Tab4 中配置权益"
+    parent_content = f"{'前置说明' * 500}{hit_text}{'后续说明' * 500}"
+    docs = [
+        {
+            "content": parent_content,
+            "metadata": {
+                "source": "text",
+                "document_title": "权益中心操作指南",
+                "section_path": "跨模块关联",
+                "document_chunk_id": 1,
+                "evidence_text": hit_text,
+            },
+        }
+    ]
+
+    _result, trace = asyncio.run(
+        retrieve_module.rerank_retrieved_docs("员工内购会员模式的权益配置", docs, top_k=1)
+    )
+
+    rerank_text = captured["chunks"][0]["search_text"]
+    assert f"[命中片段] {hit_text}" in rerank_text
+    assert "[父级上下文]" in rerank_text
+    assert hit_text in rerank_text
+    assert len(rerank_text) <= 1200
+    assert trace["hit_text_input_count"] == 1

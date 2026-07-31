@@ -18,14 +18,54 @@ def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
         for item in list(retrieval_result.get("evidence_items") or [])
         if isinstance(item, dict)
     ]
+    if retrieval_status == "needs_clarification":
+        question = str(retrieval_result.get("clarification_question") or "").strip()
+        result = build_sub_agent_result(
+            state,
+            sub_agent_id="knowledge_qa",
+            status="needs_input",
+            answer_status="clarification_needed",
+            title="知识问答子智能体结果",
+            message=question,
+        )
+        result["actions"]["required_user_input"] = [
+            {
+                "kind": "clarification",
+                "message": question,
+            }
+        ]
+        result["data"] = {
+            "kind": "clarification",
+            "content": {"question": question},
+            "normalized": {
+                "retrieval_status": retrieval_status,
+                "reason_code": retrieval_result.get("reason_code"),
+            },
+        }
+        return result
+
     primary_count = len([item for item in evidence_items if item.get("role") == "primary"])
-    status = "success" if retrieval_status == "found" and primary_count else "failed"
-    answer_status = "answered" if status == "success" else "no_answer"
-    message = (
-        f"已找到 {primary_count} 条主要知识证据。"
-        if status == "success"
-        else "当前知识库没有找到可用于回答的相关内容。"
-    )
+    if retrieval_status == "provider_error":
+        status = "failed"
+        answer_status = "retrieval_failed"
+        message = "知识库检索服务暂时不可用，本次结果不代表知识库中没有相关内容。"
+    else:
+        status = "success" if retrieval_status == "found" and primary_count else "failed"
+        coverage_complete = bool(retrieval_result.get("coverage_complete"))
+        answer_status = (
+            "answered"
+            if status == "success" and coverage_complete
+            else "partial"
+            if status == "success"
+            else "no_answer"
+        )
+        message = (
+            f"已找到 {primary_count} 条主要知识证据，可回答问题的部分内容。"
+            if status == "success" and not coverage_complete
+            else f"已找到 {primary_count} 条主要知识证据。"
+            if status == "success" and coverage_complete
+            else "当前知识库没有找到可用于回答的相关内容。"
+        )
     result = build_sub_agent_result(
         state,
         sub_agent_id="knowledge_qa",
@@ -45,6 +85,8 @@ def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
             "budget": dict(retrieval_result.get("budget") or {}),
             "metrics": dict(retrieval_result.get("metrics") or {}),
             "warnings": list(retrieval_result.get("warnings") or []),
+            "subtask_results": list(retrieval_result.get("subtask_results") or []),
+            "coverage_complete": bool(retrieval_result.get("coverage_complete")),
         },
     }
     result["evidence"] = {
@@ -59,5 +101,14 @@ def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
             if item.get("role") == "primary"
         ],
     }
+    if retrieval_status == "provider_error":
+        result["errors"] = [
+            {
+                "code": "RETRIEVAL_PROVIDER_ERROR",
+                "message": message,
+                "retryable": True,
+                "details": {},
+            }
+        ]
     return result
 

@@ -26,15 +26,15 @@ chunk:
   # Overlap characters between adjacent chunks.
   overlap: 100
   # Minimum and maximum parent chunk size used by structured section planning.
-  parent_target_min: 1200
-  parent_target_max: 2500
+  parent_target_min: 2000
+  parent_target_max: 4000
   # Minimum and maximum child chunk size used by structured section planning.
   child_target_min: 400
   child_target_max: 900
   # Number of split units retained as overlap when one block is split.
   split_overlap_units: 1
   # Maximum parent content size returned during retrieval window expansion.
-  parent_window_max_chars: 1800
+  parent_window_max_chars: 4000
   # Number of adjacent child chunks included on each side of a hit.
   parent_window_neighbor_span: 1
 
@@ -49,12 +49,12 @@ retrieval:
   rrf_k: 60
   # Maximum merged candidates allowed into rerank.
   hybrid_pool_limit: 64
-  # Vector distance threshold. Smaller distance means higher similarity.
-  distance_threshold: 0.5
+  # Vector distance threshold. Smaller distance means higher similarity. null disables filtering.
+  distance_threshold: null
   # Minimum RRF fusion score to keep. null disables RRF score filtering.
-  rrf_score_threshold: 0.012
+  rrf_score_threshold: null
   # Minimum rerank score to keep. null disables rerank score filtering.
-  rerank_threshold: 0.3
+  rerank_threshold: null
   # Maximum retrieval results returned to application logic.
   final_top_k: 16
   # Maximum reference chunks sent into the LLM prompt.

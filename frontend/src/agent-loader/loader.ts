@@ -16,6 +16,8 @@ interface BootstrapResponse {
   };
 }
 
+type BootstrapProvider = () => Promise<BootstrapResponse>;
+
 interface AgentChatElement extends HTMLElement {
   configure(options: {
     apiBaseUrl: string;
@@ -32,8 +34,19 @@ interface AgentChatElement extends HTMLElement {
 type LoaderEvent = "ready" | "open" | "close" | "error" | "destroy";
 type LoaderListener = (detail?: unknown) => void;
 
+class LoaderRequestError extends Error {
+  readonly displayMessage?: string;
+
+  constructor(message: string, displayMessage?: string) {
+    super(message);
+    this.name = "LoaderRequestError";
+    this.displayMessage = displayMessage;
+  }
+}
+
 interface EnterpriseAgentApi {
   readonly status: LoaderStatus;
+  configure(options: { getBootstrap?: BootstrapProvider }): void;
   open(options?: { context?: PageContext }): Promise<void>;
   close(): void;
   destroy(): void;
@@ -104,7 +117,20 @@ function assertBootstrap(payload: unknown): BootstrapResponse {
   return value as BootstrapResponse;
 }
 
-async function requestBootstrap(): Promise<BootstrapResponse> {
+async function readBootstrapDisplayMessage(response: Response) {
+  if (response.status < 400 || response.status >= 500) {
+    return undefined;
+  }
+  try {
+    const payload = (await response.json()) as { message?: unknown };
+    const message = typeof payload?.message === "string" ? payload.message.trim() : "";
+    return message && message.length <= 200 ? message : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function requestDefaultBootstrap(): Promise<BootstrapResponse> {
   const response = await fetch(bootstrapUrl, {
     method: "POST",
     credentials: "same-origin",
@@ -115,13 +141,23 @@ async function requestBootstrap(): Promise<BootstrapResponse> {
     body: "{}",
   });
   if (!response.ok) {
-    throw new Error(`Business bootstrap failed with HTTP ${response.status}.`);
+    const displayMessage = await readBootstrapDisplayMessage(response);
+    throw new LoaderRequestError(
+      `Business bootstrap failed with HTTP ${response.status}.`,
+      displayMessage,
+    );
   }
   return assertBootstrap(await response.json());
 }
 
+let getBootstrap: BootstrapProvider = requestDefaultBootstrap;
+
+async function resolveBootstrap() {
+  return assertBootstrap(await getBootstrap());
+}
+
 async function refreshToken() {
-  const bootstrap = await requestBootstrap();
+  const bootstrap = await resolveBootstrap();
   if (
     initializedVersion &&
     (bootstrap.widget.version !== initializedVersion ||
@@ -151,7 +187,7 @@ function requireElement() {
 }
 
 async function initialize(currentLifecycle: number) {
-  const bootstrap = await requestBootstrap();
+  const bootstrap = await resolveBootstrap();
   const widgetUrl = new URL(
     `/agent-static/widget/${bootstrap.widget.version}/index.js`,
     assetOrigin,
@@ -187,6 +223,15 @@ async function initialize(currentLifecycle: number) {
 const api: EnterpriseAgentApi = {
   get status() {
     return status;
+  },
+  configure(options) {
+    if (status !== "idle" || element || openingPromise) {
+      throw new Error("Enterprise Agent must be configured before it is opened.");
+    }
+    if (options.getBootstrap && typeof options.getBootstrap !== "function") {
+      throw new Error("Enterprise Agent getBootstrap must be a function.");
+    }
+    getBootstrap = options.getBootstrap || requestDefaultBootstrap;
   },
   async open(options = {}) {
     if (options.context) {

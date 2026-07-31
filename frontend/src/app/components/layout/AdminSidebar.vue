@@ -44,8 +44,6 @@ const navIcons: Record<
   assistants: MagicStick,
   "agent-integrations": Connection,
   evaluations: DocumentChecked,
-  "evaluation-knowledge-bases": Collection,
-  "evaluation-reports": DocumentChecked,
   organizations: User,
   users: UserFilled,
   "roles-permissions": UserFilled,
@@ -75,13 +73,7 @@ function filterNavItem(item: AdminNavItem): AdminNavItem | null {
 
 function isNavActive(to: string) {
   if (to === "/evaluations") {
-    return route.path === to || route.path.startsWith("/evaluations/datasets/");
-  }
-  if (to === "/evaluations/reports") {
-    return route.path === to || route.path.startsWith("/evaluations/runs/");
-  }
-  if (route.path.startsWith("/evaluations/runs/")) {
-    return false;
+    return route.path === to || route.path.startsWith("/evaluations/");
   }
   return route.path === to || route.path.startsWith(`${to}/`);
 }

@@ -320,7 +320,9 @@ def _meaningful_dense_distance(row: dict[str, Any]) -> float | None:
         return None
 
 
-def _passes_distance_threshold(row: dict[str, Any], threshold: float) -> bool:
+def _passes_distance_threshold(row: dict[str, Any], threshold: float | None) -> bool:
+    if threshold is None:
+        return True
     distance = _meaningful_dense_distance(row)
     return distance is None or distance <= threshold
 

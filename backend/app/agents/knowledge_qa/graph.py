@@ -43,24 +43,60 @@ def create_knowledge_qa_graph(
         )
         intent = dict(state.get("intent") or {})
         goal = str(intent.get("goal") or state.get("query") or "").strip()
+        previous_attempt = int(state.get("query_plan_attempt") or 0)
+        attempt = previous_attempt + 1 if state.get("should_replan") else 1
         query_plan = await build_knowledge_query_plan(
             goal,
+            original_query=str(state.get("query") or "").strip(),
             chat_history=list(state.get("chat_history") or []),
             memory_summary=state.get("memory_summary"),
             page_context=dict(state.get("page_context") or {}),
+            attempt=attempt,
+            previous_plan=dict(state.get("current_query_plan") or {}),
+            retrieval_feedback=dict(state.get("retrieval_feedback") or {}),
             llm_factory=planner_factory,
         )
-        result = dict(query_plan)
+        result = {
+            **dict(query_plan),
+            "should_replan": False,
+        }
+        if query_plan.get("replan_exhausted"):
+            retrieval_result = dict(state.get("retrieval_result") or {})
+            evidence_items = [
+                dict(item)
+                for item in list(retrieval_result.get("evidence_items") or [])
+                if isinstance(item, dict)
+            ]
+            has_primary_evidence = any(
+                item.get("role") == "primary" for item in evidence_items
+            )
+            retrieval_result["status"] = (
+                "found" if has_primary_evidence else "no_hits"
+            )
+            retrieval_result["reason_code"] = (
+                None
+                if has_primary_evidence
+                else retrieval_result.get("reason_code") or "no_hits"
+            )
+            result["retrieval_result"] = retrieval_result
         log_node_info(
             workflow_id="knowledge_qa",
             node_id="plan_query",
             node_name="规划查询",
             details={
                 "问题类型": query_plan.get("question_type"),
+                "规划轮次": attempt,
+                "是否二次规划": attempt > 1,
                 "检索复杂度": query_plan.get("retrieval_complexity"),
+                "独立问题": query_plan.get("standalone_query"),
+                "业务对象": query_plan.get("business_objects"),
+                "用户动作": query_plan.get("action"),
+                "参数": query_plan.get("query_parameters"),
+                "是否需要澄清": (query_plan.get("ambiguity") or {}).get("needs_clarification"),
+                "检索子任务数": len(query_plan.get("retrieval_subtasks") or []),
+                "二次规划是否已无新查询": query_plan.get("replan_exhausted"),
                 "语义查询数": len(query_plan.get("semantic_queries") or []),
                 "候选实体数": len(query_plan.get("candidate_entities") or []),
-                "是否使用HyDE": (query_plan.get("query_plan_trace") or {}).get("hyde_used"),
             },
             elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
@@ -72,7 +108,11 @@ def create_knowledge_qa_graph(
             message="知识库检索线索规划完成",
             display_stage="understand",
             display_title="🤔 思考您的问题",
-            activity_text="已生成查询、关键词和实体线索",
+            activity_text=(
+                "已根据首轮证据重新规划查询"
+                if attempt > 1
+                else "已理解问题并生成检索子任务"
+            ),
             activity_status="completed",
         )
         return result
@@ -93,7 +133,7 @@ def create_knowledge_qa_graph(
         retrieval_complexity = str(state.get("retrieval_complexity") or "standard")
         execution_plan = build_knowledge_qa_retrieval_plan(
             question_type=question_type,
-            retrieval_strategy="auto",
+            retrieval_strategy="text_only",
             retrieval_complexity=retrieval_complexity,
         )
         channels = execution_plan.get("channels") or {}
@@ -137,7 +177,11 @@ def create_knowledge_qa_graph(
 
     async def _retrieve_knowledge_node(state: KnowledgeQaState) -> dict[str, Any]:
         started_at = perf_counter()
-        result = await knowledge_qa_retrieve_node(state, node_id="retrieve_knowledge")
+        result = await knowledge_qa_retrieve_node(
+            state,
+            node_id="retrieve_knowledge",
+            coverage_llm_factory=planner_factory,
+        )
         retrieval_result = dict(result.get("retrieval_result") or {})
         metrics = dict(retrieval_result.get("metrics") or {})
         log_node_info(
@@ -146,11 +190,22 @@ def create_knowledge_qa_graph(
             node_name="检索知识",
             details={
                 "规划引擎": (state.get("query_plan_trace") or {}).get("engine"),
+                "规划轮次": state.get("query_plan_attempt"),
                 "语义查询数": len(state.get("semantic_queries") or []),
                 "关键词数": len(state.get("lexical_terms") or []),
                 "候选实体数": len(state.get("candidate_entities") or []),
                 "关系查询数": len(state.get("relation_queries") or []),
                 "检索策略": state.get("retrieval_strategy"),
+                "检索子任务数": len(state.get("retrieval_subtasks") or []),
+                "已覆盖子任务数": len(
+                    [
+                        item
+                        for item in retrieval_result.get("subtask_results") or []
+                        if item.get("covered")
+                    ]
+                ),
+                "子任务是否全部覆盖": retrieval_result.get("coverage_complete"),
+                "是否触发二次规划": result.get("should_replan"),
                 "文本命中数": metrics.get("text_hit_count"),
                 "图谱命中数": metrics.get("graph_hit_count"),
                 "最终主证据数": metrics.get("primary_count"),
@@ -232,8 +287,22 @@ def create_knowledge_qa_graph(
     workflow.add_node("retrieve_knowledge", _retrieve_knowledge_node)
     workflow.add_node("compose_result", _compose_result_node)
     workflow.set_entry_point("plan_query")
-    workflow.add_edge("plan_query", "plan_retrieval")
+    workflow.add_conditional_edges(
+        "plan_query",
+        lambda state: "compose" if state.get("replan_exhausted") else "retrieve",
+        {
+            "compose": "compose_result",
+            "retrieve": "plan_retrieval",
+        },
+    )
     workflow.add_edge("plan_retrieval", "retrieve_knowledge")
-    workflow.add_edge("retrieve_knowledge", "compose_result")
+    workflow.add_conditional_edges(
+        "retrieve_knowledge",
+        lambda state: "replan" if state.get("should_replan") else "compose",
+        {
+            "replan": "plan_query",
+            "compose": "compose_result",
+        },
+    )
     workflow.add_edge("compose_result", END)
     return workflow.compile()

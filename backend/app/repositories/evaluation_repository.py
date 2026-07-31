@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -205,23 +205,60 @@ class EvaluationRepository:
         dataset_id: int,
         run_name: str | None,
         kb_snapshot: dict[str, Any],
+        assistant_snapshot: dict[str, Any],
+        case_snapshot: dict[str, Any],
+        policy_snapshot: dict[str, Any],
         model_config: dict[str, Any],
         total_cases: int,
     ) -> EvalRun:
         row = EvalRun(
             dataset_id=dataset_id,
             run_name=(run_name or "").strip() or None,
-            status="running",
+            status="pending",
             kb_snapshot=dict(kb_snapshot),
+            assistant_snapshot=dict(assistant_snapshot),
+            case_snapshot=dict(case_snapshot),
+            policy_snapshot=dict(policy_snapshot),
             model_config=dict(model_config),
             total_cases=total_cases,
-            started_at=utc_now(),
             created_by=self.user_id,
         )
         self.db.add(row)
         await self.db.commit()
         await self.db.refresh(row)
         return row
+
+    async def claim_pending_run(self, run_id: int) -> EvalRun | None:
+        now = utc_now()
+        stmt = (
+            update(EvalRun)
+            .where(EvalRun.id == run_id, EvalRun.status == "pending")
+            .values(status="running", started_at=now, heartbeat_at=now, error_message=None)
+            .returning(EvalRun.id)
+        )
+        if (await self.db.execute(stmt)).scalar_one_or_none() is None:
+            await self.db.rollback()
+            return None
+        await self.db.commit()
+        return await self.get_run(run_id)
+
+    async def touch_run(self, run: EvalRun) -> None:
+        run.heartbeat_at = utc_now()
+        await self.db.commit()
+
+    async def is_run_canceled(self, run_id: int) -> bool:
+        result = await self.db.execute(select(EvalRun.status).where(EvalRun.id == run_id))
+        return result.scalar_one_or_none() == "canceled"
+
+    async def cancel_run(self, run: EvalRun) -> EvalRun | None:
+        if run.status not in {"pending", "running"}:
+            return None
+        run.status = "canceled"
+        run.finished_at = utc_now()
+        run.heartbeat_at = run.finished_at
+        await self.db.commit()
+        await self.db.refresh(run)
+        return run
 
     async def finish_run(
         self,
@@ -237,6 +274,7 @@ class EvaluationRepository:
         run.failed_cases = failed_cases
         run.average_score = average_score
         run.finished_at = utc_now()
+        run.heartbeat_at = run.finished_at
         await self.db.commit()
         await self.db.refresh(run)
         return run
@@ -244,6 +282,7 @@ class EvaluationRepository:
     async def mark_run_failed(self, run: EvalRun) -> EvalRun:
         run.status = "failed"
         run.finished_at = utc_now()
+        run.heartbeat_at = run.finished_at
         await self.db.commit()
         await self.db.refresh(run)
         return run
@@ -320,7 +359,8 @@ class EvaluationRepository:
         self,
         *,
         run_id: int,
-        case_id: int,
+        case_id: int | None,
+        case_snapshot: dict[str, Any],
         status: str,
         score: int,
         actual_answer: str,
@@ -333,6 +373,7 @@ class EvaluationRepository:
         row = EvalCaseResult(
             run_id=run_id,
             case_id=case_id,
+            case_snapshot=dict(case_snapshot),
             status=status,
             score=score,
             actual_answer=actual_answer,

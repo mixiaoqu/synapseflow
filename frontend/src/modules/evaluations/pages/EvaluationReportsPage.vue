@@ -28,11 +28,11 @@ import {
   listEvalCases,
   listEvalRuns,
 } from "@/shared/api/evaluations";
+import { listAssistants } from "@/shared/api/assistants";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
 import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import type {
-  EvalCase,
   EvalCaseResult,
   EvalCaseResultStatus,
   EvalDataset,
@@ -41,6 +41,7 @@ import type {
   EvalRunListItem,
   EvalRunStatus,
 } from "@/modules/evaluations/types";
+import type { AssistantSummary } from "@/shared/types/assistant";
 
 interface EvalRunTaskRow {
   id: number;
@@ -90,10 +91,13 @@ const taskStatusFilter = ref<RunStatusFilter>("all");
 const createDrawerVisible = ref(false);
 const createSubmitting = ref(false);
 const datasetLoading = ref(false);
+const assistantLoading = ref(false);
+const assistants = ref<AssistantSummary[]>([]);
 const selectedDatasetCaseCount = ref<number | null>(null);
 const createForm = reactive({
   runName: "",
   datasetId: null as number | null,
+  assistantId: null as number | null,
   targetType: "kb_chat",
   judgeMethod: "llm_judge",
   recallEnabled: true,
@@ -110,7 +114,6 @@ const reportLoading = ref(false);
 const reportHasLoadedData = ref(false);
 const reportLoadError = ref<unknown>(null);
 const runDetail = ref<EvalRunDetail | null>(null);
-const cases = ref<EvalCase[]>([]);
 const activeFilter = ref<ReportFilter>("all");
 const expandedTextKeys = ref<Set<string>>(new Set());
 const expandedEvidenceKeys = ref<Set<string>>(new Set());
@@ -141,23 +144,16 @@ const taskRows = computed<EvalRunTaskRow[]>(() =>
     finishedAt: formatDateTime(item.finished_at),
   })),
 );
-const caseById = computed(() => {
-  const map = new Map<number, EvalCase>();
-  for (const item of cases.value) {
-    map.set(item.id, item);
-  }
-  return map;
-});
 const reportRows = computed<ReportCaseRow[]>(() =>
   (runDetail.value?.results ?? []).map((result) => {
-    const matchedCase = caseById.value.get(result.case_id);
+    const caseSnapshot = result.case_snapshot ?? {};
     return {
       id: result.id,
-      caseId: result.case_id,
+      caseId: result.case_id ?? Number(caseSnapshot.case_id ?? 0),
       status: result.status,
       score: result.score,
-      question: matchedCase?.question ?? `用例 #${result.case_id}`,
-      expectedAnswer: matchedCase?.expected_answer ?? "当前接口未返回该用例的期望答案。",
+      question: String(caseSnapshot.question ?? `用例 #${result.case_id ?? "未知"}`),
+      expectedAnswer: String(caseSnapshot.expected_answer ?? "历史运行未保存期望答案。"),
       actualAnswer: result.actual_answer?.trim() || "暂无实际回答",
       retrievedEvidence: result.retrieved_evidence ?? [],
       judgeReason: getJudgeReason(result),
@@ -418,12 +414,10 @@ async function loadReport() {
   reportLoadError.value = null;
   try {
     const detail = await getEvalRunDetail(runId.value);
-    const caseResult = await listEvalCases(detail.dataset_id);
     if (requestSeq !== reportRequestSeq) {
       return;
     }
     runDetail.value = detail;
-    cases.value = caseResult.items;
     activeFilter.value = "all";
     expandedTextKeys.value = new Set();
     expandedEvidenceKeys.value = new Set();
@@ -447,6 +441,12 @@ function openCreateDrawer() {
   createDrawerVisible.value = true;
   if (datasets.value.length === 0) {
     void loadDatasets();
+  }
+  if (assistants.value.length === 0) {
+    assistantLoading.value = true;
+    void listAssistants({ active_only: true, page: 1, page_size: 100 })
+      .then((result) => { assistants.value = result.items; })
+      .finally(() => { assistantLoading.value = false; });
   }
 }
 
@@ -476,11 +476,16 @@ async function submitCreateTask() {
     ElMessage.warning("请选择关联评测集。");
     return;
   }
+  if (!createForm.assistantId) {
+    ElMessage.warning("请选择 Assistant。");
+    return;
+  }
 
   createSubmitting.value = true;
   try {
     const result = await executeEvalDataset(createForm.datasetId, {
       run_name: runName,
+      assistant_id: createForm.assistantId,
     });
     createDrawerVisible.value = false;
     ElMessage.success(`已提交后台运行：共 ${result.total_cases} 条用例。`);
@@ -1101,6 +1106,11 @@ onMounted(() => {
                 </el-option>
               </el-select>
             </el-form-item>
+            <el-form-item label="Assistant" required>
+              <el-select v-model="createForm.assistantId" class="evaluation-report-page__drawer-select" :loading="assistantLoading" placeholder="选择本次评测使用的 Assistant">
+                <el-option v-for="item in assistants" :key="item.id" :label="item.name" :value="item.id" />
+              </el-select>
+            </el-form-item>
             <div
               v-if="selectedDataset"
               class="evaluation-report-page__selected-dataset"
@@ -1116,40 +1126,6 @@ onMounted(() => {
           </el-form>
         </section>
 
-        <section class="evaluation-report-page__form-section">
-          <div class="evaluation-report-page__form-section-title">
-            <span />
-            <strong>评测方式</strong>
-          </div>
-          <div class="evaluation-report-page__judge-card">
-            <el-radio-group v-model="createForm.judgeMethod">
-              <el-radio label="llm_judge">
-                大模型裁判
-              </el-radio>
-            </el-radio-group>
-            <p>当前评测链路会检查期望答案、检索切片命中和回答质量，并在报告中展示每条用例的裁判原因。</p>
-            <div class="evaluation-report-page__metric-list">
-              <el-checkbox
-                v-model="createForm.recallEnabled"
-                disabled
-              >
-                检索召回率
-              </el-checkbox>
-              <el-checkbox
-                v-model="createForm.faithfulnessEnabled"
-                disabled
-              >
-                回答忠实度
-              </el-checkbox>
-              <el-checkbox
-                v-model="createForm.relevanceEnabled"
-                disabled
-              >
-                答案相关性
-              </el-checkbox>
-            </div>
-          </div>
-        </section>
       </div>
 
       <template #footer>

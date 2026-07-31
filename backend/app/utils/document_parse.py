@@ -295,7 +295,10 @@ def _render_node(node: ParsedNode, *, indent: int = 0) -> str:
         return "\n\n".join(parts).strip()
 
     if node.node_type == "clause":
-        prefix = f"{node.numbering} " if node.numbering else ""
+        numbering = str(node.numbering or "")
+        if numbering.isdigit():
+            numbering = f"{numbering}."
+        prefix = f"{numbering} " if numbering else ""
         title = f"{prefix}{node.text}".strip()
         children = [_render_node(child, indent=indent) for child in node.children]
         parts = [title, *[item for item in children if item.strip()]]

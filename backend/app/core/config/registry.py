@@ -248,7 +248,11 @@ class ConfigRegistry:
             ),
             retrieval=RagRetrievalConfig(
                 k_first=int(retrieval.get("k_first", 16)),
-                distance_threshold=float(retrieval.get("distance_threshold", 0.5)),
+                distance_threshold=(
+                    float(retrieval.get("distance_threshold", 0.5))
+                    if retrieval.get("distance_threshold", 0.5) is not None
+                    else None
+                ),
                 rrf_score_threshold=(
                     float(retrieval["rrf_score_threshold"])
                     if retrieval.get("rrf_score_threshold") is not None

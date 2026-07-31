@@ -101,7 +101,7 @@ class BusinessOperationService:
         operation = self.registry.from_tool_record(record)
         effective_request = self._with_schema_defaults(
             operation,
-            self._without_context_params(request),
+            self._without_context_params(operation, request),
         )
         logger.bind(agent_business_ops_log=True).info(
             "[业务工具参数] 已移除上下文参数 | operation={} | request_keys={} | effective_keys={}",
@@ -208,11 +208,21 @@ class BusinessOperationService:
     def _is_blank(value: Any) -> bool:
         return value is None or (isinstance(value, str) and not value.strip())
 
-    def _without_context_params(self, request: BusinessOperationRequest) -> BusinessOperationRequest:
+    def _without_context_params(
+        self,
+        operation: BusinessOperationDefinition,
+        request: BusinessOperationRequest,
+    ) -> BusinessOperationRequest:
+        declared_properties = operation.input_schema.get("properties")
+        allows_store_id = (
+            isinstance(declared_properties, dict)
+            and "store_id" in declared_properties
+        )
         params = {
             key: value
             for key, value in request.params.items()
             if key not in AGENT_CONTEXT_PARAM_KEYS
+            and (key != "store_id" or allows_store_id)
         }
         return request.model_copy(update={"params": params})
 

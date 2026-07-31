@@ -63,6 +63,23 @@ class AgentRunTraceBuilder:
         candidate_entities = _string_items(result.get("candidate_entities")) or _string_items(
             state.get("candidate_entities")
         )
+        retrieval_subtasks = [
+            dict(item)
+            for item in list(
+                result.get("retrieval_subtasks") or state.get("retrieval_subtasks") or []
+            )
+            if isinstance(item, dict)
+        ]
+        subtask_results = [
+            dict(item)
+            for item in list(result.get("subtask_results") or [])
+            if isinstance(item, dict)
+        ]
+        retrieval_metrics = (
+            dict(result.get("retrieval_metrics") or {})
+            if isinstance(result.get("retrieval_metrics"), dict)
+            else {}
+        )
         if not semantic_queries:
             semantic_queries = [
                 str(item.get("query") or "").strip()
@@ -75,15 +92,32 @@ class AgentRunTraceBuilder:
                 for item in lexical_term_stats
                 if str(item.get("query") or "").strip()
             ]
-        text_hit_count = int(text_trace.get("text_hits") or 0)
-        graph_hit_count = int(graph_trace.get("graph_hits") or 0)
+        text_hit_count = int(
+            text_trace.get("text_hits")
+            or retrieval_metrics.get("text_hit_count")
+            or 0
+        )
+        graph_hit_count = int(
+            graph_trace.get("graph_hits")
+            or retrieval_metrics.get("graph_hit_count")
+            or 0
+        )
         merged_count = int(
             retrieval_trace.get("merged_pool_count")
             or text_trace.get("merged_candidate_count")
+            or retrieval_metrics.get("rerank_input_count")
             or 0
         )
-        final_context_count = int(retrieval_trace.get("final_context_docs") or len(retrieved_docs))
-        rerank_count = int(rerank_trace.get("output_count") or final_context_count)
+        final_context_count = int(
+            retrieval_trace.get("final_context_docs")
+            or retrieval_metrics.get("primary_count")
+            or len(retrieved_docs)
+        )
+        rerank_count = int(
+            rerank_trace.get("output_count")
+            or retrieval_metrics.get("rerank_output_count")
+            or final_context_count
+        )
 
         def _query_stat_total(items: list[dict[str, Any]]) -> int:
             return sum(int(item.get("chunk_count") or 0) for item in items)
@@ -186,6 +220,30 @@ class AgentRunTraceBuilder:
             )
 
         return {
+            "knowledge_plan": {
+                "attempt_count": int(result.get("query_plan_attempt") or 1),
+                "standalone_query": str(
+                    result.get("standalone_query")
+                    or state.get("standalone_query")
+                    or ""
+                ).strip(),
+                "business_objects": _string_items(
+                    result.get("business_objects") or state.get("business_objects")
+                ),
+                "action": str(result.get("action") or state.get("action") or "").strip(),
+                "parameters": dict(
+                    result.get("query_parameters")
+                    or state.get("query_parameters")
+                    or {}
+                ),
+                "ambiguity": dict(
+                    result.get("ambiguity") or state.get("ambiguity") or {}
+                ),
+                "subtasks": retrieval_subtasks,
+                "retrieval_attempts": list(result.get("retrieval_attempts") or []),
+                "retrieval_feedback": dict(result.get("retrieval_feedback") or {}),
+            },
+            "subtask_results": subtask_results,
             "query_clues": {
                 "semantic_queries": semantic_queries,
                 "lexical_terms": lexical_terms,

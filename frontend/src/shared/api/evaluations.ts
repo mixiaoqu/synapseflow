@@ -144,13 +144,14 @@ export function executeEvalDataset(datasetId: number, payload: EvalRunPayload) {
   });
 }
 
-export function bulkRunEvalDatasets(datasetIds: number[], payload: EvalRunPayload = {}) {
+export function bulkRunEvalDatasets(datasetIds: number[], payload: EvalRunPayload) {
   return request<EvalDatasetBulkRunResponse>({
     url: "/evaluations/datasets/bulk-runs",
     method: "POST",
     data: {
       dataset_ids: datasetIds,
       run_name: payload.run_name ?? null,
+      assistant_id: payload.assistant_id,
     },
   });
 }

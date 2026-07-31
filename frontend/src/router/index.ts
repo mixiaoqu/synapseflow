@@ -142,7 +142,7 @@ const router = createRouter({
           name: "evaluation-knowledge-base-detail",
           component: KnowledgeBaseDetailPage,
           meta: {
-            parent: "evaluation-knowledge-bases",
+            parent: "evaluations",
             title: "评测基准库详情",
             description: "评测基准库分类侧栏与文档管理工作台。",
           },

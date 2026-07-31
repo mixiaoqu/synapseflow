@@ -1,7 +1,11 @@
 import asyncio
 
 from app.core.config.schemas import RagChunkConfig, RagConfig, RagRetrievalConfig
-from app.services.semantic_chunk import build_chunk_plan, build_vector_index_chunks
+from app.services.semantic_chunk import (
+    CHUNKING_VERSION,
+    build_chunk_plan,
+    build_vector_index_chunks,
+)
 from app.services.vector_store import add_document_chunks
 from app.utils.document_parse import ParsedBlock, ParsedDocument, parse_raw_document_content
 
@@ -91,6 +95,55 @@ def test_build_chunk_plan_honors_configured_child_target_max(monkeypatch):
     plan = build_chunk_plan(parsed, document_title=parsed.title)
 
     assert len(plan.child_chunks) >= 3
+
+
+def test_build_chunk_plan_splits_oversized_tree_leaf_without_losing_content(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.semantic_chunk.config_registry.get_rag_config",
+        lambda: _rag_config(child_target_max=80, split_overlap_units=0),
+    )
+    body = "第一段说明。" * 12 + "\n\n" + "第二段结论。" * 12
+    parsed = parse_raw_document_content(
+        f"# 超长章节\n\n{body}",
+        title="操作手册",
+        document_type="md",
+    )
+
+    plan = build_chunk_plan(parsed, document_title=parsed.title)
+
+    assert len(plan.child_chunks) > 1
+    assert all(len(chunk.content) <= 80 for chunk in plan.child_chunks)
+    assert "第一段说明。" in "".join(chunk.content for chunk in plan.child_chunks)
+    assert "第二段结论。" in "".join(chunk.content for chunk in plan.child_chunks)
+    parent_content = "\n\n".join(chunk.content for chunk in plan.parent_chunks)
+    assert parent_content.count("第一段说明。") == 12
+    assert parent_content.count("第二段结论。") == 12
+    assert all("超长章节" in chunk.search_text for chunk in plan.child_chunks)
+    for parent in plan.parent_chunks:
+        children = [chunk for chunk in plan.child_chunks if chunk.parent_local_id == parent.local_id]
+        child_unit_indexes = {chunk.metadata["child_index_within_parent"] for chunk in children}
+        for child_unit_index in child_unit_indexes:
+            segments = [
+                chunk
+                for chunk in children
+                if chunk.metadata["child_index_within_parent"] == child_unit_index
+            ]
+            assert all(chunk.metadata["segment_count"] == len(segments) for chunk in segments)
+
+
+def test_build_chunk_plan_adds_stable_chunk_identity_metadata():
+    parsed = ParsedDocument(
+        title="Identity",
+        blocks=[ParsedBlock(type="paragraph", text="Stable chunk content")],
+    )
+
+    first = build_chunk_plan(parsed, document_title=parsed.title)
+    second = build_chunk_plan(parsed, document_title=parsed.title)
+
+    assert first.child_chunks[0].metadata["chunking_version"] == CHUNKING_VERSION
+    assert first.child_chunks[0].metadata["content_fingerprint"] == second.child_chunks[0].metadata[
+        "content_fingerprint"
+    ]
 
 
 def test_add_document_chunks_stores_document_chunk_relationships():

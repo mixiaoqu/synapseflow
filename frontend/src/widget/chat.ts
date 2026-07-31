@@ -53,6 +53,40 @@ function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function normalizeRetrievedDocs(
+  docs: Array<Record<string, unknown>> | null | undefined,
+): Array<Record<string, unknown>> {
+  const normalized: Array<Record<string, unknown>> = [];
+  const sourceIds = new Set<string>();
+
+  for (const [index, doc] of (docs ?? []).entries()) {
+    const metadata =
+      doc.metadata && typeof doc.metadata === "object" && !Array.isArray(doc.metadata)
+        ? (doc.metadata as Record<string, unknown>)
+        : {};
+    const documentId = metadata.document_id;
+    const documentTitle =
+      typeof metadata.document_title === "string"
+        ? metadata.document_title.trim().toLocaleLowerCase()
+        : "";
+    const refId = typeof metadata.ref_id === "string" ? metadata.ref_id.trim() : "";
+    const sourceId =
+      documentId !== null && documentId !== undefined
+        ? `document:${String(documentId)}`
+        : documentTitle
+          ? `title:${documentTitle}`
+          : refId
+            ? `ref:${refId}`
+            : `unknown:${index}`;
+
+    if (sourceIds.has(sourceId)) continue;
+    sourceIds.add(sourceId);
+    normalized.push(doc);
+  }
+
+  return normalized;
+}
+
 function toMessage(message: WidgetSessionMessage): AgentChatMessage | null {
   const role = message.role.trim().toLowerCase();
   if ((role !== "user" && role !== "assistant") || !message.content.trim()) {
@@ -62,7 +96,7 @@ function toMessage(message: WidgetSessionMessage): AgentChatMessage | null {
     id: createId(role),
     role,
     content: message.content,
-    retrievedDocs: message.retrieved_docs ?? [],
+    retrievedDocs: normalizeRetrievedDocs(message.retrieved_docs),
     answerStatus: message.answer_status ?? null,
     logId: message.log_id ?? null,
     feedback: null,
@@ -253,7 +287,9 @@ export function useAgentChat(options: UseAgentChatOptions) {
         } else if (event.type === "retrieved") {
           const docs = event.data.retrieved_docs;
           if (Array.isArray(docs)) {
-            assistantMessage.retrievedDocs = docs as Array<Record<string, unknown>>;
+            assistantMessage.retrievedDocs = normalizeRetrievedDocs(
+              docs as Array<Record<string, unknown>>,
+            );
           }
         } else if (event.type === "activity") {
           const text = event.data.activity_text ?? event.data.message;
@@ -273,9 +309,9 @@ export function useAgentChat(options: UseAgentChatOptions) {
             assistantMessage.answerStatus = event.data.answer_status;
           }
           if (Array.isArray(event.data.retrieved_docs)) {
-            assistantMessage.retrievedDocs = event.data.retrieved_docs as Array<
-              Record<string, unknown>
-            >;
+            assistantMessage.retrievedDocs = normalizeRetrievedDocs(
+              event.data.retrieved_docs as Array<Record<string, unknown>>,
+            );
           }
           activityText.value = "";
         } else if (event.type === "error") {

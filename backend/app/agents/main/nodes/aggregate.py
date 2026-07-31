@@ -9,6 +9,19 @@ from app.agents.common.node_logging import log_node_info
 from app.agents.main.state import AgentState
 
 
+def _source_identity(item: dict[str, Any]) -> str:
+    source = dict(item.get("source") or {})
+    document_id = source.get("document_id")
+    if document_id is not None:
+        return f"document:{document_id}"
+
+    document_title = str(source.get("document_title") or "").strip().casefold()
+    if document_title:
+        return f"title:{document_title}"
+
+    return f"ref:{str(item.get('ref_id') or '').strip()}"
+
+
 def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> dict[str, Any]:
     runs = list(execution_runs.values())
     sub_agent_results = [
@@ -23,6 +36,9 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         for result in sub_agent_results
         if result.get("status") not in {"success", "needs_input"}
     ]
+    has_partial_success = any(
+        result.get("answer_status") == "partial" for result in successes
+    )
     knowledge_context: list[dict[str, Any]] = []
     citation_refs: list[str] = []
     business_data: list[dict[str, Any]] = []
@@ -75,20 +91,27 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
             context_by_ref[ref_id] = item
     deduped_citation_refs = list(dict.fromkeys(citation_refs))
 
-    retrieved_docs = [
-        {
-            "content": item.get("content") or "",
-            "metadata": {
-                **dict(item.get("source") or {}),
-                "ref_id": ref_id,
-                "role": item.get("role"),
-                "kind": item.get("kind"),
-            },
-        }
-        for ref_id, item in context_by_ref.items()
-        if item.get("role") == "primary"
-    ]
-    if successes and (failures or needs_input):
+    retrieved_docs: list[dict[str, Any]] = []
+    retrieved_source_ids: set[str] = set()
+    for ref_id, item in context_by_ref.items():
+        if item.get("role") != "primary":
+            continue
+        source_id = _source_identity(item)
+        if source_id in retrieved_source_ids:
+            continue
+        retrieved_source_ids.add(source_id)
+        retrieved_docs.append(
+            {
+                "content": item.get("content") or "",
+                "metadata": {
+                    **dict(item.get("source") or {}),
+                    "ref_id": ref_id,
+                    "role": item.get("role"),
+                    "kind": item.get("kind"),
+                },
+            }
+        )
+    if successes and (failures or needs_input or has_partial_success):
         status = answer_status = "partial"
     elif needs_input:
         status = answer_status = "clarification_needed"
@@ -103,7 +126,7 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         "success_count": len(successes),
         "failed_count": len(failures),
         "needs_input_count": len(needs_input),
-        "partial": bool(successes and (failures or needs_input)),
+        "partial": bool(successes and (failures or needs_input or has_partial_success)),
         "knowledge_context": list(context_by_ref.values()),
         "business_data": business_data,
         "citation_refs": deduped_citation_refs,

@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 EvalDatasetStatus = Literal["draft", "active", "archived"]
-EvalRunStatus = Literal["pending", "running", "completed", "failed"]
+EvalRunStatus = Literal["pending", "running", "completed", "failed", "canceled"]
 EvalCaseResultStatus = Literal["passed", "failed"]
 
 
@@ -133,6 +133,8 @@ class EvalRunCreate(BaseModel):
     """Create evaluation run request."""
 
     run_name: str | None = Field(default=None, max_length=100)
+    assistant_id: int = Field(..., gt=0)
+    assistant_id: int = Field(..., gt=0)
 
 
 class EvalRunResponse(BaseModel):
@@ -150,12 +152,17 @@ class EvalRunResponse(BaseModel):
         serialization_alias="model_config",
     )
     kb_snapshot: dict[str, Any] = Field(default_factory=dict)
+    assistant_snapshot: dict[str, Any] = Field(default_factory=dict)
+    case_snapshot: dict[str, Any] = Field(default_factory=dict)
+    policy_snapshot: dict[str, Any] = Field(default_factory=dict)
     total_cases: int
     passed_cases: int
     failed_cases: int
     average_score: int
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+    error_message: str | None = None
     created_by: int | None = None
     created_at: datetime
 
@@ -187,7 +194,8 @@ class EvalCaseResultResponse(BaseModel):
 
     id: int
     run_id: int
-    case_id: int
+    case_id: int | None = None
+    case_snapshot: dict[str, Any] = Field(default_factory=dict)
     status: EvalCaseResultStatus
     score: int
     actual_answer: str

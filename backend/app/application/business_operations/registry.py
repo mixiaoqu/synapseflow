@@ -22,7 +22,6 @@ AGENT_CONTEXT_PARAM_KEYS = {
     "project_id",
     "request_id",
     "session_id",
-    "store_id",
     "user_id",
 }
 

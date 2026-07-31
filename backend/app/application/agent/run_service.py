@@ -390,6 +390,28 @@ class AgentRunService:
 
         from app.models.schemas.kb_chat import KbChatResponse
 
+        result = await self.execute_stateless(request, user_id=user_id)
+        answer = str(result.get("answer") or "")
+        return KbChatResponse(
+            answer=answer,
+            answer_text=answer,
+            answer_status=self._resolve_answer_status(result),
+            backend_citations=list(result.get("retrieved_docs") or []),
+            retrieved_docs=list(result.get("retrieved_docs") or []),
+            assistant_id=result.get("assistant_id"),
+            assistant_name=result.get("assistant_name"),
+            session_id=None,
+            log_id=None,
+        )
+
+    async def execute_stateless(
+        self,
+        request: AgentRunRequest,
+        *,
+        user_id: int | None,
+    ) -> dict[str, Any]:
+        """Execute one Agent request without loading or writing conversation state."""
+
         state = self.build_initial_state(
             request,
             user_id=user_id,
@@ -397,21 +419,18 @@ class AgentRunService:
             chat_history=[],
             memory_summary=None,
         )
+        started_at = perf_counter()
         query_risk_check = await self._check_content_risk(scene="query", text=request.query)
         if query_risk_check.blocked:
             result = self._build_blocked_result(state, query_risk_check)
-            answer_status = self._resolve_answer_status(result)
-            return KbChatResponse(
-                answer=result["answer"],
-                answer_text=result["answer"],
-                answer_status=answer_status,
-                backend_citations=[],
+            result["status"] = self._resolve_answer_status(result)
+            result["latency_ms"] = int((perf_counter() - started_at) * 1000)
+            result["trace"] = self._trace_builder.build_log_trace_payload(
+                state=state,
+                result=result,
                 retrieved_docs=[],
-                assistant_id=state.get("assistant_id"),
-                assistant_name=state.get("assistant_name"),
-                session_id=None,
-                log_id=None,
             )
+            return result
 
         graph_result = await self._runner.invoke(state["input"])
         graph_response = dict(graph_result.get("response") or {})
@@ -429,18 +448,15 @@ class AgentRunService:
         )
         if answer_risk_check.blocked:
             result = self._build_blocked_result({**state, **result}, answer_risk_check)
-        answer_status = self._resolve_answer_status(result)
-        return KbChatResponse(
-            answer=result.get("answer", ""),
-            answer_text=result.get("answer", ""),
-            answer_status=answer_status,
-            backend_citations=result.get("retrieved_docs", []),
-            retrieved_docs=result.get("retrieved_docs", []),
-            assistant_id=state.get("assistant_id"),
-            assistant_name=state.get("assistant_name"),
-            session_id=None,
-            log_id=None,
+        result["answer_status"] = self._resolve_answer_status(result)
+        result["status"] = result["answer_status"]
+        result["latency_ms"] = int((perf_counter() - started_at) * 1000)
+        result["trace"] = self._trace_builder.build_log_trace_payload(
+            state=state,
+            result=result,
+            retrieved_docs=list(result.get("retrieved_docs") or []),
         )
+        return result
 
     async def stream(
         self,

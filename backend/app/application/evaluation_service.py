@@ -7,8 +7,8 @@ import re
 from time import perf_counter
 from typing import Any
 
-from app.application.agent.input_builder import prepare_agent_input
-from app.application.agent.runner import get_agent_runner
+from app.application.agent.input_builder import AgentRunRequest
+from app.application.agent.run_service import get_agent_run_service
 from app.core.llm.factory import get_llm_for_analysis
 from app.db.models import EvalCase, EvalDataset, EvalRun, KnowledgeBase, User
 from app.models.schemas.evaluation import (
@@ -20,6 +20,7 @@ from app.models.schemas.evaluation import (
     EvalDatasetUpdate,
     EvalRunCreate,
 )
+from app.repositories.assistant_profile_repository import AssistantProfileRepository
 from app.repositories.evaluation_repository import EvaluationRepository
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
@@ -227,20 +228,54 @@ class EvaluationService:
         if dataset is None:
             return None
 
+        knowledge_base = await self._require_evaluation_knowledge_base(
+            db=db,
+            current_user=current_user,
+            knowledge_base_id=int(dataset.knowledge_base_id),
+        )
+        assistant_record = await AssistantProfileRepository(
+            db, current_user.id, current_user
+        ).get_by_id(body.assistant_id, active_only=True)
+        if assistant_record is None:
+            raise ValueError("Assistant 不存在、未启用或无权访问")
+        assistant = assistant_record.assistant
+        if int(assistant.team_id) != int(knowledge_base.team_id):
+            raise ValueError("Assistant 与评测知识库必须属于同一团队")
+
         cases = await repo.list_cases(dataset_id, enabled_only=True)
+        case_items = [self._build_case_snapshot(case) for case in cases]
         return await repo.create_run(
             dataset_id=dataset_id,
             run_name=body.run_name,
             kb_snapshot={
                 "knowledge_base_id": int(dataset.knowledge_base_id),
+                "knowledge_base_name": knowledge_base.name,
+                "knowledge_base_purpose": knowledge_base.purpose,
+                "team_id": int(knowledge_base.team_id),
+                "dataset_id": int(dataset.id),
+                "dataset_name": dataset.name,
                 "dataset_version": dataset.version,
+            },
+            assistant_snapshot={
+                "assistant_id": int(assistant.id),
+                "name": assistant.name,
+                "llm_model_key": assistant.llm_model_key,
+                "persona_prompt": assistant.persona_prompt,
+                "rule_template": assistant.rule_template,
+            },
+            case_snapshot={"items": case_items},
+            policy_snapshot={
+                "agent_workflow": "agent",
+                "judge_model_role": "analysis",
+                "answer_passing_score": ANSWER_PASSING_SCORE,
+                "evidence_match_rule": "snippet_then_chunk_then_document",
             },
             model_config={
                 "agent_workflow": "agent",
                 "judge_model_role": "analysis",
                 "answer_passing_score": ANSWER_PASSING_SCORE,
             },
-            total_cases=len(cases),
+            total_cases=len(case_items),
         )
 
     async def submit_dataset_runs(
@@ -250,6 +285,7 @@ class EvaluationService:
         current_user: User,
         dataset_ids: list[int],
         run_name: str | None,
+        assistant_id: int,
     ) -> list[EvalRun]:
         runs: list[EvalRun] = []
         for dataset_id in self._unique_ints(dataset_ids):
@@ -257,7 +293,7 @@ class EvaluationService:
                 db=db,
                 current_user=current_user,
                 dataset_id=dataset_id,
-                body=EvalRunCreate(run_name=run_name),
+                body=EvalRunCreate(run_name=run_name, assistant_id=assistant_id),
             )
             if run is None:
                 raise ValueError("评测集不存在或无权访问")
@@ -294,24 +330,22 @@ class EvaluationService:
         run_id: int,
     ) -> EvalRun | None:
         repo = EvaluationRepository(db, current_user.id, current_user)
-        run = await repo.get_run(run_id)
+        run = await repo.claim_pending_run(run_id)
         if run is None:
-            return None
-        dataset = await repo.get_dataset(int(run.dataset_id))
-        if dataset is None:
-            return None
-        cases = await repo.list_cases(int(run.dataset_id), enabled_only=True)
+            return await repo.get_run(run_id)
+        case_items = list(dict(run.case_snapshot or {}).get("items") or [])
 
         passed_cases = 0
         failed_cases = 0
         scores: list[int] = []
         try:
-            for case in cases:
+            for case in case_items:
+                if await repo.is_run_canceled(int(run.id)):
+                    return await repo.get_run(int(run.id))
                 result_status, score = await self._execute_case(
                     db=db,
                     current_user=current_user,
                     repo=repo,
-                    dataset=dataset,
                     run=run,
                     case=case,
                 )
@@ -320,6 +354,7 @@ class EvaluationService:
                     passed_cases += 1
                 else:
                     failed_cases += 1
+                await repo.touch_run(run)
 
             average_score = int(round(sum(scores) / len(scores))) if scores else 0
             return await repo.finish_run(
@@ -329,7 +364,8 @@ class EvaluationService:
                 failed_cases=failed_cases,
                 average_score=average_score,
             )
-        except Exception:
+        except Exception as exc:
+            run.error_message = str(exc) or "评测任务执行失败"
             return await repo.mark_run_failed(run)
 
     async def _execute_case(
@@ -338,9 +374,8 @@ class EvaluationService:
         db,
         current_user: User,
         repo: EvaluationRepository,
-        dataset: EvalDataset,
         run: EvalRun,
-        case: EvalCase,
+        case: dict[str, Any],
     ) -> tuple[str, int]:
         started_at = perf_counter()
         actual_answer = ""
@@ -351,42 +386,67 @@ class EvaluationService:
         status = "failed"
 
         try:
-            agent_input = prepare_agent_input(
-                query=case.question,
+            assistant_snapshot = dict(run.assistant_snapshot or {})
+            agent_result = await get_agent_run_service().execute_stateless(
+                AgentRunRequest(
+                    query=str(case["question"]),
+                    team_id=int(dict(run.kb_snapshot or {}).get("team_id") or 0) or None,
+                    knowledge_base_id=int(dict(run.kb_snapshot or {}).get("knowledge_base_id") or 0) or None,
+                    assistant_id=assistant_snapshot.get("assistant_id"),
+                    assistant_name=assistant_snapshot.get("name"),
+                    assistant_llm_model_key=assistant_snapshot.get("llm_model_key"),
+                    assistant_persona_prompt=assistant_snapshot.get("persona_prompt"),
+                    assistant_rule_template=assistant_snapshot.get("rule_template"),
+                    source_surface="evaluation",
+                ),
                 user_id=current_user.id,
-                team_id=int(dataset.team_id) if getattr(dataset, "team_id", None) else None,
-                knowledge_base_id=int(dataset.knowledge_base_id),
-                chat_history=[],
-                metadata={"source_surface": "evaluation"},
             )
-            agent_state = await get_agent_runner().invoke(agent_input)
-            response = agent_state["response"]
-            actual_answer = response["answer"]
-            retrieved_docs = list(response["sources"])
+            actual_answer = str(agent_result.get("answer") or "")
+            retrieved_docs = list(agent_result.get("retrieved_docs") or [])
+            if agent_result.get("answer_status") == "blocked":
+                judge_result = {"blocked": True, "content_risk_hits": agent_result.get("content_risk_hits", [])}
+                error_message = None
+                raise RuntimeError("__evaluation_risk_blocked__")
             judge_result = await self._judge_answer(
-                question=case.question,
-                expected_answer=case.expected_answer,
+                question=str(case["question"]),
+                expected_answer=str(case["expected_answer"]),
                 actual_answer=actual_answer,
-                expected_snippets=list(case.expected_snippets or []),
+                expected_snippets=list(case.get("expected_snippets") or []),
                 retrieved_docs=retrieved_docs,
             )
             score = self._normalize_score(judge_result.get("score"))
+            retrieved_doc_ids = self._extract_retrieved_doc_ids(retrieved_docs)
             retrieved_chunk_ids = self._extract_retrieved_chunk_ids(retrieved_docs)
-            chunk_matched = self._is_chunk_matched(
-                expected_chunk_ids=self._unique_ints(case.expected_chunk_ids or []),
+            retrieval_metrics = self._calculate_retrieval_metrics(
+                expected_doc_ids=self._unique_ints(case.get("expected_doc_ids") or []),
+                expected_chunk_ids=self._unique_ints(case.get("expected_chunk_ids") or []),
+                expected_snippets=self._non_empty_strings(case.get("expected_snippets") or []),
+                retrieved_docs=retrieved_docs,
+                retrieved_doc_ids=retrieved_doc_ids,
                 retrieved_chunk_ids=retrieved_chunk_ids,
             )
-            judge_result["chunk_matched"] = chunk_matched
-            judge_result["answer_passing_score"] = ANSWER_PASSING_SCORE
-            status = "passed" if score >= ANSWER_PASSING_SCORE and chunk_matched else "failed"
+            passing_score = int(
+                dict(run.policy_snapshot or {}).get("answer_passing_score") or ANSWER_PASSING_SCORE
+            )
+            judge_result["chunk_matched"] = retrieval_metrics["chunk_matched"]
+            judge_result["evidence_matched"] = retrieval_metrics["evidence_matched"]
+            judge_result["retrieval_metrics"] = retrieval_metrics
+            judge_result["answer_passing_score"] = passing_score
+            status = (
+                "passed"
+                if score >= passing_score and bool(retrieval_metrics["evidence_matched"])
+                else "failed"
+            )
         except Exception as exc:
-            error_message = str(exc) or "评测用例执行失败"
+            if str(exc) != "__evaluation_risk_blocked__":
+                error_message = str(exc) or "评测用例执行失败"
             retrieved_chunk_ids = []
 
         latency_ms = int((perf_counter() - started_at) * 1000)
         await repo.create_case_result(
             run_id=int(run.id),
-            case_id=int(case.id),
+            case_id=case.get("case_id"),
+            case_snapshot=case,
             status=status,
             score=score,
             actual_answer=actual_answer,
@@ -397,6 +457,17 @@ class EvaluationService:
             error_message=error_message,
         )
         return status, score
+
+    @staticmethod
+    def _build_case_snapshot(case: EvalCase) -> dict[str, Any]:
+        return {
+            "case_id": int(case.id),
+            "question": case.question,
+            "expected_answer": case.expected_answer,
+            "expected_doc_ids": list(case.expected_doc_ids or []),
+            "expected_snippets": list(case.expected_snippets or []),
+            "expected_chunk_ids": list(case.expected_chunk_ids or []),
+        }
 
     async def _judge_answer(
         self,
@@ -504,10 +575,126 @@ class EvaluationService:
         return EvaluationService._unique_ints(ids)
 
     @staticmethod
-    def _is_chunk_matched(*, expected_chunk_ids: list[int], retrieved_chunk_ids: list[int]) -> bool:
-        if not expected_chunk_ids:
-            return True
-        return bool(set(expected_chunk_ids).intersection(retrieved_chunk_ids))
+    def _calculate_retrieval_metrics(
+        *,
+        expected_doc_ids: list[int],
+        expected_chunk_ids: list[int],
+        expected_snippets: list[str],
+        retrieved_docs: list[dict[str, Any]],
+        retrieved_doc_ids: list[int],
+        retrieved_chunk_ids: list[int],
+    ) -> dict[str, Any]:
+        expected_doc_set = set(expected_doc_ids)
+        expected_chunk_set = set(expected_chunk_ids)
+        retrieved_doc_set = set(retrieved_doc_ids)
+        retrieved_chunk_set = set(retrieved_chunk_ids)
+
+        normalized_snippets: list[str] = []
+        for item in expected_snippets:
+            normalized = EvaluationService._normalize_evidence_text(item)
+            if normalized:
+                normalized_snippets.append(normalized)
+        normalized_contents = [
+            EvaluationService._normalize_evidence_text(
+                str(doc.get("content") or doc.get("chunk_text") or "")
+            )
+            for doc in retrieved_docs
+        ]
+        matched_snippets = [
+            snippet
+            for snippet in normalized_snippets
+            if any(snippet in content for content in normalized_contents)
+        ]
+
+        doc_recall = (
+            len(expected_doc_set.intersection(retrieved_doc_set)) / len(expected_doc_set)
+            if expected_doc_set
+            else 1.0
+        )
+        chunk_recall = (
+            len(expected_chunk_set.intersection(retrieved_chunk_set)) / len(expected_chunk_set)
+            if expected_chunk_set
+            else 1.0
+        )
+        snippet_recall = (
+            len(matched_snippets) / len(normalized_snippets)
+            if normalized_snippets
+            else 1.0
+        )
+
+        first_relevant_rank = EvaluationService._first_relevant_rank(
+            retrieved_docs=retrieved_docs,
+            expected_doc_ids=expected_doc_set,
+            expected_chunk_ids=expected_chunk_set,
+            normalized_snippets=normalized_snippets,
+        )
+        chunk_matched = not expected_chunk_set or chunk_recall > 0
+        if normalized_snippets:
+            evidence_matched = snippet_recall > 0
+            evidence_basis = "snippet"
+        elif expected_chunk_set:
+            evidence_matched = chunk_matched
+            evidence_basis = "chunk"
+        elif expected_doc_set:
+            evidence_matched = doc_recall > 0
+            evidence_basis = "document"
+        else:
+            evidence_matched = True
+            evidence_basis = "unconstrained"
+
+        return {
+            "retrieved_count": len(retrieved_docs),
+            "document_recall": round(doc_recall, 4),
+            "chunk_recall": round(chunk_recall, 4),
+            "snippet_recall": round(snippet_recall, 4),
+            "first_relevant_rank": first_relevant_rank,
+            "reciprocal_rank": round(1 / first_relevant_rank, 4) if first_relevant_rank else 0.0,
+            "chunk_matched": chunk_matched,
+            "evidence_matched": evidence_matched,
+            "evidence_basis": evidence_basis,
+        }
+
+    @staticmethod
+    def _first_relevant_rank(
+        *,
+        retrieved_docs: list[dict[str, Any]],
+        expected_doc_ids: set[int],
+        expected_chunk_ids: set[int],
+        normalized_snippets: list[str],
+    ) -> int | None:
+        for rank, doc in enumerate(retrieved_docs, start=1):
+            metadata = dict(doc.get("metadata") or {})
+            doc_id = metadata.get("document_id") or doc.get("document_id")
+            normalized_doc_ids = EvaluationService._unique_ints([doc_id])
+            chunk_ids = set(
+                EvaluationService._unique_ints(
+                    [
+                        metadata.get("document_chunk_id"),
+                        metadata.get("child_chunk_id"),
+                        *(metadata.get("merged_child_chunk_ids") or []),
+                    ]
+                )
+            )
+            content = EvaluationService._normalize_evidence_text(
+                str(doc.get("content") or doc.get("chunk_text") or "")
+            )
+            if normalized_snippets and any(snippet in content for snippet in normalized_snippets):
+                return rank
+            if not normalized_snippets and expected_chunk_ids.intersection(chunk_ids):
+                return rank
+            if (
+                not normalized_snippets
+                and not expected_chunk_ids
+                and expected_doc_ids
+                and normalized_doc_ids
+                and normalized_doc_ids[0] in expected_doc_ids
+            ):
+                return rank
+        return None
+
+    @staticmethod
+    def _normalize_evidence_text(value: str) -> str:
+        return re.sub(r"\s+", "", str(value or "")).casefold()
 
     @staticmethod
     def _normalize_score(value: Any) -> int:
