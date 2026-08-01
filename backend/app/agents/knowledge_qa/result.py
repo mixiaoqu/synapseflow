@@ -85,8 +85,9 @@ def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
             "budget": dict(retrieval_result.get("budget") or {}),
             "metrics": dict(retrieval_result.get("metrics") or {}),
             "warnings": list(retrieval_result.get("warnings") or []),
-            "subtask_results": list(retrieval_result.get("subtask_results") or []),
+            "coverage_status": retrieval_result.get("coverage_status"),
             "coverage_complete": bool(retrieval_result.get("coverage_complete")),
+            "coverage_audit": dict(retrieval_result.get("coverage_audit") or {}),
         },
     }
     result["evidence"] = {

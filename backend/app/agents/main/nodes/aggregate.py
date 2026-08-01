@@ -11,6 +11,15 @@ from app.agents.main.state import AgentState
 
 def _source_identity(item: dict[str, Any]) -> str:
     source = dict(item.get("source") or {})
+    ref_id = str(item.get("ref_id") or "").strip()
+    if ref_id:
+        return f"ref:{ref_id}"
+    parent_chunk_id = source.get("parent_chunk_id")
+    if parent_chunk_id is not None:
+        return f"parent:{parent_chunk_id}"
+    document_chunk_id = source.get("document_chunk_id")
+    if document_chunk_id is not None:
+        return f"chunk:{document_chunk_id}"
     document_id = source.get("document_id")
     if document_id is not None:
         return f"document:{document_id}"
@@ -19,7 +28,7 @@ def _source_identity(item: dict[str, Any]) -> str:
     if document_title:
         return f"title:{document_title}"
 
-    return f"ref:{str(item.get('ref_id') or '').strip()}"
+    return f"content:{str(item.get('content') or '').strip().casefold()}"
 
 
 def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -44,11 +53,17 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
     business_data: list[dict[str, Any]] = []
     clarifications: list[dict[str, Any]] = []
     result_errors: list[dict[str, Any]] = []
-    knowledge_diagnostics: dict[str, Any] = {}
+    knowledge_goal_diagnostics: list[dict[str, Any]] = []
     for run in runs:
         diagnostics = dict(run.get("diagnostics") or {})
-        if diagnostics and not knowledge_diagnostics:
-            knowledge_diagnostics = diagnostics
+        if diagnostics:
+            knowledge_goal_diagnostics.append(
+                {
+                    "task_id": run.get("task_id"),
+                    "goal": run.get("goal"),
+                    **diagnostics,
+                }
+            )
     for sub_agent_result in sub_agent_results:
         data = dict(sub_agent_result.get("data") or {})
         content = data.get("content")
@@ -119,8 +134,18 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         status = answer_status = "answered"
     else:
         status = answer_status = "failed"
+    primary_knowledge_diagnostics = (
+        {
+            key: value
+            for key, value in knowledge_goal_diagnostics[0].items()
+            if key not in {"task_id", "goal"}
+        }
+        if knowledge_goal_diagnostics
+        else {}
+    )
     return {
-        **knowledge_diagnostics,
+        **primary_knowledge_diagnostics,
+        "knowledge_goal_diagnostics": knowledge_goal_diagnostics,
         "status": status,
         "answer_status": answer_status,
         "success_count": len(successes),

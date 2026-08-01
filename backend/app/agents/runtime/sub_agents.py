@@ -30,6 +30,7 @@ def _build_shared_input(
     intent = dict(routing.get("intent") or {})
     step_goal = str(step.get("goal") or "").strip()
     goal = step_goal or str(intent.get("goal") or "").strip()
+    intent["goal"] = goal
     original_query = str(agent_input.get("query") or "").strip()
     metadata = dict(agent_input.get("metadata") or {})
     metadata["workflow"] = workflow_id
@@ -55,6 +56,11 @@ def _build_shared_input(
         "original_query": original_query,
         "query": goal or original_query,
         "intent": intent,
+        "expected_facts": [
+            str(item).strip()
+            for item in list(step.get("expected_facts") or [])
+            if str(item).strip()
+        ],
         "dependency_results": dependency_results,
     }
 

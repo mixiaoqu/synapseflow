@@ -70,6 +70,7 @@ class AgentTaskStep(TypedDict):
     task_id: str
     sub_agent_id: str
     goal: str
+    expected_facts: list[str]
     depends_on: list[str]
 
 

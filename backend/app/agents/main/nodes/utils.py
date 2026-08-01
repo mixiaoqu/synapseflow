@@ -97,16 +97,16 @@ def knowledge_diagnostics(child_state: dict[str, Any]) -> dict[str, Any]:
     retrieval_analysis = dict(child_state.get("retrieval_analysis") or {})
     retrieval_result = dict(child_state.get("retrieval_result") or {})
     return {
+        "goal": child_state.get("query"),
         "question_type": child_state.get("question_type"),
         "retrieval_complexity": child_state.get("retrieval_complexity"),
         "route_reason": retrieval_analysis.get("reason"),
         "retrieval_execution_plan": dict(child_state.get("retrieval_execution_plan") or {}),
-        "standalone_query": child_state.get("standalone_query"),
+        "goal_query": child_state.get("goal_query"),
         "business_objects": list(child_state.get("business_objects") or []),
         "action": child_state.get("action"),
         "query_parameters": dict(child_state.get("query_parameters") or {}),
-        "ambiguity": dict(child_state.get("ambiguity") or {}),
-        "retrieval_subtasks": list(child_state.get("retrieval_subtasks") or []),
+        "evidence_requirements": list(child_state.get("evidence_requirements") or []),
         "query_plan_attempt": int(child_state.get("query_plan_attempt") or 1),
         "retrieval_feedback": dict(child_state.get("retrieval_feedback") or {}),
         "retrieval_attempts": list(child_state.get("retrieval_attempts") or []),
@@ -120,7 +120,7 @@ def knowledge_diagnostics(child_state: dict[str, Any]) -> dict[str, Any]:
         "retrieval_budget": dict(retrieval_result.get("budget") or {}),
         "retrieval_metrics": dict(retrieval_result.get("metrics") or {}),
         "retrieval_warnings": list(retrieval_result.get("warnings") or []),
-        "subtask_results": list(retrieval_result.get("subtask_results") or []),
+        "coverage_status": retrieval_result.get("coverage_status"),
         "coverage_complete": bool(retrieval_result.get("coverage_complete")),
         "coverage_audit": dict(retrieval_result.get("coverage_audit") or {}),
     }

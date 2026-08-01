@@ -21,12 +21,25 @@ def _validate_steps(
 ) -> list[dict[str, Any]]:
     steps: list[dict[str, Any]] = []
     task_ids: set[str] = set()
-    for raw in raw_steps:
+    for raw in raw_steps[:4]:
         if not isinstance(raw, dict):
             raise ValueError("Plan step must be an object")
         task_id = str(raw.get("task_id") or "").strip()
         sub_agent_id = str(raw.get("sub_agent_id") or "").strip()
         goal = str(raw.get("goal") or "").strip()
+        raw_expected_facts = raw.get("expected_facts") or []
+        expected_fact_items = (
+            [raw_expected_facts]
+            if isinstance(raw_expected_facts, str)
+            else list(raw_expected_facts)
+        )
+        expected_facts = list(
+            dict.fromkeys(
+                str(item).strip()
+                for item in expected_fact_items
+                if str(item).strip()
+            )
+        )[:6]
         depends_on = [str(item).strip() for item in list(raw.get("depends_on") or [])]
         if not task_id or task_id in task_ids:
             raise ValueError("Plan contains missing or duplicate task_id")
@@ -40,11 +53,14 @@ def _validate_steps(
                 "task_id": task_id,
                 "sub_agent_id": sub_agent_id,
                 "goal": goal,
+                "expected_facts": expected_facts,
                 "depends_on": depends_on,
             }
         )
     if any(dep not in task_ids for step in steps for dep in step["depends_on"]):
         raise ValueError("Plan contains unknown dependency")
+    if sum(step["sub_agent_id"] == "knowledge_qa" for step in steps) > 3:
+        raise ValueError("Plan contains more than three knowledge goals")
     if not steps:
         raise ValueError("Plan must contain at least one task")
     pending = {step["task_id"]: set(step["depends_on"]) for step in steps}
@@ -67,7 +83,7 @@ async def _plan_multi_agent(
     routing = state["routing"]
     prompt = f"""
 Create the smallest executable task plan. Return JSON only:
-{{"steps":[{{"task_id":"task_1","sub_agent_id":"knowledge_qa","goal":"standalone goal","depends_on":[]}}]}}
+{{"steps":[{{"task_id":"goal_1","sub_agent_id":"knowledge_qa","goal":"one standalone answer goal","expected_facts":["facts needed to answer this goal"],"depends_on":[]}}]}}
 
 Available capability IDs: {json.dumps(routing["target_sub_agents"], ensure_ascii=False)}
 User goal: {routing["intent"]["goal"]}
@@ -76,6 +92,10 @@ Rules:
 - task_id must be unique and stable within this plan.
 - depends_on may reference task_id only, never capability ID.
 - The same capability may be used by multiple independent tasks.
+- For knowledge_qa, split only genuinely independent answer goals, at most 3. Keep a simple request as one goal.
+- Each knowledge_qa goal must be standalone, single-purpose, and preserve the user's objects, actions, conditions, and constraints.
+- expected_facts describes the minimum facts needed to answer that goal; it is not a retrieval query.
+- Do not create separate goals for synonyms or alternative query phrasings.
 - Do not create tool arguments or unsupported capabilities.
 """.strip()
     llm = (
@@ -98,7 +118,7 @@ def build_plan_node(*, planner_llm_factory: Callable[[], Any] | None):
         started_at = perf_counter()
         routing = state["routing"]
         targets = list(routing["target_sub_agents"])
-        if routing["route_type"] == ROUTE_MULTI_SUB_AGENT:
+        if routing["route_type"] == ROUTE_MULTI_SUB_AGENT or "knowledge_qa" in targets:
             steps = await _plan_multi_agent(state, planner_llm_factory=planner_llm_factory)
         else:
             steps = [
@@ -106,6 +126,7 @@ def build_plan_node(*, planner_llm_factory: Callable[[], Any] | None):
                     "task_id": "task_1",
                     "sub_agent_id": targets[0],
                     "goal": routing["intent"]["goal"] or state["input"]["query"],
+                    "expected_facts": [],
                     "depends_on": [],
                 }
             ]

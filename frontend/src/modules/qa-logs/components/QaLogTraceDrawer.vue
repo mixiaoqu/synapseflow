@@ -30,7 +30,6 @@ const emit = defineEmits<{
 
 type QueryStat = { query: string; chunk_count: number };
 type SourceKind = "vector" | "lexical" | "graph";
-type SubtaskTraceResult = NonNullable<QaLogTracePayload["subtask_results"]>[number];
 
 const emptyReasonMeta: Record<string, { title: string; advice: string }> = {
   disabled: {
@@ -115,15 +114,7 @@ function sourceTagType(doc: QaLogDiagnosticDoc) {
 
 const tracePayload = computed<QaLogTracePayload | null>(() => props.detail?.tracePayload ?? null);
 const knowledgePlan = computed(() => tracePayload.value?.knowledge_plan ?? null);
-const retrievalSubtasks = computed(() => knowledgePlan.value?.subtasks || []);
-const subtaskResults = computed(() => tracePayload.value?.subtask_results || []);
-const subtaskResultById = computed(() => {
-  return new Map(
-    subtaskResults.value
-      .filter((item) => item.id)
-      .map((item): [string, SubtaskTraceResult] => [item.id as string, item]),
-  );
-});
+const knowledgeGoals = computed(() => knowledgePlan.value?.knowledge_goals || []);
 const queryClues = computed(() => tracePayload.value?.query_clues ?? null);
 const sourceSummary = computed(() => tracePayload.value?.source_summary ?? null);
 const funnel = computed(() => tracePayload.value?.funnel ?? null);
@@ -377,14 +368,14 @@ watch(
           </div>
 
           <div
-            v-if="knowledgePlan?.standalone_query"
+            v-if="knowledgePlan?.goal_query"
             class="qa-log-trace-drawer__query-hero"
           >
             <p class="qa-log-trace-drawer__query-hero-label">
-              Standalone Query
+              Goal Query
             </p>
             <div class="qa-log-trace-drawer__query-hero-content">
-              {{ knowledgePlan.standalone_query }}
+              {{ knowledgePlan.goal_query }}
             </div>
           </div>
 
@@ -394,43 +385,30 @@ watch(
 
           <div class="qa-log-trace-drawer__rewrite-stack">
             <article
-              v-if="retrievalSubtasks.length > 0"
+              v-if="knowledgeGoals.length > 0 || (knowledgePlan?.evidence_requirements?.length || 0) > 0"
               class="qa-log-trace-drawer__panel qa-log-trace-drawer__panel--vector"
             >
               <h4>
                 <el-icon><ChatDotRound /></el-icon>
-                检索子任务（{{ knowledgePlan?.attempt_count || 1 }} 轮）
+                主图目标与证据要求（{{ knowledgePlan?.attempt_count || 1 }} 轮）
               </h4>
               <ul class="qa-log-trace-drawer__query-list">
                 <li
-                  v-for="(task, index) in retrievalSubtasks"
-                  :key="task.id || `${task.goal}-${index}`"
+                  v-for="(goal, index) in knowledgeGoals"
+                  :key="goal.task_id || `${goal.goal}-${index}`"
                 >
                   <span>{{ index + 1 }}</span>
                   <p>
-                    {{ task.goal }}
-                    <small v-if="task.evidence_requirement">
-                      证据要求：{{ task.evidence_requirement }}
-                    </small>
-                    <small>
-                      覆盖状态：{{
-                        subtaskResultById.get(task.id || "")?.coverage_status || "未审计"
-                      }}
-                    </small>
-                    <small
-                      v-if="subtaskResultById.get(task.id || '')?.coverage_reason"
-                    >
-                      审计说明：{{
-                        subtaskResultById.get(task.id || "")?.coverage_reason
-                      }}
-                    </small>
-                    <small
-                      v-for="claim in subtaskResultById.get(task.id || '')?.supported_claims || []"
-                      :key="claim"
-                    >
-                      已支持：{{ claim }}
-                    </small>
+                    {{ goal.goal }}
+                    <small>覆盖状态：{{ goal.coverage_status || "未审计" }}</small>
                   </p>
+                </li>
+                <li
+                  v-for="(requirement, index) in knowledgePlan?.evidence_requirements || []"
+                  :key="`requirement-${requirement}-${index}`"
+                >
+                  <span>{{ knowledgeGoals.length + index + 1 }}</span>
+                  <p>证据要求：{{ requirement }}</p>
                 </li>
               </ul>
             </article>

@@ -13,6 +13,7 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     original_query: str
     query: str
     intent: Dict[str, Any]
+    expected_facts: List[str]
     dependency_results: Dict[str, Dict[str, Any]]
     page_context: Dict[str, Any]
     allowed_document_statuses: List[str]
@@ -28,19 +29,19 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     needs_relation: bool
     needs_summary: bool
     retrieval_execution_plan: Dict[str, Any]
-    standalone_query: str
+    goal_query: str
     business_objects: List[str]
     action: str
     query_parameters: Dict[str, Any]
-    ambiguity: Dict[str, Any]
-    retrieval_subtasks: List[Dict[str, Any]]
+    evidence_requirements: List[str]
     current_query_plan: Dict[str, Any]
     query_plan_attempt: int
     replan_exhausted: bool
     retrieval_feedback: Dict[str, Any]
     retrieval_attempts: List[Dict[str, Any]]
     accumulated_evidence_items: List[Dict[str, Any]]
-    subtask_coverage: List[Dict[str, Any]]
+    accumulated_candidate_docs: List[Dict[str, Any]]
+    coverage_audit: Dict[str, Any]
     should_replan: bool
     semantic_queries: List[str]
     lexical_terms: List[str]

@@ -47,10 +47,7 @@ def create_knowledge_qa_graph(
         attempt = previous_attempt + 1 if state.get("should_replan") else 1
         query_plan = await build_knowledge_query_plan(
             goal,
-            original_query=str(state.get("query") or "").strip(),
-            chat_history=list(state.get("chat_history") or []),
-            memory_summary=state.get("memory_summary"),
-            page_context=dict(state.get("page_context") or {}),
+            expected_facts=list(state.get("expected_facts") or []),
             attempt=attempt,
             previous_plan=dict(state.get("current_query_plan") or {}),
             retrieval_feedback=dict(state.get("retrieval_feedback") or {}),
@@ -88,12 +85,11 @@ def create_knowledge_qa_graph(
                 "规划轮次": attempt,
                 "是否二次规划": attempt > 1,
                 "检索复杂度": query_plan.get("retrieval_complexity"),
-                "独立问题": query_plan.get("standalone_query"),
+                "目标查询": query_plan.get("goal_query"),
                 "业务对象": query_plan.get("business_objects"),
                 "用户动作": query_plan.get("action"),
                 "参数": query_plan.get("query_parameters"),
-                "是否需要澄清": (query_plan.get("ambiguity") or {}).get("needs_clarification"),
-                "检索子任务数": len(query_plan.get("retrieval_subtasks") or []),
+                "预期事实数": len(query_plan.get("evidence_requirements") or []),
                 "二次规划是否已无新查询": query_plan.get("replan_exhausted"),
                 "语义查询数": len(query_plan.get("semantic_queries") or []),
                 "候选实体数": len(query_plan.get("candidate_entities") or []),
@@ -111,7 +107,7 @@ def create_knowledge_qa_graph(
             activity_text=(
                 "已根据首轮证据重新规划查询"
                 if attempt > 1
-                else "已理解问题并生成检索子任务"
+                else "已理解目标并生成检索表达"
             ),
             activity_status="completed",
         )
@@ -196,15 +192,8 @@ def create_knowledge_qa_graph(
                 "候选实体数": len(state.get("candidate_entities") or []),
                 "关系查询数": len(state.get("relation_queries") or []),
                 "检索策略": state.get("retrieval_strategy"),
-                "检索子任务数": len(state.get("retrieval_subtasks") or []),
-                "已覆盖子任务数": len(
-                    [
-                        item
-                        for item in retrieval_result.get("subtask_results") or []
-                        if item.get("covered")
-                    ]
-                ),
-                "子任务是否全部覆盖": retrieval_result.get("coverage_complete"),
+                "证据覆盖状态": retrieval_result.get("coverage_status"),
+                "证据是否完整": retrieval_result.get("coverage_complete"),
                 "是否触发二次规划": result.get("should_replan"),
                 "文本命中数": metrics.get("text_hit_count"),
                 "图谱命中数": metrics.get("graph_hit_count"),

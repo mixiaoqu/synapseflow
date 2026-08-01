@@ -63,18 +63,6 @@ class AgentRunTraceBuilder:
         candidate_entities = _string_items(result.get("candidate_entities")) or _string_items(
             state.get("candidate_entities")
         )
-        retrieval_subtasks = [
-            dict(item)
-            for item in list(
-                result.get("retrieval_subtasks") or state.get("retrieval_subtasks") or []
-            )
-            if isinstance(item, dict)
-        ]
-        subtask_results = [
-            dict(item)
-            for item in list(result.get("subtask_results") or [])
-            if isinstance(item, dict)
-        ]
         retrieval_metrics = (
             dict(result.get("retrieval_metrics") or {})
             if isinstance(result.get("retrieval_metrics"), dict)
@@ -222,11 +210,16 @@ class AgentRunTraceBuilder:
         return {
             "knowledge_plan": {
                 "attempt_count": int(result.get("query_plan_attempt") or 1),
-                "standalone_query": str(
-                    result.get("standalone_query")
-                    or state.get("standalone_query")
+                "goal_query": str(
+                    result.get("goal_query")
+                    or state.get("goal_query")
                     or ""
                 ).strip(),
+                "knowledge_goals": list(result.get("knowledge_goal_diagnostics") or []),
+                "evidence_requirements": _string_items(
+                    result.get("evidence_requirements")
+                    or state.get("evidence_requirements")
+                ),
                 "business_objects": _string_items(
                     result.get("business_objects") or state.get("business_objects")
                 ),
@@ -236,14 +229,11 @@ class AgentRunTraceBuilder:
                     or state.get("query_parameters")
                     or {}
                 ),
-                "ambiguity": dict(
-                    result.get("ambiguity") or state.get("ambiguity") or {}
-                ),
-                "subtasks": retrieval_subtasks,
+                "coverage_status": result.get("coverage_status"),
+                "coverage_audit": dict(result.get("coverage_audit") or {}),
                 "retrieval_attempts": list(result.get("retrieval_attempts") or []),
                 "retrieval_feedback": dict(result.get("retrieval_feedback") or {}),
             },
-            "subtask_results": subtask_results,
             "query_clues": {
                 "semantic_queries": semantic_queries,
                 "lexical_terms": lexical_terms,
