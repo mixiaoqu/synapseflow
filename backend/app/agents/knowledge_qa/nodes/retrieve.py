@@ -906,7 +906,7 @@ async def knowledge_qa_retrieve_node(
                 document_statuses=state.get("allowed_document_statuses"),
                 recall_k=recall_k,
                 lexical_k=lexical_k,
-                rerank_enabled=False,
+                rerank_enabled=rerank_enabled,
             )
         except (httpx.HTTPError, OSError, TimeoutError) as exc:
             logger.warning(
@@ -937,22 +937,16 @@ async def knowledge_qa_retrieve_node(
         retrieved_docs = list(text_result.get("retrieved_docs") or [])
         primary_docs = [doc for doc in retrieved_docs if _classify_evidence(doc) == "primary"]
         supporting_docs = [doc for doc in retrieved_docs if _classify_evidence(doc) != "primary"]
-        if rerank_enabled:
-            ranked_docs, rerank_trace = await rerank_retrieved_docs(
-                goal,
-                primary_docs,
-                per_subtask_top_k,
-            )
-        else:
-            ranked_docs = primary_docs[:per_subtask_top_k]
-            rerank_trace = {
-                "enabled": False,
-                "input_count": len(primary_docs),
-                "output_count": len(ranked_docs),
-                "latency_ms": 0,
-                "rerank_threshold": None,
-                "threshold_filtered_count": 0,
-            }
+        trace = dict(text_result.get("retrieval_trace") or {})
+        child_rerank_trace = dict(trace.get("rerank") or {})
+        ranked_docs = primary_docs[:per_subtask_top_k]
+        rerank_trace = {
+            **child_rerank_trace,
+            "stage": "child_chunk",
+            "enabled": bool(child_rerank_trace.get("rerank_enabled")),
+            "input_count": int(child_rerank_trace.get("candidate_count") or 0),
+            "output_count": int(child_rerank_trace.get("final_count") or 0),
+        }
         empty_reason = None
         if not ranked_docs:
             if (
@@ -972,7 +966,6 @@ async def knowledge_qa_retrieve_node(
                 "evidence_requirement": subtask.get("evidence_requirement"),
             }
             annotated_docs.append(annotated)
-        trace = dict(text_result.get("retrieval_trace") or {})
         return {
             "id": subtask_id,
             "goal": goal,

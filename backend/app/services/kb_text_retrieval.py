@@ -27,6 +27,9 @@ from app.services.vector_store import (
 )
 
 PRE_RERANK_MIN_CANDIDATE_MULTIPLIER = 2
+CHANNEL_RETRIEVAL_MAX_CONCURRENCY = 8
+CHANNEL_MAX_SEMANTIC_QUERIES = 3
+CHANNEL_MAX_LEXICAL_TERMS = 3
 
 
 def _format_kb_chunk(doc: dict[str, Any], content: str) -> str:
@@ -514,6 +517,7 @@ async def _finalize_ranked_rows(
             }
         )
     filtered = _apply_post_rerank_thresholds(results, rerank_enabled=rerank_enabled)
+    rerank_threshold = config_registry.get_rag_config().retrieval.rerank_threshold
     return filtered, {
         "rerank_enabled": rerank_enabled,
         "candidate_count": candidate_count,
@@ -521,6 +525,8 @@ async def _finalize_ranked_rows(
         "pre_rerank_filtered_count": candidate_count - pre_rerank_count,
         "post_rerank_count": len(results),
         "final_count": len(filtered),
+        "rerank_threshold": rerank_threshold if rerank_enabled else None,
+        "threshold_filtered_count": len(results) - len(filtered),
         "latency_ms": rerank_latency_ms,
         "top_docs_changed": rerank_top_docs_changed,
         "top_changes": top_changes,
@@ -993,12 +999,14 @@ async def run_kb_channel_text_retrieval(
     rerank_enabled: bool | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Retrieve text evidence with separated vector and lexical inputs."""
+    """Retrieve, fuse, rerank child chunks, then expand them into parent context."""
 
     started_at = perf_counter()
     rag = config_registry.get_rag_config().retrieval
-    vector_queries = _dedupe_queries(semantic_queries or [query])
-    terms = _dedupe_queries(lexical_terms)
+    vector_queries = _dedupe_queries(semantic_queries or [query])[
+        :CHANNEL_MAX_SEMANTIC_QUERIES
+    ]
+    terms = _dedupe_queries(lexical_terms)[:CHANNEL_MAX_LEXICAL_TERMS]
     resolved_recall_k = recall_k if recall_k is not None else rag.k_first
     resolved_lexical_k = lexical_k if lexical_k is not None else rag.lexical_k
     final_top_k = max(1, result_limit) if result_limit is not None else rag.final_top_k
@@ -1019,11 +1027,12 @@ async def run_kb_channel_text_retrieval(
         vector_queries,
         terms,
     )
-    text_started_at = perf_counter()
-    vector_batches = await asyncio.gather(
-        *[
-            _retrieve_vector_candidate_rows(
-                query=item,
+    concurrency_limiter = asyncio.Semaphore(CHANNEL_RETRIEVAL_MAX_CONCURRENCY)
+
+    async def retrieve_vector(query_text: str) -> tuple[list[dict[str, Any]], bool]:
+        async with concurrency_limiter:
+            return await _retrieve_vector_candidate_rows(
+                query=query_text,
                 team_id=team_id,
                 knowledge_base_id=knowledge_base_id,
                 category_id=category_id,
@@ -1031,13 +1040,11 @@ async def run_kb_channel_text_retrieval(
                 recall_k=vector_k,
                 document_statuses=document_statuses,
             )
-            for item in vector_queries
-        ]
-    )
-    lexical_batches = await asyncio.gather(
-        *[
-            _retrieve_lexical_candidate_rows(
-                term=item,
+
+    async def retrieve_lexical(term: str) -> tuple[list[dict[str, Any]], bool]:
+        async with concurrency_limiter:
+            return await _retrieve_lexical_candidate_rows(
+                term=term,
                 team_id=team_id,
                 knowledge_base_id=knowledge_base_id,
                 category_id=category_id,
@@ -1045,8 +1052,11 @@ async def run_kb_channel_text_retrieval(
                 lexical_k=term_k,
                 document_statuses=document_statuses,
             )
-            for item in terms
-        ]
+
+    text_started_at = perf_counter()
+    vector_batches, lexical_batches = await asyncio.gather(
+        asyncio.gather(*(retrieve_vector(item) for item in vector_queries)),
+        asyncio.gather(*(retrieve_lexical(item) for item in terms)),
     )
     text_retrieval_latency_ms = int((perf_counter() - text_started_at) * 1000)
 
@@ -1083,6 +1093,9 @@ async def run_kb_channel_text_retrieval(
         rerank_enabled=resolved_rerank,
         final_top_k=final_top_k,
     )
+    all_candidates_below_rerank_threshold = bool(fused_results) and not results and bool(
+        rerank_trace.get("threshold_filtered_count")
+    )
     retrieval_funnel = _build_retrieval_funnel(
         mode="vector_lexical",
         query_stats=[*vector_stats, *lexical_stats],
@@ -1115,6 +1128,8 @@ async def run_kb_channel_text_retrieval(
         context_budget=context_budget,
         retrieval_funnel=retrieval_funnel,
     )
+    if all_candidates_below_rerank_threshold:
+        output["kb_retrieval_status"] = "below_rerank_threshold"
     output["semantic_queries"] = vector_queries
     output["lexical_terms"] = terms
     output["retrieval_trace"] = {
