@@ -78,7 +78,7 @@ interface ReportCaseRow {
   latencyText: string;
 }
 
-type ReportFilter = "all" | EvalCaseResultStatus;
+type ReportFilter = "all" | "passed" | "failed";
 type RunStatusFilter = "all" | EvalRunStatus;
 
 const route = useRoute();
@@ -560,7 +560,7 @@ async function handleResumeRun(targetRunId: number) {
 }
 
 function isRetrievedEvidenceLoaded(row: ReportCaseRow) {
-  return Object.hasOwn(retrievedEvidenceByResultId.value, row.id);
+  return Object.prototype.hasOwnProperty.call(retrievedEvidenceByResultId.value, row.id);
 }
 
 async function loadRetrievedEvidence(row: ReportCaseRow) {
