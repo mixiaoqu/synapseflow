@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import csv
+from datetime import timedelta
 import json
 import re
+from io import StringIO
 from time import perf_counter
 from typing import Any
 
@@ -13,6 +16,9 @@ from app.core.llm.factory import get_llm_for_analysis
 from app.db.models import EvalCase, EvalDataset, EvalRun, KnowledgeBase, User
 from app.models.schemas.evaluation import (
     EvalCaseCreate,
+    EvalCaseImportError,
+    EvalCaseImportItem,
+    EvalCaseImportPreviewResponse,
     EvalCaseUpdate,
     EvalChunkCandidate,
     EvalChunkSearchResponse,
@@ -23,10 +29,14 @@ from app.models.schemas.evaluation import (
 from app.repositories.assistant_profile_repository import AssistantProfileRepository
 from app.repositories.evaluation_repository import EvaluationRepository
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
+from app.utils.time import utc_now
 
 EVALUATION_PURPOSE = "evaluation"
 BUSINESS_PURPOSE = "business"
 ANSWER_PASSING_SCORE = 80
+EVAL_CASE_IMPORT_MAX_ROWS = 1000
+EVAL_CASE_IMPORT_HEADERS = ("question", "expected_answer", "expected_evidence")
+EVALUATION_RUN_HEARTBEAT_TIMEOUT_SECONDS = 300
 
 
 class EvaluationService:
@@ -115,6 +125,130 @@ class EvaluationService:
             expected_chunk_ids=self._unique_ints(body.expected_chunk_ids),
             enabled=body.enabled,
         )
+
+    async def preview_case_import(
+        self,
+        *,
+        db,
+        current_user: User,
+        dataset_id: int,
+        content: bytes,
+    ) -> EvalCaseImportPreviewResponse | None:
+        repo = EvaluationRepository(db, current_user.id, current_user)
+        dataset = await repo.get_dataset(dataset_id)
+        if dataset is None:
+            return None
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise ValueError("文件编码无效，请使用 CSV UTF-8 格式保存后再上传") from exc
+
+        reader = csv.DictReader(StringIO(text))
+        headers = {str(item or "").strip() for item in (reader.fieldnames or [])}
+        missing_headers = [header for header in EVAL_CASE_IMPORT_HEADERS[:2] if header not in headers]
+        if missing_headers:
+            raise ValueError(f"缺少必填列：{', '.join(missing_headers)}")
+
+        existing_questions = {
+            self._normalize_import_question(case.question)
+            for case in await repo.list_cases(dataset_id)
+        }
+        valid_cases: list[EvalCaseImportItem] = []
+        errors: list[EvalCaseImportError] = []
+        imported_questions: set[str] = set()
+        total_rows = 0
+        for row_number, row in enumerate(reader, start=2):
+            normalized_row = {
+                str(key or "").strip(): str(value or "").strip()
+                for key, value in row.items()
+            }
+            if not any(normalized_row.values()):
+                continue
+            total_rows += 1
+            if total_rows > EVAL_CASE_IMPORT_MAX_ROWS:
+                raise ValueError(f"单次最多导入 {EVAL_CASE_IMPORT_MAX_ROWS} 条用例")
+
+            question = normalized_row.get("question", "")
+            expected_answer = normalized_row.get("expected_answer", "")
+            expected_evidence = normalized_row.get("expected_evidence", "") or None
+            row_errors: list[EvalCaseImportError] = []
+            if not question:
+                row_errors.append(EvalCaseImportError(row_number=row_number, field="question", message="问题不能为空"))
+            elif len(question) > 1000:
+                row_errors.append(EvalCaseImportError(row_number=row_number, field="question", message="问题不能超过 1000 个字符"))
+            if not expected_answer:
+                row_errors.append(EvalCaseImportError(row_number=row_number, field="expected_answer", message="期望答案不能为空"))
+            elif len(expected_answer) > 4000:
+                row_errors.append(EvalCaseImportError(row_number=row_number, field="expected_answer", message="期望答案不能超过 4000 个字符"))
+            if expected_evidence and len(expected_evidence) > 4000:
+                row_errors.append(EvalCaseImportError(row_number=row_number, field="expected_evidence", message="期望依据不能超过 4000 个字符"))
+
+            normalized_question = self._normalize_import_question(question)
+            if question and normalized_question in existing_questions:
+                row_errors.append(EvalCaseImportError(row_number=row_number, field="question", message="该问题已存在于当前评测集"))
+            elif question and normalized_question in imported_questions:
+                row_errors.append(EvalCaseImportError(row_number=row_number, field="question", message="文件内存在重复问题"))
+            if row_errors:
+                errors.extend(row_errors)
+                continue
+            imported_questions.add(normalized_question)
+            valid_cases.append(EvalCaseImportItem(
+                row_number=row_number,
+                question=question,
+                expected_answer=expected_answer,
+                expected_evidence=expected_evidence,
+            ))
+
+        if total_rows == 0:
+            errors.append(EvalCaseImportError(row_number=1, message="CSV 中没有可导入的数据行"))
+        return EvalCaseImportPreviewResponse(
+            total_rows=total_rows,
+            valid_cases=valid_cases,
+            errors=errors,
+            can_import=bool(valid_cases) and not errors,
+        )
+
+    async def import_cases(
+        self,
+        *,
+        db,
+        current_user: User,
+        dataset_id: int,
+        cases: list[EvalCaseImportItem],
+    ) -> int | None:
+        repo = EvaluationRepository(db, current_user.id, current_user)
+        dataset = await repo.get_dataset(dataset_id)
+        if dataset is None:
+            return None
+        if len(cases) > EVAL_CASE_IMPORT_MAX_ROWS:
+            raise ValueError(f"单次最多导入 {EVAL_CASE_IMPORT_MAX_ROWS} 条用例")
+
+        existing_questions = {
+            self._normalize_import_question(case.question)
+            for case in await repo.list_cases(dataset_id)
+        }
+        imported_questions: set[str] = set()
+        normalized_cases: list[dict[str, Any]] = []
+        for case in cases:
+            question = case.question.strip()
+            expected_answer = case.expected_answer.strip()
+            evidence = (case.expected_evidence or "").strip()
+            if not question:
+                raise ValueError(f"第 {case.row_number} 行问题不能为空，请重新预检")
+            if not expected_answer:
+                raise ValueError(f"第 {case.row_number} 行期望答案不能为空，请重新预检")
+            normalized_question = self._normalize_import_question(question)
+            if normalized_question in existing_questions:
+                raise ValueError(f"第 {case.row_number} 行问题已存在于当前评测集，请重新预检")
+            if normalized_question in imported_questions:
+                raise ValueError(f"第 {case.row_number} 行与文件内其他问题重复，请重新预检")
+            imported_questions.add(normalized_question)
+            normalized_cases.append({
+                "question": question,
+                "expected_answer": expected_answer,
+                "expected_snippets": [evidence] if evidence else [],
+            })
+        return await repo.create_cases(dataset_id=dataset_id, cases=normalized_cases)
 
     async def update_case(
         self,
@@ -268,7 +402,7 @@ class EvaluationService:
                 "agent_workflow": "agent",
                 "judge_model_role": "analysis",
                 "answer_passing_score": ANSWER_PASSING_SCORE,
-                "evidence_match_rule": "snippet_then_chunk_then_document",
+                "evidence_match_rule": "selected_chunk_only",
             },
             model_config={
                 "agent_workflow": "agent",
@@ -333,14 +467,27 @@ class EvaluationService:
         run = await repo.claim_pending_run(run_id)
         if run is None:
             return await repo.get_run(run_id)
-        case_items = list(dict(run.case_snapshot or {}).get("items") or [])
-
-        passed_cases = 0
-        failed_cases = 0
-        scores: list[int] = []
+        existing_results = await repo.list_case_results(int(run.id))
+        completed_case_ids = set(
+            self._unique_ints(
+                [
+                    result.case_id
+                    or dict(result.case_snapshot or {}).get("case_id")
+                    for result in existing_results
+                ]
+            )
+        )
+        case_items = [
+            case
+            for case in list(dict(run.case_snapshot or {}).get("items") or [])
+            if int(case.get("case_id") or 0) not in completed_case_ids
+        ]
+        passed_cases = sum(1 for result in existing_results if result.status == "passed")
+        failed_cases = sum(1 for result in existing_results if result.status == "failed")
+        scores = [int(result.score) for result in existing_results]
         try:
             for case in case_items:
-                if await repo.is_run_canceled(int(run.id)):
+                if not await repo.is_run_claim_current(int(run.id), run.started_at):
                     return await repo.get_run(int(run.id))
                 result_status, score = await self._execute_case(
                     db=db,
@@ -367,6 +514,32 @@ class EvaluationService:
         except Exception as exc:
             run.error_message = str(exc) or "评测任务执行失败"
             return await repo.mark_run_failed(run)
+
+    async def resume_run(
+        self,
+        *,
+        db,
+        current_user: User,
+        run_id: int,
+    ) -> EvalRun | None:
+        repo = EvaluationRepository(db, current_user.id, current_user)
+        run = await repo.get_run(run_id)
+        if run is None:
+            return None
+        if not self._is_run_resumable(run):
+            raise ValueError("当前评测任务仍在正常运行，不能继续执行")
+
+        results = await repo.list_case_results(run_id)
+        passed_cases = sum(1 for result in results if result.status == "passed")
+        failed_cases = sum(1 for result in results if result.status == "failed")
+        scores = [int(result.score) for result in results]
+        average_score = int(round(sum(scores) / len(scores))) if scores else 0
+        return await repo.prepare_run_for_resume(
+            run,
+            passed_cases=passed_cases,
+            failed_cases=failed_cases,
+            average_score=average_score,
+        )
 
     async def _execute_case(
         self,
@@ -468,6 +641,18 @@ class EvaluationService:
             "expected_snippets": list(case.expected_snippets or []),
             "expected_chunk_ids": list(case.expected_chunk_ids or []),
         }
+
+    @staticmethod
+    def _is_run_resumable(run: EvalRun) -> bool:
+        if run.status in {"canceled", "failed"}:
+            return True
+        if run.status != "running":
+            return False
+        if run.heartbeat_at is None:
+            return True
+        return utc_now() - run.heartbeat_at >= timedelta(
+            seconds=EVALUATION_RUN_HEARTBEAT_TIMEOUT_SECONDS
+        )
 
     async def _judge_answer(
         self,
@@ -629,15 +814,9 @@ class EvaluationService:
             normalized_snippets=normalized_snippets,
         )
         chunk_matched = not expected_chunk_set or chunk_recall > 0
-        if normalized_snippets:
-            evidence_matched = snippet_recall > 0
-            evidence_basis = "snippet"
-        elif expected_chunk_set:
+        if expected_chunk_set:
             evidence_matched = chunk_matched
             evidence_basis = "chunk"
-        elif expected_doc_set:
-            evidence_matched = doc_recall > 0
-            evidence_basis = "document"
         else:
             evidence_matched = True
             evidence_basis = "unconstrained"
@@ -703,6 +882,10 @@ class EvaluationService:
         except (TypeError, ValueError):
             return 0
         return max(0, min(100, score))
+
+    @staticmethod
+    def _normalize_import_question(value: str) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
 
     @staticmethod
     def _unique_ints(values: list[Any]) -> list[int]:

@@ -23,10 +23,12 @@ import AdminPagination from "@/app/components/admin/AdminPagination.vue";
 import AdminTableToolbar from "@/app/components/admin/AdminTableToolbar.vue";
 import {
   executeEvalDataset,
+  getEvalCaseRetrievedEvidence,
   getEvalRunDetail,
   listEvalDatasets,
   listEvalCases,
   listEvalRuns,
+  resumeEvalRun,
 } from "@/shared/api/evaluations";
 import { listAssistants } from "@/shared/api/assistants";
 import AppEmpty from "@/shared/components/feedback/AppEmpty.vue";
@@ -59,6 +61,7 @@ interface EvalRunTaskRow {
   durationText: string;
   startedAt: string;
   finishedAt: string;
+  heartbeatAt: string | null;
 }
 
 interface ReportCaseRow {
@@ -90,6 +93,7 @@ const taskKeyword = ref("");
 const taskStatusFilter = ref<RunStatusFilter>("all");
 const createDrawerVisible = ref(false);
 const createSubmitting = ref(false);
+const resumingRunIds = ref<Set<number>>(new Set());
 const datasetLoading = ref(false);
 const assistantLoading = ref(false);
 const assistants = ref<AssistantSummary[]>([]);
@@ -117,6 +121,13 @@ const runDetail = ref<EvalRunDetail | null>(null);
 const activeFilter = ref<ReportFilter>("all");
 const expandedTextKeys = ref<Set<string>>(new Set());
 const expandedEvidenceKeys = ref<Set<string>>(new Set());
+const retrievedEvidenceByResultId = ref<Record<number, EvalRetrievedDocumentEvidence[]>>({});
+const evidenceLoadingResultIds = ref<Set<number>>(new Set());
+const reportPagination = reactive({
+  page: 1,
+  pageSize: 10,
+  total: 0,
+});
 let taskRequestSeq = 0;
 let reportRequestSeq = 0;
 
@@ -142,6 +153,7 @@ const taskRows = computed<EvalRunTaskRow[]>(() =>
     durationText: formatDuration(item.started_at, item.finished_at, item.status),
     startedAt: formatDateTime(item.started_at),
     finishedAt: formatDateTime(item.finished_at),
+    heartbeatAt: item.heartbeat_at,
   })),
 );
 const reportRows = computed<ReportCaseRow[]>(() =>
@@ -155,7 +167,7 @@ const reportRows = computed<ReportCaseRow[]>(() =>
       question: String(caseSnapshot.question ?? `用例 #${result.case_id ?? "未知"}`),
       expectedAnswer: String(caseSnapshot.expected_answer ?? "历史运行未保存期望答案。"),
       actualAnswer: result.actual_answer?.trim() || "暂无实际回答",
-      retrievedEvidence: result.retrieved_evidence ?? [],
+      retrievedEvidence: retrievedEvidenceByResultId.value[result.id] ?? [],
       judgeReason: getJudgeReason(result),
       errorMessage: result.error_message,
       latencyText: formatLatency(result.latency_ms),
@@ -168,8 +180,8 @@ const filteredReportRows = computed(() => {
   }
   return reportRows.value.filter((item) => item.status === activeFilter.value);
 });
-const passedCount = computed(() => reportRows.value.filter((item) => item.status === "passed").length);
-const failedCount = computed(() => reportRows.value.filter((item) => item.status === "failed").length);
+const passedCount = computed(() => runDetail.value?.passed_cases ?? 0);
+const failedCount = computed(() => runDetail.value?.failed_cases ?? 0);
 const reportTitle = computed(() => `评测报告：${runDetail.value?.run_name?.trim() || "运行报告"}`);
 const reportRunName = computed(() => runDetail.value?.run_name?.trim() || (runDetail.value ? `RUN-${runDetail.value.id}` : "暂无运行"));
 const reportModelLabel = computed(() => formatModelConfig(runDetail.value?.model_config));
@@ -262,6 +274,9 @@ function getRunStatusLabel(status: EvalRunStatus | undefined) {
   if (status === "failed") {
     return "失败";
   }
+  if (status === "canceled") {
+    return "已取消";
+  }
   return "等待中";
 }
 
@@ -275,7 +290,21 @@ function getRunStatusType(status: EvalRunStatus | undefined) {
   if (status === "failed") {
     return "danger";
   }
+  if (status === "canceled") {
+    return "info";
+  }
   return "info";
+}
+
+function canResumeRun(status: EvalRunStatus, heartbeatAt: string | null) {
+  if (status === "canceled" || status === "failed") {
+    return true;
+  }
+  if (status !== "running" || !heartbeatAt) {
+    return status === "running";
+  }
+  const heartbeatTime = new Date(heartbeatAt).getTime();
+  return Number.isNaN(heartbeatTime) || Date.now() - heartbeatTime >= 5 * 60 * 1000;
 }
 
 function getCaseStatusLabel(status: EvalCaseResultStatus) {
@@ -312,7 +341,12 @@ function toggleEvidence(row: ReportCaseRow, documentId: number) {
 }
 
 function setReportFilter(filter: ReportFilter) {
+  if (activeFilter.value === filter) {
+    return;
+  }
   activeFilter.value = filter;
+  reportPagination.page = 1;
+  void loadReport();
 }
 
 function getTextKey(row: ReportCaseRow, field: "expected" | "actual" | "judge" | "error") {
@@ -413,12 +447,16 @@ async function loadReport() {
   reportLoading.value = true;
   reportLoadError.value = null;
   try {
-    const detail = await getEvalRunDetail(runId.value);
+    const detail = await getEvalRunDetail(runId.value, {
+      result_page: reportPagination.page,
+      result_page_size: reportPagination.pageSize,
+      ...(activeFilter.value === "all" ? {} : { result_status: activeFilter.value }),
+    });
     if (requestSeq !== reportRequestSeq) {
       return;
     }
     runDetail.value = detail;
-    activeFilter.value = "all";
+    reportPagination.total = detail.result_total;
     expandedTextKeys.value = new Set();
     expandedEvidenceKeys.value = new Set();
     reportHasLoadedData.value = true;
@@ -496,6 +534,62 @@ async function submitCreateTask() {
   }
 }
 
+async function handleResumeRun(targetRunId: number) {
+  const nextIds = new Set(resumingRunIds.value);
+  nextIds.add(targetRunId);
+  resumingRunIds.value = nextIds;
+  try {
+    await resumeEvalRun(targetRunId);
+    ElMessage.success("已重新提交任务，将跳过已完成的用例继续执行。");
+    if (runId.value === targetRunId) {
+      await loadReport();
+    } else {
+      await loadTaskRuns();
+    }
+  } finally {
+    const currentIds = new Set(resumingRunIds.value);
+    currentIds.delete(targetRunId);
+    resumingRunIds.value = currentIds;
+  }
+}
+
+function isRetrievedEvidenceLoaded(row: ReportCaseRow) {
+  return Object.hasOwn(retrievedEvidenceByResultId.value, row.id);
+}
+
+async function loadRetrievedEvidence(row: ReportCaseRow) {
+  if (!runId.value || isRetrievedEvidenceLoaded(row) || evidenceLoadingResultIds.value.has(row.id)) {
+    return;
+  }
+  const nextLoadingIds = new Set(evidenceLoadingResultIds.value);
+  nextLoadingIds.add(row.id);
+  evidenceLoadingResultIds.value = nextLoadingIds;
+  try {
+    const result = await getEvalCaseRetrievedEvidence(runId.value, row.id);
+    retrievedEvidenceByResultId.value = {
+      ...retrievedEvidenceByResultId.value,
+      [row.id]: result.items,
+    };
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "检索依据加载失败，请稍后重试。");
+  } finally {
+    const currentLoadingIds = new Set(evidenceLoadingResultIds.value);
+    currentLoadingIds.delete(row.id);
+    evidenceLoadingResultIds.value = currentLoadingIds;
+  }
+}
+
+function handleReportPageChange(page: number) {
+  reportPagination.page = page;
+  void loadReport();
+}
+
+function handleReportPageSizeChange(pageSize: number) {
+  reportPagination.pageSize = pageSize;
+  reportPagination.page = 1;
+  void loadReport();
+}
+
 function handleTaskSearch() {
   taskPagination.page = 1;
   void loadTaskRuns();
@@ -554,6 +648,11 @@ watch(
     runDetail.value = null;
     reportLoadError.value = null;
     reportHasLoadedData.value = false;
+    activeFilter.value = "all";
+    reportPagination.page = 1;
+    reportPagination.total = 0;
+    retrievedEvidenceByResultId.value = {};
+    evidenceLoadingResultIds.value = new Set();
     loadCurrentPage();
   },
 );
@@ -601,6 +700,10 @@ onMounted(() => {
             <el-option
               label="失败"
               value="failed"
+            />
+            <el-option
+              label="已取消"
+              value="canceled"
             />
           </el-select>
           <el-button
@@ -729,10 +832,20 @@ onMounted(() => {
             />
             <el-table-column
               label="操作"
-              width="120"
+              width="200"
               fixed="right"
             >
               <template #default="{ row }">
+                <el-button
+                  v-if="canResumeRun(row.status, row.heartbeatAt)"
+                  link
+                  type="primary"
+                  :icon="VideoPlay"
+                  :loading="resumingRunIds.has(row.id)"
+                  @click="handleResumeRun(row.id)"
+                >
+                  继续执行
+                </el-button>
                 <el-button
                   link
                   type="primary"
@@ -787,6 +900,15 @@ onMounted(() => {
           >
             返回评测集
           </el-button>
+          <el-button
+            v-if="runDetail && canResumeRun(runDetail.status, runDetail.heartbeat_at)"
+            type="primary"
+            :icon="VideoPlay"
+            :loading="resumingRunIds.has(runDetail.id)"
+            @click="handleResumeRun(runDetail.id)"
+          >
+            继续执行
+          </el-button>
         </template>
       </AdminTableToolbar>
 
@@ -837,7 +959,7 @@ onMounted(() => {
             round
             @click="setReportFilter('all')"
           >
-            全部 ({{ reportRows.length }})
+            全部 ({{ runDetail.total_cases }})
           </el-button>
           <el-button
             :type="activeFilter === 'passed' ? 'success' : 'default'"
@@ -940,7 +1062,20 @@ onMounted(() => {
                   </span>
                 </div>
                 <div
-                  v-if="row.retrievedEvidence.length === 0"
+                  v-if="!isRetrievedEvidenceLoaded(row)"
+                  class="evaluation-report-page__evidence-miss"
+                >
+                  <el-button
+                    link
+                    type="primary"
+                    :loading="evidenceLoadingResultIds.has(row.id)"
+                    @click="loadRetrievedEvidence(row)"
+                  >
+                    加载检索依据
+                  </el-button>
+                </div>
+                <div
+                  v-else-if="row.retrievedEvidence.length === 0"
                   class="evaluation-report-page__evidence-miss"
                 >
                   切片召回为空
@@ -1028,6 +1163,14 @@ onMounted(() => {
             </aside>
           </article>
         </section>
+        <AdminPagination
+          :current-page="reportPagination.page"
+          :page-size="reportPagination.pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="reportPagination.total"
+          @page-change="handleReportPageChange"
+          @page-size-change="handleReportPageSizeChange"
+        />
       </template>
     </AdminListPanel>
 

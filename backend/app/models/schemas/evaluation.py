@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 EvalDatasetStatus = Literal["draft", "active", "archived"]
 EvalRunStatus = Literal["pending", "running", "completed", "failed", "canceled"]
@@ -87,6 +87,44 @@ class EvalCaseBulkDelete(BaseModel):
     """Delete multiple evaluation cases in one dataset."""
 
     case_ids: list[int] = Field(default_factory=list)
+
+
+class EvalCaseImportItem(BaseModel):
+    """One normalized standard Q&A case parsed from a CSV file."""
+
+    row_number: int = Field(..., ge=2)
+    question: str = Field(..., min_length=1, max_length=1000)
+    expected_answer: str = Field(..., min_length=1, max_length=4000)
+    expected_evidence: str | None = Field(default=None, max_length=4000)
+
+
+class EvalCaseImportError(BaseModel):
+    """One CSV row validation error shown before import confirmation."""
+
+    row_number: int = Field(..., ge=1)
+    field: str | None = None
+    message: str
+
+
+class EvalCaseImportPreviewResponse(BaseModel):
+    """CSV validation result returned before creating evaluation cases."""
+
+    total_rows: int = 0
+    valid_cases: list[EvalCaseImportItem] = Field(default_factory=list)
+    errors: list[EvalCaseImportError] = Field(default_factory=list)
+    can_import: bool = False
+
+
+class EvalCaseImportRequest(BaseModel):
+    """Confirmed normalized CSV rows to import as evaluation cases."""
+
+    cases: list[EvalCaseImportItem] = Field(default_factory=list, min_length=1, max_length=1000)
+
+
+class EvalCaseImportResponse(BaseModel):
+    """Result of a successful evaluation case import."""
+
+    imported_count: int
 
 
 class EvalRetrievedChunkEvidence(BaseModel):
@@ -206,6 +244,23 @@ class EvalCaseResultResponse(BaseModel):
     error_message: str | None = None
     created_at: datetime
 
+    @field_validator("retrieved_doc_ids", "retrieved_chunk_ids", mode="before")
+    @classmethod
+    def normalize_retrieved_identifiers(cls, value: Any) -> list[int]:
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        result: list[int] = []
+        seen: set[int] = set()
+        for item in value:
+            try:
+                identifier = int(item)
+            except (TypeError, ValueError):
+                continue
+            if identifier > 0 and identifier not in seen:
+                seen.add(identifier)
+                result.append(identifier)
+        return result
+
 
 class EvalCaseResultDetailResponse(EvalCaseResultResponse):
     """Evaluation case result response with readable retrieval evidence."""
@@ -213,10 +268,19 @@ class EvalCaseResultDetailResponse(EvalCaseResultResponse):
     retrieved_evidence: list[EvalRetrievedDocumentEvidence] = Field(default_factory=list)
 
 
+class EvalCaseRetrievedEvidenceResponse(BaseModel):
+    """Lazy-loaded retrieval evidence for one evaluation case result."""
+
+    items: list[EvalRetrievedDocumentEvidence] = Field(default_factory=list)
+
+
 class EvalRunDetailResponse(EvalRunResponse):
     """Evaluation run detail with case results."""
 
     results: list[EvalCaseResultDetailResponse] = Field(default_factory=list)
+    result_total: int = 0
+    result_page: int = 1
+    result_page_size: int = 10
 
 
 class EvalChunkCandidate(BaseModel):

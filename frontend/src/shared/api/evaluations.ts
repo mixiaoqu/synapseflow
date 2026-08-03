@@ -1,8 +1,12 @@
 import { request } from "@/shared/api/http";
 import type {
   EvalCase,
+  EvalCaseImportItem,
+  EvalCaseImportPreview,
+  EvalCaseImportResult,
   EvalCaseListResponse,
   EvalCasePayload,
+  EvalCaseRetrievedEvidenceResponse,
   EvalChunkSearchResponse,
   EvalDataset,
   EvalDatasetBulkRunResponse,
@@ -124,6 +128,24 @@ export function bulkDeleteEvalCases(datasetId: number, caseIds: number[]) {
   });
 }
 
+export function previewEvalCaseImport(datasetId: number, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return request<EvalCaseImportPreview, FormData>({
+    url: `/evaluations/datasets/${datasetId}/cases/import-preview`,
+    method: "POST",
+    data: formData,
+  });
+}
+
+export function importEvalCases(datasetId: number, cases: EvalCaseImportItem[]) {
+  return request<EvalCaseImportResult>({
+    url: `/evaluations/datasets/${datasetId}/cases/import`,
+    method: "POST",
+    data: { cases },
+  });
+}
+
 export function searchEvalChunks(datasetId: number, params: { query?: string; offset?: number; limit?: number }) {
   return request<EvalChunkSearchResponse>({
     url: `/evaluations/datasets/${datasetId}/chunks`,
@@ -176,9 +198,27 @@ export function listEvalRuns(params: {
   });
 }
 
-export function getEvalRunDetail(runId: number) {
+export function getEvalRunDetail(
+  runId: number,
+  params: { result_page: number; result_page_size: number; result_status?: "passed" | "failed" },
+) {
   return request<EvalRunDetail>({
     url: `/evaluations/runs/${runId}`,
     method: "GET",
+    params,
+  });
+}
+
+export function getEvalCaseRetrievedEvidence(runId: number, resultId: number) {
+  return request<EvalCaseRetrievedEvidenceResponse>({
+    url: `/evaluations/runs/${runId}/results/${resultId}/retrieved-evidence`,
+    method: "GET",
+  });
+}
+
+export function resumeEvalRun(runId: number) {
+  return request<EvalRun>({
+    url: `/evaluations/runs/${runId}/resume`,
+    method: "POST",
   });
 }

@@ -68,6 +68,30 @@ export interface EvalCasePayload {
   enabled: boolean;
 }
 
+export interface EvalCaseImportItem {
+  row_number: number;
+  question: string;
+  expected_answer: string;
+  expected_evidence: string | null;
+}
+
+export interface EvalCaseImportError {
+  row_number: number;
+  field: string | null;
+  message: string;
+}
+
+export interface EvalCaseImportPreview {
+  total_rows: number;
+  valid_cases: EvalCaseImportItem[];
+  errors: EvalCaseImportError[];
+  can_import: boolean;
+}
+
+export interface EvalCaseImportResult {
+  imported_count: number;
+}
+
 export interface EvalChunkCandidate {
   chunk_id: number;
   document_id: number;
@@ -161,6 +185,13 @@ export interface EvalRetrievedDocumentEvidence {
   chunks: EvalRetrievedChunkEvidence[];
 }
 
+export interface EvalCaseRetrievedEvidenceResponse {
+  items: EvalRetrievedDocumentEvidence[];
+}
+
 export interface EvalRunDetail extends EvalRun {
   results: EvalCaseResult[];
+  result_total: number;
+  result_page: number;
+  result_page_size: number;
 }

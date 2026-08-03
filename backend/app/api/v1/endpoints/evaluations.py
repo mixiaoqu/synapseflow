@@ -1,6 +1,6 @@
 """Evaluation module endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import require_content_roles
@@ -14,7 +14,11 @@ from app.db.session import get_db
 from app.models.schemas.evaluation import (
     EvalCaseBulkDelete,
     EvalCaseCreate,
+    EvalCaseImportPreviewResponse,
+    EvalCaseImportRequest,
+    EvalCaseImportResponse,
     EvalCaseListResponse,
+    EvalCaseRetrievedEvidenceResponse,
     EvalCaseResponse,
     EvalCaseResultDetailResponse,
     EvalCaseResultResponse,
@@ -41,13 +45,17 @@ from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 from app.workers.evaluation_tasks import execute_evaluation_run_actor
 
 router = APIRouter()
+MAX_EVAL_CASE_IMPORT_FILE_BYTES = 5 * 1024 * 1024
 
 
-def _unique_ints(values: list[int]) -> list[int]:
+def _unique_ints(values: list[object]) -> list[int]:
     result: list[int] = []
     seen: set[int] = set()
     for value in values:
-        item = int(value)
+        try:
+            item = int(value)
+        except (TypeError, ValueError):
+            continue
         if item <= 0 or item in seen:
             continue
         seen.add(item)
@@ -283,6 +291,53 @@ async def create_eval_case(
     return row
 
 
+@router.post("/datasets/{dataset_id}/cases/import-preview", response_model=EvalCaseImportPreviewResponse)
+async def preview_eval_case_import(
+    dataset_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="请上传 CSV 文件")
+    content = await file.read(MAX_EVAL_CASE_IMPORT_FILE_BYTES + 1)
+    if len(content) > MAX_EVAL_CASE_IMPORT_FILE_BYTES:
+        raise HTTPException(status_code=400, detail="CSV 文件不能超过 5 MB")
+    try:
+        preview = await evaluation_service.preview_case_import(
+            db=db,
+            current_user=current_user,
+            dataset_id=dataset_id,
+            content=content,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if preview is None:
+        raise HTTPException(status_code=404, detail="评测集不存在或无权访问")
+    return preview
+
+
+@router.post("/datasets/{dataset_id}/cases/import", response_model=EvalCaseImportResponse)
+async def import_eval_cases(
+    dataset_id: int,
+    body: EvalCaseImportRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    try:
+        imported_count = await evaluation_service.import_cases(
+            db=db,
+            current_user=current_user,
+            dataset_id=dataset_id,
+            cases=body.cases,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if imported_count is None:
+        raise HTTPException(status_code=404, detail="评测集不存在或无权访问")
+    return EvalCaseImportResponse(imported_count=imported_count)
+
+
 @router.put("/datasets/{dataset_id}/cases/{case_id}", response_model=EvalCaseResponse)
 async def update_eval_case(
     dataset_id: int,
@@ -457,9 +512,32 @@ async def cancel_eval_run(
     return canceled
 
 
+@router.post("/runs/{run_id}/resume", response_model=EvalRunResponse)
+async def resume_eval_run(
+    run_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    try:
+        run = await evaluation_service.resume_run(
+            db=db,
+            current_user=current_user,
+            run_id=run_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if run is None:
+        raise HTTPException(status_code=404, detail="评测运行不存在")
+    _enqueue_evaluation_run(int(run.id), int(current_user.id))
+    return run
+
+
 @router.get("/runs/{run_id}", response_model=EvalRunDetailResponse)
 async def get_eval_run(
     run_id: int,
+    result_page: int = Query(1, ge=1),
+    result_page_size: int = Query(10, ge=1, le=50),
+    result_status: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
@@ -470,51 +548,71 @@ async def get_eval_run(
     dataset = await repo.get_dataset(int(run.dataset_id))
     if dataset is None:
         raise HTTPException(status_code=404, detail="评测运行不存在或无权访问")
-    results = await repo.list_case_results(run_id)
-    chunk_ids = _unique_ints(
-        [
-            int(chunk_id)
-            for item in results
-            for chunk_id in list(item.retrieved_chunk_ids or [])
-        ]
+    normalized_status = result_status.strip() if result_status and result_status.strip() else None
+    if normalized_status and normalized_status not in {"passed", "failed"}:
+        raise HTTPException(status_code=400, detail="评测结果状态无效")
+    normalized_page_size = min(50, max(1, int(result_page_size)))
+    result_total = await repo.count_case_results(run_id=run_id, status=normalized_status)
+    results = await repo.list_case_results_page(
+        run_id=run_id,
+        status=normalized_status,
+        offset=(result_page - 1) * normalized_page_size,
+        limit=normalized_page_size,
     )
-    chunk_rows = await repo.list_retrieved_chunk_details(chunk_ids=chunk_ids)
-    chunk_detail_by_id = {int(chunk.id): (chunk, document) for chunk, document in chunk_rows}
-
-    result_payloads: list[EvalCaseResultDetailResponse] = []
-    for item in results:
-        grouped_documents: dict[int, EvalRetrievedDocumentEvidence] = {}
-        for chunk_id in _unique_ints([int(value) for value in list(item.retrieved_chunk_ids or [])]):
-            detail = chunk_detail_by_id.get(chunk_id)
-            if detail is None:
-                continue
-            chunk, document = detail
-            document_id = int(document.id)
-            if document_id not in grouped_documents:
-                grouped_documents[document_id] = EvalRetrievedDocumentEvidence(
-                    document_id=document_id,
-                    document_title=document.title,
-                    chunks=[],
-                )
-            grouped_documents[document_id].chunks.append(
-                EvalRetrievedChunkEvidence(
-                    chunk_id=int(chunk.id),
-                    chunk_index=int(chunk.chunk_index),
-                    section_path=chunk.section_path,
-                    content=chunk.content,
-                )
-            )
-
-        result_payload = EvalCaseResultResponse.model_validate(item).model_dump()
-        result_payloads.append(
-            EvalCaseResultDetailResponse(
-                **result_payload,
-                retrieved_evidence=list(grouped_documents.values()),
-            )
-        )
+    result_payloads = [
+        EvalCaseResultDetailResponse(**EvalCaseResultResponse.model_validate(item).model_dump())
+        for item in results
+    ]
 
     payload = EvalRunResponse.model_validate(run).model_dump()
     return EvalRunDetailResponse(
         **payload,
         results=result_payloads,
+        result_total=result_total,
+        result_page=result_page,
+        result_page_size=normalized_page_size,
     )
+
+
+@router.get(
+    "/runs/{run_id}/results/{result_id}/retrieved-evidence",
+    response_model=EvalCaseRetrievedEvidenceResponse,
+)
+async def get_eval_case_retrieved_evidence(
+    run_id: int,
+    result_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    repo = EvaluationRepository(db, current_user.id, current_user)
+    run = await repo.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="评测运行不存在")
+    result = await repo.get_case_result(run_id=run_id, result_id=result_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="评测用例结果不存在")
+    chunk_ids = _unique_ints(list(result.retrieved_chunk_ids or []))
+    chunk_rows = await repo.list_retrieved_chunk_details(chunk_ids=chunk_ids)
+    chunk_detail_by_id = {int(chunk.id): (chunk, document) for chunk, document in chunk_rows}
+    grouped_documents: dict[int, EvalRetrievedDocumentEvidence] = {}
+    for chunk_id in chunk_ids:
+        detail = chunk_detail_by_id.get(chunk_id)
+        if detail is None:
+            continue
+        chunk, document = detail
+        document_id = int(document.id)
+        if document_id not in grouped_documents:
+            grouped_documents[document_id] = EvalRetrievedDocumentEvidence(
+                document_id=document_id,
+                document_title=document.title,
+                chunks=[],
+            )
+        grouped_documents[document_id].chunks.append(
+            EvalRetrievedChunkEvidence(
+                chunk_id=int(chunk.id),
+                chunk_index=int(chunk.chunk_index),
+                section_path=chunk.section_path,
+                content=chunk.content,
+            )
+        )
+    return EvalCaseRetrievedEvidenceResponse(items=list(grouped_documents.values()))

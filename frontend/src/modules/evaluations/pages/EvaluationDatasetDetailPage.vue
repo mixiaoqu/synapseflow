@@ -26,7 +26,9 @@ import {
   deleteEvalCase,
   executeEvalDataset,
   getEvalDataset,
+  importEvalCases,
   listEvalCases,
+  previewEvalCaseImport,
   searchEvalChunks,
   updateEvalCase,
 } from "@/shared/api/evaluations";
@@ -36,6 +38,7 @@ import AppError from "@/shared/components/feedback/AppError.vue";
 import AppLoading from "@/shared/components/feedback/AppLoading.vue";
 import type {
   EvalCase,
+  EvalCaseImportPreview,
   EvalCasePayload,
   EvalChunkCandidate,
   EvalDataset,
@@ -84,6 +87,11 @@ const caseStatusFilter = ref<"all" | "enabled" | "disabled">("all");
 const selectedCaseIds = ref<Set<number>>(new Set());
 const togglingCaseIds = ref<Set<number>>(new Set());
 const bulkDeleting = ref(false);
+const importDialogVisible = ref(false);
+const importPreviewLoading = ref(false);
+const importSubmitting = ref(false);
+const importFileName = ref("");
+const importPreview = ref<EvalCaseImportPreview | null>(null);
 const chunkPagination = reactive({
   offset: 0,
   limit: 30,
@@ -584,6 +592,66 @@ function openReportsPage() {
   void router.push("/evaluations/reports");
 }
 
+function downloadImportTemplate() {
+  const content = [
+    "question,expected_answer,expected_evidence",
+    "如何重置密码？,在登录页点击忘记密码并按邮件提示完成重置。,系统会向注册邮箱发送重置链接。",
+  ].join("\r\n");
+  const blob = new Blob([`\uFEFF${content}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = window.document.createElement("a");
+  link.href = url;
+  link.download = "评测用例导入模板.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function resetImportDialog() {
+  importFileName.value = "";
+  importPreview.value = null;
+}
+
+function openImportDialog() {
+  resetImportDialog();
+  importDialogVisible.value = true;
+}
+
+async function handleImportFileChange(file: { raw?: File }) {
+  if (!datasetId.value || !file.raw) {
+    return;
+  }
+  if (!file.raw.name.toLowerCase().endsWith(".csv")) {
+    ElMessage.warning("请上传 CSV 文件。")
+    return;
+  }
+
+  importFileName.value = file.raw.name;
+  importPreview.value = null;
+  importPreviewLoading.value = true;
+  try {
+    importPreview.value = await previewEvalCaseImport(datasetId.value, file.raw);
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "CSV 预检失败，请稍后重试。")
+  } finally {
+    importPreviewLoading.value = false;
+  }
+}
+
+async function submitCaseImport() {
+  if (!datasetId.value || !importPreview.value?.can_import) {
+    return;
+  }
+  importSubmitting.value = true;
+  try {
+    const result = await importEvalCases(datasetId.value, importPreview.value.valid_cases);
+    importDialogVisible.value = false;
+    ElMessage.success(`已导入 ${result.imported_count} 条评测用例。`);
+    await loadDetail();
+  } finally {
+    importSubmitting.value = false;
+  }
+}
+
 function openKnowledgeBaseDocuments() {
   if (!dataset.value?.knowledge_base_id) {
     ElMessage.warning("当前评测集尚未绑定测试知识库。");
@@ -772,6 +840,12 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
           >
             运行评测
           </el-button>
+          <el-button @click="downloadImportTemplate">
+            下载 CSV 模板
+          </el-button>
+          <el-button @click="openImportDialog">
+            批量导入
+          </el-button>
           <el-button
             type="primary"
             :icon="Plus"
@@ -799,6 +873,9 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
           description="新增问题和期望答案后，就可以沉淀评测数据。"
         >
           <template #actions>
+            <el-button @click="openImportDialog">
+              批量导入
+            </el-button>
             <el-button
               type="primary"
               :icon="Plus"
@@ -1139,6 +1216,111 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
         </el-button>
       </template>
     </el-drawer>
+
+    <AdminDialog
+      v-model="importDialogVisible"
+      title="批量导入评测用例"
+      width="720px"
+      :loading="importSubmitting"
+      :close-on-click-modal="!importSubmitting"
+      @closed="resetImportDialog"
+    >
+      <el-alert
+        title="请上传 CSV UTF-8 文件"
+        type="info"
+        show-icon
+        :closable="false"
+        description="模板包含 question、expected_answer、expected_evidence 三列；前两列必填，期望依据会作为评测检索关键片段保存。"
+      />
+      <div class="evaluation-dataset-detail-page__import-actions">
+        <el-upload
+          accept=".csv,text/csv"
+          :auto-upload="false"
+          :show-file-list="false"
+          :disabled="importPreviewLoading || importSubmitting"
+          :on-change="handleImportFileChange"
+        >
+          <el-button
+            type="primary"
+            plain
+            :loading="importPreviewLoading"
+          >
+            选择 CSV 文件并预检
+          </el-button>
+        </el-upload>
+        <el-button
+          link
+          type="primary"
+          @click="downloadImportTemplate"
+        >
+          下载模板
+        </el-button>
+        <span v-if="importFileName" class="evaluation-dataset-detail-page__import-file-name">
+          {{ importFileName }}
+        </span>
+      </div>
+      <template v-if="importPreview">
+        <el-descriptions
+          class="evaluation-dataset-detail-page__import-summary"
+          :column="3"
+          border
+        >
+          <el-descriptions-item label="数据行">
+            {{ importPreview.total_rows }}
+          </el-descriptions-item>
+          <el-descriptions-item label="可导入">
+            {{ importPreview.valid_cases.length }}
+          </el-descriptions-item>
+          <el-descriptions-item label="错误">
+            {{ importPreview.errors.length }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <el-alert
+          v-if="importPreview.errors.length > 0"
+          title="请修正 CSV 中的错误后重新上传；为避免部分导入，当前文件不会写入任何用例。"
+          type="error"
+          show-icon
+          :closable="false"
+        />
+        <el-table
+          v-if="importPreview.errors.length > 0"
+          :data="importPreview.errors"
+          class="evaluation-dataset-detail-page__import-errors"
+          max-height="220"
+        >
+          <el-table-column label="行号" prop="row_number" width="90" />
+          <el-table-column label="字段" prop="field" width="160">
+            <template #default="{ row }">
+              {{ row.field || "文件" }}
+            </template>
+          </el-table-column>
+          <el-table-column label="错误原因" prop="message" min-width="280" />
+        </el-table>
+        <el-alert
+          v-else
+          :title="`预检通过，可一次性导入 ${importPreview.valid_cases.length} 条标准问答用例。`"
+          type="success"
+          show-icon
+          :closable="false"
+        />
+      </template>
+      <template #footer>
+        <el-button
+          :disabled="importSubmitting"
+          @click="importDialogVisible = false"
+        >
+          取消
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="importSubmitting"
+          :disabled="!importPreview?.can_import || importPreviewLoading"
+          @click="submitCaseImport"
+        >
+          确认导入
+        </el-button>
+      </template>
+    </AdminDialog>
 
     <AdminDialog
       v-model="runDialogVisible"
@@ -1552,6 +1734,28 @@ watch([caseSearchKeyword, caseStatusFilter, filteredRows], () => {
   height: 100%;
   overflow-y: auto;
   padding: 24px;
+}
+
+.evaluation-dataset-detail-page__import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.evaluation-dataset-detail-page__import-file-name {
+  max-width: 280px;
+  overflow: hidden;
+  color: var(--admin-text-secondary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evaluation-dataset-detail-page__import-summary,
+.evaluation-dataset-detail-page__import-errors {
+  margin: 16px 0;
 }
 
 .evaluation-dataset-detail-page__form-section {

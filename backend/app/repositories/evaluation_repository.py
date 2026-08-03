@@ -189,6 +189,28 @@ class EvaluationRepository:
         await self.db.refresh(case)
         return case
 
+    async def create_cases(
+        self,
+        *,
+        dataset_id: int,
+        cases: list[dict[str, Any]],
+    ) -> int:
+        rows = [
+            EvalCase(
+                dataset_id=dataset_id,
+                question=str(item["question"]).strip(),
+                expected_answer=str(item["expected_answer"]).strip(),
+                expected_doc_ids=[],
+                expected_snippets=list(item.get("expected_snippets") or []),
+                expected_chunk_ids=[],
+                enabled=True,
+            )
+            for item in cases
+        ]
+        self.db.add_all(rows)
+        await self.db.commit()
+        return len(rows)
+
     async def delete_case(self, case: EvalCase) -> None:
         await self.db.delete(case)
         await self.db.commit()
@@ -246,6 +268,13 @@ class EvaluationRepository:
         run.heartbeat_at = utc_now()
         await self.db.commit()
 
+    async def is_run_claim_current(self, run_id: int, started_at) -> bool:
+        result = await self.db.execute(
+            select(EvalRun.status, EvalRun.started_at).where(EvalRun.id == run_id)
+        )
+        row = result.one_or_none()
+        return bool(row and row.status == "running" and row.started_at == started_at)
+
     async def is_run_canceled(self, run_id: int) -> bool:
         result = await self.db.execute(select(EvalRun.status).where(EvalRun.id == run_id))
         return result.scalar_one_or_none() == "canceled"
@@ -256,6 +285,26 @@ class EvaluationRepository:
         run.status = "canceled"
         run.finished_at = utc_now()
         run.heartbeat_at = run.finished_at
+        await self.db.commit()
+        await self.db.refresh(run)
+        return run
+
+    async def prepare_run_for_resume(
+        self,
+        run: EvalRun,
+        *,
+        passed_cases: int,
+        failed_cases: int,
+        average_score: int,
+    ) -> EvalRun:
+        run.status = "pending"
+        run.passed_cases = passed_cases
+        run.failed_cases = failed_cases
+        run.average_score = average_score
+        run.started_at = None
+        run.finished_at = None
+        run.heartbeat_at = None
+        run.error_message = None
         await self.db.commit()
         await self.db.refresh(run)
         return run
@@ -395,6 +444,51 @@ class EvaluationRepository:
             .order_by(EvalCaseResult.id.asc())
         )
         return list(result.scalars().all())
+
+    async def count_case_results(
+        self,
+        *,
+        run_id: int,
+        status: str | None = None,
+    ) -> int:
+        stmt = select(func.count()).select_from(EvalCaseResult).where(EvalCaseResult.run_id == run_id)
+        if status:
+            stmt = stmt.where(EvalCaseResult.status == status)
+        return int((await self.db.execute(stmt)).scalar() or 0)
+
+    async def list_case_results_page(
+        self,
+        *,
+        run_id: int,
+        offset: int,
+        limit: int,
+        status: str | None = None,
+    ) -> list[EvalCaseResult]:
+        stmt = (
+            select(EvalCaseResult)
+            .where(EvalCaseResult.run_id == run_id)
+            .order_by(EvalCaseResult.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        if status:
+            stmt = stmt.where(EvalCaseResult.status == status)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_case_result(
+        self,
+        *,
+        run_id: int,
+        result_id: int,
+    ) -> EvalCaseResult | None:
+        result = await self.db.execute(
+            select(EvalCaseResult).where(
+                EvalCaseResult.run_id == run_id,
+                EvalCaseResult.id == result_id,
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def list_retrieved_chunk_details(
         self,

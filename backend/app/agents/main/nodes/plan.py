@@ -118,7 +118,7 @@ def build_plan_node(*, planner_llm_factory: Callable[[], Any] | None):
         started_at = perf_counter()
         routing = state["routing"]
         targets = list(routing["target_sub_agents"])
-        if routing["route_type"] == ROUTE_MULTI_SUB_AGENT or "knowledge_qa" in targets:
+        if routing["route_type"] == ROUTE_MULTI_SUB_AGENT:
             steps = await _plan_multi_agent(state, planner_llm_factory=planner_llm_factory)
         else:
             steps = [
