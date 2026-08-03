@@ -308,6 +308,12 @@ function canResumeRun(status: EvalRunStatus, heartbeatAt: string | null) {
 }
 
 function getCaseStatusLabel(status: EvalCaseResultStatus) {
+  if (status === "pending") {
+    return "等待执行";
+  }
+  if (status === "running") {
+    return "评测中";
+  }
   return status === "passed" ? "评测通过" : "评测失败";
 }
 

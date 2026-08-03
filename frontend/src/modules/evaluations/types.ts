@@ -2,7 +2,7 @@ import type { KnowledgeBaseListResponse, KnowledgeBaseSummary } from "@/shared/t
 
 export type EvalDatasetStatus = "draft" | "active" | "archived";
 export type EvalRunStatus = "pending" | "running" | "completed" | "failed" | "canceled";
-export type EvalCaseResultStatus = "passed" | "failed";
+export type EvalCaseResultStatus = "pending" | "running" | "passed" | "failed";
 
 export interface EvaluationKnowledgeBasePayload {
   name: string;

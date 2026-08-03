@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     DRAMATIQ_INDEXING_QUEUE: str = "indexing"
     DRAMATIQ_GRAPH_INDEXING_QUEUE: str = "graph_indexing"
     DRAMATIQ_EVALUATION_QUEUE: str = "evaluation"
+    EVALUATION_CASE_TIMEOUT_SECONDS: int = 120
     EMBEDDING_MODEL: Optional[str] = None
 
     MOYU_API_KEY: str = ""

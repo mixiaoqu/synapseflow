@@ -30,25 +30,55 @@ class _MissingActor:
         )
 
 
-async def _execute_evaluation_run(run_id: int, user_id: int) -> None:
+async def _dispatch_evaluation_run(run_id: int, user_id: int) -> None:
     async with AsyncSessionLocal() as db:
         current_user = await db.get(User, user_id)
         if current_user is None:
             logger.warning("Skip evaluation run because user is missing run_id={} user_id={}", run_id, user_id)
             return
-        await evaluation_service.execute_run(
+        case_keys = await evaluation_service.start_run(
             db=db,
             current_user=current_user,
             run_id=run_id,
+        )
+    for case_key in case_keys:
+        execute_evaluation_case_actor.send(run_id, user_id, case_key)
+
+
+async def _execute_evaluation_case(run_id: int, user_id: int, case_key: str) -> None:
+    async with AsyncSessionLocal() as db:
+        current_user = await db.get(User, user_id)
+        if current_user is None:
+            logger.warning(
+                "Skip evaluation case because user is missing run_id={} user_id={} case_key={}",
+                run_id,
+                user_id,
+                case_key,
+            )
+            return
+        await evaluation_service.execute_case(
+            db=db,
+            current_user=current_user,
+            run_id=run_id,
+            case_key=case_key,
         )
 
 
 if dramatiq is not None:
 
-    @dramatiq.actor(queue_name=settings.DRAMATIQ_EVALUATION_QUEUE)
+    @dramatiq.actor(queue_name=settings.DRAMATIQ_EVALUATION_QUEUE, time_limit=120000, max_retries=0)
     async def execute_evaluation_run_actor(run_id: int, user_id: int) -> None:
-        await _execute_evaluation_run(run_id=run_id, user_id=user_id)
+        await _dispatch_evaluation_run(run_id=run_id, user_id=user_id)
+
+    @dramatiq.actor(
+        queue_name=settings.DRAMATIQ_EVALUATION_QUEUE,
+        time_limit=(settings.EVALUATION_CASE_TIMEOUT_SECONDS + 30) * 1000,
+        max_retries=0,
+    )
+    async def execute_evaluation_case_actor(run_id: int, user_id: int, case_key: str) -> None:
+        await _execute_evaluation_case(run_id=run_id, user_id=user_id, case_key=case_key)
 
 
 else:
     execute_evaluation_run_actor = _MissingActor("execute_evaluation_run_actor")
+    execute_evaluation_case_actor = _MissingActor("execute_evaluation_case_actor")

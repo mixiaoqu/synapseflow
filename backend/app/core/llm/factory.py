@@ -34,6 +34,12 @@ class LLMFactory:
             llm_kwargs["max_tokens"] = model_config.max_tokens
 
         llm_kwargs.update(override_kwargs)
+        if getattr(model_config, "provider", "") == "deepseek":
+            extra_body = dict(llm_kwargs.get("extra_body") or {})
+            thinking = dict(extra_body.get("thinking") or {})
+            thinking["type"] = "disabled"
+            extra_body["thinking"] = thinking
+            llm_kwargs["extra_body"] = extra_body
         logger.debug(
             "Creating LLM instance: key={} provider={} model={}",
             getattr(model_config, "key", "unknown"),

@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 EvalDatasetStatus = Literal["draft", "active", "archived"]
 EvalRunStatus = Literal["pending", "running", "completed", "failed", "canceled"]
-EvalCaseResultStatus = Literal["passed", "failed"]
+EvalCaseResultStatus = Literal["pending", "running", "passed", "failed"]
 
 
 class EvalKnowledgeBaseCreate(BaseModel):

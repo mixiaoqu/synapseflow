@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
-from datetime import timedelta
 import json
 import re
+from datetime import timedelta
 from io import StringIO
 from time import perf_counter
 from typing import Any
 
 from app.application.agent.input_builder import AgentRunRequest
 from app.application.agent.run_service import get_agent_run_service
+from app.core.config.settings import settings
 from app.core.llm.factory import get_llm_for_analysis
 from app.db.models import EvalCase, EvalDataset, EvalRun, KnowledgeBase, User
 from app.models.schemas.evaluation import (
@@ -37,6 +39,7 @@ ANSWER_PASSING_SCORE = 80
 EVAL_CASE_IMPORT_MAX_ROWS = 1000
 EVAL_CASE_IMPORT_HEADERS = ("question", "expected_answer", "expected_evidence")
 EVALUATION_RUN_HEARTBEAT_TIMEOUT_SECONDS = 300
+EVALUATION_CASE_TIMEOUT_SECONDS = settings.EVALUATION_CASE_TIMEOUT_SECONDS
 
 
 class EvaluationService:
@@ -456,6 +459,85 @@ class EvaluationService:
             run_id=int(run.id),
         )
 
+    async def start_run(
+        self,
+        *,
+        db,
+        current_user: User,
+        run_id: int,
+    ) -> list[str]:
+        repo = EvaluationRepository(db, current_user.id, current_user)
+        run = await repo.claim_pending_run(run_id)
+        if run is None:
+            return []
+        await repo.ensure_case_execution_records(run)
+        case_keys = await repo.list_pending_case_keys(int(run.id))
+        if not case_keys:
+            await repo.finish_run_if_all_case_results_completed(int(run.id))
+        return case_keys
+
+    async def execute_case(
+        self,
+        *,
+        db,
+        current_user: User,
+        run_id: int,
+        case_key: str,
+    ) -> None:
+        repo = EvaluationRepository(db, current_user.id, current_user)
+        run = await repo.get_run(run_id)
+        if run is None or run.status != "running":
+            return
+        result = await repo.claim_pending_case_result(run_id=run_id, case_key=case_key)
+        if result is None:
+            return
+
+        started_at = perf_counter()
+        try:
+            outcome = await asyncio.wait_for(
+                self._evaluate_case_content(
+                    current_user=current_user,
+                    run=run,
+                    case=dict(result.case_snapshot or {}),
+                ),
+                timeout=EVALUATION_CASE_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            outcome = {
+                "status": "failed",
+                "score": 0,
+                "actual_answer": "",
+                "retrieved_doc_ids": [],
+                "retrieved_chunk_ids": [],
+                "judge_result": {},
+                "error_message": f"单题评测超过 {EVALUATION_CASE_TIMEOUT_SECONDS} 秒，已自动标记为失败",
+            }
+        except Exception as exc:
+            outcome = {
+                "status": "failed",
+                "score": 0,
+                "actual_answer": "",
+                "retrieved_doc_ids": [],
+                "retrieved_chunk_ids": [],
+                "judge_result": {},
+                "error_message": str(exc) or "评测用例执行失败",
+            }
+
+        await repo.complete_case_result(
+            result,
+            status=str(outcome["status"]),
+            score=int(outcome["score"]),
+            actual_answer=str(outcome["actual_answer"]),
+            retrieved_doc_ids=list(outcome["retrieved_doc_ids"]),
+            retrieved_chunk_ids=list(outcome["retrieved_chunk_ids"]),
+            judge_result=dict(outcome["judge_result"]),
+            latency_ms=int((perf_counter() - started_at) * 1000),
+            error_message=outcome["error_message"],
+        )
+        await repo.touch_run(run)
+        await repo.sync_run_statistics(run_id)
+        await repo.finish_run_if_all_case_results_completed(run_id)
+
     async def execute_run(
         self,
         *,
@@ -463,57 +545,19 @@ class EvaluationService:
         current_user: User,
         run_id: int,
     ) -> EvalRun | None:
-        repo = EvaluationRepository(db, current_user.id, current_user)
-        run = await repo.claim_pending_run(run_id)
-        if run is None:
-            return await repo.get_run(run_id)
-        existing_results = await repo.list_case_results(int(run.id))
-        completed_case_ids = set(
-            self._unique_ints(
-                [
-                    result.case_id
-                    or dict(result.case_snapshot or {}).get("case_id")
-                    for result in existing_results
-                ]
-            )
+        case_keys = await self.start_run(
+            db=db,
+            current_user=current_user,
+            run_id=run_id,
         )
-        case_items = [
-            case
-            for case in list(dict(run.case_snapshot or {}).get("items") or [])
-            if int(case.get("case_id") or 0) not in completed_case_ids
-        ]
-        passed_cases = sum(1 for result in existing_results if result.status == "passed")
-        failed_cases = sum(1 for result in existing_results if result.status == "failed")
-        scores = [int(result.score) for result in existing_results]
-        try:
-            for case in case_items:
-                if not await repo.is_run_claim_current(int(run.id), run.started_at):
-                    return await repo.get_run(int(run.id))
-                result_status, score = await self._execute_case(
-                    db=db,
-                    current_user=current_user,
-                    repo=repo,
-                    run=run,
-                    case=case,
-                )
-                scores.append(score)
-                if result_status == "passed":
-                    passed_cases += 1
-                else:
-                    failed_cases += 1
-                await repo.touch_run(run)
-
-            average_score = int(round(sum(scores) / len(scores))) if scores else 0
-            return await repo.finish_run(
-                run,
-                status="completed",
-                passed_cases=passed_cases,
-                failed_cases=failed_cases,
-                average_score=average_score,
+        for case_key in case_keys:
+            await self.execute_case(
+                db=db,
+                current_user=current_user,
+                run_id=run_id,
+                case_key=case_key,
             )
-        except Exception as exc:
-            run.error_message = str(exc) or "评测任务执行失败"
-            return await repo.mark_run_failed(run)
+        return await EvaluationRepository(db, current_user.id, current_user).get_run(run_id)
 
     async def resume_run(
         self,
@@ -529,10 +573,11 @@ class EvaluationService:
         if not self._is_run_resumable(run):
             raise ValueError("当前评测任务仍在正常运行，不能继续执行")
 
+        await repo.reset_retryable_case_results(run_id)
         results = await repo.list_case_results(run_id)
         passed_cases = sum(1 for result in results if result.status == "passed")
-        failed_cases = sum(1 for result in results if result.status == "failed")
-        scores = [int(result.score) for result in results]
+        failed_cases = 0
+        scores = [int(result.score) for result in results if result.status == "passed"]
         average_score = int(round(sum(scores) / len(scores))) if scores else 0
         return await repo.prepare_run_for_resume(
             run,
@@ -541,30 +586,27 @@ class EvaluationService:
             average_score=average_score,
         )
 
-    async def _execute_case(
+    async def _evaluate_case_content(
         self,
         *,
-        db,
         current_user: User,
-        repo: EvaluationRepository,
         run: EvalRun,
         case: dict[str, Any],
-    ) -> tuple[str, int]:
-        started_at = perf_counter()
+    ) -> dict[str, Any]:
         actual_answer = ""
         retrieved_docs: list[dict[str, Any]] = []
         judge_result: dict[str, Any] = {}
         error_message: str | None = None
         score = 0
         status = "failed"
-
         try:
             assistant_snapshot = dict(run.assistant_snapshot or {})
             agent_result = await get_agent_run_service().execute_stateless(
                 AgentRunRequest(
                     query=str(case["question"]),
                     team_id=int(dict(run.kb_snapshot or {}).get("team_id") or 0) or None,
-                    knowledge_base_id=int(dict(run.kb_snapshot or {}).get("knowledge_base_id") or 0) or None,
+                    knowledge_base_id=int(dict(run.kb_snapshot or {}).get("knowledge_base_id") or 0)
+                    or None,
                     assistant_id=assistant_snapshot.get("assistant_id"),
                     assistant_name=assistant_snapshot.get("name"),
                     assistant_llm_model_key=assistant_snapshot.get("llm_model_key"),
@@ -577,8 +619,10 @@ class EvaluationService:
             actual_answer = str(agent_result.get("answer") or "")
             retrieved_docs = list(agent_result.get("retrieved_docs") or [])
             if agent_result.get("answer_status") == "blocked":
-                judge_result = {"blocked": True, "content_risk_hits": agent_result.get("content_risk_hits", [])}
-                error_message = None
+                judge_result = {
+                    "blocked": True,
+                    "content_risk_hits": agent_result.get("content_risk_hits", []),
+                }
                 raise RuntimeError("__evaluation_risk_blocked__")
             judge_result = await self._judge_answer(
                 question=str(case["question"]),
@@ -614,22 +658,17 @@ class EvaluationService:
             if str(exc) != "__evaluation_risk_blocked__":
                 error_message = str(exc) or "评测用例执行失败"
             retrieved_chunk_ids = []
+            retrieved_doc_ids = self._extract_retrieved_doc_ids(retrieved_docs)
 
-        latency_ms = int((perf_counter() - started_at) * 1000)
-        await repo.create_case_result(
-            run_id=int(run.id),
-            case_id=case.get("case_id"),
-            case_snapshot=case,
-            status=status,
-            score=score,
-            actual_answer=actual_answer,
-            retrieved_doc_ids=self._extract_retrieved_doc_ids(retrieved_docs),
-            retrieved_chunk_ids=retrieved_chunk_ids,
-            judge_result=judge_result,
-            latency_ms=latency_ms,
-            error_message=error_message,
-        )
-        return status, score
+        return {
+            "status": status,
+            "score": score,
+            "actual_answer": actual_answer,
+            "retrieved_doc_ids": retrieved_doc_ids,
+            "retrieved_chunk_ids": retrieved_chunk_ids,
+            "judge_result": judge_result,
+            "error_message": error_message,
+        }
 
     @staticmethod
     def _build_case_snapshot(case: EvalCase) -> dict[str, Any]:

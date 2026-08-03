@@ -926,6 +926,7 @@ class EvalCaseResult(Base):
         nullable=False,
         index=True,
     )
+    case_key = Column(String(100), nullable=True)
     case_id = Column(
         Integer,
         ForeignKey("eval_cases.id", ondelete="SET NULL"),

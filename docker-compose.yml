@@ -196,7 +196,7 @@ services:
     command:
       - sh
       - -c
-      - uv run dramatiq app.workers.indexing_tasks app.workers.evaluation_tasks --processes 1 --threads 1
+      - uv run dramatiq app.workers.indexing_tasks app.workers.evaluation_tasks --processes 2 --threads 2
 
   frontend:
     build:

@@ -1,7 +1,7 @@
 from app.application.evaluation_service import EvaluationService
 
 
-def test_retrieval_metrics_prefer_stable_snippets_over_chunk_ids():
+def test_retrieval_metrics_require_selected_chunk_match():
     docs = [
         {
             "content": "账号创建后，系统会立即发送通知。",
@@ -21,14 +21,14 @@ def test_retrieval_metrics_prefer_stable_snippets_over_chunk_ids():
         retrieved_chunk_ids=[999],
     )
 
-    assert metrics["evidence_basis"] == "snippet"
-    assert metrics["evidence_matched"] is True
+    assert metrics["evidence_basis"] == "chunk"
+    assert metrics["evidence_matched"] is False
     assert metrics["chunk_matched"] is False
     assert metrics["snippet_recall"] == 1.0
     assert metrics["reciprocal_rank"] == 1.0
 
 
-def test_retrieval_metrics_fall_back_to_chunk_then_document():
+def test_retrieval_metrics_ignore_document_match_without_selected_chunks():
     chunk_metrics = EvaluationService._calculate_retrieval_metrics(
         expected_doc_ids=[10],
         expected_chunk_ids=[123],
@@ -53,5 +53,5 @@ def test_retrieval_metrics_fall_back_to_chunk_then_document():
 
     assert chunk_metrics["evidence_basis"] == "chunk"
     assert chunk_metrics["evidence_matched"] is True
-    assert document_metrics["evidence_basis"] == "document"
+    assert document_metrics["evidence_basis"] == "unconstrained"
     assert document_metrics["evidence_matched"] is True

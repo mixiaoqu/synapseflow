@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import case as sql_case
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -246,9 +247,62 @@ class EvaluationRepository:
             created_by=self.user_id,
         )
         self.db.add(row)
+        await self.db.flush()
+        case_items = list(dict(case_snapshot or {}).get("items") or [])
+        self.db.add_all(
+            [
+                EvalCaseResult(
+                    run_id=int(row.id),
+                    case_key=str(case["case_id"]),
+                    case_id=int(case["case_id"]),
+                    case_snapshot=dict(case),
+                    status="pending",
+                )
+                for case in case_items
+            ]
+        )
         await self.db.commit()
         await self.db.refresh(row)
         return row
+
+    async def ensure_case_execution_records(self, run: EvalRun) -> None:
+        """为历史评测运行补齐按题执行所需的结果记录。"""
+        case_items = list(dict(run.case_snapshot or {}).get("items") or [])
+        if not case_items:
+            return
+
+        results = await self.list_case_results(int(run.id))
+        assigned_keys = {str(result.case_key) for result in results if result.case_key}
+        results_by_case_id: dict[int, list[EvalCaseResult]] = {}
+        for result in results:
+            if result.case_id is not None:
+                results_by_case_id.setdefault(int(result.case_id), []).append(result)
+
+        has_changes = False
+        for case in case_items:
+            case_key = str(case["case_id"])
+            case_id = int(case["case_id"])
+            if case_key in assigned_keys:
+                continue
+
+            legacy_results = results_by_case_id.get(case_id, [])
+            if legacy_results:
+                legacy_results[0].case_key = case_key
+            else:
+                self.db.add(
+                    EvalCaseResult(
+                        run_id=int(run.id),
+                        case_key=case_key,
+                        case_id=case_id,
+                        case_snapshot=dict(case),
+                        status="pending",
+                    )
+                )
+            assigned_keys.add(case_key)
+            has_changes = True
+
+        if has_changes:
+            await self.db.commit()
 
     async def claim_pending_run(self, run_id: int) -> EvalRun | None:
         now = utc_now()
@@ -308,6 +362,133 @@ class EvaluationRepository:
         await self.db.commit()
         await self.db.refresh(run)
         return run
+
+    async def list_pending_case_keys(self, run_id: int) -> list[str]:
+        result = await self.db.execute(
+            select(EvalCaseResult.case_key)
+            .where(EvalCaseResult.run_id == run_id, EvalCaseResult.status == "pending")
+            .order_by(EvalCaseResult.id.asc())
+        )
+        return [str(case_key) for case_key in result.scalars().all() if case_key]
+
+    async def claim_pending_case_result(
+        self,
+        *,
+        run_id: int,
+        case_key: str,
+    ) -> EvalCaseResult | None:
+        stmt = (
+            update(EvalCaseResult)
+            .where(
+                EvalCaseResult.run_id == run_id,
+                EvalCaseResult.case_key == case_key,
+                EvalCaseResult.status == "pending",
+            )
+            .values(status="running", error_message=None)
+            .returning(EvalCaseResult.id)
+        )
+        result_id = (await self.db.execute(stmt)).scalar_one_or_none()
+        if result_id is None:
+            await self.db.rollback()
+            return None
+        await self.db.commit()
+        return await self.get_case_result(run_id=run_id, result_id=int(result_id))
+
+    async def complete_case_result(
+        self,
+        result: EvalCaseResult,
+        *,
+        status: str,
+        score: int,
+        actual_answer: str,
+        retrieved_doc_ids: list[int],
+        retrieved_chunk_ids: list[int],
+        judge_result: dict[str, Any],
+        latency_ms: int | None,
+        error_message: str | None,
+    ) -> EvalCaseResult:
+        result.status = status
+        result.score = score
+        result.actual_answer = actual_answer
+        result.retrieved_doc_ids = list(retrieved_doc_ids)
+        result.retrieved_chunk_ids = list(retrieved_chunk_ids)
+        result.judge_result = dict(judge_result)
+        result.latency_ms = latency_ms
+        result.error_message = error_message
+        await self.db.commit()
+        await self.db.refresh(result)
+        return result
+
+    async def reset_retryable_case_results(self, run_id: int) -> None:
+        await self.db.execute(
+            update(EvalCaseResult)
+            .where(
+                EvalCaseResult.run_id == run_id,
+                EvalCaseResult.status.in_(("failed", "running")),
+            )
+            .values(
+                status="pending",
+                score=0,
+                actual_answer="",
+                retrieved_doc_ids=[],
+                retrieved_chunk_ids=[],
+                judge_result={},
+                latency_ms=None,
+                error_message=None,
+            )
+        )
+        await self.db.commit()
+
+    async def sync_run_statistics(self, run_id: int) -> None:
+        statistics = await self.db.execute(
+            select(
+                func.coalesce(
+                    func.sum(sql_case((EvalCaseResult.status == "passed", 1), else_=0)),
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(sql_case((EvalCaseResult.status == "failed", 1), else_=0)),
+                    0,
+                ),
+                func.avg(
+                    sql_case(
+                        (EvalCaseResult.status.in_(("passed", "failed")), EvalCaseResult.score),
+                        else_=None,
+                    )
+                ),
+            ).where(EvalCaseResult.run_id == run_id)
+        )
+        passed_cases, failed_cases, average_score = statistics.one()
+        await self.db.execute(
+            update(EvalRun)
+            .where(EvalRun.id == run_id, EvalRun.status == "running")
+            .values(
+                passed_cases=int(passed_cases or 0),
+                failed_cases=int(failed_cases or 0),
+                average_score=int(round(float(average_score or 0))),
+            )
+        )
+        await self.db.commit()
+
+    async def finish_run_if_all_case_results_completed(self, run_id: int) -> EvalRun | None:
+        run = await self.get_run(run_id)
+        if run is None or run.status != "running":
+            return run
+        results = await self.list_case_results(run_id)
+        if len(results) != int(run.total_cases) or any(
+            result.status in {"pending", "running"} for result in results
+        ):
+            return run
+        passed_cases = sum(1 for result in results if result.status == "passed")
+        failed_cases = sum(1 for result in results if result.status == "failed")
+        average_score = int(round(sum(int(result.score) for result in results) / len(results))) if results else 0
+        return await self.finish_run(
+            run,
+            status="completed",
+            passed_cases=passed_cases,
+            failed_cases=failed_cases,
+            average_score=average_score,
+        )
 
     async def finish_run(
         self,
