@@ -58,12 +58,10 @@ class RemoteMcpAuthMiddleware:
             return
         try:
             bearer_token = _bearer_token(scope)
-            mcp_session_id = _header(scope, b"mcp-session-id")
             async with AsyncSessionLocal() as db:
                 context = await authenticate_remote_mcp(
                     db,
                     bearer_token=bearer_token,
-                    mcp_session_id=mcp_session_id,
                 )
         except RemoteMcpConfigurationError as exc:
             response = JSONResponse({"detail": str(exc)}, status_code=409)
@@ -117,7 +115,7 @@ mcp_server = FastMCP(
     instructions=(
         "通过当前应用绑定的知识库回答问题，回答仅基于检索到的知识库证据。"
     ),
-    stateless_http=False,
+    stateless_http=True,
     json_response=True,
     transport_security=mcp_transport_security,
 )

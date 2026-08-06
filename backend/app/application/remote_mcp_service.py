@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
+from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,7 +38,6 @@ class RemoteMcpContext:
     assistant_llm_model_key: str | None
     assistant_persona_prompt: str | None
     assistant_rule_template: str | None
-    mcp_session_id: str | None
 
 
 def _split_client_credential(token: str) -> tuple[str, str]:
@@ -52,7 +51,6 @@ async def authenticate_remote_mcp(
     db: AsyncSession,
     *,
     bearer_token: str,
-    mcp_session_id: str | None,
 ) -> RemoteMcpContext:
     """Validate a ProjectApp credential and derive its Agent capabilities."""
 
@@ -80,15 +78,12 @@ async def authenticate_remote_mcp(
     return _build_context(
         credential.client_id,
         runtime,
-        mcp_session_id=mcp_session_id,
     )
 
 
 def _build_context(
     client_id: str,
     runtime: ProjectAppRuntimeRecord,
-    *,
-    mcp_session_id: str | None,
 ) -> RemoteMcpContext:
     assistant = runtime.assistant
     return RemoteMcpContext(
@@ -114,14 +109,11 @@ def _build_context(
         assistant_rule_template=(
             getattr(assistant, "rule_template", None) if assistant is not None else None
         ),
-        mcp_session_id=mcp_session_id,
     )
 
 
 def _agent_session_id(context: RemoteMcpContext) -> str:
-    raw_session_id = context.mcp_session_id or context.client_id
-    digest = hashlib.sha256(raw_session_id.encode("utf-8")).hexdigest()[:40]
-    return f"mcp:{context.project_app_id}:{digest}"
+    return f"mcp:{context.project_app_id}:run:{uuid4().hex}"
 
 
 async def chat_remote_mcp(context: RemoteMcpContext, *, message: str):
