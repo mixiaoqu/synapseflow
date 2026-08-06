@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse
 
 from app.application.remote_mcp_service import (
@@ -103,6 +104,14 @@ def _current_context() -> RemoteMcpContext:
     return state.context
 
 
+mcp_transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=[
+        "zsk.szsayu.com"
+    ],
+)
+
+
 mcp_server = FastMCP(
     "SynapseFlow Agent",
     instructions=(
@@ -110,6 +119,7 @@ mcp_server = FastMCP(
     ),
     stateless_http=False,
     json_response=True,
+    transport_security=mcp_transport_security,
 )
 mcp_server.settings.streamable_http_path = "/"
 
