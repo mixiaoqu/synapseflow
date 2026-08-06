@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies.auth import require_review_roles
 from app.application.agent.input_builder import AgentRunRequest
 from app.application.agent.run_service import get_agent_run_service
+from app.application.model_usage_service import model_usage_service
 from app.application.permission_service import PermissionService
 from app.core.authz import PERMISSION_REVIEW_QA_LOG, PERMISSION_VIEW_QA_LOG
 from app.db.models import User
@@ -30,6 +31,36 @@ from app.services.document_lifecycle import (
 )
 
 router = APIRouter()
+
+
+@router.get("/cost-summary")
+async def get_cost_summary(
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    team_id: int | None = Query(None),
+    granularity: str = Query("day", pattern="^(day|week|month)$"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    permission_service = PermissionService(db)
+    accessible_team_ids = await permission_service.list_accessible_team_ids(current_user)
+    if team_id is not None:
+        if (
+            accessible_team_ids is not None
+            and team_id not in accessible_team_ids
+            and not PermissionService.is_system_admin(current_user)
+        ):
+            raise HTTPException(status_code=403, detail="Cost center team access denied")
+        scoped_team_ids = [team_id]
+    else:
+        scoped_team_ids = accessible_team_ids
+    return await model_usage_service.summary(
+        db,
+        team_ids=scoped_team_ids,
+        start_date=start_date,
+        end_date=end_date,
+        granularity=granularity,
+    )
 
 
 def _build_log_detail_response(record) -> KbChatLogDetail:
@@ -59,6 +90,11 @@ def _build_log_detail_response(record) -> KbChatLogDetail:
         final_context_count=record.final_context_count,
         empty_reason=record.empty_reason,
         rerank_enabled=record.rerank_enabled,
+        input_tokens=record.input_tokens,
+        output_tokens=record.output_tokens,
+        total_tokens=record.total_tokens,
+        estimated_cost=record.estimated_cost,
+        token_usage=record.token_usage,
         feedback_value=record.feedback_value,
         feedback_note=record.feedback_note,
         suggested_review_label=record.suggested_review_label,
@@ -228,6 +264,11 @@ async def list_ask_logs(
                 final_context_count=item.final_context_count,
                 empty_reason=item.empty_reason,
                 rerank_enabled=item.rerank_enabled,
+                input_tokens=item.input_tokens,
+                output_tokens=item.output_tokens,
+                total_tokens=item.total_tokens,
+                estimated_cost=item.estimated_cost,
+                token_usage=item.token_usage,
                 feedback_value=item.feedback_value,
                 feedback_note=item.feedback_note,
                 suggested_review_label=item.suggested_review_label,

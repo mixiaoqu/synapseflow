@@ -4,6 +4,7 @@ from langchain_openai import ChatOpenAI
 from loguru import logger
 
 from app.core.config import config_registry
+from app.core.llm.token_usage import TokenUsageCallbackHandler
 
 
 class LLMFactory:
@@ -34,6 +35,19 @@ class LLMFactory:
             llm_kwargs["max_tokens"] = model_config.max_tokens
 
         llm_kwargs.update(override_kwargs)
+        callbacks = llm_kwargs.get("callbacks")
+        usage_handler = TokenUsageCallbackHandler(
+            model=str(getattr(model_config, "key", None) or llm_kwargs.get("model")),
+            provider=str(getattr(model_config, "provider", "") or "") or None,
+            input_price=getattr(model_config, "input_price", 0),
+            output_price=getattr(model_config, "output_price", 0),
+        )
+        if callbacks is None:
+            llm_kwargs["callbacks"] = [usage_handler]
+        elif isinstance(callbacks, (list, tuple)):
+            llm_kwargs["callbacks"] = [*callbacks, usage_handler]
+        else:
+            llm_kwargs["callbacks"] = [callbacks, usage_handler]
         if getattr(model_config, "provider", "") == "deepseek":
             extra_body = dict(llm_kwargs.get("extra_body") or {})
             thinking = dict(extra_body.get("thinking") or {})

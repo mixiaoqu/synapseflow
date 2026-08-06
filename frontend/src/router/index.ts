@@ -23,6 +23,7 @@ import TeamListPage from "@/modules/organizations/pages/TeamListPage.vue";
 import UserListPage from "@/modules/users/pages/UserListPage.vue";
 import ProjectAppListPage from "@/modules/projects/pages/ProjectAppListPage.vue";
 import ProjectListPage from "@/modules/projects/pages/ProjectListPage.vue";
+import ModelUsagePage from "@/modules/model-usage/pages/ModelUsagePage.vue";
 // 当前阶段所有一级后台模块先复用统一骨架页，后续再逐个替换成真实业务页面。
 const router = createRouter({
   history: createWebHistory(),
@@ -63,6 +64,15 @@ const router = createRouter({
           meta: {
             title: "控制台",
             description: "平台总览与待办入口，后续在此接入全局工作台内容。",
+          },
+        },
+        {
+          path: "model-usage",
+          name: "model-usage",
+          component: ModelUsagePage,
+          meta: {
+            title: "AI 成本中心",
+            description: "按模型、应用和业务场景查看 Token 用量与估算成本。",
           },
         },
         {

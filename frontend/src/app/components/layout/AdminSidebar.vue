@@ -11,6 +11,7 @@ import {
   FolderOpened,
   Fold,
   MagicStick,
+  Money,
   Odometer,
   SetUp,
   User,
@@ -39,6 +40,7 @@ const navIcons: Record<
   Component
 > = {
   dashboard: Odometer,
+  "model-usage": Money,
   "knowledge-bases": Collection,
   projects: FolderOpened,
   assistants: MagicStick,

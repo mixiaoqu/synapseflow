@@ -1,6 +1,7 @@
 """Knowledge-base chat related schemas."""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -147,6 +148,11 @@ class KbChatLogItem(BaseModel):
     final_context_count: int = 0
     empty_reason: str | None = None
     rerank_enabled: bool = False
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    estimated_cost: Decimal | None = None
+    token_usage: Dict[str, Any] | None = None
     feedback_value: str | None = None
     feedback_note: str | None = None
     suggested_review_label: str | None = None

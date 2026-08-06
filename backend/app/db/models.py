@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -781,6 +782,11 @@ class KbChatLog(Base):
     final_context_count = Column(Integer, nullable=False, default=0)
     empty_reason = Column(String(40), nullable=True, index=True)
     rerank_enabled = Column(Boolean, nullable=False, default=False)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    estimated_cost = Column(Numeric(18, 8), nullable=True)
+    token_usage = Column(JSON, nullable=True)
     trace_payload = Column(JSON, nullable=True)
     feedback_value = Column(String(20), nullable=True, index=True)
     feedback_note = Column(Text, nullable=True)
@@ -910,6 +916,11 @@ class EvalRun(Base):
     finished_at = Column(DateTime(timezone=True), nullable=True)
     heartbeat_at = Column(DateTime(timezone=True), nullable=True, index=True)
     error_message = Column(Text, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    estimated_cost = Column(Numeric(18, 8), nullable=True)
+    token_usage = Column(JSON, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
 
@@ -942,4 +953,9 @@ class EvalCaseResult(Base):
     judge_result = Column(JSON, nullable=False, default=dict)
     latency_ms = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    estimated_cost = Column(Numeric(18, 8), nullable=True)
+    token_usage = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)

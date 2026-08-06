@@ -1,6 +1,7 @@
 export interface AdminNavItem {
   key:
     | "dashboard"
+    | "model-usage"
     | "projects"
     | "knowledge-bases"
     | "assistants"
@@ -30,6 +31,11 @@ export const adminNavGroups: AdminNavGroup[] = [
         key: "dashboard",
         label: "控制台",
         to: "/dashboard",
+      },
+      {
+        key: "model-usage",
+        label: "AI 成本中心",
+        to: "/model-usage",
       },
     ],
   },

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import case as sql_case
@@ -406,6 +407,11 @@ class EvaluationRepository:
         judge_result: dict[str, Any],
         latency_ms: int | None,
         error_message: str | None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        total_tokens: int | None = None,
+        estimated_cost: Any | None = None,
+        token_usage: dict[str, Any] | None = None,
     ) -> EvalCaseResult:
         result.status = status
         result.score = score
@@ -415,6 +421,11 @@ class EvaluationRepository:
         result.judge_result = dict(judge_result)
         result.latency_ms = latency_ms
         result.error_message = error_message
+        result.input_tokens = input_tokens
+        result.output_tokens = output_tokens
+        result.total_tokens = total_tokens
+        result.estimated_cost = estimated_cost
+        result.token_usage = token_usage
         await self.db.commit()
         await self.db.refresh(result)
         return result
@@ -435,6 +446,11 @@ class EvaluationRepository:
                 judge_result={},
                 latency_ms=None,
                 error_message=None,
+                input_tokens=None,
+                output_tokens=None,
+                total_tokens=None,
+                estimated_cost=None,
+                token_usage=None,
             )
         )
         await self.db.commit()
@@ -459,6 +475,64 @@ class EvaluationRepository:
             ).where(EvalCaseResult.run_id == run_id)
         )
         passed_cases, failed_cases, average_score = statistics.one()
+        case_results = await self.list_case_results(run_id)
+        usage_results = [item for item in case_results if item.total_tokens is not None]
+        usage_models: dict[str, dict[str, Any]] = {}
+        for item in usage_results:
+            payload = item.token_usage if isinstance(item.token_usage, dict) else {}
+            for model_key, model_usage in dict(payload.get("models") or {}).items():
+                if not isinstance(model_usage, dict):
+                    continue
+                target = usage_models.setdefault(
+                    str(model_key),
+                    {
+                        "model_key": str(model_usage.get("model_key") or model_key),
+                        "provider": model_usage.get("provider"),
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                        "estimated_cost": Decimal("0"),
+                        "input_price": model_usage.get("input_price", 0),
+                        "output_price": model_usage.get("output_price", 0),
+                    },
+                )
+                target["input_tokens"] += int(model_usage.get("input_tokens") or 0)
+                target["output_tokens"] += int(model_usage.get("output_tokens") or 0)
+                target["total_tokens"] += int(model_usage.get("total_tokens") or 0)
+                target["estimated_cost"] += Decimal(str(model_usage.get("estimated_cost") or 0))
+        token_usage = None
+        if usage_results:
+            token_usage = {
+                "schema_version": 1,
+                "currency": "CNY",
+                "models": {
+                    key: {
+                        **value,
+                        "estimated_cost": str(value["estimated_cost"]),
+                    }
+                    for key, value in usage_models.items()
+                },
+            }
+        input_tokens = (
+            sum(int(item.input_tokens or 0) for item in usage_results)
+            if usage_results
+            else None
+        )
+        output_tokens = (
+            sum(int(item.output_tokens or 0) for item in usage_results)
+            if usage_results
+            else None
+        )
+        total_tokens = (
+            sum(int(item.total_tokens or 0) for item in usage_results)
+            if usage_results
+            else None
+        )
+        estimated_cost = (
+            sum((item.estimated_cost for item in usage_results), Decimal("0"))
+            if usage_results
+            else None
+        )
         await self.db.execute(
             update(EvalRun)
             .where(EvalRun.id == run_id, EvalRun.status == "running")
@@ -466,6 +540,11 @@ class EvaluationRepository:
                 passed_cases=int(passed_cases or 0),
                 failed_cases=int(failed_cases or 0),
                 average_score=int(round(float(average_score or 0))),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                estimated_cost=estimated_cost,
+                token_usage=token_usage,
             )
         )
         await self.db.commit()

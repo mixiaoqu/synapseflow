@@ -113,6 +113,7 @@ function sourceTagType(doc: QaLogDiagnosticDoc) {
 }
 
 const tracePayload = computed<QaLogTracePayload | null>(() => props.detail?.tracePayload ?? null);
+const answerModel = computed(() => tracePayload.value?.answer_model ?? null);
 const knowledgePlan = computed(() => tracePayload.value?.knowledge_plan ?? null);
 const knowledgeGoals = computed(() => knowledgePlan.value?.knowledge_goals || []);
 const queryClues = computed(() => tracePayload.value?.query_clues ?? null);
@@ -620,11 +621,18 @@ watch(
               </div>
             </div>
             <span class="qa-log-trace-drawer__section-pill qa-log-trace-drawer__section-pill--answer">
-              LLM Response
+              {{ answerModel?.model || answerModel?.name || answerModel?.key || "模型版本未记录" }}
             </span>
           </header>
 
           <div class="qa-log-trace-drawer__answer-card">
+            <div class="qa-log-trace-drawer__answer-model">
+              <span>回答模型版本</span>
+              <strong>{{ answerModel?.model || answerModel?.name || answerModel?.key || "未记录" }}</strong>
+              <small v-if="answerModel?.name && answerModel?.model !== answerModel.name">
+                {{ answerModel.name }}<template v-if="answerModel.provider"> · {{ answerModel.provider }}</template>
+              </small>
+            </div>
             <div class="qa-log-trace-drawer__answer-body">
               {{ detail.answerText || "当前日志未记录模型最终回答。" }}
             </div>
@@ -1506,6 +1514,31 @@ watch(
   border-radius: 16px;
   background: linear-gradient(180deg, #f8faff 0%, #f5f3ff 100%);
   box-shadow: 0 10px 24px rgba(99, 102, 241, 0.06);
+}
+
+.qa-log-trace-drawer__answer-model {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #64748b;
+  font-size: 12px;
+}
+
+.qa-log-trace-drawer__answer-model strong {
+  color: #4338ca;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.qa-log-trace-drawer__answer-model small {
+  color: #94a3b8;
+  font-size: 11px;
 }
 
 .qa-log-trace-drawer__answer-body {

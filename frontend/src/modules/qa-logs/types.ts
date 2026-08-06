@@ -150,6 +150,12 @@ export interface QaLogTraceBranchSummary {
 }
 
 export interface QaLogTracePayload {
+  answer_model?: {
+    key?: string;
+    model?: string;
+    name?: string;
+    provider?: string;
+  } | null;
   knowledge_plan?: {
     attempt_count?: number;
     goal_query?: string;

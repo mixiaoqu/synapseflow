@@ -582,14 +582,24 @@ async function submitRunEvaluation() {
     });
     runDialogVisible.value = false;
     ElMessage.success(`已提交后台运行：共 ${result.total_cases} 条用例。`);
-    void router.push("/evaluations/reports");
+    void router.push({
+      path: "/evaluations/reports",
+      query: { dataset_id: String(datasetId.value) },
+    });
   } finally {
     runLoading.value = false;
   }
 }
 
 function openReportsPage() {
-  void router.push("/evaluations/reports");
+  if (!datasetId.value) {
+    void router.push("/evaluations/reports");
+    return;
+  }
+  void router.push({
+    path: "/evaluations/reports",
+    query: { dataset_id: String(datasetId.value) },
+  });
 }
 
 function downloadImportTemplate() {

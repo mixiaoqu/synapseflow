@@ -107,6 +107,8 @@ class ConfigRegistry:
             request_timeout=int(raw.get("request_timeout", 120)),
             streaming=bool(raw.get("streaming", True)),
             max_tokens=int(raw["max_tokens"]) if raw.get("max_tokens") is not None else None,
+            input_price=float(raw.get("input_price", 0) or 0),
+            output_price=float(raw.get("output_price", 0) or 0),
         )
 
     @functools.lru_cache(maxsize=1)

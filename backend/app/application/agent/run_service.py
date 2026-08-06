@@ -31,6 +31,8 @@ from app.application.agent.workflow_meta import (
     get_node_progress_message,
     normalize_activity_payload,
 )
+from app.core.config.registry import config_registry
+from app.core.llm.token_usage import summarize_token_usage, token_usage_context
 from app.services.chat_memory import (
     ChatMemoryContext,
     ChatMemoryStore,
@@ -235,12 +237,35 @@ class AgentRunService:
             result=result,
             retrieved_docs=retrieved_docs,
         )
+        answer_model = self._resolve_answer_model(state)
+        if answer_model is not None:
+            trace_payload["answer_model"] = answer_model
         return await self._recorder.record_chat_log(
             state=state,
             result=result,
             latency_ms=latency_ms,
             trace_payload=trace_payload,
         )
+
+    @staticmethod
+    def _resolve_answer_model(state: dict[str, Any]) -> dict[str, str] | None:
+        assistant = state.get("input", {}).get("assistant", {})
+        model_key = str(assistant.get("model_key") or "generation").strip()
+        if not model_key:
+            return None
+        try:
+            model_config = config_registry.get_model_asset(model_key)
+        except ValueError:
+            try:
+                model_config = config_registry.get_model_config(model_key)
+            except ValueError:
+                return {"key": model_key}
+        return {
+            "key": model_config.key,
+            "model": model_config.model,
+            "name": model_config.name,
+            "provider": model_config.provider,
+        }
 
     @staticmethod
     def _build_blocked_result(
@@ -332,7 +357,8 @@ class AgentRunService:
             )
 
         started_at = perf_counter()
-        graph_result = await self._runner.invoke(state["input"])
+        async with token_usage_context(scene="chat", run_id=str(state.get("run_id") or "")) as usage:
+            graph_result = await self._runner.invoke(state["input"])
         graph_response = dict(graph_result.get("response") or {})
         result = {
             **state,
@@ -342,6 +368,7 @@ class AgentRunService:
             "answer_status": graph_response.get("status", "failed"),
             "retrieved_docs": list(graph_response.get("sources") or []),
         }
+        result.update(summarize_token_usage(usage))
         answer = result["answer"]
         answer_risk_check = await self._check_content_risk(scene="answer", text=answer)
         blocked_answer_text = answer
@@ -432,7 +459,8 @@ class AgentRunService:
             )
             return result
 
-        graph_result = await self._runner.invoke(state["input"])
+        async with token_usage_context(scene="chat", run_id=str(state.get("run_id") or "")) as usage:
+            graph_result = await self._runner.invoke(state["input"])
         graph_response = dict(graph_result.get("response") or {})
         result = {
             **state,
@@ -442,6 +470,7 @@ class AgentRunService:
             "answer_status": graph_response.get("status", "failed"),
             "retrieved_docs": list(graph_response.get("sources") or []),
         }
+        result.update(summarize_token_usage(usage))
         answer_risk_check = await self._check_content_risk(
             scene="answer",
             text=str(result.get("answer") or ""),
@@ -472,12 +501,15 @@ class AgentRunService:
         started_nodes: set[tuple[str, str]] = set()
         final_state = dict(state)
         started_at = perf_counter()
+        usage_context = token_usage_context(scene="chat", run_id=str(run_id or ""))
+        usage = await usage_context.__aenter__()
 
         try:
             yield emit_start(run_id, "开始处理请求", workflow_id=workflow_id)
             query_risk_check = await self._check_content_risk(scene="query", text=request.query)
             if query_risk_check.blocked:
                 blocked_state = self._build_blocked_result(state, query_risk_check)
+                blocked_state.update(summarize_token_usage(usage))
                 answer_status = self._resolve_answer_status(blocked_state)
                 log_id = await self._record_log(
                     state=state,
@@ -664,6 +696,7 @@ class AgentRunService:
             final_state["answer"] = answer
             final_state["answer_status"] = str(graph_response.get("status") or "failed")
             final_state["retrieved_docs"] = list(graph_response.get("sources") or [])
+            final_state.update(summarize_token_usage(usage))
             answer_risk_check = await self._check_content_risk(scene="answer", text=answer)
             blocked_answer_text = answer
             if answer_risk_check.blocked:
@@ -716,6 +749,8 @@ class AgentRunService:
             yield emit_error(
                 run_id, self._public_stream_error_message(exc), workflow_id=workflow_id
             )
+        finally:
+            await usage_context.__aexit__(None, None, None)
 
 
 agent_run_service: AgentRunService | None = None

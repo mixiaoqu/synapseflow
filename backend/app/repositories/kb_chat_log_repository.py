@@ -56,6 +56,11 @@ class KbChatLogRecord:
     final_context_count: int
     empty_reason: str | None
     rerank_enabled: bool
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    estimated_cost: object | None
+    token_usage: dict[str, Any] | None
     feedback_value: str | None
     feedback_note: str | None
     suggested_review_label: str | None
@@ -117,6 +122,11 @@ class KbChatLogRepository:
         final_context_count: int = 0,
         empty_reason: str | None = None,
         rerank_enabled: bool = False,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        total_tokens: int | None = None,
+        estimated_cost: Any | None = None,
+        token_usage: dict[str, Any] | None = None,
         trace_payload: dict[str, Any] | None = None,
     ) -> KbChatLog:
         row = KbChatLog(
@@ -141,6 +151,11 @@ class KbChatLogRepository:
             final_context_count=final_context_count,
             empty_reason=empty_reason,
             rerank_enabled=rerank_enabled,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            estimated_cost=estimated_cost,
+            token_usage=token_usage,
             trace_payload=trace_payload,
         )
         self.db.add(row)
@@ -282,6 +297,11 @@ class KbChatLogRepository:
                     final_context_count=int(item.final_context_count or 0),
                     empty_reason=item.empty_reason,
                     rerank_enabled=bool(item.rerank_enabled),
+                    input_tokens=item.input_tokens,
+                    output_tokens=item.output_tokens,
+                    total_tokens=item.total_tokens,
+                    estimated_cost=item.estimated_cost,
+                    token_usage=item.token_usage if isinstance(item.token_usage, dict) else None,
                     feedback_value=item.feedback_value,
                     feedback_note=item.feedback_note,
                     suggested_review_label=self._suggest_review_label(item),
@@ -617,6 +637,11 @@ class KbChatLogRepository:
             final_context_count=int(item.final_context_count or 0),
             empty_reason=item.empty_reason,
             rerank_enabled=bool(item.rerank_enabled),
+            input_tokens=item.input_tokens,
+            output_tokens=item.output_tokens,
+            total_tokens=item.total_tokens,
+            estimated_cost=item.estimated_cost,
+            token_usage=item.token_usage if isinstance(item.token_usage, dict) else None,
             feedback_value=item.feedback_value,
             feedback_note=item.feedback_note,
             suggested_review_label=KbChatLogRepository._suggest_review_label(item),

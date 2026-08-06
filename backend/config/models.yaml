@@ -16,6 +16,8 @@ providers:
 
 
 model_assets:
+  # Optional estimated prices in CNY per one million tokens.
+  # Keep them at 0/omit them when the provider price is not confirmed.
   glm-5-1:
     type: chat
     provider: moyu
@@ -57,6 +59,8 @@ model_assets:
     provider: deepseek
     model: deepseek-v4-flash
     name:  DeepSeek V4 Flash
+    input_price: 1
+    output_price: 2
     request_timeout: 180
     streaming: true
     max_tokens: 4096
@@ -76,6 +80,9 @@ model_assets:
     provider: deepseek
     model: deepseek-v4-pro
     name:  DeepSeek V4 pro
+    # 官方美元价格按 1 USD = 6.8 CNY 换算；输入采用缓存未命中价格。
+    input_price: 3
+    output_price: 6
     request_timeout: 180
     streaming: true
     max_tokens: 4096

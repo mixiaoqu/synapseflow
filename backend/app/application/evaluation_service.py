@@ -15,6 +15,7 @@ from app.application.agent.input_builder import AgentRunRequest
 from app.application.agent.run_service import get_agent_run_service
 from app.core.config.settings import settings
 from app.core.llm.factory import get_llm_for_analysis
+from app.core.llm.token_usage import summarize_token_usage, token_usage_context
 from app.db.models import EvalCase, EvalDataset, EvalRun, KnowledgeBase, User
 from app.models.schemas.evaluation import (
     EvalCaseCreate,
@@ -533,6 +534,11 @@ class EvaluationService:
             judge_result=dict(outcome["judge_result"]),
             latency_ms=int((perf_counter() - started_at) * 1000),
             error_message=outcome["error_message"],
+            input_tokens=outcome.get("input_tokens"),
+            output_tokens=outcome.get("output_tokens"),
+            total_tokens=outcome.get("total_tokens"),
+            estimated_cost=outcome.get("estimated_cost"),
+            token_usage=outcome.get("token_usage"),
         )
         await repo.touch_run(run)
         await repo.sync_run_statistics(run_id)
@@ -587,6 +593,22 @@ class EvaluationService:
         )
 
     async def _evaluate_case_content(
+        self,
+        *,
+        current_user: User,
+        run: EvalRun,
+        case: dict[str, Any],
+    ) -> dict[str, Any]:
+        async with token_usage_context(scene="evaluation", run_id=str(run.id)) as usage:
+            outcome = await self._evaluate_case_content_with_usage(
+                current_user=current_user,
+                run=run,
+                case=case,
+            )
+            outcome.update(summarize_token_usage(usage))
+            return outcome
+
+    async def _evaluate_case_content_with_usage(
         self,
         *,
         current_user: User,
@@ -709,7 +731,8 @@ class EvaluationService:
             expected_snippets=expected_snippets,
             retrieved_docs=retrieved_docs,
         )
-        response = await get_llm_for_analysis(temperature=0, streaming=False).ainvoke(prompt)
+        async with token_usage_context(scene="evaluation"):
+            response = await get_llm_for_analysis(temperature=0, streaming=False).ainvoke(prompt)
         content = str(getattr(response, "content", response) or "")
         return self._parse_judge_json(content)
 

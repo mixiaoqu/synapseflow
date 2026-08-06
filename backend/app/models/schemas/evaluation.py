@@ -1,6 +1,7 @@
 """Evaluation module schemas."""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -201,6 +202,11 @@ class EvalRunResponse(BaseModel):
     finished_at: datetime | None = None
     heartbeat_at: datetime | None = None
     error_message: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    estimated_cost: Decimal | None = None
+    token_usage: dict[str, Any] | None = None
     created_by: int | None = None
     created_at: datetime
 
@@ -242,6 +248,11 @@ class EvalCaseResultResponse(BaseModel):
     judge_result: dict[str, Any] = Field(default_factory=dict)
     latency_ms: int | None = None
     error_message: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    estimated_cost: Decimal | None = None
+    token_usage: dict[str, Any] | None = None
     created_at: datetime
 
     @field_validator("retrieved_doc_ids", "retrieved_chunk_ids", mode="before")

@@ -135,6 +135,11 @@ const runId = computed(() => {
   const raw = Number(route.params.runId);
   return Number.isInteger(raw) && raw > 0 ? raw : null;
 });
+const datasetIdFilter = computed(() => {
+  const raw = route.query.dataset_id;
+  const value = Number(Array.isArray(raw) ? raw[0] : raw);
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+});
 const isReportDetail = computed(() => runId.value !== null);
 const taskRows = computed<EvalRunTaskRow[]>(() =>
   taskRuns.value.map((item) => ({
@@ -396,6 +401,7 @@ async function loadTaskRuns() {
     const result = await listEvalRuns({
       keyword: taskKeyword.value,
       status: taskStatusFilter.value === "all" ? undefined : taskStatusFilter.value,
+      dataset_id: datasetIdFilter.value,
       page: taskPagination.page,
       page_size: taskPagination.pageSize,
     });
@@ -629,6 +635,13 @@ function openRunReport(row: EvalRunTaskRow) {
 }
 
 function backToTaskList() {
+  if (runDetail.value?.dataset_id) {
+    void router.push({
+      path: "/evaluations/reports",
+      query: { dataset_id: String(runDetail.value.dataset_id) },
+    });
+    return;
+  }
   void router.push("/evaluations/reports");
 }
 

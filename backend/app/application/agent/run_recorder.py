@@ -185,6 +185,11 @@ class AgentRunRecorder:
                     ),
                     empty_reason=empty_reason or None,
                     rerank_enabled=bool(rerank_trace.get("enabled")),
+                    input_tokens=result.get("input_tokens"),
+                    output_tokens=result.get("output_tokens"),
+                    total_tokens=result.get("total_tokens"),
+                    estimated_cost=result.get("estimated_cost"),
+                    token_usage=result.get("token_usage"),
                     trace_payload=trace_payload,
                 )
                 return row.id

@@ -36,6 +36,8 @@ class ModelConfig:
     request_timeout: int
     streaming: bool
     max_tokens: int | None = None
+    input_price: float = 0.0
+    output_price: float = 0.0
 
 
 @dataclass(frozen=True)
