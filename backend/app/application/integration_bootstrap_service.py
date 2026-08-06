@@ -51,6 +51,8 @@ class IntegrationBootstrapService:
         )
         if runtime is None:
             raise HTTPException(status_code=409, detail="Project application runtime is incomplete")
+        if runtime.app.terminal_type != "api":
+            raise HTTPException(status_code=403, detail="Project application is not configured for API access")
         expires_minutes = max(1, settings.WIDGET_TOKEN_EXPIRE_MINUTES)
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
         token = create_widget_token(

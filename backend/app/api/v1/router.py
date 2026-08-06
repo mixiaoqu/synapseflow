@@ -12,7 +12,6 @@ from app.api.v1.endpoints import (
     health,
     integration_bootstrap,
     knowledge_bases,
-    mcp,
     products,
     project_app_access,
     projects,
@@ -34,7 +33,6 @@ api_router.include_router(
     prefix="/integration",
     tags=["integration"],
 )
-api_router.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
 api_router.include_router(assistants.router, prefix="/assistants", tags=["assistants"])
 api_router.include_router(project_app_access.router, prefix="/agent-integrations", tags=["agent-integrations"])
 api_router.include_router(tool_providers.router, prefix="/agent-integrations", tags=["agent-integrations"])

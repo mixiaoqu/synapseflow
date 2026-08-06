@@ -116,7 +116,7 @@ SUB_AGENT_DEFINITIONS: tuple[SubAgentDefinition, ...] = (
     SubAgentDefinition(
         sub_agent_id="knowledge_qa",
         graph_id="knowledge_qa",
-        description="查询知识库中的规则、说明、流程和文档内容",
+        description="查询当前应用绑定知识库中的规则、说明、流程和文档内容",
         handoff_action="结合相关资料看一下具体情况",
         input_builder=build_knowledge_qa_input,
     ),

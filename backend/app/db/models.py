@@ -277,7 +277,7 @@ class ProjectApp(Base):
         index=True,
     )
     widget_version = Column(String(30), nullable=False, default="1.0.0")
-    terminal_type = Column(String(40), nullable=False, default="web")
+    terminal_type = Column(String(40), nullable=False, default="api")
     is_active = Column(Boolean, nullable=False, default=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)

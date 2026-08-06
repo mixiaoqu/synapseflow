@@ -110,6 +110,8 @@ class ProjectAppAccessService:
         allowed_origins: list[str],
     ) -> IssuedProjectAppCredential:
         app = await self._get_managed_app(project_id=project_id, app_id=app_id)
+        if app.terminal_type not in {"api", "mcp"}:
+            raise HTTPException(status_code=409, detail="Project application type is not supported")
         if await self.repository.get_by_app(app.id) is not None:
             raise HTTPException(status_code=409, detail="Project application access already exists")
         client_secret = self._generate_client_secret()
@@ -118,7 +120,11 @@ class ProjectAppAccessService:
             client_id=self._generate_client_id(),
             client_secret_digest=self._digest(client_secret),
             client_secret_last_four=client_secret[-4:],
-            allowed_origins=self._normalize_origins(allowed_origins),
+            allowed_origins=(
+                self._normalize_origins(allowed_origins)
+                if app.terminal_type == "api"
+                else []
+            ),
             token_version=1,
             enabled=True,
         )
@@ -132,6 +138,8 @@ class ProjectAppAccessService:
         app_id: int,
     ) -> IssuedProjectAppCredential:
         app = await self._get_managed_app(project_id=project_id, app_id=app_id)
+        if app.terminal_type not in {"api", "mcp"}:
+            raise HTTPException(status_code=409, detail="Project application type is not supported")
         credential = await self.repository.get_by_app(app.id)
         if credential is None:
             raise HTTPException(status_code=404, detail="Project application access not found")
@@ -145,6 +153,8 @@ class ProjectAppAccessService:
 
     async def get_access(self, *, project_id: int, app_id: int) -> ProjectAppAccessCredential:
         app = await self._get_managed_app(project_id=project_id, app_id=app_id)
+        if app.terminal_type not in {"api", "mcp"}:
+            raise HTTPException(status_code=409, detail="Project application type is not supported")
         credential = await self.repository.get_by_app(app.id)
         if credential is None:
             raise HTTPException(status_code=404, detail="Project application access not found")
@@ -157,7 +167,12 @@ class ProjectAppAccessService:
         app_id: int,
         allowed_origins: list[str],
     ) -> ProjectAppAccessCredential:
-        credential = await self.get_access(project_id=project_id, app_id=app_id)
+        app = await self._get_managed_app(project_id=project_id, app_id=app_id)
+        if app.terminal_type != "api":
+            raise HTTPException(status_code=409, detail="Only API applications support allowed origins")
+        credential = await self.repository.get_by_app(app.id)
+        if credential is None:
+            raise HTTPException(status_code=404, detail="Project application access not found")
         credential.allowed_origins = self._normalize_origins(allowed_origins)
         return await self.repository.save(credential)
 

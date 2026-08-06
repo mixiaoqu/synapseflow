@@ -62,6 +62,10 @@ def _build_evidence_item(doc: dict[str, Any], *, role: str) -> dict[str, Any] | 
             "parent_chunk_id": metadata.get("parent_chunk_id"),
             "document_title": metadata.get("document_title"),
             "section_path": metadata.get("section_path"),
+            "source_path": metadata.get("source_path"),
+            "language": metadata.get("language"),
+            "start_line": metadata.get("start_line"),
+            "end_line": metadata.get("end_line"),
             "source_type": metadata.get("source") or "text",
         },
     }
@@ -78,6 +82,9 @@ def _apply_evidence_budget(
         source = dict(item.get("source") or {})
         header_chars = len(str(source.get("document_title") or "")) + len(
             str(source.get("section_path") or "")
+        )
+        header_chars += len(str(source.get("source_path") or "")) + len(
+            str(source.get("language") or "")
         )
         if max_chars > 0:
             remaining = max_chars - used_chars - header_chars

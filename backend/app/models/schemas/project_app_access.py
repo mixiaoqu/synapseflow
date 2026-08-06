@@ -6,11 +6,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProjectAppAccessCreate(BaseModel):
-    allowed_origins: list[str] = Field(..., min_length=1, max_length=20)
+    allowed_origins: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ProjectAppAccessUpdate(BaseModel):
-    allowed_origins: list[str] = Field(..., min_length=1, max_length=20)
+    allowed_origins: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ProjectAppAccessResponse(BaseModel):
@@ -28,4 +28,3 @@ class ProjectAppAccessResponse(BaseModel):
 
 class ProjectAppAccessIssuedResponse(ProjectAppAccessResponse):
     client_secret: str
-

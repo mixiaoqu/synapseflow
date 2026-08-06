@@ -92,7 +92,7 @@ Current API router prefixes:
 - `/api/v1/content-risk`: content-risk rule library CRUD, rule CRUD, and test check.
 - `/api/v1/knowledge-bases`: knowledge-base CRUD.
 - `/api/v1/evaluations`: evaluation dataset, case, run, and report management.
-- `/api/v1/mcp`: bootstrap, scope resolution, search, and answer for read-only KB access.
+- `/mcp`: remote Streamable HTTP MCP endpoint exposing the app-scoped `agent_chat` tool.
 - `/api/v1/agent-integrations`: tool provider management, tool synchronization/publishing, per-app grants, invocation audit, and project-app access credentials.
 - health routes are registered without a versioned prefix tag in the router and also exist on the root app.
 
@@ -111,7 +111,7 @@ Application/service layer anchors:
 - `backend/app/application/project_service.py`: project and project app operations.
 - `backend/app/application/integration_bootstrap_service.py`: validates app credentials and issues Loader bootstrap payloads.
 - `backend/app/application/product_service.py`: product CRUD and team-scoped product listing.
-- `backend/app/application/mcp_service.py`: read-only MCP scope resolution plus search/answer proxying.
+- `backend/app/application/remote_mcp_service.py`: validates ProjectApp credentials, resolves the bound application context, maps MCP sessions, and invokes the main Agent.
 - `backend/app/application/business_operations/*`: whitelisted business data operation boundary for agent-triggered business data queries or actions. The current implementation exposes product search through a controlled registry/service/mock gateway.
 - `backend/app/application/agent_tool_catalog_service.py`: tool provider management, discovery, synchronization, publishing, grants, and invocation queries.
 - `backend/app/application/agent_tool_execution_service.py`: governed tool validation, provider execution, and redacted invocation audit.
@@ -256,7 +256,7 @@ Only describe these as existing product surfaces unless code changes add more:
 - Admin team, member, user, and role management.
 - Admin QA log review and feedback flow.
 - Content-risk rule library management, rule testing, and query/answer interception.
-- Read-only MCP scope resolution, search, and answer access through `/api/v1/mcp` and the separate `mcp_server/` stdio tools.
+- Remote Streamable HTTP MCP access through `/mcp`; the only exposed tool is the app-scoped `agent_chat` entrypoint.
 
 ## Product / project / app relation
 

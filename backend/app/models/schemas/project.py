@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ProjectAppTerminalType = Literal["web", "h5", "mini_program", "admin", "api", "other"]
+ProjectAppTerminalType = Literal["api", "mcp"]
 
 
 class ProjectCreate(BaseModel):
@@ -76,7 +76,7 @@ class ProjectAppCreate(BaseModel):
     category_id: int | None = Field(default=None, gt=0)
     default_assistant_id: int | None = Field(default=None, gt=0)
     widget_version: str = Field(default="1.0.0", pattern=r"^\d+\.\d+\.\d+$")
-    terminal_type: ProjectAppTerminalType = "web"
+    terminal_type: ProjectAppTerminalType = "api"
     is_active: bool = True
 
 
@@ -88,7 +88,7 @@ class ProjectAppUpdate(BaseModel):
     category_id: int | None = Field(default=None, gt=0)
     default_assistant_id: int | None = Field(default=None, gt=0)
     widget_version: str = Field(default="1.0.0", pattern=r"^\d+\.\d+\.\d+$")
-    terminal_type: ProjectAppTerminalType = "web"
+    terminal_type: ProjectAppTerminalType = "api"
     is_active: bool = True
 
 
@@ -107,7 +107,7 @@ class ProjectAppResponse(BaseModel):
     default_assistant_id: int | None = None
     default_assistant_name: str | None = None
     widget_version: str
-    terminal_type: ProjectAppTerminalType = "web"
+    terminal_type: ProjectAppTerminalType = "api"
     is_active: bool
     created_at: datetime
     updated_at: datetime

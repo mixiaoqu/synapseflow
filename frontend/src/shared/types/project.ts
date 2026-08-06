@@ -82,15 +82,11 @@ export interface ProjectAppUpsertPayload {
   is_active: boolean;
 }
 
-export type ProjectAppTerminalType = "web" | "h5" | "mini_program" | "admin" | "api" | "other";
+export type ProjectAppTerminalType = "api" | "mcp";
 
 export const PROJECT_APP_TERMINAL_TYPE_LABELS: Record<ProjectAppTerminalType, string> = {
-  web: "Web",
-  h5: "H5",
-  mini_program: "小程序",
-  admin: "管理后台",
   api: "API",
-  other: "其他",
+  mcp: "远程 MCP",
 };
 
 export type ProjectAppBulkAction = "enable" | "disable" | "delete";

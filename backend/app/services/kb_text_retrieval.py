@@ -36,9 +36,22 @@ def _format_kb_chunk(doc: dict[str, Any], content: str) -> str:
     meta = doc.get("metadata", {}) or {}
     title = meta.get("document_title", "Unknown document")
     section_path = meta.get("section_path")
+    source_path = meta.get("source_path")
+    language = meta.get("language")
+    start_line = meta.get("start_line")
+    end_line = meta.get("end_line")
     header = f"[Document: {title}]"
     if section_path:
         header += f"\n[Section: {section_path}]"
+    if source_path:
+        header += f"\n[Source path: {source_path}]"
+    if language:
+        header += f"\n[Language: {language}]"
+    if start_line is not None:
+        line_range = str(start_line)
+        if end_line is not None:
+            line_range = f"{line_range}-{end_line}"
+        header += f"\n[Lines: {line_range}]"
     return f"{header}\n{content}"
 
 

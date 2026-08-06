@@ -2,9 +2,8 @@
 
 当前仓库收口为三个主要应用/工具：
 
-- `backend/`：FastAPI + LangGraph 后端服务。
+- `backend/`：FastAPI + LangGraph 后端服务，同时提供面向编辑器/客户端的远程 Streamable HTTP MCP 入口。
 - `frontend/`：Vue 3 + Vite 管理后台前端。
-- `mcp_server/`：面向编辑器/客户端的只读 MCP stdio 工具服务。
 
 ## 技术栈
 
@@ -39,7 +38,6 @@
 synapseflow/
 ├─ backend/      FastAPI + LangGraph 服务
 ├─ frontend/     Vue 3 管理后台、Agent Loader 与 Widget
-├─ mcp_server/   MCP stdio 工具服务
 ├─ docker/       Docker 构建配置
 ├─ deploy/       部署与 nginx 配置
 └─ README.md
@@ -69,17 +67,27 @@ synapseflow/
 - 助手配置：`/api/v1/assistants`
 - 团队、用户、产品、项目/应用管理：`/api/v1/teams`、`/api/v1/users`、`/api/v1/products`、`/api/v1/projects`
 - 内容风控规则库、规则测试和判定日志：`/api/v1/content-risk`
-- MCP 只读知识访问：`/api/v1/mcp`
+- 远程 MCP Agent 入口：`/mcp`
 
 ### MCP 工具边界
 
-`mcp_server/` 通过 stdio 注册 3 个工具：
+远程 MCP 使用 Streamable HTTP，仅注册一个 `agent_chat(message)` 工具。请求使用
+`ProjectAppAccessCredential` 生成的 Bearer 凭据，服务端根据凭证解析当前 `ProjectApp`，第一版仅通过其绑定的知识库调用 `knowledge_qa`。
 
-- `resolve_scope`：根据 `product_code`、`project_code`、`app_code` 解析产品/项目/应用范围。
-- `search_knowledge`：在已绑定的单个知识库范围内检索片段。
-- `answer_knowledge`：复用后端 KB chat 预览能力返回答案和检索证据。
+TRAE 配置示例：
 
-后端 `/api/v1/mcp/bootstrap` 用企业服务 token 换取 MCP scope token；`/scope/resolve`、`/search`、`/answer` 是只读访问入口。
+```json
+{
+  "mcpServers": {
+    "synapseflow-agent": {
+      "url": "https://your-domain.example/mcp",
+      "headers": {
+        "Authorization": "Bearer <client_id>.<client_secret>"
+      }
+    }
+  }
+}
+```
 
 ### 产品 / 项目 / 应用关系
 
@@ -135,16 +143,6 @@ pnpm dev
 
 前端默认地址：`http://localhost:5173`
 
-### 5. 启动 MCP server
-
-```bash
-cd mcp_server
-pnpm install
-pnpm dev
-```
-
-MCP server 使用 stdio transport，通常由编辑器或 MCP 客户端拉起；Windows 安装脚本在 `mcp_server/installer/windows/` 下。
-
 ## 当前公开 API 组
 
 - `POST /api/v1/auth/register`
@@ -170,10 +168,7 @@ MCP server 使用 stdio transport，通常由编辑器或 MCP 客户端拉起；
 - `GET|POST|PATCH|DELETE /api/v1/content-risk/*`
 - `POST /api/v1/documents/*`
 - `GET|POST|PATCH|DELETE /api/v1/knowledge-bases/*`
-- `POST /api/v1/mcp/bootstrap`
-- `POST /api/v1/mcp/scope/resolve`
-- `POST /api/v1/mcp/search`
-- `POST /api/v1/mcp/answer`
+- `POST|GET|DELETE /mcp`
 
 完整接口以 `http://localhost:8000/api/v1/docs` 为准。
 
@@ -182,5 +177,4 @@ MCP server 使用 stdio transport，通常由编辑器或 MCP 客户端拉起；
 - 前端统一在 `frontend/` 下开发。
 - 前端依赖和脚本统一使用 `pnpm`。
 - 后端依赖和命令统一使用 `uv`。
-- MCP server 依赖和脚本统一使用 `pnpm`。
 - 业务实现优先放在现有模块目录或服务层，避免新增重复入口。

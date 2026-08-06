@@ -4,19 +4,20 @@ import { useRoute } from "vue-router";
 import {
   Collection,
   Connection,
+  CopyDocument,
   Cpu,
   Delete,
   EditPen,
   Grid,
   Link,
-  Monitor,
+  MoreFilled,
   Plus,
+  RefreshRight,
   Search,
   Setting,
 } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
-import AdminDialog from "@/app/components/admin/AdminDialog.vue";
 import AdminListPanel from "@/app/components/admin/AdminListPanel.vue";
 import {
   createProjectAppAccess,
@@ -29,6 +30,7 @@ import {
   revokeProjectAppAccess,
   updateProjectAppAccess,
 } from "@/shared/api/agent-integrations";
+import { API_BASE_URL } from "@/shared/api/config";
 import { listAssistants } from "@/shared/api/assistants";
 import { listDocumentCategoriesTree } from "@/shared/api/document-categories";
 import { listKnowledgeBases } from "@/shared/api/knowledge-bases";
@@ -60,7 +62,6 @@ import {
 } from "@/shared/types/project";
 
 const route = useRoute();
-
 const project = ref<ProjectSummary | null>(null);
 const apps = ref<ProjectAppSummary[]>([]);
 const assistants = ref<AssistantSummary[]>([]);
@@ -68,20 +69,31 @@ const availableTools = ref<AgentTool[]>([]);
 const toolGrants = ref<AgentToolGrant[]>([]);
 const knowledgeBases = ref<KnowledgeBaseListItem[]>([]);
 const categoryTree = ref<DocumentCategoryTreeNode[]>([]);
+const categoryPath = ref<number[]>([]);
 const loading = ref(false);
 const loadError = ref<unknown>(null);
 const hasLoadedData = ref(false);
+const activeAppId = ref<number | null>(null);
+const searchKeyword = ref("");
+const typeFilter = ref<"all" | ProjectAppTerminalType>("all");
+const statusFilter = ref<"all" | "active" | "inactive">("all");
 const statusLoadingId = ref<number | null>(null);
 const deletingAppId = ref<number | null>(null);
-const configSavingKey = ref<"" | "knowledge_base" | "category" | "assistant">("");
+
+const appDialogVisible = ref(false);
+const appDialogSaving = ref(false);
+const editingApp = ref<ProjectAppSummary | null>(null);
 const categoryLoading = ref(false);
-const toolGrantLoading = ref(false);
-const toolGrantDialogVisible = ref(false);
-const toolGrantSaving = ref(false);
-const toolGrantKeyword = ref("");
-const toolGrantSelectedOnly = ref(false);
-const draftToolGrantIds = ref<number[]>([]);
-const activeAppId = ref<number | null>(null);
+const appForm = reactive({
+  name: "",
+  code: "",
+  description: "",
+  terminal_type: "api" as ProjectAppTerminalType,
+  knowledge_base_id: null as number | null,
+  category_id: null as number | null,
+  default_assistant_id: null as number | null,
+});
+
 const integrationDialogVisible = ref(false);
 const integrationApp = ref<ProjectAppSummary | null>(null);
 const accessCredential = ref<ProjectAppAccessCredential | null>(null);
@@ -89,18 +101,14 @@ const issuedClientSecret = ref("");
 const allowedOriginsText = ref("");
 const accessLoading = ref(false);
 const accessSavingAction = ref<"" | "create" | "update" | "enable" | "reset" | "revoke">("");
-const categoryPath = ref<number[]>([]);
-const appDialogVisible = ref(false);
-const appDialogSaving = ref(false);
-const editingApp = ref<ProjectAppSummary | null>(null);
 
-const appForm = reactive({
-  name: "",
-  code: "",
-  widget_version: "1.0.0",
-  terminal_type: "web" as ProjectAppTerminalType,
-  description: "",
-});
+const toolGrantDialogVisible = ref(false);
+const toolGrantSaving = ref(false);
+const toolGrantLoading = ref(false);
+const toolGrantKeyword = ref("");
+const toolGrantSelectedOnly = ref(false);
+const draftToolGrantIds = ref<number[]>([]);
+let toolGrantRequestSequence = 0;
 
 const categoryCascaderProps = {
   value: "id",
@@ -114,15 +122,22 @@ const projectId = computed(() => {
   const raw = Number(route.params.projectId);
   return Number.isInteger(raw) && raw > 0 ? raw : null;
 });
-
 const isForbidden = computed(() => Boolean(loadError.value) && isForbiddenError(loadError.value));
-const activeApp = computed(() => apps.value.find((item) => item.id === activeAppId.value) ?? apps.value[0] ?? null);
-const appDialogTitle = computed(() => (editingApp.value ? "编辑应用端" : "新建应用端"));
-const appDialogSubmitText = computed(() => (editingApp.value ? "保存应用端" : "创建应用端"));
+const activeApp = computed(() => apps.value.find((item) => item.id === activeAppId.value) ?? null);
+const appDialogTitle = computed(() => (editingApp.value ? "编辑应用端" : "创建应用端"));
+const appDialogSubmitText = computed(() => (editingApp.value ? "保存修改" : "创建应用端"));
+const filteredApps = computed(() => {
+  const keyword = searchKeyword.value.trim().toLowerCase();
+  return apps.value.filter((app) => {
+    const matchesKeyword = !keyword || [app.name, app.code, app.description, app.knowledge_base_name]
+      .some((value) => String(value || "").toLowerCase().includes(keyword));
+    const matchesType = typeFilter.value === "all" || app.terminal_type === typeFilter.value;
+    const matchesStatus = statusFilter.value === "all"
+      || (statusFilter.value === "active" ? app.is_active : !app.is_active);
+    return matchesKeyword && matchesType && matchesStatus;
+  });
+});
 const grantedToolIdSet = computed(() => new Set(toolGrants.value.map((grant) => grant.agent_tool_id)));
-const grantedProviderCount = computed(
-  () => new Set(toolGrants.value.map((grant) => grant.provider_id)).size,
-);
 const toolGrantHasChanges = computed(() => {
   const saved = [...grantedToolIdSet.value].sort((a, b) => a - b);
   const draft = [...new Set(draftToolGrantIds.value)].sort((a, b) => a - b);
@@ -131,18 +146,17 @@ const toolGrantHasChanges = computed(() => {
 const groupedAvailableTools = computed(() => {
   const keyword = toolGrantKeyword.value.trim().toLowerCase();
   const selectedIds = new Set(draftToolGrantIds.value);
-  const filtered = availableTools.value.filter((tool) => {
-    if (toolGrantSelectedOnly.value && !selectedIds.has(tool.id)) {
-      return false;
-    }
-    if (!keyword) {
-      return true;
-    }
-    return [tool.name, tool.tool_key, tool.provider_name, tool.agent_description, tool.external_description]
-      .some((value) => String(value || "").toLowerCase().includes(keyword));
-  });
   const groups = new Map<number, { providerId: number; providerName: string; tools: AgentTool[] }>();
-  for (const tool of filtered) {
+  for (const tool of availableTools.value) {
+    const matchesSelected = !toolGrantSelectedOnly.value || selectedIds.has(tool.id);
+    const matchesKeyword = !keyword || [
+      tool.name,
+      tool.tool_key,
+      tool.provider_name,
+      tool.agent_description,
+      tool.external_description,
+    ].some((value) => String(value || "").toLowerCase().includes(keyword));
+    if (!matchesSelected || !matchesKeyword) continue;
     const group = groups.get(tool.provider_id) ?? {
       providerId: tool.provider_id,
       providerName: tool.provider_name,
@@ -153,20 +167,36 @@ const groupedAvailableTools = computed(() => {
   }
   return [...groups.values()];
 });
-
-let toolGrantRequestSequence = 0;
-
+const isMcpIntegration = computed(() => integrationApp.value?.terminal_type === "mcp");
+const agentPublicOrigin = new URL(API_BASE_URL, window.location.origin).origin;
+const apiEndpoint = computed(() => `${agentPublicOrigin}/api/v1`);
+const mcpEndpoint = computed(() => `${agentPublicOrigin}/mcp/`);
+const mcpConfigCode = computed(() => JSON.stringify({
+  mcpServers: {
+    "synapseflow-agent": {
+      url: mcpEndpoint.value,
+      headers: {
+        Authorization: `Bearer ${accessCredential.value?.client_id || "<client_id>"}.${issuedClientSecret.value || "<client_secret>"}`,
+      },
+    },
+  },
+}, null, 2));
+const bootstrapEnvironmentCode = computed(() => `AGENT_BASE_URL=${apiEndpoint.value}
+AGENT_CLIENT_ID=${accessCredential.value?.client_id || "<启用后生成>"}
+AGENT_CLIENT_SECRET=${issuedClientSecret.value || "<仅在启用或重置后显示>"}`);
+const widgetLoaderCode = computed(() => `<script
+  src="${agentPublicOrigin}/agent-static/loader/v1/loader.js"
+  data-bootstrap-endpoint="/api/agent/bootstrap"
+  defer
+>` + "<" + "/script>");
 
 function formatTerminalType(value: ProjectAppTerminalType) {
-  return PROJECT_APP_TERMINAL_TYPE_LABELS[value] ?? "其他";
+  return PROJECT_APP_TERMINAL_TYPE_LABELS[value] ?? "未知类型";
 }
 
 function formatDateTime(value: string) {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
+  if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("zh-CN", {
     year: "numeric",
     month: "2-digit",
@@ -177,15 +207,6 @@ function formatDateTime(value: string) {
 }
 
 function getTerminalIcon(value: ProjectAppTerminalType) {
-  if (value === "web" || value === "h5") {
-    return Monitor;
-  }
-  if (value === "mini_program") {
-    return Grid;
-  }
-  if (value === "admin") {
-    return Setting;
-  }
   return value === "api" ? Connection : Link;
 }
 
@@ -193,10 +214,16 @@ function getTerminalIconClass(value: ProjectAppTerminalType) {
   return `project-app-workspace-page__terminal-icon--${value}`;
 }
 
-function buildUpdatePayload(
-  app: ProjectAppSummary,
-  overrides: Partial<ProjectAppUpsertPayload> = {},
-): ProjectAppUpsertPayload {
+function normalizeCode(value: string) {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "")
+    .replace(/^_+|_+$/g, "").slice(0, 120);
+}
+
+function generateAppCode(name: string) {
+  return normalizeCode(name) || `app_${Date.now()}`;
+}
+
+function buildUpdatePayload(app: ProjectAppSummary, overrides: Partial<ProjectAppUpsertPayload> = {}) {
   return {
     code: app.code,
     name: app.name,
@@ -208,25 +235,18 @@ function buildUpdatePayload(
     widget_version: app.widget_version,
     is_active: app.is_active,
     ...overrides,
-  };
-}
-
-function normalizeCode(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_")
-    .replace(/[^a-z0-9_]/g, "")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120);
+  } satisfies ProjectAppUpsertPayload;
 }
 
 function resetAppForm() {
   appForm.name = "";
   appForm.code = "";
-  appForm.widget_version = "1.0.0";
-  appForm.terminal_type = "web";
   appForm.description = "";
+  appForm.terminal_type = "api";
+  appForm.knowledge_base_id = null;
+  appForm.category_id = null;
+  appForm.default_assistant_id = null;
+  categoryPath.value = [];
   editingApp.value = null;
 }
 
@@ -237,13 +257,9 @@ function findCategoryPath(
 ): number[] {
   for (const node of nodes) {
     const path = [...parentPath, node.id];
-    if (node.id === targetId) {
-      return path;
-    }
+    if (node.id === targetId) return path;
     const childPath = findCategoryPath(node.children || [], targetId, path);
-    if (childPath.length > 0) {
-      return childPath;
-    }
+    if (childPath.length > 0) return childPath;
   }
   return [];
 }
@@ -251,27 +267,20 @@ function findCategoryPath(
 async function loadCategories(knowledgeBaseId: number | null, categoryId: number | null = null) {
   categoryTree.value = [];
   categoryPath.value = [];
-  if (!knowledgeBaseId) {
-    return;
-  }
-
+  if (!knowledgeBaseId) return;
   categoryLoading.value = true;
   try {
     categoryTree.value = await listDocumentCategoriesTree(knowledgeBaseId);
-    if (categoryId) {
-      categoryPath.value = findCategoryPath(categoryTree.value, categoryId);
-    }
+    if (categoryId) categoryPath.value = findCategoryPath(categoryTree.value, categoryId);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "加载知识库分类失败，请稍后重试。";
-    ElMessage.error(message);
+    ElMessage.error(error instanceof Error ? error.message : "加载知识库分类失败，请稍后重试。");
   } finally {
     categoryLoading.value = false;
   }
 }
 
 async function listAllPublishedTools(teamId: number) {
-  const pageSize = 100;
-  const tools: AgentTool[] = [];
+  const items: AgentTool[] = [];
   let page = 1;
   let total = 0;
   do {
@@ -280,102 +289,65 @@ async function listAllPublishedTools(teamId: number) {
       publish_status: "published",
       sync_status: "active",
       page,
-      page_size: pageSize,
+      page_size: 100,
     });
-    tools.push(...response.items);
+    items.push(...response.items);
     total = response.total;
-    if (response.items.length === 0) {
-      break;
-    }
     page += 1;
-  } while (tools.length < total);
-  return tools;
+    if (!response.items.length) break;
+  } while (items.length < total);
+  return items;
 }
 
 async function loadOptionData(projectResponse: ProjectSummary) {
-  const [assistantResponses, knowledgeBaseResponses, toolResponse] = await Promise.all([
-    listAssistants({
-      team_id: projectResponse.team_id,
-      active_only: true,
-      page: 1,
-      page_size: 100,
-    }),
-    listKnowledgeBases({
-      team_id: projectResponse.team_id,
-      active_only: true,
-      page: 1,
-      page_size: 100,
-    }),
+  const [assistantResponse, knowledgeBaseResponse, toolResponse] = await Promise.all([
+    listAssistants({ team_id: projectResponse.team_id, active_only: true, page: 1, page_size: 100 }),
+    listKnowledgeBases({ team_id: projectResponse.team_id, active_only: true, page: 1, page_size: 100 }),
     listAllPublishedTools(projectResponse.team_id),
   ]);
-  assistants.value = assistantResponses.items;
-  knowledgeBases.value = knowledgeBaseResponses.items;
+  assistants.value = assistantResponse.items;
+  knowledgeBases.value = knowledgeBaseResponse.items;
   availableTools.value = toolResponse;
 }
 
 async function loadToolGrants(appId: number | null) {
   const requestSequence = ++toolGrantRequestSequence;
   toolGrants.value = [];
-  if (!projectId.value || !appId) {
-    return;
-  }
-
+  if (!projectId.value || !appId) return;
   toolGrantLoading.value = true;
   try {
     const response = await listProjectAppToolGrants(projectId.value, appId);
-    if (requestSequence === toolGrantRequestSequence && activeApp.value?.id === appId) {
-      toolGrants.value = response.items;
-    }
+    if (requestSequence === toolGrantRequestSequence) toolGrants.value = response.items;
   } catch (error) {
     if (requestSequence === toolGrantRequestSequence) {
-      const message = error instanceof Error ? error.message : "加载工具授权失败，请稍后重试。";
-      ElMessage.error(message);
+      ElMessage.error(error instanceof Error ? error.message : "加载工具授权失败，请稍后重试。");
     }
   } finally {
-    if (requestSequence === toolGrantRequestSequence) {
-      toolGrantLoading.value = false;
-    }
+    if (requestSequence === toolGrantRequestSequence) toolGrantLoading.value = false;
   }
 }
 
 async function loadPage() {
-  if (!projectId.value || loading.value) {
-    return;
-  }
-
+  if (!projectId.value || loading.value) return;
   loading.value = true;
   loadError.value = null;
-
   try {
     const projectResponse = await getProject(projectId.value);
-    const [appResponses] = await Promise.all([
-      listProjectApps(projectId.value, {
-        status: "all",
-        page: 1,
-        page_size: 100,
-      }),
+    const [appResponse] = await Promise.all([
+      listProjectApps(projectId.value, { status: "all", page: 1, page_size: 100 }),
       loadOptionData(projectResponse),
     ]);
     project.value = projectResponse;
-    apps.value = appResponses.items;
+    apps.value = appResponse.items;
     const requestedAppId = Number(route.query.appId);
-    if (Number.isInteger(requestedAppId) && apps.value.some((item) => item.id === requestedAppId)) {
-      activeAppId.value = requestedAppId;
-    }
-    if (!apps.value.some((item) => item.id === activeAppId.value)) {
-      activeAppId.value = apps.value[0]?.id ?? null;
-    }
-    if (activeApp.value) {
-      await loadCategories(activeApp.value.knowledge_base_id, activeApp.value.category_id);
-    }
-    await loadToolGrants(activeApp.value?.id ?? null);
+    activeAppId.value = Number.isInteger(requestedAppId) && apps.value.some((item) => item.id === requestedAppId)
+      ? requestedAppId
+      : apps.value[0]?.id ?? null;
+    await loadToolGrants(activeAppId.value);
     hasLoadedData.value = true;
   } catch (error) {
-    if (hasLoadedData.value) {
-      ElMessage.error(error instanceof Error ? error.message : "应用端刷新失败，请稍后重试。");
-    } else {
-      loadError.value = error;
-    }
+    if (hasLoadedData.value) ElMessage.error(error instanceof Error ? error.message : "应用端刷新失败，请稍后重试。");
+    else loadError.value = error;
   } finally {
     loading.value = false;
   }
@@ -390,256 +362,122 @@ function openEditApp(app: ProjectAppSummary) {
   editingApp.value = app;
   appForm.name = app.name;
   appForm.code = app.code;
-  appForm.widget_version = app.widget_version;
-  appForm.terminal_type = app.terminal_type;
   appForm.description = app.description ?? "";
+  appForm.terminal_type = app.terminal_type;
+  appForm.knowledge_base_id = app.knowledge_base_id;
+  appForm.category_id = app.category_id;
+  appForm.default_assistant_id = app.default_assistant_id;
+  void loadCategories(app.knowledge_base_id, app.category_id);
   appDialogVisible.value = true;
 }
 
-function selectApp(appId: number) {
-  activeAppId.value = appId;
-  const nextApp = apps.value.find((item) => item.id === appId) ?? null;
-  void loadCategories(nextApp?.knowledge_base_id ?? null, nextApp?.category_id ?? null);
-  void loadToolGrants(nextApp?.id ?? null);
+function openEditResources() {
+  const app = integrationApp.value;
+  if (!app) return;
+  integrationDialogVisible.value = false;
+  openEditApp(app);
 }
 
-async function handleToggleStatus(app: ProjectAppSummary, nextValue: boolean | string | number) {
-  if (!projectId.value || statusLoadingId.value) {
-    return;
-  }
-
-  statusLoadingId.value = app.id;
-  try {
-    const updated = await updateProjectApp(
-      projectId.value,
-      app.id,
-      buildUpdatePayload(app, { is_active: Boolean(nextValue) }),
-    );
-    const index = apps.value.findIndex((item) => item.id === app.id);
-    if (index >= 0) {
-      apps.value[index] = updated;
-    }
-    activeAppId.value = updated.id;
-    ElMessage.success(`已${updated.is_active ? "启用" : "停用"}应用端“${updated.name}”。`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "更新应用端状态失败，请稍后重试。";
-    ElMessage.error(message);
-  } finally {
-    statusLoadingId.value = null;
-  }
-}
-
-async function saveActiveAppConfig(
-  key: "knowledge_base" | "category" | "assistant",
-  overrides: Partial<ProjectAppUpsertPayload>,
-  successMessage: string,
-) {
-  if (!projectId.value || !activeApp.value || configSavingKey.value) {
-    return;
-  }
-
-  const app = activeApp.value;
-  configSavingKey.value = key;
-  try {
-    const updated = await updateProjectApp(projectId.value, app.id, buildUpdatePayload(app, overrides));
-    const index = apps.value.findIndex((item) => item.id === app.id);
-    if (index >= 0) {
-      apps.value[index] = updated;
-    }
-    activeAppId.value = updated.id;
-    ElMessage.success(successMessage);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "保存应用端配置失败，请稍后重试。";
-    ElMessage.error(message);
-  } finally {
-    configSavingKey.value = "";
-  }
-}
-
-async function handleKnowledgeBaseChange(value: number | string | null) {
+async function handleAppKnowledgeBaseChange(value: number | string | null) {
   const knowledgeBaseId = Number(value);
-  const nextKnowledgeBaseId =
-    Number.isInteger(knowledgeBaseId) && knowledgeBaseId > 0 ? knowledgeBaseId : null;
-  await saveActiveAppConfig(
-    "knowledge_base",
-    {
-      knowledge_base_id: nextKnowledgeBaseId,
-      category_id: null,
-    },
-    "已更新知识库。",
-  );
-  await loadCategories(nextKnowledgeBaseId, null);
+  appForm.knowledge_base_id = Number.isInteger(knowledgeBaseId) && knowledgeBaseId > 0 ? knowledgeBaseId : null;
+  appForm.category_id = null;
+  categoryPath.value = [];
+  await loadCategories(appForm.knowledge_base_id);
 }
 
-async function handleCategoryPathChange(value: unknown) {
+function handleAppCategoryPathChange(value: unknown) {
   const selectedPath = Array.isArray(value)
     ? value.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item > 0)
     : [];
   categoryPath.value = selectedPath;
-  const categoryId = selectedPath.length > 0 ? selectedPath[selectedPath.length - 1] : null;
-  await saveActiveAppConfig("category", { category_id: categoryId }, "已更新限定分类。");
+  appForm.category_id = selectedPath.length > 0 ? selectedPath[selectedPath.length - 1] : null;
 }
 
-async function handleAssistantChange(value: number | string | null) {
-  const assistantId = Number(value);
-  const nextAssistantId = Number.isInteger(assistantId) && assistantId > 0 ? assistantId : null;
-  await saveActiveAppConfig("assistant", { default_assistant_id: nextAssistantId }, "已更新默认助手。");
-}
-
-function openToolGrantManager() {
-  draftToolGrantIds.value = [...grantedToolIdSet.value];
-  toolGrantKeyword.value = "";
-  toolGrantSelectedOnly.value = false;
-  toolGrantDialogVisible.value = true;
-}
-
-function isProviderFullySelected(tools: AgentTool[]) {
-  const selected = new Set(draftToolGrantIds.value);
-  return tools.length > 0 && tools.every((tool) => selected.has(tool.id));
-}
-
-function isProviderPartiallySelected(tools: AgentTool[]) {
-  const selected = new Set(draftToolGrantIds.value);
-  const selectedCount = tools.filter((tool) => selected.has(tool.id)).length;
-  return selectedCount > 0 && selectedCount < tools.length;
-}
-
-function handleProviderSelection(tools: AgentTool[], selected: boolean | string | number) {
-  const nextIds = new Set(draftToolGrantIds.value);
-  for (const tool of tools) {
-    if (selected === true) {
-      nextIds.add(tool.id);
-    } else {
-      nextIds.delete(tool.id);
-    }
-  }
-  draftToolGrantIds.value = [...nextIds].sort((a, b) => a - b);
-}
-
-function handleToolSelection(toolId: number, selected: boolean | string | number) {
-  const nextIds = new Set(draftToolGrantIds.value);
-  if (selected === true) {
-    nextIds.add(toolId);
-  } else {
-    nextIds.delete(toolId);
-  }
-  draftToolGrantIds.value = [...nextIds].sort((a, b) => a - b);
-}
-
-async function handleSaveToolGrants() {
-  if (!projectId.value || !activeApp.value || toolGrantSaving.value || !toolGrantHasChanges.value) {
-    return;
-  }
-  const appId = activeApp.value.id;
-  toolGrantSaving.value = true;
-  try {
-    const response = await replaceProjectAppToolGrants(
-      projectId.value,
-      appId,
-      [...new Set(draftToolGrantIds.value)].sort((a, b) => a - b),
-    );
-    if (activeApp.value?.id !== appId) {
-      return;
-    }
-    toolGrantRequestSequence += 1;
-    toolGrants.value = response.items;
-    toolGrantDialogVisible.value = false;
-    ElMessage.success("工具授权已保存。");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "保存工具授权失败，请稍后重试。";
-    ElMessage.error(message);
-  } finally {
-    toolGrantSaving.value = false;
-  }
-}
-
-async function handleSaveAppBasicInfo() {
-  if (!projectId.value || appDialogSaving.value) {
-    return;
-  }
+async function handleSaveApp() {
+  if (!projectId.value || appDialogSaving.value) return;
   const name = appForm.name.trim();
-  const code = normalizeCode(appForm.code);
-  if (!name || !code) {
-    ElMessage.warning("请填写应用端名称和编码。");
+  if (!name) {
+    ElMessage.warning("请填写应用端名称。");
     return;
   }
-  if (!/^\d+\.\d+\.\d+$/.test(appForm.widget_version)) {
-    ElMessage.warning("Widget 版本必须是精确版本，例如 1.0.0。");
+  if (appForm.terminal_type === "mcp" && !appForm.knowledge_base_id) {
+    ElMessage.warning("MCP 应用端至少需要绑定一个知识库。");
     return;
   }
-
+  const code = normalizeCode(appForm.code) || generateAppCode(name);
   appDialogSaving.value = true;
   try {
     if (editingApp.value) {
-      const updated = await updateProjectApp(
-        projectId.value,
-        editingApp.value.id,
-        buildUpdatePayload(editingApp.value, {
-          name,
-          code,
-          widget_version: appForm.widget_version,
-          terminal_type: appForm.terminal_type,
-          description: appForm.description.trim() || null,
-        }),
-      );
+      const updated = await updateProjectApp(projectId.value, editingApp.value.id, buildUpdatePayload(editingApp.value, {
+        name,
+        code,
+        description: appForm.description.trim() || null,
+        knowledge_base_id: appForm.knowledge_base_id,
+        category_id: appForm.category_id,
+        default_assistant_id: appForm.default_assistant_id,
+      }));
       const index = apps.value.findIndex((item) => item.id === updated.id);
-      if (index >= 0) {
-        apps.value[index] = updated;
-      }
-      activeAppId.value = updated.id;
+      if (index >= 0) apps.value[index] = updated;
       appDialogVisible.value = false;
       ElMessage.success(`已保存应用端“${updated.name}”。`);
+      void openIntegration(updated);
       return;
     }
-
     const created = await createProjectApp(projectId.value, {
       name,
       code,
-      widget_version: appForm.widget_version,
-      terminal_type: appForm.terminal_type,
       description: appForm.description.trim() || null,
-      knowledge_base_id: null,
-      category_id: null,
-      default_assistant_id: null,
+      terminal_type: appForm.terminal_type,
+      knowledge_base_id: appForm.knowledge_base_id,
+      category_id: appForm.category_id,
+      default_assistant_id: appForm.default_assistant_id,
+      widget_version: "1.0.0",
       is_active: true,
     });
     apps.value = [created, ...apps.value];
     activeAppId.value = created.id;
     appDialogVisible.value = false;
     ElMessage.success(`已创建应用端“${created.name}”。`);
+    void openIntegration(created);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "保存应用端失败，请稍后重试。";
-    ElMessage.error(message);
+    ElMessage.error(error instanceof Error ? error.message : "保存应用端失败，请稍后重试。");
   } finally {
     appDialogSaving.value = false;
   }
 }
 
 function handleAppDialogClosed() {
-  if (!appDialogSaving.value) {
-    resetAppForm();
+  if (!appDialogSaving.value) resetAppForm();
+}
+
+async function handleToggleStatus(app: ProjectAppSummary, nextValue = !app.is_active) {
+  if (!projectId.value || statusLoadingId.value) return;
+  statusLoadingId.value = app.id;
+  try {
+    const updated = await updateProjectApp(projectId.value, app.id, buildUpdatePayload(app, { is_active: nextValue }));
+    const index = apps.value.findIndex((item) => item.id === updated.id);
+    if (index >= 0) apps.value[index] = updated;
+    if (integrationApp.value?.id === updated.id) integrationApp.value = updated;
+    ElMessage.success(`已${updated.is_active ? "启用" : "停用"}应用端“${updated.name}”。`);
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "更新应用端状态失败，请稍后重试。");
+  } finally {
+    statusLoadingId.value = null;
   }
 }
 
 async function handleDeleteApp(app: ProjectAppSummary) {
-  if (!projectId.value || deletingAppId.value) {
-    return;
-  }
-
+  if (!projectId.value || deletingAppId.value) return;
   try {
-    await ElMessageBox.confirm(
-      `确定删除应用端“${app.name}”吗？删除后该嵌入入口将立即失效。`,
-      "删除应用端",
-      {
-        type: "warning",
-        confirmButtonText: "删除",
-        cancelButtonText: "取消",
-      },
-    );
+    await ElMessageBox.confirm(`确定删除应用端“${app.name}”吗？删除后该应用的接入凭证也会失效。`, "删除应用端", {
+      type: "warning",
+      confirmButtonText: "删除",
+      cancelButtonText: "取消",
+    });
   } catch {
     return;
   }
-
   deletingAppId.value = app.id;
   try {
     await deleteProjectApp(projectId.value, app.id);
@@ -648,24 +486,32 @@ async function handleDeleteApp(app: ProjectAppSummary) {
     await loadToolGrants(activeAppId.value);
     ElMessage.success(`已删除应用端“${app.name}”。`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "删除应用端失败，请稍后重试。";
-    ElMessage.error(message);
+    ElMessage.error(error instanceof Error ? error.message : "删除应用端失败，请稍后重试。");
   } finally {
     deletingAppId.value = null;
   }
 }
 
-async function openIntegration(app: ProjectAppSummary) {
-  if (!app.is_active) {
-    ElMessage.warning("当前应用端已停用，请先启用后再查看接入说明。");
-    return;
-  }
+async function handleAppAction(app: ProjectAppSummary, command: string | number | object) {
+  const action = String(command);
+  if (action === "access") void openIntegration(app);
+  else if (action === "edit") openEditApp(app);
+  else if (action === "tools") {
+    activeAppId.value = app.id;
+    await loadToolGrants(app.id);
+    draftToolGrantIds.value = [...grantedToolIdSet.value];
+    toolGrantDialogVisible.value = true;
+  } else if (action === "toggle") void handleToggleStatus(app);
+  else if (action === "delete") void handleDeleteApp(app);
+}
 
+async function openIntegration(app: ProjectAppSummary) {
+  activeAppId.value = app.id;
   integrationDialogVisible.value = true;
   integrationApp.value = app;
   accessCredential.value = null;
   issuedClientSecret.value = "";
-  allowedOriginsText.value = "https://your-business.example.com";
+  allowedOriginsText.value = app.terminal_type === "api" ? "https://your-business.example.com" : "";
   accessLoading.value = true;
   try {
     const credential = await getProjectAppAccess(projectId.value as number, app.id);
@@ -673,7 +519,7 @@ async function openIntegration(app: ProjectAppSummary) {
     allowedOriginsText.value = credential.allowed_origins.join("\n");
   } catch (error) {
     if (!(error instanceof AppRequestError) || error.status !== 404) {
-      ElMessage.error(error instanceof Error ? error.message : "加载业务接入凭证失败。");
+      ElMessage.error(error instanceof Error ? error.message : "加载应用接入凭证失败。");
     }
   } finally {
     accessLoading.value = false;
@@ -686,7 +532,7 @@ function getAllowedOrigins() {
 
 function validateAllowedOrigins() {
   const origins = getAllowedOrigins();
-  const hasInvalidOrigin = origins.some((origin) => {
+  const invalid = origins.some((origin) => {
     try {
       const parsed = new URL(origin);
       return !["http:", "https:"].includes(parsed.protocol) || parsed.origin !== origin;
@@ -694,7 +540,7 @@ function validateAllowedOrigins() {
       return true;
     }
   });
-  if (!origins.length || hasInvalidOrigin) {
+  if (!origins.length || invalid) {
     ElMessage.warning("请填写不含路径的完整 HTTP 或 HTTPS Origin。");
     return null;
   }
@@ -703,19 +549,17 @@ function validateAllowedOrigins() {
 
 async function handleCreateAccess() {
   if (!projectId.value || !integrationApp.value || accessSavingAction.value) return;
-  const allowedOrigins = validateAllowedOrigins();
-  if (!allowedOrigins) return;
+  const allowedOrigins = integrationApp.value.terminal_type === "api" ? validateAllowedOrigins() : [];
+  if (allowedOrigins === null) return;
   accessSavingAction.value = "create";
   try {
-    const issued = await createProjectAppAccess(projectId.value, integrationApp.value.id, {
-      allowed_origins: allowedOrigins,
-    });
+    const issued = await createProjectAppAccess(projectId.value, integrationApp.value.id, { allowed_origins: allowedOrigins });
     accessCredential.value = issued;
     issuedClientSecret.value = issued.client_secret;
     allowedOriginsText.value = issued.allowed_origins.join("\n");
-    ElMessage.success("业务接入已启用，请立即保存 Client Secret。");
+    ElMessage.success(`${integrationApp.value.terminal_type === "mcp" ? "MCP" : "API"} 接入已启用，请立即保存 Client Secret。`);
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "启用业务接入失败。");
+    ElMessage.error(error instanceof Error ? error.message : "启用应用接入失败。");
   } finally {
     accessSavingAction.value = "";
   }
@@ -727,9 +571,7 @@ async function handleUpdateAccess() {
   if (!allowedOrigins) return;
   accessSavingAction.value = "update";
   try {
-    accessCredential.value = await updateProjectAppAccess(projectId.value, integrationApp.value.id, {
-      allowed_origins: allowedOrigins,
-    });
+    accessCredential.value = await updateProjectAppAccess(projectId.value, integrationApp.value.id, { allowed_origins: allowedOrigins });
     allowedOriginsText.value = accessCredential.value.allowed_origins.join("\n");
     ElMessage.success("允许的 Origin 已保存。");
   } catch (error) {
@@ -743,13 +585,10 @@ async function handleEnableExistingAccess() {
   if (!projectId.value || !integrationApp.value || !accessCredential.value || accessSavingAction.value) return;
   accessSavingAction.value = "enable";
   try {
-    accessCredential.value = await enableProjectAppAccess(
-      projectId.value,
-      integrationApp.value.id,
-    );
-    ElMessage.success("业务接入已重新启用。");
+    accessCredential.value = await enableProjectAppAccess(projectId.value, integrationApp.value.id);
+    ElMessage.success("应用接入已重新启用。");
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "重新启用业务接入失败。");
+    ElMessage.error(error instanceof Error ? error.message : "重新启用应用接入失败。");
   } finally {
     accessSavingAction.value = "";
   }
@@ -782,7 +621,7 @@ async function handleResetAccessSecret() {
 async function handleRevokeAccess() {
   if (!projectId.value || !integrationApp.value || accessSavingAction.value) return;
   try {
-    await ElMessageBox.confirm("吊销后当前应用的 Widget Token 将失效，确定继续吗？", "吊销业务接入", {
+    await ElMessageBox.confirm("吊销后当前应用的接入凭证将失效，确定继续吗？", "吊销应用接入", {
       type: "warning",
       confirmButtonText: "吊销",
       cancelButtonText: "取消",
@@ -794,9 +633,9 @@ async function handleRevokeAccess() {
   try {
     accessCredential.value = await revokeProjectAppAccess(projectId.value, integrationApp.value.id);
     issuedClientSecret.value = "";
-    ElMessage.success("业务接入已吊销。");
+    ElMessage.success("应用接入已吊销。");
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "吊销业务接入失败。");
+    ElMessage.error(error instanceof Error ? error.message : "吊销应用接入失败。");
   } finally {
     accessSavingAction.value = "";
   }
@@ -811,29 +650,57 @@ async function copyText(value: string, successMessage: string) {
   }
 }
 
-const agentPublicOrigin = window.location.origin.replace(/\/+$/, "");
+function openToolGrantManager() {
+  draftToolGrantIds.value = [...grantedToolIdSet.value];
+  toolGrantKeyword.value = "";
+  toolGrantSelectedOnly.value = false;
+  toolGrantDialogVisible.value = true;
+}
 
-const bootstrapEnvironmentCode = computed(() => `AGENT_BASE_URL=${agentPublicOrigin}/api/v1
-AGENT_CLIENT_ID=${accessCredential.value?.client_id || "<启用后生成>"}
-AGENT_CLIENT_SECRET=${issuedClientSecret.value || "<仅在启用或重置后显示>"}`);
+function isProviderFullySelected(tools: AgentTool[]) {
+  const selected = new Set(draftToolGrantIds.value);
+  return tools.length > 0 && tools.every((tool) => selected.has(tool.id));
+}
 
-const loaderCode = `<script
-  src="${agentPublicOrigin}/agent-static/loader/v1/loader.js"
-  data-bootstrap-endpoint="/api/agent/bootstrap"
-  defer
->` + "<" + "/script>";
+function isProviderPartiallySelected(tools: AgentTool[]) {
+  const selectedCount = tools.filter((tool) => draftToolGrantIds.value.includes(tool.id)).length;
+  return selectedCount > 0 && selectedCount < tools.length;
+}
 
-onMounted(() => {
+function handleProviderSelection(tools: AgentTool[], selected: boolean | string | number) {
+  const nextIds = new Set(draftToolGrantIds.value);
+  for (const tool of tools) selected === true ? nextIds.add(tool.id) : nextIds.delete(tool.id);
+  draftToolGrantIds.value = [...nextIds].sort((a, b) => a - b);
+}
+
+function handleToolSelection(toolId: number, selected: boolean | string | number) {
+  const nextIds = new Set(draftToolGrantIds.value);
+  selected === true ? nextIds.add(toolId) : nextIds.delete(toolId);
+  draftToolGrantIds.value = [...nextIds].sort((a, b) => a - b);
+}
+
+async function handleSaveToolGrants() {
+  if (!projectId.value || !activeApp.value || toolGrantSaving.value || !toolGrantHasChanges.value) return;
+  toolGrantSaving.value = true;
+  try {
+    const response = await replaceProjectAppToolGrants(projectId.value, activeApp.value.id, [...new Set(draftToolGrantIds.value)].sort((a, b) => a - b));
+    toolGrantRequestSequence += 1;
+    toolGrants.value = response.items;
+    toolGrantDialogVisible.value = false;
+    ElMessage.success("工具授权已保存。");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "保存工具授权失败，请稍后重试。");
+  } finally {
+    toolGrantSaving.value = false;
+  }
+}
+
+onMounted(() => void loadPage());
+
+watch(() => route.params.projectId, () => {
+  activeAppId.value = null;
   void loadPage();
 });
-
-watch(
-  () => route.params.projectId,
-  () => {
-    activeAppId.value = null;
-    void loadPage();
-  },
-);
 
 watch(integrationDialogVisible, (visible) => {
   if (!visible) {
@@ -869,1629 +736,399 @@ watch(integrationDialogVisible, (visible) => {
       :show-retry="false"
     />
 
-    <AdminListPanel
-      v-else
-      class="project-app-workspace-page__panel"
-    >
-      <div class="project-app-workspace-page__header">
-        <div class="project-app-workspace-page__title-row">
-          <div>
-            <h2>{{ project?.name || "项目应用端" }}</h2>
-          </div>
-          <el-button
-            class="project-app-workspace-page__create-button"
-            type="primary"
-            @click="openCreateApp"
-          >
-            <el-icon><Plus /></el-icon>
-            新建应用端
-          </el-button>
+    <AdminListPanel v-else class="project-app-workspace-page__panel">
+      <div class="project-app-workspace-page__list-header">
+        <div>
+          <p class="project-app-workspace-page__eyebrow">{{ project?.name || "项目" }}</p>
+          <h2>应用端管理</h2>
+          <p>管理当前项目下 API 与远程 MCP 应用端的接入与使用。</p>
         </div>
+        <el-button type="primary" class="project-app-workspace-page__create-button" @click="openCreateApp">
+          <el-icon><Plus /></el-icon>
+          创建应用端
+        </el-button>
+      </div>
 
-        <div
-          v-if="apps.length > 0"
-          class="project-app-workspace-page__tabs"
-        >
-          <div
-            v-for="app in apps"
-            :key="app.id"
-            :class="[
-              'project-app-workspace-page__tab',
-              activeApp?.id === app.id ? 'project-app-workspace-page__tab--active' : '',
-              !app.is_active ? 'project-app-workspace-page__tab--disabled' : '',
-              app.is_active && (!app.knowledge_base_id || !app.default_assistant_id)
-                ? 'project-app-workspace-page__tab--incomplete'
-                : '',
-            ]"
-          >
-            <button
-              type="button"
-              class="project-app-workspace-page__tab-main"
-              @click="selectApp(app.id)"
-            >
-              <el-icon :class="getTerminalIconClass(app.terminal_type)">
-                <component :is="getTerminalIcon(app.terminal_type)" />
-              </el-icon>
-              <span>{{ app.name }}</span>
-            </button>
-            <span
-              v-if="app.is_active && (!app.knowledge_base_id || !app.default_assistant_id)"
-              class="project-app-workspace-page__tab-badge"
-            >
-              未配置
-            </span>
-            <button
-              type="button"
-              class="project-app-workspace-page__tab-delete"
-              :disabled="deletingAppId === app.id"
-              @click.stop="handleDeleteApp(app)"
-            >
-              <el-icon><Delete /></el-icon>
-            </button>
-          </div>
-        </div>
+      <div v-if="apps.length > 0" class="project-app-workspace-page__toolbar">
+        <el-input v-model="searchKeyword" clearable placeholder="搜索应用名称、编码或知识库">
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+        <el-select v-model="typeFilter" clearable placeholder="全部类型">
+          <el-option label="全部类型" value="all" />
+          <el-option label="API" value="api" />
+          <el-option label="远程 MCP" value="mcp" />
+        </el-select>
+        <el-select v-model="statusFilter" clearable placeholder="全部状态">
+          <el-option label="全部状态" value="all" />
+          <el-option label="已启用" value="active" />
+          <el-option label="已停用" value="inactive" />
+        </el-select>
       </div>
 
       <AppEmpty
         v-if="apps.length === 0"
-        v-loading="loading"
         title="当前项目暂无应用端"
-        description="可以先创建一个应用端，再绑定助手和知识库。"
+        description="创建一个应用端，并在创建时绑定知识库、分类和默认助手。"
       >
-        <el-button
-          type="primary"
-          @click="openCreateApp"
-        >
-          新建应用端
+        <el-button type="primary" @click="openCreateApp">
+          <el-icon><Plus /></el-icon>
+          创建应用端
         </el-button>
       </AppEmpty>
 
-      <section
-        v-else-if="activeApp"
-        class="project-app-workspace-page__body"
-      >
-        <div class="project-app-workspace-page__inspector">
-          <section class="project-app-workspace-page__status-card">
-            <div class="project-app-workspace-page__app-identity">
-              <div
-                :class="[
-                  'project-app-workspace-page__app-icon',
-                  getTerminalIconClass(activeApp.terminal_type),
-                ]"
-              >
-                <el-icon><component :is="getTerminalIcon(activeApp.terminal_type)" /></el-icon>
-              </div>
-              <div>
-                <div class="project-app-workspace-page__app-title">
-                  <h3>{{ activeApp.name }}</h3>
-                  <el-tag
-                    size="small"
-                    type="info"
-                    effect="plain"
-                  >
-                    {{ activeApp.code }}
-                  </el-tag>
-                </div>
-                <p>{{ activeApp.description?.trim() || "暂无说明" }}</p>
-              </div>
-            </div>
-
-            <div class="project-app-workspace-page__status-control">
-              <el-button
-                class="project-app-workspace-page__icon-button"
-                :icon="EditPen"
-                circle
-                plain
-                title="编辑应用端"
-                @click="openEditApp(activeApp)"
-              />
-              <span :class="activeApp.is_active ? 'is-active' : ''">{{ activeApp.is_active ? "在线" : "停用" }}</span>
-              <el-switch
-                :model-value="activeApp.is_active"
-                :loading="statusLoadingId === activeApp.id"
-                @change="handleToggleStatus(activeApp, $event)"
-              />
-            </div>
-          </section>
-
-          <section class="project-app-workspace-page__config-card">
-            <div class="project-app-workspace-page__config-header">
-              <div>
-                <h3>问答引擎</h3>
-                <p>为当前应用端指定回答来源、检索范围和默认助手。</p>
-              </div>
-            </div>
-
-            <div class="project-app-workspace-page__config-list">
-              <div class="project-app-workspace-page__config-row">
-                <div class="project-app-workspace-page__row-icon project-app-workspace-page__row-icon--knowledge">
-                  <el-icon><Collection /></el-icon>
-                </div>
-                <div class="project-app-workspace-page__config-copy">
-                  <span>知识库</span>
-                  <p>选择此应用端优先召回的业务知识来源。</p>
-                </div>
-                <el-select
-                  :model-value="activeApp.knowledge_base_id"
-                  clearable
-                  filterable
-                  placeholder="未绑定"
-                  class="project-app-workspace-page__config-control"
-                  :loading="configSavingKey === 'knowledge_base'"
-                  @change="handleKnowledgeBaseChange"
-                >
-                  <el-option
-                    v-for="item in knowledgeBases"
-                    :key="item.id"
-                    :label="item.name"
-                    :value="item.id"
-                  />
-                </el-select>
-              </div>
-              <div class="project-app-workspace-page__config-row">
-                <div class="project-app-workspace-page__row-icon project-app-workspace-page__row-icon--category">
-                  <el-icon><Grid /></el-icon>
-                </div>
-                <div class="project-app-workspace-page__config-copy">
-                  <span>分类范围</span>
-                  <p>可选限定分类，让回答聚焦到具体业务边界。</p>
-                </div>
-                <el-cascader
-                  v-model="categoryPath"
-                  :options="categoryTree"
-                  :props="categoryCascaderProps"
-                  :disabled="!activeApp.knowledge_base_id || categoryLoading || configSavingKey === 'category'"
-                  clearable
-                  filterable
-                  :placeholder="categoryLoading ? '分类加载中...' : '全部分类'"
-                  class="project-app-workspace-page__config-control"
-                  @change="handleCategoryPathChange"
-                >
-                  <template #default="{ data }">
-                    <div class="project-app-workspace-page__category-option">
-                      <span>{{ data.name }}</span>
-                      <small>{{ data.document_count }} 个文档</small>
-                    </div>
-                  </template>
-                </el-cascader>
-              </div>
-              <div class="project-app-workspace-page__config-row">
-                <div class="project-app-workspace-page__row-icon project-app-workspace-page__row-icon--assistant">
-                  <el-icon><Cpu /></el-icon>
-                </div>
-                <div class="project-app-workspace-page__config-copy">
-                  <span>默认助手</span>
-                  <p>选择对话人设、模型和回复策略。</p>
-                </div>
-                <el-select
-                  :model-value="activeApp.default_assistant_id"
-                  clearable
-                  filterable
-                  placeholder="未绑定"
-                  class="project-app-workspace-page__config-control"
-                  :loading="configSavingKey === 'assistant'"
-                  @change="handleAssistantChange"
-                >
-                  <el-option
-                    v-for="assistant in assistants"
-                    :key="assistant.id"
-                    :label="assistant.name"
-                    :value="assistant.id"
-                  >
-                    <div class="project-app-workspace-page__assistant-option">
-                      <span>{{ assistant.name }}</span>
-                      <small>{{ assistant.llm_model_key || "未指定模型" }}</small>
-                    </div>
-                  </el-option>
-                </el-select>
-              </div>
-            </div>
-          </section>
-
-          <section class="project-app-workspace-page__business-tool-card">
-            <div class="project-app-workspace-page__config-header">
-              <div>
-                <h3>Agent 工具授权</h3>
-                <p>控制当前应用端可以调用的业务能力。</p>
-              </div>
-              <div class="project-app-workspace-page__tool-header-actions">
-                <router-link
-                  class="project-app-workspace-page__plain-link"
-                  to="/agent-integrations"
-                >
-                  工具目录
-                </router-link>
-                <el-button
-                  type="primary"
-                  :disabled="toolGrantLoading || availableTools.length === 0"
-                  @click="openToolGrantManager"
-                >
-                  <el-icon><Setting /></el-icon>
-                  管理授权
-                </el-button>
-              </div>
-            </div>
-
-            <div
-              v-loading="toolGrantLoading"
-              class="project-app-workspace-page__business-tool-body"
-            >
-              <div
-                v-if="availableTools.length > 0"
-                class="project-app-workspace-page__tool-summary"
-              >
-                <div>
-                  <strong>{{ toolGrants.length }}</strong>
-                  <span>已授权工具</span>
-                </div>
-                <div>
-                  <strong>{{ availableTools.length }}</strong>
-                  <span>可用工具</span>
-                </div>
-                <div>
-                  <strong>{{ grantedProviderCount }}</strong>
-                  <span>已覆盖提供方</span>
-                </div>
-                <p>
-                  {{ toolGrants.length > 0
-                    ? `当前应用可调用 ${toolGrants.length} 个已发布工具。`
-                    : "当前应用尚未获得业务工具授权。" }}
-                </p>
-              </div>
-
-              <div
-                v-else
-                class="project-app-workspace-page__binding-empty"
-              >
-                <strong>当前团队还没有已发布工具</strong>
-                <span>请先在 Agent 工具页同步并发布工具。</span>
-              </div>
-            </div>
-          </section>
-
-          <section class="project-app-workspace-page__access-card">
-            <div class="project-app-workspace-page__access-header">
-              <div>
-                <h3>接入信息</h3>
-                <p>用于业务系统识别并嵌入当前应用端。</p>
-              </div>
-              <el-button
-                class="project-app-workspace-page__link-button"
-                type="primary"
-                @click="openIntegration(activeApp)"
-              >
-                <el-icon><Link /></el-icon>
-                管理业务接入
-              </el-button>
-            </div>
-
-            <dl class="project-app-workspace-page__access-list">
-              <div>
-                <dt>终端类型</dt>
-                <dd>{{ formatTerminalType(activeApp.terminal_type) }}</dd>
-              </div>
-              <div>
-                <dt>应用编码</dt>
-                <dd>{{ activeApp.code }}</dd>
-              </div>
-              <div>
-                <dt>Widget 版本</dt>
-                <dd>{{ activeApp.widget_version }}</dd>
-              </div>
-              <div>
-                <dt>运行状态</dt>
-                <dd :class="activeApp.is_active ? 'is-active' : ''">
-                  {{ activeApp.is_active ? "在线" : "停用" }}
-                </dd>
-              </div>
-              <div>
-                <dt>更新时间</dt>
-                <dd>{{ formatDateTime(activeApp.updated_at) }}</dd>
-              </div>
-            </dl>
-          </section>
+      <div v-else-if="filteredApps.length > 0" class="project-app-workspace-page__table-wrap">
+        <div class="project-app-workspace-page__table-head">
+          <span>应用端名称</span><span>类型</span><span>绑定知识库</span><span>默认助手</span>
+          <span>状态</span><span>更新时间</span><span>操作</span>
         </div>
-      </section>
+        <button
+          v-for="app in filteredApps"
+          :key="app.id"
+          type="button"
+          :class="['project-app-workspace-page__table-row', activeAppId === app.id ? 'is-selected' : '']"
+          @click="openIntegration(app)"
+        >
+          <span class="project-app-workspace-page__app-cell">
+            <span class="project-app-workspace-page__app-icon" :class="getTerminalIconClass(app.terminal_type)">
+              <el-icon><component :is="getTerminalIcon(app.terminal_type)" /></el-icon>
+            </span>
+            <span><strong>{{ app.name }}</strong><small>{{ app.description || app.code }}</small></span>
+          </span>
+          <span><el-tag size="small" effect="plain">{{ formatTerminalType(app.terminal_type) }}</el-tag></span>
+          <span>{{ app.knowledge_base_name || "—" }}</span>
+          <span>{{ app.default_assistant_name || "—" }}</span>
+          <span :class="['project-app-workspace-page__status', app.is_active ? 'is-active' : 'is-inactive']"><i />{{ app.is_active ? "已启用" : "已停用" }}</span>
+          <span>{{ formatDateTime(app.updated_at) }}</span>
+          <span class="project-app-workspace-page__row-actions" @click.stop>
+            <el-dropdown trigger="click" @command="handleAppAction(app, $event)">
+              <el-button text class="project-app-workspace-page__more-button" title="更多操作"><el-icon><MoreFilled /></el-icon></el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="access"><el-icon><Link /></el-icon>查看接入方式</el-dropdown-item>
+                  <el-dropdown-item command="edit"><el-icon><EditPen /></el-icon>编辑运行资源</el-dropdown-item>
+                  <el-dropdown-item command="tools"><el-icon><Setting /></el-icon>管理工具授权</el-dropdown-item>
+                  <el-dropdown-item command="toggle"><el-icon><Connection /></el-icon>{{ app.is_active ? "停用应用端" : "启用应用端" }}</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided><el-icon><Delete /></el-icon>删除应用端</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </span>
+        </button>
+      </div>
+
+      <AppEmpty v-else title="没有匹配的应用端" description="请调整搜索关键词或筛选条件。" />
     </AdminListPanel>
 
-    <el-drawer
-      v-model="toolGrantDialogVisible"
-      class="project-app-workspace-page__tool-drawer"
-      size="720px"
-      :show-close="!toolGrantSaving"
-      :close-on-click-modal="!toolGrantSaving"
-      :close-on-press-escape="!toolGrantSaving"
-    >
+    <el-drawer v-model="integrationDialogVisible" class="project-app-workspace-page__drawer" size="520px" :with-header="true">
       <template #header>
-        <div class="project-app-workspace-page__drawer-title">
-          <h3>管理工具授权</h3>
-          <p>{{ activeApp?.name }} · 已选择 {{ draftToolGrantIds.length }} / {{ availableTools.length }}</p>
-        </div>
-      </template>
-
-      <div class="project-app-workspace-page__tool-drawer-body">
-        <div class="project-app-workspace-page__tool-toolbar">
-          <el-input
-            v-model="toolGrantKeyword"
-            clearable
-            placeholder="搜索工具名称、标识或提供方"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-          <el-checkbox v-model="toolGrantSelectedOnly">
-            仅看已授权
-          </el-checkbox>
-        </div>
-
-        <div class="project-app-workspace-page__tool-groups">
-          <section
-            v-for="group in groupedAvailableTools"
-            :key="group.providerId"
-            class="project-app-workspace-page__tool-group"
-          >
-            <div class="project-app-workspace-page__tool-group-header">
-              <el-checkbox
-                :model-value="isProviderFullySelected(group.tools)"
-                :indeterminate="isProviderPartiallySelected(group.tools)"
-                @change="handleProviderSelection(group.tools, $event)"
-              >
-                {{ group.providerName }}
-              </el-checkbox>
-              <span>{{ group.tools.length }} 个工具</span>
-            </div>
-            <label
-              v-for="tool in group.tools"
-              :key="tool.id"
-              class="project-app-workspace-page__tool-option"
-            >
-              <el-checkbox
-                :model-value="draftToolGrantIds.includes(tool.id)"
-                @change="handleToolSelection(tool.id, $event)"
-              />
-              <div class="project-app-workspace-page__tool-option-main">
-                <div class="project-app-workspace-page__tool-option-title">
-                  <strong>{{ tool.name }}</strong>
-                  <el-tag
-                    v-if="tool.risk_level !== 'low'"
-                    size="small"
-                    :type="tool.risk_level === 'high' ? 'danger' : 'warning'"
-                    effect="plain"
-                  >
-                    {{ tool.risk_level === "high" ? "高风险" : "中风险" }}
-                  </el-tag>
-                  <el-tag
-                    v-if="tool.requires_confirmation"
-                    size="small"
-                    type="warning"
-                    effect="plain"
-                  >
-                    调用前确认
-                  </el-tag>
-                </div>
-                <p>{{ tool.agent_description || tool.external_description || "暂无工具说明" }}</p>
-                <span>{{ tool.tool_key }}</span>
-              </div>
-            </label>
-          </section>
-        </div>
-
-        <AppEmpty
-          v-if="groupedAvailableTools.length === 0"
-          title="没有匹配的工具"
-          description="请调整搜索词或关闭仅看已授权。"
-        />
-      </div>
-
-      <template #footer>
-        <div class="project-app-workspace-page__drawer-footer">
-          <span>已选择 {{ draftToolGrantIds.length }} 个工具</span>
+        <div class="project-app-workspace-page__drawer-heading">
           <div>
-            <el-button
-              :disabled="toolGrantSaving"
-              @click="toolGrantDialogVisible = false"
-            >
-              取消
-            </el-button>
-            <el-button
-              type="primary"
-              :loading="toolGrantSaving"
-              :disabled="!toolGrantHasChanges"
-              @click="handleSaveToolGrants"
-            >
-              保存授权
-            </el-button>
+            <p>应用接入</p>
+            <h3>{{ integrationApp?.name || "应用端" }}</h3>
           </div>
+          <el-tag v-if="integrationApp" size="small" effect="plain">{{ formatTerminalType(integrationApp.terminal_type) }}</el-tag>
         </div>
       </template>
+      <div v-loading="accessLoading" class="project-app-workspace-page__drawer-body">
+        <div v-if="integrationApp" class="project-app-workspace-page__drawer-app-meta">
+          <span class="project-app-workspace-page__app-icon" :class="getTerminalIconClass(integrationApp.terminal_type)"><el-icon><component :is="getTerminalIcon(integrationApp.terminal_type)" /></el-icon></span>
+          <div><strong>{{ integrationApp.name }}</strong><span>{{ integrationApp.is_active ? "已启用" : "已停用" }}</span></div>
+          <el-button text @click="openEditResources"><el-icon><EditPen /></el-icon>编辑资源</el-button>
+        </div>
+
+        <section v-if="integrationApp" class="project-app-workspace-page__drawer-section">
+          <div class="project-app-workspace-page__section-title"><h4>运行资源</h4></div>
+          <div class="project-app-workspace-page__resource-list">
+            <div><span><el-icon><Collection /></el-icon>知识库</span><strong>{{ integrationApp.knowledge_base_name || "未绑定" }}</strong></div>
+            <div><span><el-icon><Grid /></el-icon>分类</span><strong>{{ integrationApp.category_name || "不限制分类" }}</strong></div>
+            <div><span><el-icon><Cpu /></el-icon>默认助手</span><strong>{{ integrationApp.default_assistant_name || "主 Agent 默认配置" }}</strong></div>
+          </div>
+        </section>
+
+        <section class="project-app-workspace-page__drawer-section">
+          <div class="project-app-workspace-page__section-title"><div><h4>连接信息</h4><p>使用以下信息连接当前应用端。</p></div></div>
+          <div class="project-app-workspace-page__credential-list">
+            <div><span>{{ isMcpIntegration ? "服务端点" : "API 地址" }}</span><code>{{ isMcpIntegration ? mcpEndpoint : apiEndpoint }}</code><el-button text @click="copyText(isMcpIntegration ? mcpEndpoint : apiEndpoint, '地址已复制。')"><el-icon><CopyDocument /></el-icon></el-button></div>
+            <div><span>Client ID</span><code>{{ accessCredential?.client_id || "尚未生成" }}</code><el-button v-if="accessCredential" text @click="copyText(accessCredential.client_id, 'Client ID 已复制。')"><el-icon><CopyDocument /></el-icon></el-button></div>
+            <div><span>Client Secret</span><code>{{ issuedClientSecret || (accessCredential ? `••••••••••••${accessCredential.client_secret_last_four}` : "尚未生成") }}</code><el-button v-if="issuedClientSecret" text @click="copyText(issuedClientSecret, 'Client Secret 已复制。')"><el-icon><CopyDocument /></el-icon></el-button></div>
+          </div>
+          <el-alert v-if="issuedClientSecret" class="project-app-workspace-page__secret-alert" title="Client Secret 只显示这一次，请立即保存。" type="warning" :closable="false" show-icon />
+          <div v-if="!accessCredential" class="project-app-workspace-page__drawer-empty"><p>当前应用端尚未生成接入凭证。</p><el-button type="primary" :loading="accessSavingAction === 'create'" @click="handleCreateAccess">生成接入凭证</el-button></div>
+          <div v-else class="project-app-workspace-page__drawer-actions">
+            <el-button :loading="accessSavingAction === 'reset'" @click="handleResetAccessSecret"><el-icon><RefreshRight /></el-icon>重置 Secret</el-button>
+            <el-button v-if="!accessCredential.enabled" type="primary" :loading="accessSavingAction === 'enable'" @click="handleEnableExistingAccess">重新启用</el-button>
+            <el-button v-else type="danger" plain :loading="accessSavingAction === 'revoke'" @click="handleRevokeAccess">吊销接入</el-button>
+          </div>
+        </section>
+
+        <section v-if="integrationApp?.terminal_type === 'mcp' && accessCredential" class="project-app-workspace-page__drawer-section">
+          <div class="project-app-workspace-page__section-title"><div><h4>客户端配置</h4><p>复制到支持远程 MCP 的客户端配置文件中。</p></div></div>
+          <div class="project-app-workspace-page__code-block"><pre>{{ mcpConfigCode }}</pre></div>
+          <el-button type="primary" class="project-app-workspace-page__copy-config" @click="copyText(mcpConfigCode, 'MCP 配置 JSON 已复制。')"><el-icon><CopyDocument /></el-icon>复制配置 JSON</el-button>
+        </section>
+
+        <section v-if="integrationApp?.terminal_type === 'api' && accessCredential" class="project-app-workspace-page__drawer-section">
+          <div class="project-app-workspace-page__section-title"><div><h4>服务端配置</h4><p>业务后端可使用这组凭证调用 Agent API。</p></div></div>
+          <div class="project-app-workspace-page__code-block"><pre>{{ bootstrapEnvironmentCode }}</pre></div>
+          <el-button text class="project-app-workspace-page__section-action" @click="copyText(bootstrapEnvironmentCode, '环境变量模板已复制。')">复制环境变量</el-button>
+        </section>
+
+        <section v-if="integrationApp?.terminal_type === 'api'" class="project-app-workspace-page__drawer-section">
+          <div class="project-app-workspace-page__section-title">
+            <div><h4>Widget 聊天窗口</h4><p>业务前端通过 Loader 加载聊天窗口，长期 Client Secret 只保留在业务后端。</p></div>
+          </div>
+          <div class="project-app-workspace-page__widget-meta">
+            <span>Widget 版本 <strong>{{ integrationApp.widget_version }}</strong></span>
+            <span>Bootstrap <code>/api/agent/bootstrap</code></span>
+          </div>
+          <template v-if="accessCredential">
+            <div class="project-app-workspace-page__widget-origin">
+              <div class="project-app-workspace-page__section-title"><div><h4>允许的 Origin</h4><p>限制哪些业务网站可以加载并使用聊天窗口。</p></div></div>
+              <el-input v-model="allowedOriginsText" type="textarea" :rows="3" placeholder="https://your-business.example.com" />
+              <el-button class="project-app-workspace-page__section-action" :loading="accessSavingAction === 'update'" @click="handleUpdateAccess">保存 Origin</el-button>
+            </div>
+            <div class="project-app-workspace-page__code-block"><pre>{{ widgetLoaderCode }}</pre></div>
+            <el-button type="primary" plain class="project-app-workspace-page__copy-config" @click="copyText(widgetLoaderCode, 'Widget Loader 代码已复制。')"><el-icon><CopyDocument /></el-icon>复制嵌入代码</el-button>
+          </template>
+          <div v-else class="project-app-workspace-page__widget-empty">生成应用接入凭证后，才能复制 Widget 嵌入代码并连接聊天服务。</div>
+        </section>
+      </div>
     </el-drawer>
 
-    <AdminDialog
-      v-model="integrationDialogVisible"
-      width="720px"
-      :title="integrationApp ? `业务接入：${integrationApp.name}` : '业务接入'"
-    >
-      <div v-loading="accessLoading">
-        <div class="project-app-workspace-page__integration-summary">
-          <div>
-            <span>当前应用</span>
-            <strong>{{ integrationApp?.name || "-" }}</strong>
+    <el-drawer v-model="appDialogVisible" class="project-app-workspace-page__drawer" size="460px" :show-close="!appDialogSaving" :close-on-press-escape="!appDialogSaving" @closed="handleAppDialogClosed">
+      <template #header><div class="project-app-workspace-page__drawer-heading"><div><p>应用端管理</p><h3>{{ appDialogTitle }}</h3></div></div></template>
+      <el-form label-position="top" class="project-app-workspace-page__create-form">
+        <el-form-item label="应用端名称" required><el-input v-model="appForm.name" maxlength="100" placeholder="例如：客服助手 MCP" /></el-form-item>
+        <el-form-item label="接入方式" required>
+          <div class="project-app-workspace-page__type-grid">
+            <button type="button" :class="['project-app-workspace-page__type-option', appForm.terminal_type === 'api' ? 'is-selected' : '']" :disabled="Boolean(editingApp)" @click="appForm.terminal_type = 'api'">
+              <el-icon><Connection /></el-icon><span><strong>API</strong><small>适用于后台服务调用</small></span>
+            </button>
+            <button type="button" :class="['project-app-workspace-page__type-option', appForm.terminal_type === 'mcp' ? 'is-selected' : '']" :disabled="Boolean(editingApp)" @click="appForm.terminal_type = 'mcp'">
+              <el-icon><Link /></el-icon><span><strong>远程 MCP</strong><small>适用于外部 MCP 客户端</small></span>
+            </button>
           </div>
-          <div>
-            <span>Client ID</span>
-            <strong>{{ accessCredential?.client_id || "尚未生成" }}</strong>
-          </div>
-          <div>
-            <span>接入状态</span>
-            <strong>{{ accessCredential?.enabled ? "已启用" : accessCredential ? "已吊销" : "未启用" }}</strong>
-          </div>
-        </div>
-
-        <el-alert
-          v-if="issuedClientSecret"
-          class="project-app-workspace-page__integration-secret"
-          title="Client Secret 只显示这一次，请立即保存到业务后端的密钥配置。"
-          type="warning"
-          :closable="false"
-          show-icon
-        >
-          <template #default>
-            <div class="project-app-workspace-page__secret-value">
-              <code>{{ issuedClientSecret }}</code>
-              <el-button
-                size="small"
-                @click="copyText(issuedClientSecret, 'Client Secret 已复制。')"
-              >
-                复制
-              </el-button>
-            </div>
-          </template>
-        </el-alert>
-
-        <section class="project-app-workspace-page__integration-step">
-          <div class="project-app-workspace-page__integration-step-header">
-            <div>
-              <span>浏览器来源</span>
-              <h3>允许的 Origin</h3>
-              <p>每行填写一个完整 Origin，例如 https://b2c.example.com。</p>
-            </div>
-          </div>
-          <el-input
-            v-model="allowedOriginsText"
-            type="textarea"
-            :rows="3"
-            placeholder="https://b2c.example.com"
-          />
-          <div class="project-app-workspace-page__integration-actions">
-            <el-button
-              v-if="!accessCredential"
-              type="primary"
-              :loading="accessSavingAction === 'create'"
-              @click="handleCreateAccess"
-            >
-              启用业务接入
-            </el-button>
-            <template v-else>
-              <el-button
-                :loading="accessSavingAction === 'update'"
-                @click="handleUpdateAccess"
-              >
-                保存 Origin
-              </el-button>
-              <el-button
-                :loading="accessSavingAction === 'reset'"
-                @click="handleResetAccessSecret"
-              >
-                重置 Secret
-              </el-button>
-              <el-button
-                v-if="!accessCredential.enabled"
-                type="primary"
-                :loading="accessSavingAction === 'enable'"
-                @click="handleEnableExistingAccess"
-              >
-                重新启用
-              </el-button>
-              <el-button
-                v-else
-                type="danger"
-                plain
-                :loading="accessSavingAction === 'revoke'"
-                @click="handleRevokeAccess"
-              >
-                吊销接入
-              </el-button>
-            </template>
-          </div>
-        </section>
-
-        <section
-          v-if="accessCredential"
-          class="project-app-workspace-page__integration-step"
-        >
-          <div class="project-app-workspace-page__integration-step-header">
-            <div>
-              <span>服务端配置</span>
-              <h3>业务 Bootstrap 环境变量</h3>
-              <p>业务后端验证登录与权限后，使用这组凭证调用 Agent 的 /integration/bootstrap。</p>
-            </div>
-            <el-button
-              size="small"
-              @click="copyText(bootstrapEnvironmentCode, '环境变量模板已复制。')"
-            >
-              复制
-            </el-button>
-          </div>
-          <div class="project-app-workspace-page__code-block">
-            <pre>{{ bootstrapEnvironmentCode }}</pre>
-          </div>
-          <div class="project-app-workspace-page__credential-meta">
-            <span>Secret 尾号：{{ accessCredential.client_secret_last_four }}</span>
-            <span>Token 版本：{{ accessCredential.token_version }}</span>
-          </div>
-        </section>
-
-        <section
-          v-if="accessCredential"
-          class="project-app-workspace-page__integration-step"
-        >
-          <div class="project-app-workspace-page__integration-step-header">
-            <div>
-              <span>浏览器接入</span>
-              <h3>加载 CDN Loader</h3>
-              <p>按钮和权限展示由业务前端负责；Loader 只在用户触发时启动 Widget。</p>
-            </div>
-            <el-button
-              size="small"
-              @click="copyText(loaderCode, 'Loader 代码已复制。')"
-            >
-              复制
-            </el-button>
-          </div>
-          <div class="project-app-workspace-page__code-block">
-            <pre>{{ loaderCode }}</pre>
-          </div>
-        </section>
-      </div>
-    </AdminDialog>
-
-    <AdminDialog
-      v-model="appDialogVisible"
-      :title="appDialogTitle"
-      :loading="appDialogSaving"
-      @closed="handleAppDialogClosed"
-    >
-      <el-form
-        label-position="top"
-        class="project-app-workspace-page__create-form"
-      >
-        <el-row :gutter="14">
-          <el-col :span="12">
-            <el-form-item
-              label="应用端名称"
-              required
-            >
-              <el-input
-                v-model="appForm.name"
-                maxlength="100"
-                placeholder="例如：Web H5 演示端"
-              />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item
-              label="应用端编码"
-              required
-            >
-              <el-input
-                v-model="appForm.code"
-                maxlength="120"
-                placeholder="例如：demo_web_01"
-                @blur="appForm.code = normalizeCode(appForm.code)"
-              />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="终端类型">
-              <el-select
-                v-model="appForm.terminal_type"
-                class="project-app-workspace-page__create-full"
-              >
-                <el-option
-                  v-for="(label, value) in PROJECT_APP_TERMINAL_TYPE_LABELS"
-                  :key="value"
-                  :label="label"
-                  :value="value"
-                />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item
-              label="Widget 精确版本"
-              required
-            >
-              <el-input
-                v-model="appForm.widget_version"
-                maxlength="30"
-                placeholder="例如：1.0.0"
-              />
-            </el-form-item>
-          </el-col>
-          <el-col :span="24">
-            <el-form-item label="描述说明">
-              <el-input
-                v-model="appForm.description"
-                type="textarea"
-                :rows="3"
-                maxlength="500"
-                show-word-limit
-                placeholder="简要描述该应用端的使用场景或接入方"
-              />
-            </el-form-item>
-          </el-col>
-        </el-row>
+        </el-form-item>
+        <el-form-item label="绑定知识库" :required="appForm.terminal_type === 'mcp'"><el-select v-model="appForm.knowledge_base_id" class="project-app-workspace-page__full-control" clearable filterable placeholder="请选择知识库" @change="handleAppKnowledgeBaseChange"><el-option v-for="knowledgeBase in knowledgeBases" :key="knowledgeBase.id" :label="knowledgeBase.name" :value="knowledgeBase.id" /></el-select></el-form-item>
+        <el-form-item label="所属分类（可选）"><el-cascader v-model="categoryPath" class="project-app-workspace-page__full-control" :options="categoryTree" :props="categoryCascaderProps" clearable filterable :disabled="!appForm.knowledge_base_id" :loading="categoryLoading" placeholder="不限制分类" @change="handleAppCategoryPathChange"><template #default="{ data }"><div class="project-app-workspace-page__category-option"><span>{{ data.name }}</span><small>{{ data.document_count }} 篇</small></div></template></el-cascader></el-form-item>
+        <el-form-item label="默认助手（可选）"><el-select v-model="appForm.default_assistant_id" class="project-app-workspace-page__full-control" clearable filterable placeholder="使用主 Agent 默认配置"><el-option v-for="assistant in assistants" :key="assistant.id" :label="assistant.name" :value="assistant.id" /></el-select></el-form-item>
+        <el-form-item label="描述说明（可选）"><el-input v-model="appForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="简要描述该应用端的使用场景" /></el-form-item>
+        <div class="project-app-workspace-page__form-note">应用编码和接入凭证由系统自动生成。创建成功后，可在接入抽屉中复制 API 或 MCP 配置。</div>
       </el-form>
-      <template #footer>
-        <el-button @click="appDialogVisible = false">
-          取消
-        </el-button>
-        <el-button
-          type="primary"
-          :loading="appDialogSaving"
-          @click="handleSaveAppBasicInfo"
-        >
-          {{ appDialogSubmitText }}
-        </el-button>
-      </template>
-    </AdminDialog>
+      <template #footer><div class="project-app-workspace-page__drawer-footer"><el-button :disabled="appDialogSaving" @click="appDialogVisible = false">取消</el-button><el-button type="primary" :loading="appDialogSaving" @click="handleSaveApp">{{ appDialogSubmitText }}</el-button></div></template>
+    </el-drawer>
+
+    <el-drawer v-model="toolGrantDialogVisible" class="project-app-workspace-page__drawer" size="620px" :show-close="!toolGrantSaving">
+      <template #header><div class="project-app-workspace-page__drawer-heading"><div><p>应用能力</p><h3>管理工具授权</h3></div><span class="project-app-workspace-page__drawer-caption">{{ activeApp?.name }}</span></div></template>
+      <div v-loading="toolGrantLoading" class="project-app-workspace-page__tool-body">
+        <div class="project-app-workspace-page__tool-toolbar"><el-input v-model="toolGrantKeyword" clearable placeholder="搜索工具名称、标识或提供方"><template #prefix><el-icon><Search /></el-icon></template></el-input><el-checkbox v-model="toolGrantSelectedOnly">仅看已授权</el-checkbox></div>
+        <section v-for="group in groupedAvailableTools" :key="group.providerId" class="project-app-workspace-page__tool-group">
+          <div class="project-app-workspace-page__tool-group-header"><strong>{{ group.providerName }}</strong><el-checkbox :model-value="isProviderFullySelected(group.tools)" :indeterminate="isProviderPartiallySelected(group.tools)" @change="handleProviderSelection(group.tools, $event)">全选</el-checkbox></div>
+          <label v-for="tool in group.tools" :key="tool.id" class="project-app-workspace-page__tool-option"><el-checkbox :model-value="draftToolGrantIds.includes(tool.id)" @change="handleToolSelection(tool.id, $event)" /><span><strong>{{ tool.name }}</strong><small>{{ tool.agent_description || tool.external_description || "暂无工具说明" }}</small><code>{{ tool.tool_key }}</code></span></label>
+        </section>
+        <AppEmpty v-if="groupedAvailableTools.length === 0" title="没有匹配的工具" description="请调整搜索词或关闭仅看已授权。" />
+      </div>
+      <template #footer><div class="project-app-workspace-page__drawer-footer"><span>已选择 {{ draftToolGrantIds.length }} 个工具</span><div><el-button :disabled="toolGrantSaving" @click="toolGrantDialogVisible = false">取消</el-button><el-button type="primary" :loading="toolGrantSaving" :disabled="!toolGrantHasChanges" @click="handleSaveToolGrants">保存授权</el-button></div></div></template>
+    </el-drawer>
   </section>
 </template>
 
 <style scoped>
 .project-app-workspace-page {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
+  --app-border: #e5eaf2;
+  --app-muted: #64748b;
+  --app-text: #172033;
+  --app-primary: #2563eb;
+  --app-soft: #eff6ff;
+  min-height: 100%;
+  padding: 24px;
 }
 
 .project-app-workspace-page__panel {
-  min-height: 0;
-  border: 0;
-  background: #ffffff;
-  box-shadow: none;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.04);
 }
 
-.project-app-workspace-page__header {
-  display: grid;
-  gap: 22px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #ffffff;
-  padding: 0 0 0;
-}
-
-.project-app-workspace-page__title-row,
-.project-app-workspace-page__app-title,
-.project-app-workspace-page__status-control,
-.project-app-workspace-page__config-header,
-.project-app-workspace-page__access-header {
+.project-app-workspace-page__list-header {
   display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.project-app-workspace-page__title-row {
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  padding: 0 8px;
+  gap: 24px;
+  padding: 28px 30px 22px;
 }
 
-.project-app-workspace-page__title-row h2 {
+.project-app-workspace-page__eyebrow,
+.project-app-workspace-page__list-header p,
+.project-app-workspace-page__drawer-heading p {
   margin: 0;
-  color: #020617;
-  font-size: 28px;
-  font-weight: 800;
-  line-height: 1.2;
+  color: var(--app-muted);
+  font-size: 13px;
 }
 
-.project-app-workspace-page__create-button {
-  --el-button-bg-color: #0f172a;
-  --el-button-border-color: #0f172a;
-  --el-button-hover-bg-color: #1e293b;
-  --el-button-hover-border-color: #1e293b;
-  height: 40px;
-  border-radius: 12px;
-  padding: 0 18px;
-  font-weight: 700;
+.project-app-workspace-page__list-header h2,
+.project-app-workspace-page__drawer-heading h3 {
+  margin: 4px 0 0;
+  color: var(--app-text);
+  font-size: 22px;
+  font-weight: 750;
 }
 
-.project-app-workspace-page__tabs {
+.project-app-workspace-page__list-header h2 + p { margin-top: 8px; }
+.project-app-workspace-page__create-button { border-radius: 8px; padding: 0 18px; }
+
+.project-app-workspace-page__toolbar {
   display: flex;
-  gap: 30px;
-  overflow-x: auto;
-  padding: 0 8px;
+  gap: 10px;
+  border-top: 1px solid var(--app-border);
+  border-bottom: 1px solid var(--app-border);
+  background: #fbfcfe;
+  padding: 14px 30px;
 }
 
-.project-app-workspace-page__tab {
-  display: inline-flex;
+.project-app-workspace-page__toolbar .el-input { width: min(360px, 100%); }
+.project-app-workspace-page__toolbar .el-select { width: 140px; }
+
+.project-app-workspace-page__table-wrap { overflow-x: auto; }
+.project-app-workspace-page__table-head,
+.project-app-workspace-page__table-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.55fr) 100px minmax(140px, 1fr) minmax(140px, 1fr) 100px 150px 52px;
   align-items: center;
-  gap: 8px;
-  border-bottom: 3px solid transparent;
-  background: transparent;
-  color: var(--admin-text-muted);
-  padding: 0 0 15px;
-}
-
-.project-app-workspace-page__tab:hover,
-.project-app-workspace-page__tab--active {
-  border-bottom-color: var(--admin-primary);
-  color: var(--admin-primary);
-}
-
-.project-app-workspace-page__tab--disabled {
-  opacity: 0.58;
-}
-
-.project-app-workspace-page__tab--incomplete {
-  color: #b45309;
-}
-
-.project-app-workspace-page__tab-main {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  padding: 0;
+  gap: 16px;
+  min-width: 980px;
+  padding: 0 30px;
   text-align: left;
 }
 
-.project-app-workspace-page__tab-main span,
-.project-app-workspace-page__tab small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-app-workspace-page__tab-main span {
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.project-app-workspace-page__tab-main > .el-icon {
-  width: 22px;
-  height: 22px;
-  flex-shrink: 0;
-  border-radius: 7px;
-  font-size: 14px;
-}
-
-.project-app-workspace-page__tab-badge {
-  flex-shrink: 0;
-  border: 1px solid #fed7aa;
-  border-radius: 999px;
-  background: #fff7ed;
-  color: #b45309;
+.project-app-workspace-page__table-head {
+  min-height: 44px;
+  background: #f8fafc;
+  color: #475569;
   font-size: 12px;
   font-weight: 700;
-  line-height: 1;
-  padding: 4px 7px;
 }
 
-.project-app-workspace-page__tab-delete {
-  display: inline-flex;
-  width: 20px;
-  height: 20px;
-  align-items: center;
-  justify-content: center;
+.project-app-workspace-page__table-row {
+  width: 100%;
+  min-height: 76px;
   border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #94a3b8;
+  border-bottom: 1px solid #edf1f6;
+  background: #fff;
+  color: #475569;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  font: inherit;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
 }
 
-.project-app-workspace-page__tab:hover .project-app-workspace-page__tab-delete,
-.project-app-workspace-page__tab--active .project-app-workspace-page__tab-delete {
-  opacity: 1;
-}
-
-.project-app-workspace-page__tab-delete:hover {
-  background: #fee2e2;
-  color: #dc2626;
-}
-
-.project-app-workspace-page__tab-delete:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-.project-app-workspace-page__body {
-  min-height: 0;
-  width: min(960px, 100%);
-  margin: 0 auto;
-  padding: 32px 8px 0;
-}
-
-.project-app-workspace-page__inspector {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  gap: 24px;
-}
-
-.project-app-workspace-page__status-card,
-.project-app-workspace-page__config-card,
-.project-app-workspace-page__business-tool-card,
-.project-app-workspace-page__access-card {
-  border: 1px solid var(--admin-border);
-  border-radius: 18px;
-  background: var(--admin-surface);
-  box-shadow: 0 16px 45px rgba(15, 23, 42, 0.04);
-}
-
-.project-app-workspace-page__status-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 80px;
-  padding: 16px;
-}
-
-.project-app-workspace-page__app-identity {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 12px;
-}
+.project-app-workspace-page__table-row:hover,
+.project-app-workspace-page__table-row.is-selected { background: #f8fbff; }
+.project-app-workspace-page__table-row.is-selected { box-shadow: inset 3px 0 0 var(--app-primary); }
+.project-app-workspace-page__app-cell { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.project-app-workspace-page__app-cell > span:last-child { display: grid; min-width: 0; gap: 4px; }
+.project-app-workspace-page__app-cell strong { overflow: hidden; color: var(--app-text); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.project-app-workspace-page__app-cell small { overflow: hidden; color: var(--app-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 
 .project-app-workspace-page__app-icon {
   display: inline-flex;
-  width: 50px;
-  height: 50px;
-  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--admin-border-soft);
-  border-radius: 14px;
-  background: #f8fafc;
-  color: #0f172a;
-  font-size: 24px;
-}
-
-.project-app-workspace-page__app-title {
-  flex-wrap: wrap;
-}
-
-.project-app-workspace-page__app-title h3,
-.project-app-workspace-page__config-header h3,
-.project-app-workspace-page__access-header h3,
-.project-app-workspace-page__dialog-title {
-  margin: 0;
-  color: #020617;
-  font-size: 16px;
-  font-weight: 800;
-}
-
-.project-app-workspace-page__app-identity p,
-.project-app-workspace-page__config-header p,
-.project-app-workspace-page__access-header p,
-.project-app-workspace-page__config-row p {
-  margin: 4px 0 0;
-  color: var(--admin-text-muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.project-app-workspace-page__status-control {
-  flex-shrink: 0;
-  border-left: 1px solid #eef2f7;
-  padding-left: 16px;
-}
-
-.project-app-workspace-page__sandbox-button {
-  margin-left: 0;
-}
-
-.project-app-workspace-page__icon-button {
-  width: 32px;
-  height: 32px;
-  border-color: #e2e8f0;
-  color: #64748b;
-}
-
-.project-app-workspace-page__icon-button:hover {
-  border-color: var(--admin-primary-border);
-  color: var(--admin-primary);
-}
-
-.project-app-workspace-page__status-control span {
-  color: var(--admin-text-muted);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.project-app-workspace-page__status-control span.is-active {
-  color: #059669;
-}
-
-.project-app-workspace-page__config-card {
-  overflow: hidden;
-}
-
-.project-app-workspace-page__business-tool-card {
-  overflow: hidden;
-}
-
-.project-app-workspace-page__config-header,
-.project-app-workspace-page__access-header {
-  justify-content: space-between;
-  border-bottom: 1px solid #eef2f7;
-  background: #ffffff;
-  padding: 20px 24px;
-}
-
-.project-app-workspace-page__access-header {
-  align-items: flex-start;
-}
-
-.project-app-workspace-page__link-button {
   border-radius: 10px;
-}
-
-.project-app-workspace-page__plain-link {
-  flex-shrink: 0;
-  color: var(--admin-primary);
-  font-size: 13px;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.project-app-workspace-page__plain-link:hover {
-  color: var(--admin-primary-strong);
-}
-
-.project-app-workspace-page__tool-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.project-app-workspace-page__config-list {
-  display: grid;
-}
-
-.project-app-workspace-page__config-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  border-bottom: 1px solid #eef2f7;
-  padding: 26px 24px;
-}
-
-.project-app-workspace-page__config-row:last-child {
-  border-bottom: 0;
-}
-
-.project-app-workspace-page__config-row span {
-  color: #0f172a;
-  font-size: 14px;
-  font-weight: 800;
-}
-
-.project-app-workspace-page__config-copy {
-  min-width: 0;
-  flex: 1;
-}
-
-.project-app-workspace-page__config-control {
-  margin-left: auto;
-  width: 240px;
-  flex-shrink: 0;
-}
-
-.project-app-workspace-page__config-control :deep(.el-input),
-.project-app-workspace-page__config-control :deep(.el-select__wrapper),
-.project-app-workspace-page__config-control :deep(.el-cascader__tags) {
-  width: 100%;
-}
-
-.project-app-workspace-page__category-option,
-.project-app-workspace-page__assistant-option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.project-app-workspace-page__category-option small,
-.project-app-workspace-page__assistant-option small {
-  color: var(--admin-text-subtle);
-  font-size: 12px;
-}
-
-.project-app-workspace-page__row-icon {
-  display: inline-flex;
-  width: 42px;
-  height: 42px;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border-radius: 14px;
-  font-size: 20px;
-}
-
-.project-app-workspace-page__row-icon--knowledge {
-  background: var(--admin-primary-soft);
-  color: var(--admin-primary);
-}
-
-.project-app-workspace-page__row-icon--category {
-  background: #f5f3ff;
-  color: #7c3aed;
-}
-
-.project-app-workspace-page__row-icon--assistant {
-  background: #ecfdf5;
-  color: #059669;
-}
-
-.project-app-workspace-page__business-tool-body {
-  display: grid;
-  gap: 14px;
-  padding: 0;
-}
-
-.project-app-workspace-page__tool-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding: 0 24px;
-}
-
-.project-app-workspace-page__tool-summary > div {
-  border-right: 1px solid #eef2f7;
-  padding: 20px 24px 20px 0;
-}
-
-.project-app-workspace-page__tool-summary > div + div {
-  padding-left: 24px;
-}
-
-.project-app-workspace-page__tool-summary > div:nth-child(3) {
-  border-right: 0;
-}
-
-.project-app-workspace-page__tool-summary strong,
-.project-app-workspace-page__tool-summary span {
-  display: block;
-}
-
-.project-app-workspace-page__tool-summary strong {
-  color: #0f172a;
-  font-size: 24px;
-  font-weight: 800;
-}
-
-.project-app-workspace-page__tool-summary span {
-  margin-top: 4px;
-  color: var(--admin-text-muted);
-  font-size: 12px;
-}
-
-.project-app-workspace-page__tool-summary p {
-  grid-column: 1 / -1;
-  margin: 0 -24px;
-  border-top: 1px solid #eef2f7;
-  background: #f8fafc;
-  color: var(--admin-text-muted);
-  font-size: 12px;
-  padding: 12px 24px;
-}
-
-.project-app-workspace-page__binding-empty {
-  display: grid;
-  gap: 5px;
-  border: 1px dashed #cbd5e1;
-  border-radius: var(--admin-radius-md);
-  background: #f8fafc;
-  color: var(--admin-text-muted);
-  font-size: 13px;
-  padding: 18px;
-  text-align: center;
-}
-
-.project-app-workspace-page__binding-empty strong {
-  color: var(--admin-text-secondary);
-  font-size: 13px;
-}
-
-.project-app-workspace-page__binding-empty span {
-  color: var(--admin-text-muted);
-  font-size: 12px;
-}
-
-.project-app-workspace-page__terminal-icon--web {
-  background: var(--admin-primary-soft);
-  color: var(--admin-primary);
-}
-
-.project-app-workspace-page__terminal-icon--h5 {
-  background: #f0fdfa;
-  color: #0f766e;
-}
-
-.project-app-workspace-page__terminal-icon--mini_program {
-  background: #f5f3ff;
-  color: #7c3aed;
-}
-
-.project-app-workspace-page__terminal-icon--admin {
-  background: #fff7ed;
-  color: #c2410c;
-}
-
-.project-app-workspace-page__terminal-icon--api {
-  background: #ecfdf5;
-  color: #047857;
-}
-
-.project-app-workspace-page__terminal-icon--other {
-  background: #f8fafc;
-  color: #475569;
-}
-
-.project-app-workspace-page__access-card {
-  overflow: hidden;
-}
-
-.project-app-workspace-page__access-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0;
-  margin: 16px;
-}
-
-.project-app-workspace-page__access-list div {
-  min-width: 0;
-  border-right: 1px solid #eef2f7;
-  border-bottom: 1px solid #eef2f7;
-  padding: 16px 18px;
-}
-
-.project-app-workspace-page__access-list div:nth-child(2n) {
-  border-right: 0;
-}
-
-.project-app-workspace-page__access-list div:nth-last-child(-n + 2) {
-  border-bottom: 0;
-}
-
-.project-app-workspace-page__access-list dt {
-  margin: 0 0 6px;
-  color: var(--admin-text-muted);
-  font-size: 12px;
-}
-
-.project-app-workspace-page__access-list dd {
-  overflow: hidden;
-  margin: 0;
-  color: #0f172a;
-  font-size: 13px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-app-workspace-page__access-list dd.is-active {
-  color: #059669;
-}
-
-.project-app-workspace-page__drawer-title h3 {
-  margin: 0;
-  color: #0f172a;
-  font-size: 17px;
-  font-weight: 800;
-}
-
-.project-app-workspace-page__drawer-title p {
-  margin: 4px 0 0;
-  color: var(--admin-text-muted);
-  font-size: 12px;
-}
-
-.project-app-workspace-page__tool-drawer-body,
-.project-app-workspace-page__sandbox-drawer-content {
-  display: flex;
-  min-height: 100%;
-  flex-direction: column;
-}
-
-.project-app-workspace-page__sandbox-drawer-content {
-  width: 100%;
-  min-width: 0;
-  flex: 1;
-}
-
-.project-app-workspace-page__tool-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 18px;
-  border-bottom: 1px solid #eef2f7;
-  padding-bottom: 18px;
-}
-
-.project-app-workspace-page__tool-groups {
-  display: grid;
-  gap: 22px;
-  padding: 20px 0;
-}
-
-.project-app-workspace-page__tool-group {
-  border: 1px solid var(--admin-border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.project-app-workspace-page__tool-group-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #f8fafc;
-  padding: 12px 16px;
-}
-
-.project-app-workspace-page__tool-group-header span {
-  color: var(--admin-text-muted);
-  font-size: 12px;
-}
-
-.project-app-workspace-page__tool-option {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 12px;
-  cursor: pointer;
-  padding: 15px 16px;
-}
-
-.project-app-workspace-page__tool-option + .project-app-workspace-page__tool-option {
-  border-top: 1px solid #eef2f7;
-}
-
-.project-app-workspace-page__tool-option:hover {
-  background: #f8fafc;
-}
-
-.project-app-workspace-page__tool-option-main {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 5px;
-}
-
-.project-app-workspace-page__tool-option-title {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.project-app-workspace-page__tool-option-title strong {
-  color: #0f172a;
-  font-size: 14px;
-}
-
-.project-app-workspace-page__tool-option-main p {
-  margin: 0;
-  color: var(--admin-text-muted);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.project-app-workspace-page__tool-option-main > span {
-  overflow-wrap: anywhere;
-  color: var(--admin-text-subtle);
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 11px;
-}
-
-.project-app-workspace-page__drawer-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.project-app-workspace-page__drawer-footer > span {
-  color: var(--admin-text-muted);
-  font-size: 13px;
-}
-
-.project-app-workspace-page__sandbox-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  border-bottom: 1px solid #eef2f7;
-  padding-bottom: 16px;
-}
-
-.project-app-workspace-page__sandbox-store {
-  width: 180px;
-}
-
-.project-app-workspace-page__sandbox-body {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  margin-top: 16px;
-  overflow: hidden;
-  background: #fafafa;
-  padding: 0;
-}
-
-.project-app-workspace-page__iframe {
-  flex: 1;
-  width: 100%;
-  min-height: 0;
-  border: 1px solid var(--admin-border);
-  border-radius: var(--admin-radius-md);
-  background: var(--admin-surface);
-}
-
-.project-app-workspace-page__sandbox-empty {
-  width: 100%;
-  padding: 36px;
-}
-
-.project-app-workspace-page__sandbox-empty :deep(.app-empty__icon) {
-  width: 58px;
-  height: 58px;
-  border-radius: 8px;
-}
-
-.project-app-workspace-page :deep(.project-app-workspace-page__tool-drawer),
-.project-app-workspace-page :deep(.project-app-workspace-page__sandbox-drawer) {
-  max-width: 100%;
-}
-
-.project-app-workspace-page :deep(.project-app-workspace-page__sandbox-drawer .el-drawer__body) {
-  display: flex;
-  min-height: 0;
-}
-
-.project-app-workspace-page__integration-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0;
-  overflow: hidden;
-  border: 1px solid #e5e7eb;
-  border-radius: var(--admin-radius-md);
-  background: #ffffff;
-}
-
-.project-app-workspace-page__integration-summary div {
-  min-width: 0;
-  border-right: 1px solid #eef2f7;
-  padding: 14px 16px;
-}
-
-.project-app-workspace-page__integration-summary div:last-child {
-  border-right: 0;
-}
-
-.project-app-workspace-page__integration-summary span {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--admin-text-muted);
-  font-size: 12px;
-}
-
-.project-app-workspace-page__integration-summary strong {
-  display: block;
-  overflow: hidden;
-  color: #0f172a;
-  font-size: 13px;
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-app-workspace-page__integration-alert {
-  margin-top: 14px;
-  border: 1px solid #fed7aa;
-  border-radius: var(--admin-radius-md);
-  background: #fff7ed;
-  color: #9a3412;
-  font-size: 13px;
-  line-height: 1.6;
-  padding: 12px 14px;
-}
-
-.project-app-workspace-page__integration-secret {
-  margin-top: 14px;
-}
-
-.project-app-workspace-page__secret-value {
-  display: flex;
-  min-width: 0;
-  margin-top: 8px;
-  align-items: center;
-  gap: 10px;
-}
-
-.project-app-workspace-page__secret-value code {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: #7c2d12;
-}
-
-.project-app-workspace-page__integration-actions,
-.project-app-workspace-page__credential-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.project-app-workspace-page__credential-meta {
-  color: var(--admin-text-muted);
-  font-size: 12px;
-}
-
-.project-app-workspace-page__integration-step {
-  display: grid;
-  gap: 12px;
-  margin-top: 16px;
-  border: 1px solid #e5e7eb;
-  border-radius: var(--admin-radius-md);
-  background: #ffffff;
-  padding: 16px;
-}
-
-.project-app-workspace-page__integration-step-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.project-app-workspace-page__integration-step-header span {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--admin-primary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.project-app-workspace-page__integration-step-header h3 {
-  margin: 0;
-  color: #0f172a;
-  font-size: 15px;
-  font-weight: 800;
-}
-
-.project-app-workspace-page__integration-step-header p {
-  margin: 4px 0 0;
-  color: var(--admin-text-muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.project-app-workspace-page__code-block {
-  overflow: auto;
-  border-radius: var(--admin-radius-md);
-  background: #0f172a;
-  color: #e2e8f0;
-  padding: 18px;
-}
-
-.project-app-workspace-page__code-block pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.project-app-workspace-page__create-form {
-  padding-top: 4px;
-}
-
-.project-app-workspace-page__create-full {
-  width: 100%;
-}
+  font-size: 18px;
+}
+
+.project-app-workspace-page__terminal-icon--api { background: #ecfdf5; color: #047857; }
+.project-app-workspace-page__terminal-icon--mcp { background: #eff6ff; color: #2563eb; }
+.project-app-workspace-page__status { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; white-space: nowrap; }
+.project-app-workspace-page__status i { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; }
+.project-app-workspace-page__status.is-active { color: #059669; }
+.project-app-workspace-page__status.is-active i { background: #10b981; }
+.project-app-workspace-page__status.is-inactive { color: #64748b; }
+.project-app-workspace-page__row-actions { display: flex; justify-content: flex-end; }
+.project-app-workspace-page__more-button { color: #64748b; }
+.project-app-workspace-page__more-button:hover { color: var(--app-primary); background: var(--app-soft); }
+
+.project-app-workspace-page__drawer :deep(.el-drawer__header) { margin-bottom: 0; border-bottom: 1px solid var(--app-border); padding: 20px 24px; }
+.project-app-workspace-page__drawer :deep(.el-drawer__body) { padding: 0; }
+.project-app-workspace-page__drawer :deep(.el-drawer__footer) { border-top: 1px solid var(--app-border); padding: 14px 24px; }
+.project-app-workspace-page__drawer-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; }
+.project-app-workspace-page__drawer-body { padding: 22px 24px 28px; }
+.project-app-workspace-page__drawer-app-meta { display: flex; align-items: center; gap: 12px; padding-bottom: 22px; }
+.project-app-workspace-page__drawer-app-meta > div { display: grid; min-width: 0; flex: 1; gap: 4px; }
+.project-app-workspace-page__drawer-app-meta strong { color: var(--app-text); font-size: 15px; }
+.project-app-workspace-page__drawer-app-meta span:not(.project-app-workspace-page__app-icon) { color: #059669; font-size: 12px; }
+.project-app-workspace-page__drawer-app-meta .el-button { flex-shrink: 0; color: var(--app-primary); }
+.project-app-workspace-page__drawer-section { border-top: 1px solid var(--app-border); padding: 20px 0; }
+.project-app-workspace-page__section-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.project-app-workspace-page__section-title h4 { margin: 0; color: var(--app-text); font-size: 15px; font-weight: 750; }
+.project-app-workspace-page__section-title p { margin: 5px 0 0; color: var(--app-muted); font-size: 12px; line-height: 1.5; }
+.project-app-workspace-page__resource-list,
+.project-app-workspace-page__credential-list { overflow: hidden; border: 1px solid var(--app-border); border-radius: 8px; background: #fff; }
+.project-app-workspace-page__resource-list > div,
+.project-app-workspace-page__credential-list > div { display: flex; min-width: 0; align-items: center; gap: 12px; min-height: 48px; border-bottom: 1px solid #edf1f6; padding: 10px 12px; }
+.project-app-workspace-page__resource-list > div:last-child,
+.project-app-workspace-page__credential-list > div:last-child { border-bottom: 0; }
+.project-app-workspace-page__resource-list span { display: inline-flex; width: 96px; flex: 0 0 auto; align-items: center; gap: 7px; color: var(--app-muted); font-size: 12px; }
+.project-app-workspace-page__resource-list strong { overflow: hidden; color: var(--app-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.project-app-workspace-page__credential-list span { width: 86px; flex: 0 0 auto; color: var(--app-muted); font-size: 12px; }
+.project-app-workspace-page__credential-list code { min-width: 0; flex: 1; overflow: hidden; color: #334155; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.project-app-workspace-page__credential-list .el-button { flex: 0 0 auto; color: var(--app-primary); }
+.project-app-workspace-page__secret-alert { margin-top: 12px; }
+.project-app-workspace-page__drawer-empty { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 14px; border: 1px dashed #bfdbfe; border-radius: 8px; background: #f8fbff; padding: 12px; }
+.project-app-workspace-page__drawer-empty p { margin: 0; color: var(--app-muted); font-size: 12px; }
+.project-app-workspace-page__drawer-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.project-app-workspace-page__section-action { margin-top: 12px; }
+.project-app-workspace-page__widget-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 12px; color: var(--app-muted); font-size: 12px; }
+.project-app-workspace-page__widget-meta strong { color: var(--app-text); }
+.project-app-workspace-page__widget-meta code { color: #475569; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.project-app-workspace-page__widget-origin { margin-bottom: 16px; }
+.project-app-workspace-page__widget-empty { border: 1px dashed #bfdbfe; border-radius: 8px; background: #f8fbff; color: var(--app-muted); font-size: 12px; line-height: 1.6; padding: 12px; }
+.project-app-workspace-page__code-block { overflow: auto; border: 1px solid var(--app-border); border-radius: 8px; background: #f8fafc; padding: 14px; }
+.project-app-workspace-page__code-block pre { margin: 0; color: #334155; font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+.project-app-workspace-page__copy-config { width: 100%; margin-top: 12px; border-radius: 8px; }
+
+.project-app-workspace-page__create-form { padding: 2px 24px 24px; }
+.project-app-workspace-page__full-control { width: 100%; }
+.project-app-workspace-page__type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; width: 100%; }
+.project-app-workspace-page__type-option { display: flex; min-height: 76px; align-items: center; gap: 10px; border: 1px solid var(--app-border); border-radius: 8px; background: #fff; color: var(--app-muted); cursor: pointer; padding: 12px; text-align: left; }
+.project-app-workspace-page__type-option:hover,
+.project-app-workspace-page__type-option.is-selected { border-color: #93c5fd; background: #f8fbff; color: var(--app-primary); }
+.project-app-workspace-page__type-option:disabled { cursor: not-allowed; opacity: 0.72; }
+.project-app-workspace-page__type-option > .el-icon { font-size: 20px; }
+.project-app-workspace-page__type-option span { display: grid; gap: 4px; }
+.project-app-workspace-page__type-option strong { color: var(--app-text); font-size: 13px; }
+.project-app-workspace-page__type-option small { color: var(--app-muted); font-size: 11px; line-height: 1.4; }
+.project-app-workspace-page__form-note { border: 1px solid #dbeafe; border-radius: 8px; background: #eff6ff; color: #475569; font-size: 12px; line-height: 1.6; padding: 11px 12px; }
+.project-app-workspace-page__drawer-footer { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.project-app-workspace-page__category-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.project-app-workspace-page__category-option small { color: var(--app-muted); font-size: 11px; }
+.project-app-workspace-page__drawer-caption { color: var(--app-muted); font-size: 12px; }
+
+.project-app-workspace-page__tool-body { padding: 0 24px 24px; }
+.project-app-workspace-page__tool-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; border-bottom: 1px solid var(--app-border); padding: 4px 0 16px; }
+.project-app-workspace-page__tool-group { margin-top: 18px; overflow: hidden; border: 1px solid var(--app-border); border-radius: 8px; }
+.project-app-workspace-page__tool-group-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #f8fafc; padding: 11px 14px; }
+.project-app-workspace-page__tool-group-header strong { color: var(--app-text); font-size: 13px; }
+.project-app-workspace-page__tool-option { display: flex; align-items: flex-start; gap: 10px; border-top: 1px solid #edf1f6; cursor: pointer; padding: 12px 14px; }
+.project-app-workspace-page__tool-option > span { display: grid; min-width: 0; gap: 4px; }
+.project-app-workspace-page__tool-option strong { color: var(--app-text); font-size: 13px; }
+.project-app-workspace-page__tool-option small { color: var(--app-muted); font-size: 12px; line-height: 1.5; }
+.project-app-workspace-page__tool-option code { color: #94a3b8; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
 
 @media (max-width: 760px) {
-  .project-app-workspace-page__title-row,
-  .project-app-workspace-page__status-card,
-  .project-app-workspace-page__config-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .project-app-workspace-page__body {
-    padding: 14px;
-  }
-
-  .project-app-workspace-page__config-row {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .project-app-workspace-page__config-control {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .project-app-workspace-page__tool-header-actions {
-    justify-content: space-between;
-  }
-
-  .project-app-workspace-page__sandbox-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .project-app-workspace-page__sandbox-store {
-    width: 100%;
-  }
-
-  .project-app-workspace-page__tool-summary {
-    grid-template-columns: 1fr;
-  }
-
-  .project-app-workspace-page__tool-summary > div,
-  .project-app-workspace-page__tool-summary > div + div {
-    border-right: 0;
-    border-bottom: 1px solid #eef2f7;
-    padding: 14px 0;
-  }
-
-  .project-app-workspace-page__tool-toolbar {
-    grid-template-columns: 1fr;
-    gap: 10px;
-  }
-
-  .project-app-workspace-page__drawer-footer {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .project-app-workspace-page__secret-value {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .project-app-workspace-page__access-list {
-    grid-template-columns: 1fr;
-  }
-
-  .project-app-workspace-page__access-list div,
-  .project-app-workspace-page__access-list div:nth-child(2n),
-  .project-app-workspace-page__access-list div:nth-last-child(-n + 2) {
-    border-right: 0;
-    border-bottom: 1px solid #eef2f7;
-  }
-
-  .project-app-workspace-page__access-list div:last-child {
-    border-bottom: 0;
-  }
-
-  .project-app-workspace-page__status-control {
-    justify-content: flex-start;
-    border-left: 0;
-    border-top: 1px solid var(--admin-border-soft);
-    padding: 12px 0 0;
-  }
+  .project-app-workspace-page { padding: 14px; }
+  .project-app-workspace-page__list-header { flex-direction: column; padding: 22px 18px; }
+  .project-app-workspace-page__create-button { align-self: stretch; }
+  .project-app-workspace-page__toolbar { flex-direction: column; padding: 12px 18px; }
+  .project-app-workspace-page__toolbar .el-input,
+  .project-app-workspace-page__toolbar .el-select { width: 100%; }
+  .project-app-workspace-page__table-head,
+  .project-app-workspace-page__table-row { padding: 0 18px; }
+  .project-app-workspace-page__type-grid { grid-template-columns: 1fr; }
 }
 </style>
