@@ -54,7 +54,6 @@ class AgentInput(TypedDict):
 
 
 class AgentIntent(TypedDict):
-    kind: str
     goal: str
 
 
@@ -62,15 +61,14 @@ class AgentRouting(TypedDict):
     route_type: str
     intent: AgentIntent
     target_sub_agents: list[str]
+    clarification_question: NotRequired[str | None]
     reason: str
-    risk_hint: str
 
 
 class AgentTaskStep(TypedDict):
     task_id: str
     sub_agent_id: str
     goal: str
-    expected_facts: list[str]
     depends_on: list[str]
 
 
@@ -98,19 +96,18 @@ class AgentResult(TypedDict):
     sources: list[dict[str, Any]]
     errors: list[dict[str, Any]]
     clarifications: list[dict[str, Any]]
+    answer_material: dict[str, Any]
     success_count: NotRequired[int]
     failed_count: NotRequired[int]
     needs_input_count: NotRequired[int]
     partial: NotRequired[bool]
     citation_refs: NotRequired[list[str]]
-    question_type: NotRequired[str]
-    retrieval_complexity: NotRequired[str]
+    normalized_query: NotRequired[str]
+    retrieval_profile: NotRequired[str]
     route_reason: NotRequired[str]
     retrieval_execution_plan: NotRequired[dict[str, Any]]
     semantic_queries: NotRequired[list[str]]
     lexical_terms: NotRequired[list[str]]
-    candidate_entities: NotRequired[list[str]]
-    plan_trace: NotRequired[dict[str, Any]]
     query_plan_trace: NotRequired[dict[str, Any]]
     retrieval_status: NotRequired[str]
     retrieval_reason_code: NotRequired[str]

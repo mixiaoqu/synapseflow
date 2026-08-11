@@ -74,7 +74,7 @@ def test_business_request_accepts_current_call_action():
             "action": "call_tool",
             "tool_id": "medical_center_query_orders",
             "arguments": {},
-            "message": "查询订单",
+            "reason": "查询订单",
         },
         query="先查订单再查详情",
         candidates=candidates,
@@ -111,7 +111,7 @@ def test_business_request_rejects_duplicate_serial_call():
             "action": "call_tool",
             "tool_id": "medical_center_query_orders",
             "arguments": {},
-            "message": "继续查询",
+            "reason": "继续查询",
         },
         query="继续查询",
         candidates=candidates,
@@ -173,7 +173,7 @@ async def test_business_ops_graph_executes_two_read_only_calls_in_order(monkeypa
             if self.calls == 3:
                 return SimpleNamespace(
                     content=json.dumps(
-                        {"action": "complete", "message": "两张订单均已查询"},
+                        {"action": "complete", "reason": "两张订单均已查询"},
                         ensure_ascii=False,
                     )
                 )
@@ -184,7 +184,7 @@ async def test_business_ops_graph_executes_two_read_only_calls_in_order(monkeypa
                         "action": "call_tool",
                         "tool_id": record.tool.tool_key,
                         "arguments": {"order_number": order_number},
-                        "message": "按顺序查询",
+                        "reason": "按顺序查询",
                     },
                     ensure_ascii=False,
                 )
@@ -214,7 +214,7 @@ async def test_business_ops_graph_executes_two_read_only_calls_in_order(monkeypa
 
 def test_tool_run_result_is_partial_when_a_later_step_fails():
     result = build_tool_run_result(
-        decision=ToolDecision(action="unsupported", message="详情查询失败"),
+        decision=ToolDecision(action="unsupported", reason="详情查询失败"),
         steps=[
             ToolStep(
                 index=1,
@@ -285,9 +285,9 @@ async def test_business_ops_redecides_after_each_success_without_follow_up_flag(
             "action": "call_tool",
             "tool_id": record.tool.tool_key,
             "arguments": {"order_number": "A1001"},
-            "message": "先查询订单",
+            "reason": "先查询订单",
         },
-        {"action": "complete", "message": "已有结果足以回答"},
+        {"action": "complete", "reason": "已有结果足以回答"},
     ]
 
     class FakePlanner:
@@ -350,7 +350,7 @@ async def test_business_ops_stops_before_a_fourth_tool_call(monkeypatch):
                         "action": "call_tool",
                         "tool_id": record.tool.tool_key,
                         "arguments": {"order_number": f"A100{self.calls}"},
-                        "message": "继续查询",
+                        "reason": "继续查询",
                     },
                     ensure_ascii=False,
                 )

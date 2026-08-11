@@ -158,20 +158,16 @@ export interface QaLogTracePayload {
   } | null;
   knowledge_plan?: {
     attempt_count?: number;
-    goal_query?: string;
-    evidence_requirements?: string[];
-    coverage_status?: "covered" | "partial" | "missed" | string;
-    coverage_audit?: Record<string, unknown>;
+    normalized_query?: string;
+    retrieval_profile?: "fast" | "standard" | "broad" | string;
+    retrieval_status?: string;
     knowledge_goals?: Array<{
       task_id?: string;
       goal?: string;
-      evidence_requirements?: string[];
-      coverage_status?: "covered" | "partial" | "missed" | string;
-      coverage_audit?: Record<string, unknown>;
+      normalized_query?: string;
+      retrieval_profile?: "fast" | "standard" | "broad" | string;
+      retrieval_status?: string;
     }>;
-    business_objects?: string[];
-    action?: string;
-    parameters?: Record<string, unknown>;
     retrieval_attempts?: Array<Record<string, unknown>>;
     retrieval_feedback?: Record<string, unknown>;
   } | null;

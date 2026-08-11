@@ -47,7 +47,6 @@ def create_knowledge_qa_graph(
         attempt = previous_attempt + 1 if state.get("should_replan") else 1
         query_plan = await build_knowledge_query_plan(
             goal,
-            expected_facts=list(state.get("expected_facts") or []),
             attempt=attempt,
             previous_plan=dict(state.get("current_query_plan") or {}),
             retrieval_feedback=dict(state.get("retrieval_feedback") or {}),
@@ -81,18 +80,13 @@ def create_knowledge_qa_graph(
             node_id="plan_query",
             node_name="规划查询",
             details={
-                "问题类型": query_plan.get("question_type"),
                 "规划轮次": attempt,
                 "是否二次规划": attempt > 1,
-                "检索复杂度": query_plan.get("retrieval_complexity"),
-                "目标查询": query_plan.get("goal_query"),
-                "业务对象": query_plan.get("business_objects"),
-                "用户动作": query_plan.get("action"),
-                "参数": query_plan.get("query_parameters"),
-                "预期事实数": len(query_plan.get("evidence_requirements") or []),
+                "规范查询": query_plan.get("normalized_query"),
+                "检索档位": query_plan.get("retrieval_profile"),
                 "二次规划是否已无新查询": query_plan.get("replan_exhausted"),
                 "语义查询数": len(query_plan.get("semantic_queries") or []),
-                "候选实体数": len(query_plan.get("candidate_entities") or []),
+                "精确短语数": len(query_plan.get("lexical_terms") or []),
             },
             elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
@@ -125,15 +119,10 @@ def create_knowledge_qa_graph(
             display_title="🔍 查阅相关资料",
             activity_text="确定资料查找范围",
         )
-        question_type = str(state.get("question_type") or "definition_lookup")
-        retrieval_complexity = str(state.get("retrieval_complexity") or "standard")
         execution_plan = build_knowledge_qa_retrieval_plan(
-            question_type=question_type,
-            retrieval_strategy="text_only",
-            retrieval_complexity=retrieval_complexity,
+            retrieval_profile=str(state.get("retrieval_profile") or "standard"),
         )
         channels = execution_plan.get("channels") or {}
-        graph = channels.get("graph") or {}
         vector = channels.get("vector") or {}
         lexical = channels.get("lexical") or {}
         context = execution_plan.get("context") or {}
@@ -147,11 +136,9 @@ def create_knowledge_qa_graph(
             node_name="规划检索",
             details={
                 "检索策略": result.get("retrieval_strategy"),
-                "是否启用图谱": graph.get("enabled"),
-                "图谱模式": graph.get("graph_mode"),
+                "检索档位": execution_plan.get("retrieval_profile"),
                 "向量TopK": vector.get("recall_k"),
                 "关键词TopK": lexical.get("lexical_k"),
-                "图谱TopK": graph.get("limit"),
                 "上下文TopK": context.get("final_top_k"),
                 "重排TopK": ((execution_plan.get("rerank") or {}).get("top_k")),
                 "上下文预算": context.get("budget_chars"),
@@ -176,7 +163,6 @@ def create_knowledge_qa_graph(
         result = await knowledge_qa_retrieve_node(
             state,
             node_id="retrieve_knowledge",
-            coverage_llm_factory=planner_factory,
         )
         retrieval_result = dict(result.get("retrieval_result") or {})
         metrics = dict(retrieval_result.get("metrics") or {})
@@ -189,16 +175,12 @@ def create_knowledge_qa_graph(
                 "规划轮次": state.get("query_plan_attempt"),
                 "语义查询数": len(state.get("semantic_queries") or []),
                 "关键词数": len(state.get("lexical_terms") or []),
-                "候选实体数": len(state.get("candidate_entities") or []),
-                "关系查询数": len(state.get("relation_queries") or []),
                 "检索策略": state.get("retrieval_strategy"),
-                "证据覆盖状态": retrieval_result.get("coverage_status"),
-                "证据是否完整": retrieval_result.get("coverage_complete"),
+                "检索结果状态": retrieval_result.get("status"),
+                "候选证据数": metrics.get("text_hit_count"),
                 "是否触发二次规划": result.get("should_replan"),
                 "文本命中数": metrics.get("text_hit_count"),
-                "图谱命中数": metrics.get("graph_hit_count"),
                 "最终主证据数": metrics.get("primary_count"),
-                "辅助证据数": metrics.get("supporting_count"),
                 "空结果原因": retrieval_result.get("reason_code"),
                 "上下文长度": (retrieval_result.get("budget") or {}).get("used_chars"),
             },

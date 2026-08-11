@@ -13,7 +13,6 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     original_query: str
     query: str
     intent: Dict[str, Any]
-    expected_facts: List[str]
     dependency_results: Dict[str, Dict[str, Any]]
     page_context: Dict[str, Any]
     allowed_document_statuses: List[str]
@@ -22,18 +21,10 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     sub_agent_result: Dict[str, Any]
 
     retrieval_analysis: Dict[str, Any]
-    question_type: Optional[str]
     retrieval_strategy: Optional[str]
-    retrieval_complexity: Optional[str]
-    needs_path: bool
-    needs_relation: bool
-    needs_summary: bool
+    retrieval_profile: Optional[str]
     retrieval_execution_plan: Dict[str, Any]
-    goal_query: str
-    business_objects: List[str]
-    action: str
-    query_parameters: Dict[str, Any]
-    evidence_requirements: List[str]
+    normalized_query: str
     current_query_plan: Dict[str, Any]
     query_plan_attempt: int
     replan_exhausted: bool
@@ -41,15 +32,9 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     retrieval_attempts: List[Dict[str, Any]]
     accumulated_evidence_items: List[Dict[str, Any]]
     accumulated_candidate_docs: List[Dict[str, Any]]
-    coverage_audit: Dict[str, Any]
     should_replan: bool
     semantic_queries: List[str]
     lexical_terms: List[str]
-    candidate_entities: List[str]
-    relation_pairs: List[Dict[str, Any]]
-    relation_queries: List[Dict[str, Any]]
-    target_attributes: List[str]
-    entity_constraints: Dict[str, Any]
     plan_trace: Dict[str, Any]
     query_plan_trace: Dict[str, Any]
     answer_status: str

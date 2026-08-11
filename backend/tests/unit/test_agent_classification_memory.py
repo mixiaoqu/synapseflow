@@ -18,14 +18,11 @@ class ContextAwareClassificationLlm:
         return SimpleNamespace(
             content=(
                 "{"
-                '"request_type":"data_query",'
-                '"task_shape":"single_sub_agent",'
-                f'"goal_clarity":"{"clear" if resolved else "unclear"}",'
-                '"needs_sub_agent":true,'
-                '"domain_hints":["business_ops"],'
-                f'"sub_tasks":[{{"sub_agent_id":"business_ops","goal":"{goal}","depends_on":[]}}],'
-                f'"intent":{{"kind":"data_query","goal":"{goal}"}},'
-                '"risk_hint":"none",'
+                f'"goal":"{goal}",'
+                f'"clarity":"{"clear" if resolved else "unclear"}",'
+                '"clarification_question":null,'
+                '"handling":"capabilities",'
+                '"capability_ids":["business_ops"],'
                 '"reason":"根据上一轮列表解析序号引用"'
                 "}"
             )
@@ -50,6 +47,6 @@ def test_classification_can_resolve_late_ordinal_reference_from_recent_history()
         )
     )
 
-    assert result["goal_clarity"] == "clear"
-    assert result["intent"]["goal"] == f"查询订单号{TARGET_ORDER_NUMBER}的订单详情"
-    assert result["domain_hints"] == ["business_ops"]
+    assert result["clarity"] == "clear"
+    assert result["goal"] == f"查询订单号{TARGET_ORDER_NUMBER}的订单详情"
+    assert result["capability_ids"] == ["business_ops"]

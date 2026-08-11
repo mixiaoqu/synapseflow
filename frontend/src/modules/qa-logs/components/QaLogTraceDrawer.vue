@@ -369,14 +369,17 @@ watch(
           </div>
 
           <div
-            v-if="knowledgePlan?.goal_query"
+            v-if="knowledgePlan?.normalized_query"
             class="qa-log-trace-drawer__query-hero"
           >
             <p class="qa-log-trace-drawer__query-hero-label">
-              Goal Query
+              规范查询
             </p>
             <div class="qa-log-trace-drawer__query-hero-content">
-              {{ knowledgePlan.goal_query }}
+              {{ knowledgePlan.normalized_query }}
+              <small v-if="knowledgePlan.retrieval_profile">
+                检索档位：{{ knowledgePlan.retrieval_profile }}
+              </small>
             </div>
           </div>
 
@@ -386,12 +389,12 @@ watch(
 
           <div class="qa-log-trace-drawer__rewrite-stack">
             <article
-              v-if="knowledgeGoals.length > 0 || (knowledgePlan?.evidence_requirements?.length || 0) > 0"
+              v-if="knowledgeGoals.length > 0"
               class="qa-log-trace-drawer__panel qa-log-trace-drawer__panel--vector"
             >
               <h4>
                 <el-icon><ChatDotRound /></el-icon>
-                主图目标与证据要求（{{ knowledgePlan?.attempt_count || 1 }} 轮）
+                知识目标与检索结果（{{ knowledgePlan?.attempt_count || 1 }} 轮）
               </h4>
               <ul class="qa-log-trace-drawer__query-list">
                 <li
@@ -401,15 +404,8 @@ watch(
                   <span>{{ index + 1 }}</span>
                   <p>
                     {{ goal.goal }}
-                    <small>覆盖状态：{{ goal.coverage_status || "未审计" }}</small>
+                    <small>检索状态：{{ goal.retrieval_status || "未知" }}</small>
                   </p>
-                </li>
-                <li
-                  v-for="(requirement, index) in knowledgePlan?.evidence_requirements || []"
-                  :key="`requirement-${requirement}-${index}`"
-                >
-                  <span>{{ knowledgeGoals.length + index + 1 }}</span>
-                  <p>证据要求：{{ requirement }}</p>
                 </li>
               </ul>
             </article>

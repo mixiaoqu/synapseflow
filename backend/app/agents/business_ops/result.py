@@ -19,13 +19,19 @@ def build_business_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
     error = dict(operation_result.get("error") or {})
     retryable = bool(error.get("retryable"))
     request_status = str(business_request.get("status") or "unsupported")
+    clarification_message = str(business_request.get("clarification") or "").strip()
     decision = ToolDecision(
         action={
             "complete": "complete",
             "clarification_required": "clarify",
             "limit_reached": "limit_reached",
         }.get(request_status, "unsupported"),
-        message=str(operation_result.get("message") or "").strip() or None,
+        clarification_question=(
+            clarification_message or None
+            if request_status == "clarification_required"
+            else None
+        ),
+        reason=str(business_request.get("reason") or "").strip() or None,
     )
     steps = [
         ToolStep(
@@ -41,13 +47,19 @@ def build_business_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
     ]
     run_result = build_tool_run_result(decision=decision, steps=steps)
     status = run_result.status
+    if request_status == "clarification_required":
+        status = "needs_input"
+    elif request_status in {"planner_failed", "repair_failed"}:
+        status = "failed"
     answer_status = {
         "success": "answered",
         "partial_success": "partial",
         "needs_input": "clarification_needed",
     }.get(status, "failed")
     message = (
-        str(operation_result.get("message") or "").strip()
+        clarification_message
+        if request_status == "clarification_required"
+        else str(operation_result.get("message") or "").strip()
         or str(error.get("message") or "").strip()
         or str(business_request.get("reason") or "").strip()
         or "业务操作子智能体执行完成。"
@@ -91,7 +103,7 @@ def build_business_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
                 "message": message,
             }
         ]
-    if status not in {"success"}:
+    if status not in {"success", "needs_input"}:
         result["errors"] = [
             {
                 "code": str(error.get("code") or business_request.get("status") or "FAILED"),

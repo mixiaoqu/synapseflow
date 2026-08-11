@@ -10,14 +10,11 @@ class BusinessClassificationLlm:
         return SimpleNamespace(
             content=(
                 "{"
-                '"request_type":"data_query",'
-                '"task_shape":"single_sub_agent",'
-                '"goal_clarity":"clear",'
-                '"needs_sub_agent":true,'
-                '"domain_hints":["business_ops"],'
-                '"sub_tasks":[{"sub_agent_id":"business_ops","goal":"查询会员数量","depends_on":[]}],'
-                '"intent":{"kind":"data_query","goal":"查询会员数量"},'
-                '"risk_hint":"none",'
+                '"goal":"查询会员数量",'
+                '"clarity":"clear",'
+                '"clarification_question":null,'
+                '"handling":"capabilities",'
+                '"capability_ids":["business_ops"],'
                 '"reason":"需要查询实时会员数据"'
                 "}"
             )
@@ -33,6 +30,6 @@ def test_classification_keeps_valid_llm_domain_selection():
         )
     )
 
-    assert result["task_shape"] == "single_sub_agent"
-    assert result["domain_hints"] == ["business_ops"]
-    assert "keyword_hints" not in result
+    assert result["handling"] == "capabilities"
+    assert result["capability_ids"] == ["business_ops"]
+    assert result["goal"] == "查询会员数量"

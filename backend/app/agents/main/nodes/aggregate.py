@@ -38,15 +38,21 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         for run in runs
         if isinstance(run.get("sub_agent_result"), dict)
     ]
-    successes = [result for result in sub_agent_results if result.get("status") == "success"]
+    successes = [
+        result
+        for result in sub_agent_results
+        if result.get("status") in {"success", "partial_success"}
+    ]
     needs_input = [result for result in sub_agent_results if result.get("status") == "needs_input"]
     failures = [
         result
         for result in sub_agent_results
-        if result.get("status") not in {"success", "needs_input"}
+        if result.get("status") not in {"success", "partial_success", "needs_input"}
     ]
     has_partial_success = any(
-        result.get("answer_status") == "partial" for result in successes
+        result.get("status") == "partial_success"
+        or result.get("answer_status") == "partial"
+        for result in successes
     )
     knowledge_context: list[dict[str, Any]] = []
     citation_refs: list[str] = []
@@ -143,6 +149,31 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         if knowledge_goal_diagnostics
         else {}
     )
+    aggregated_errors = result_errors or [
+        {
+            "sub_agent_id": result.get("sub_agent_id"),
+            "code": "SUB_AGENT_FAILED",
+            "message": result.get("summary"),
+            "retryable": False,
+        }
+        for result in failures
+    ]
+    public_error = next(
+        (
+            str(item.get("message") or "").strip()
+            for item in aggregated_errors
+            if str(item.get("message") or "").strip()
+        ),
+        None,
+    )
+    answer_material = {
+        "knowledge_evidence": [
+            item for item in context_by_ref.values() if item.get("role") == "primary"
+        ],
+        "business_results": business_data,
+        "clarification": clarifications[0] if clarifications else None,
+        "public_error": public_error,
+    }
     return {
         **primary_knowledge_diagnostics,
         "knowledge_goal_diagnostics": knowledge_goal_diagnostics,
@@ -156,17 +187,9 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         "business_data": business_data,
         "citation_refs": deduped_citation_refs,
         "sources": retrieved_docs,
-        "errors": result_errors
-        or [
-            {
-                "sub_agent_id": result.get("sub_agent_id"),
-                "code": "SUB_AGENT_FAILED",
-                "message": result.get("summary"),
-                "retryable": False,
-            }
-            for result in failures
-        ],
+        "errors": aggregated_errors,
         "clarifications": clarifications,
+        "answer_material": answer_material,
     }
 
 

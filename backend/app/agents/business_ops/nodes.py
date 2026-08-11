@@ -89,7 +89,7 @@ def build_business_ops_nodes(
                 logger.exception("[business_ops] failed to plan dynamic tool call. query={}", query)
                 request_info = {
                     "raw_query": query,
-                    "status": "unsupported",
+                    "status": "planner_failed",
                     "operation_id": None,
                     "params": {},
                     "clarification": None,
@@ -360,12 +360,17 @@ def build_business_ops_nodes(
                 error=error,
                 llm_factory=planner_factory,
             )
+            action = str(replanned.get("action") or "fail")
             next_request = {
                 **request_info,
-                "status": "ready",
+                "status": {
+                    "retry": "ready",
+                    "clarify": "clarification_required",
+                    "fail": "repair_failed",
+                }[action],
                 "params": replanned["params"],
-                "clarification": None,
-                "reason": replanned["reason"] or "已根据工具约束修正参数。",
+                "clarification": replanned.get("clarification_question"),
+                "reason": replanned["reason"] or "已完成参数修正判断。",
             }
         except Exception:
             logger.exception(
@@ -374,7 +379,7 @@ def build_business_ops_nodes(
             )
             next_request = {
                 **request_info,
-                "status": "unsupported",
+                "status": "repair_failed",
                 "clarification": None,
                 "reason": "业务查询参数自动修正失败。",
             }
@@ -427,6 +432,13 @@ def build_business_ops_nodes(
             return "analyze"
         return "compose"
 
+    def _route_after_replan(state: BusinessOpsState) -> str:
+        return (
+            "execute"
+            if (state.get("business_request") or {}).get("status") == "ready"
+            else "compose"
+        )
+
     async def _compose_result_node(state: BusinessOpsState) -> dict[str, Any]:
         started_at = perf_counter()
         stream_writer = get_optional_stream_writer()
@@ -477,4 +489,5 @@ def build_business_ops_nodes(
         "compose_result": _compose_result_node,
         "route_after_analyze": _route_after_analyze,
         "route_after_execute": _route_after_execute,
+        "route_after_replan": _route_after_replan,
     }

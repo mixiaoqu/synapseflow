@@ -210,27 +210,16 @@ class AgentRunTraceBuilder:
         return {
             "knowledge_plan": {
                 "attempt_count": int(result.get("query_plan_attempt") or 1),
-                "goal_query": str(
-                    result.get("goal_query")
-                    or state.get("goal_query")
+                "normalized_query": str(
+                    result.get("normalized_query")
+                    or state.get("normalized_query")
                     or ""
                 ).strip(),
                 "knowledge_goals": list(result.get("knowledge_goal_diagnostics") or []),
-                "evidence_requirements": _string_items(
-                    result.get("evidence_requirements")
-                    or state.get("evidence_requirements")
+                "retrieval_profile": (
+                    result.get("retrieval_profile") or state.get("retrieval_profile")
                 ),
-                "business_objects": _string_items(
-                    result.get("business_objects") or state.get("business_objects")
-                ),
-                "action": str(result.get("action") or state.get("action") or "").strip(),
-                "parameters": dict(
-                    result.get("query_parameters")
-                    or state.get("query_parameters")
-                    or {}
-                ),
-                "coverage_status": result.get("coverage_status"),
-                "coverage_audit": dict(result.get("coverage_audit") or {}),
+                "retrieval_status": result.get("retrieval_status"),
                 "retrieval_attempts": list(result.get("retrieval_attempts") or []),
                 "retrieval_feedback": dict(result.get("retrieval_feedback") or {}),
             },
@@ -360,9 +349,9 @@ class AgentRunTraceBuilder:
             "团队/知识库：{} / {}\n"
             "\n"
             "1. 问题分析\n"
-            "- question_type: {}\n"
-            "- retrieval_required: {}\n"
-            "- retrieval_complexity: {}\n"
+            "- normalized_query: {}\n"
+            "- retrieval_profile: {}\n"
+            "- retrieval_status: {}\n"
             "- reason: {}\n"
             "- route_latency_ms: {}\n"
             "- plan_latency_ms: {}\n"
@@ -371,7 +360,7 @@ class AgentRunTraceBuilder:
             "- 原问题: {}\n"
             "- 向量语义查询:\n{}\n"
             "- 关键词: {}\n"
-            "- candidate_entities: {}\n"
+            "- retry_reason: {}\n"
             "- rewrite_latency_ms: {}\n"
             "\n"
             "3. 检索执行\n"
@@ -413,20 +402,20 @@ class AgentRunTraceBuilder:
             or result.get("knowledge_base_id")
             or state.get("knowledge_base_id")
             or "-",
-            result.get("question_type") or state.get("question_type") or "-",
-            (
-                result.get("retrieval_required")
-                if result.get("retrieval_required") is not None
-                else state.get("retrieval_required")
-            ),
-            result.get("retrieval_complexity") or state.get("retrieval_complexity") or "-",
+            result.get("normalized_query") or state.get("normalized_query") or "-",
+            result.get("retrieval_profile") or state.get("retrieval_profile") or "-",
+            result.get("retrieval_status") or state.get("retrieval_status") or "-",
             result.get("route_reason") or result.get("reason") or state.get("route_reason") or "-",
             int(route_trace.get("latency_ms") or 0),
             int(plan_trace.get("latency_ms") or 0),
             str(result.get("query") or state.get("query") or ""),
             _format_queries([str(query) for query in semantic_queries if str(query).strip()]),
             _format_list(lexical_terms),
-            _format_list(candidate_entities),
+            str(
+                (result.get("retrieval_feedback") or {}).get("reason_code")
+                or (state.get("retrieval_feedback") or {}).get("reason_code")
+                or "-"
+            ),
             int(rewrite_trace.get("latency_ms") or 0),
             str(retrieval_trace.get("retrieval_mode") or state.get("retrieval_mode") or "-"),
             int(text_trace.get("semantic_query_count") or len(semantic_queries) or 0),

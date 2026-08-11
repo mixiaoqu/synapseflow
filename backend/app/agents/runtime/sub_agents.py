@@ -56,11 +56,6 @@ def _build_shared_input(
         "original_query": original_query,
         "query": goal or original_query,
         "intent": intent,
-        "expected_facts": [
-            str(item).strip()
-            for item in list(step.get("expected_facts") or [])
-            if str(item).strip()
-        ],
         "dependency_results": dependency_results,
     }
 

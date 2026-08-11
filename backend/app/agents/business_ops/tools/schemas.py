@@ -28,7 +28,8 @@ class ToolDecision(BaseModel):
     action: ToolDecisionAction
     tool_id: str | None = None
     arguments: dict[str, Any] = Field(default_factory=dict)
-    message: str | None = None
+    clarification_question: str | None = None
+    reason: str | None = None
 
 
 class ToolStep(BaseModel):

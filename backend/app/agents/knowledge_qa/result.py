@@ -51,19 +51,10 @@ def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
         message = "知识库检索服务暂时不可用，本次结果不代表知识库中没有相关内容。"
     else:
         status = "success" if retrieval_status == "found" and primary_count else "failed"
-        coverage_complete = bool(retrieval_result.get("coverage_complete"))
-        answer_status = (
-            "answered"
-            if status == "success" and coverage_complete
-            else "partial"
-            if status == "success"
-            else "no_answer"
-        )
+        answer_status = "answered" if status == "success" else "no_answer"
         message = (
-            f"已找到 {primary_count} 条主要知识证据，可回答问题的部分内容。"
-            if status == "success" and not coverage_complete
-            else f"已找到 {primary_count} 条主要知识证据。"
-            if status == "success" and coverage_complete
+            f"已找到 {primary_count} 条可用于回答的知识证据。"
+            if status == "success"
             else "当前知识库没有找到可用于回答的相关内容。"
         )
     result = build_sub_agent_result(
@@ -85,9 +76,6 @@ def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
             "budget": dict(retrieval_result.get("budget") or {}),
             "metrics": dict(retrieval_result.get("metrics") or {}),
             "warnings": list(retrieval_result.get("warnings") or []),
-            "coverage_status": retrieval_result.get("coverage_status"),
-            "coverage_complete": bool(retrieval_result.get("coverage_complete")),
-            "coverage_audit": dict(retrieval_result.get("coverage_audit") or {}),
         },
     }
     result["evidence"] = {

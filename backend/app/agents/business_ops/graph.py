@@ -48,6 +48,10 @@ def create_business_ops_graph(
             "compose": "compose_result",
         },
     )
-    workflow.add_edge("replan_operation_params", "execute_operation")
+    workflow.add_conditional_edges(
+        "replan_operation_params",
+        nodes["route_after_replan"],
+        {"execute": "execute_operation", "compose": "compose_result"},
+    )
     workflow.add_edge("compose_result", END)
     return workflow.compile()

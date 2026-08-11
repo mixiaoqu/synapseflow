@@ -27,19 +27,6 @@ def _validate_steps(
         task_id = str(raw.get("task_id") or "").strip()
         sub_agent_id = str(raw.get("sub_agent_id") or "").strip()
         goal = str(raw.get("goal") or "").strip()
-        raw_expected_facts = raw.get("expected_facts") or []
-        expected_fact_items = (
-            [raw_expected_facts]
-            if isinstance(raw_expected_facts, str)
-            else list(raw_expected_facts)
-        )
-        expected_facts = list(
-            dict.fromkeys(
-                str(item).strip()
-                for item in expected_fact_items
-                if str(item).strip()
-            )
-        )[:6]
         depends_on = [str(item).strip() for item in list(raw.get("depends_on") or [])]
         if not task_id or task_id in task_ids:
             raise ValueError("Plan contains missing or duplicate task_id")
@@ -53,7 +40,6 @@ def _validate_steps(
                 "task_id": task_id,
                 "sub_agent_id": sub_agent_id,
                 "goal": goal,
-                "expected_facts": expected_facts,
                 "depends_on": depends_on,
             }
         )
@@ -82,21 +68,25 @@ async def _plan_multi_agent(
 ) -> list[dict[str, Any]]:
     routing = state["routing"]
     prompt = f"""
-Create the smallest executable task plan. Return JSON only:
-{{"steps":[{{"task_id":"goal_1","sub_agent_id":"knowledge_qa","goal":"one standalone answer goal","expected_facts":["facts needed to answer this goal"],"depends_on":[]}}]}}
+职责：把已经明确的用户目标拆成最小可执行任务计划。
 
-Available capability IDs: {json.dumps(routing["target_sub_agents"], ensure_ascii=False)}
-User goal: {routing["intent"]["goal"]}
+唯一任务：为每个独立目标选择一个可用能力，并声明真实存在的步骤依赖。
+不要回答用户问题，不要设计检索表达，不要生成工具参数，也不要推测答案应包含哪些事实。
 
-Rules:
-- task_id must be unique and stable within this plan.
-- depends_on may reference task_id only, never capability ID.
-- The same capability may be used by multiple independent tasks.
-- For knowledge_qa, split only genuinely independent answer goals, at most 3. Keep a simple request as one goal.
-- Each knowledge_qa goal must be standalone, single-purpose, and preserve the user's objects, actions, conditions, and constraints.
-- expected_facts describes the minimum facts needed to answer that goal; it is not a retrieval query.
-- Do not create separate goals for synonyms or alternative query phrasings.
-- Do not create tool arguments or unsupported capabilities.
+只返回 JSON：
+{{"steps":[{{"task_id":"goal_1","sub_agent_id":"knowledge_qa","goal":"可独立执行的单一目标","depends_on":[]}}]}}
+
+可用能力 ID：{json.dumps(routing["target_sub_agents"], ensure_ascii=False)}
+用户目标：{routing["intent"]["goal"]}
+
+决策边界：
+- task_id 在本计划内必须唯一且稳定。
+- sub_agent_id 只能使用可用能力 ID；depends_on 只能引用本计划中的 task_id。
+- 只有目标之间确实存在结果依赖时才填写 depends_on，否则保持空数组。
+- 同一能力可以处理多个相互独立的目标。
+- 仅拆分用户明确提出且可独立回答的目标；简单请求保持一个任务，不因同义表达或不同检索方式拆分。
+- knowledge_qa 最多拆成 3 个目标；每个目标必须保留用户明确给出的对象、动作、条件和约束。
+- 不补充用户没有提出的子目标、答案范围或完成标准。
 """.strip()
     llm = (
         planner_llm_factory()
@@ -126,7 +116,6 @@ def build_plan_node(*, planner_llm_factory: Callable[[], Any] | None):
                     "task_id": "task_1",
                     "sub_agent_id": targets[0],
                     "goal": routing["intent"]["goal"] or state["input"]["query"],
-                    "expected_facts": [],
                     "depends_on": [],
                 }
             ]

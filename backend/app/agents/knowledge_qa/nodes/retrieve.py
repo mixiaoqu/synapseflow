@@ -1,12 +1,11 @@
-"""单目标知识库检索、证据审计与一次改写重试。"""
+"""单目标知识库检索、回答材料整理与一次无命中改写。"""
 
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Callable
+from typing import Any
 
 from app.agents.common.streaming import emit_activity, get_optional_stream_writer
-from app.agents.knowledge_qa.evidence_coverage import assess_goal_coverage
 from app.agents.knowledge_qa.state import KnowledgeQaState
 from app.services.kb_text_retrieval import run_kb_channel_text_retrieval
 
@@ -125,9 +124,8 @@ async def knowledge_qa_retrieve_node(
     state: KnowledgeQaState,
     *,
     node_id: str = "retrieve_knowledge",
-    coverage_llm_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
-    """执行一个目标的一组并行查询，并对累计证据做一次审计。"""
+    """执行一个目标的一组并行查询，并整理重排后的回答材料。"""
 
     if str(state.get("retrieval_strategy") or "").strip().lower() == "skip":
         return {
@@ -135,8 +133,6 @@ async def knowledge_qa_retrieve_node(
                 "status": "no_hits",
                 "reason_code": "skipped",
                 "evidence_items": [],
-                "coverage_complete": False,
-                "coverage_audit": {},
                 "budget": {"max_chars": 0, "used_chars": 0, "truncated": False, "dropped_count": 0},
                 "metrics": _empty_metrics(),
                 "warnings": [],
@@ -180,7 +176,7 @@ async def knowledge_qa_retrieve_node(
     provider_error: Exception | None = None
     try:
         text_result = await run_kb_channel_text_retrieval(
-            query=str(state.get("goal_query") or goal).strip(),
+            query=str(state.get("normalized_query") or goal).strip(),
             semantic_queries=semantic_queries,
             lexical_terms=lexical_terms,
             team_id=state.get("team_id"),
@@ -214,12 +210,12 @@ async def knowledge_qa_retrieve_node(
     ]
     accumulated_docs = _dedupe_docs(
         [
+            *current_docs,
             *[
                 dict(item)
                 for item in list(state.get("accumulated_candidate_docs") or [])
                 if isinstance(item, dict)
             ],
-            *current_docs,
         ]
     )
     executed_semantic_queries = [
@@ -232,40 +228,21 @@ async def knowledge_qa_retrieve_node(
         for item in list(text_result.get("lexical_terms") or lexical_terms)
         if str(item).strip()
     ]
-    coverage_audit = await assess_goal_coverage(
-        {
-            "goal": goal,
-            "evidence_requirements": list(state.get("evidence_requirements") or []),
-            "retrieved_docs": accumulated_docs,
-            "provider_error": provider_error is not None,
-            "empty_reason": text_result.get("kb_retrieval_status"),
-        },
-        llm_factory=coverage_llm_factory,
-    )
-    coverage_status = str(coverage_audit.get("status") or "missed")
-    supported_indices = {
-        int(item)
-        for item in list(coverage_audit.get("supported_evidence_indices") or [])
-        if str(item).isdigit()
-    }
     evidence_items: list[dict[str, Any]] = []
-    for index, doc in enumerate(accumulated_docs, start=1):
-        item = _build_evidence_item(
-            doc,
-            role="primary" if index in supported_indices else "supporting",
-        )
+    for doc in accumulated_docs:
+        item = _build_evidence_item(doc, role="primary")
         if item is not None:
             evidence_items.append(item)
     evidence_items, budget = _apply_evidence_budget(
         evidence_items, max_chars=context_budget
     )
     primary_count = sum(item.get("role") == "primary" for item in evidence_items)
-    supporting_count = len(evidence_items) - primary_count
+    supporting_count = 0
 
     attempt_number = int(state.get("query_plan_attempt") or 1)
     should_replan = (
         provider_error is None
-        and coverage_status == "missed"
+        and primary_count == 0
         and attempt_number < 2
         and not state.get("replan_exhausted")
     )
@@ -281,11 +258,11 @@ async def knowledge_qa_retrieve_node(
     )
     retrieval_feedback = {
         "goal": goal,
-        "evidence_requirements": list(state.get("evidence_requirements") or []),
-        "coverage_status": coverage_status,
-        "failure_reason": coverage_audit.get("failure_reason"),
-        "supported_claims": list(coverage_audit.get("supported_claims") or []),
-        "discovered_terms": list(coverage_audit.get("discovered_terms") or []),
+        "reason_code": (
+            text_result.get("kb_retrieval_status")
+            if primary_count == 0
+            else None
+        ),
         "used_queries": used_queries,
         "attempt": attempt_number,
     }
@@ -302,7 +279,7 @@ async def knowledge_qa_retrieve_node(
             "semantic_queries": executed_semantic_queries,
             "lexical_terms": executed_lexical_terms,
             "hit_count": len(current_docs),
-            "coverage_status": coverage_status,
+            "retrieval_status": "found" if primary_count else "no_hits",
         },
     ]
     if provider_error is not None:
@@ -310,7 +287,7 @@ async def knowledge_qa_retrieve_node(
         reason_code = "provider_error"
     elif should_replan:
         status = "replan_required"
-        reason_code = coverage_audit.get("failure_reason") or "no_hits"
+        reason_code = text_result.get("kb_retrieval_status") or "no_hits"
     elif primary_count:
         status = "found"
         reason_code = None
@@ -319,7 +296,7 @@ async def knowledge_qa_retrieve_node(
         reason_code = (
             text_result.get("kb_retrieval_status")
             if text_result.get("kb_retrieval_status") != "ok"
-            else coverage_audit.get("failure_reason") or "no_hits"
+            else "no_hits"
         )
     warnings = []
     if provider_error is not None:
@@ -332,14 +309,10 @@ async def knowledge_qa_retrieve_node(
         "retrieval_attempts": retrieval_attempts,
         "accumulated_candidate_docs": accumulated_docs,
         "accumulated_evidence_items": evidence_items,
-        "coverage_audit": coverage_audit,
         "retrieval_result": {
             "status": status,
             "reason_code": reason_code,
             "evidence_items": evidence_items,
-            "coverage_status": coverage_status,
-            "coverage_complete": coverage_status == "covered",
-            "coverage_audit": coverage_audit,
             "attempt_count": len(retrieval_attempts),
             "budget": budget,
             "metrics": {

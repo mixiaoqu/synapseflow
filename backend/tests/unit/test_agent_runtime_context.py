@@ -15,12 +15,11 @@ class RelativeTimeClassificationLlm:
         return SimpleNamespace(
             content=(
                 "{"
-                '"request_type":"data_query",'
-                '"task_shape":"single_sub_agent",'
-                '"goal_clarity":"clear",'
-                '"domain_hints":["business_ops"],'
-                '"intent":{"kind":"data_query","goal":"查询2026-06-26至2026-07-25的销售总额"},'
-                '"risk_hint":"none",'
+                '"goal":"查询2026-06-26至2026-07-25的销售总额",'
+                '"clarity":"clear",'
+                '"clarification_question":null,'
+                '"handling":"capabilities",'
+                '"capability_ids":["business_ops"],'
                 '"reason":"用户请求实时销售统计"'
                 "}"
             )
@@ -62,6 +61,5 @@ def test_classification_resolves_relative_time_into_explicit_goal():
 
     assert "2026-07-25T10:30:00+08:00" in llm.prompt
     assert "Asia/Shanghai" in llm.prompt
-    assert result["intent"]["goal"] == "查询2026-06-26至2026-07-25的销售总额"
-    assert "time_range" not in result["intent"]
-    assert result["domain_hints"] == ["business_ops"]
+    assert result["goal"] == "查询2026-06-26至2026-07-25的销售总额"
+    assert result["capability_ids"] == ["business_ops"]

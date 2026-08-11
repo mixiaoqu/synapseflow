@@ -37,7 +37,12 @@ def build_tool_run_result(*, decision: ToolDecision, steps: list[ToolStep]) -> T
     }
     return ToolRunResult(
         status=status,
-        message=decision.message or defaults[status],
+        message=(
+            decision.clarification_question
+            if decision.action == "clarify"
+            else decision.reason
+        )
+        or defaults[status],
         steps=steps,
         successful_data=[step.data or {} for step in successful],
     )
