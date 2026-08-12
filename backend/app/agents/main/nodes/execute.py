@@ -10,7 +10,7 @@ from loguru import logger
 
 from app.agents.common.node_logging import log_node_info
 from app.agents.common.streaming import get_optional_stream_writer
-from app.agents.common.sub_agent_result import build_failed_sub_agent_result
+from app.agents.common.task_result import build_failed_task_result
 from app.agents.main.nodes.utils import (
     emit_subgraph_node_complete,
     forward_subgraph_custom_event,
@@ -18,14 +18,14 @@ from app.agents.main.nodes.utils import (
     parse_stream_chunk,
 )
 from app.agents.main.state import AgentState
-from app.agents.runtime.sub_agents import get_sub_agent_definition
+from app.agents.runtime.handlers import get_handler_definition
 
 
-def build_execute_node(*, sub_agent_graphs: dict[str, Any]):
+def build_execute_node(*, handler_workflows: dict[str, Any]):
     async def execute_node(state: AgentState) -> dict[str, Any]:
         started_at = perf_counter()
         writer = get_optional_stream_writer()
-        task_plan = dict(state.get("plan") or {})
+        task_plan = dict(state.get("execution_plan") or {})
         steps = [dict(step) for step in list(task_plan.get("steps") or [])]
 
         def dependency_inputs(
@@ -34,9 +34,9 @@ def build_execute_node(*, sub_agent_graphs: dict[str, Any]):
             return {
                 dependency_id: {
                     "task_id": dependency_id,
-                    "sub_agent_id": dependency_run.get("sub_agent_id"),
+                    "handler_id": dependency_run.get("handler_id"),
                     "status": dependency_run.get("status"),
-                    "sub_agent_result": dict(dependency_run.get("sub_agent_result") or {}),
+                    "task_result": dict(dependency_run.get("task_result") or {}),
                 }
                 for dependency_id in list(step.get("depends_on") or [])
                 if (dependency_run := execution_runs_by_id.get(dependency_id)) is not None
@@ -49,14 +49,14 @@ def build_execute_node(*, sub_agent_graphs: dict[str, Any]):
             message: str,
             code: str,
         ) -> dict[str, Any]:
-            sub_agent_id = str(step.get("sub_agent_id") or "").strip()
-            sub_agent_result = build_failed_sub_agent_result(
-                sub_agent_id=sub_agent_id,
+            handler_id = str(step.get("handler_id") or "").strip()
+            task_result = build_failed_task_result(
+                handler_id=handler_id or "unassigned",
                 run_id=state["input"]["run_id"],
                 step_id=step.get("task_id"),
                 message=message,
             )
-            sub_agent_result["errors"] = [
+            task_result["errors"] = [
                 {
                     "code": code,
                     "message": message,
@@ -66,9 +66,10 @@ def build_execute_node(*, sub_agent_graphs: dict[str, Any]):
             ]
             return {
                 "task_id": step.get("task_id"),
-                "sub_agent_id": sub_agent_id,
+                "goal": step.get("goal"),
+                "handler_id": handler_id or None,
                 "status": "blocked",
-                "sub_agent_result": sub_agent_result,
+                "task_result": task_result,
                 "dependency_results": dependency_results,
                 "diagnostics": {},
                 "error": message,
@@ -78,15 +79,22 @@ def build_execute_node(*, sub_agent_graphs: dict[str, Any]):
             step: dict[str, Any], dependency_results: dict[str, dict[str, Any]]
         ) -> dict[str, Any]:
             step = dict(step)
-            sub_agent_id = str(step.get("sub_agent_id") or "").strip()
+            handler_id = str(step.get("handler_id") or "").strip()
             try:
-                sub_agent = get_sub_agent_definition(sub_agent_id)
-                subgraph = sub_agent_graphs.get(sub_agent_id)
+                if not handler_id:
+                    return build_blocked_run(
+                        step,
+                        dependency_results=dependency_results,
+                        message="当前没有任务处理器能够承接该任务。",
+                        code="HANDLER_UNASSIGNED",
+                    )
+                handler = get_handler_definition(handler_id)
+                subgraph = handler_workflows.get(handler_id)
                 if subgraph is None:
-                    raise RuntimeError(f"Sub-agent graph is not initialized: {sub_agent_id}")
+                    raise RuntimeError(f"Handler workflow is not initialized: {handler_id}")
                 step["dependency_results"] = dependency_results
-                child_input = sub_agent.input_builder(state, step)
-                sub_agent_result: dict[str, Any] | None = None
+                child_input = handler.input_builder(state, step)
+                task_result: dict[str, Any] | None = None
                 final_child_state: dict[str, Any] = {}
                 async for chunk in subgraph.astream(
                     child_input,
@@ -97,7 +105,7 @@ def build_execute_node(*, sub_agent_graphs: dict[str, Any]):
                     if chunk_type == "custom":
                         forward_subgraph_custom_event(
                             writer,
-                            sub_agent.graph_id,
+                            handler.workflow_id,
                             chunk_data,
                         )
                         continue
@@ -107,49 +115,51 @@ def build_execute_node(*, sub_agent_graphs: dict[str, Any]):
                         if not isinstance(node_id, str) or not isinstance(node_state, dict):
                             continue
                         final_child_state.update(node_state)
-                        candidate = node_state.get("sub_agent_result")
+                        candidate = node_state.get("task_result")
                         if isinstance(candidate, dict):
-                            sub_agent_result = candidate
+                            task_result = candidate
                         emit_subgraph_node_complete(
                             writer,
-                            sub_agent.graph_id,
+                            handler.workflow_id,
                             node_id,
                             node_state,
                         )
-                if sub_agent_result is None:
+                if task_result is None:
                     raise RuntimeError(
-                        f"Sub-agent {sub_agent_id} completed without sub_agent_result"
+                        f"Handler {handler_id} completed without task_result"
                     )
                 return {
                     "task_id": step.get("task_id"),
-                    "sub_agent_id": sub_agent_id,
-                    "status": sub_agent_result.get("status") or "failed",
-                    "sub_agent_result": sub_agent_result,
+                    "goal": step.get("goal"),
+                    "handler_id": handler_id,
+                    "status": task_result.get("status") or "failed",
+                    "task_result": task_result,
                     "dependency_results": dependency_results,
                     "diagnostics": knowledge_diagnostics(final_child_state),
                 }
             except Exception as exc:
                 logger.exception(
-                    "[agent.execute] sub-agent execution failed | "
-                    "sub_agent_id={} task_id={} error={}",
-                    sub_agent_id,
+                    "[agent.execute] handler execution failed | "
+                    "handler_id={} task_id={} error={}",
+                    handler_id,
                     step.get("task_id"),
                     exc,
                 )
-                sub_agent_result = build_failed_sub_agent_result(
-                    sub_agent_id=sub_agent_id,
+                task_result = build_failed_task_result(
+                    handler_id=handler_id or "unassigned",
                     run_id=state["input"]["run_id"],
                     step_id=step.get("task_id"),
-                    message="子能力执行失败。",
+                    message="任务处理器执行失败。",
                 )
                 return {
                     "task_id": step.get("task_id"),
-                    "sub_agent_id": sub_agent_id,
+                    "goal": step.get("goal"),
+                    "handler_id": handler_id or None,
                     "status": "failed",
-                    "sub_agent_result": sub_agent_result,
+                    "task_result": task_result,
                     "dependency_results": dependency_results,
                     "diagnostics": {},
-                    "error": "子能力执行失败。",
+                    "error": "任务处理器执行失败。",
                 }
 
         execution_runs: dict[str, dict[str, Any]] = {}

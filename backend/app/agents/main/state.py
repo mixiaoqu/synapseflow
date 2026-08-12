@@ -53,36 +53,47 @@ class AgentInput(TypedDict):
     metadata: dict[str, Any]
 
 
-class AgentIntent(TypedDict):
+class AgentUnderstanding(TypedDict):
     goal: str
-
-
-class AgentRouting(TypedDict):
-    route_type: str
-    intent: AgentIntent
-    target_sub_agents: list[str]
+    clarity: Literal["clear", "unclear"]
+    handling: Literal["direct", "delegated", "unsupported"]
+    task_structure: Literal["atomic", "composite"]
     clarification_question: NotRequired[str | None]
     reason: str
 
 
-class AgentTaskStep(TypedDict):
+class AgentTask(TypedDict):
     task_id: str
-    sub_agent_id: str
     goal: str
     depends_on: list[str]
 
 
-class AgentTaskPlan(TypedDict):
+class TaskAssignment(TypedDict):
+    task_id: str
+    handler_id: str | None
+    status: Literal["assigned", "unassigned"]
+    reason: str
+
+
+class AgentExecutionStep(TypedDict):
+    task_id: str
+    handler_id: str | None
+    goal: str
+    depends_on: list[str]
+
+
+class AgentExecutionPlan(TypedDict):
     execution_mode: Literal["none", "single", "parallel", "dag"]
-    steps: list[AgentTaskStep]
+    steps: list[AgentExecutionStep]
     reason: str
 
 
 class AgentExecution(TypedDict, total=False):
     task_id: str
-    sub_agent_id: str
+    goal: str
+    handler_id: str | None
     status: str
-    sub_agent_result: dict[str, Any]
+    task_result: dict[str, Any]
     dependency_results: dict[str, dict[str, Any]]
     diagnostics: dict[str, Any]
     error: str
@@ -126,8 +137,10 @@ class AgentState(TypedDict):
     """Minimal graph state. Each phase owns exactly one top-level field."""
 
     input: AgentInput
-    routing: NotRequired[AgentRouting]
-    plan: NotRequired[AgentTaskPlan]
+    understanding: NotRequired[AgentUnderstanding]
+    tasks: NotRequired[list[AgentTask]]
+    assignments: NotRequired[list[TaskAssignment]]
+    execution_plan: NotRequired[AgentExecutionPlan]
     executions: NotRequired[dict[str, AgentExecution]]
     result: NotRequired[AgentResult]
     response: NotRequired[AgentResponse]

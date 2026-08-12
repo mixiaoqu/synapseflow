@@ -33,20 +33,20 @@ def _source_identity(item: dict[str, Any]) -> str:
 
 def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> dict[str, Any]:
     runs = list(execution_runs.values())
-    sub_agent_results = [
-        dict(run.get("sub_agent_result") or {})
+    task_results = [
+        dict(run.get("task_result") or {})
         for run in runs
-        if isinstance(run.get("sub_agent_result"), dict)
+        if isinstance(run.get("task_result"), dict)
     ]
     successes = [
         result
-        for result in sub_agent_results
+        for result in task_results
         if result.get("status") in {"success", "partial_success"}
     ]
-    needs_input = [result for result in sub_agent_results if result.get("status") == "needs_input"]
+    needs_input = [result for result in task_results if result.get("status") == "needs_input"]
     failures = [
         result
-        for result in sub_agent_results
+        for result in task_results
         if result.get("status") not in {"success", "partial_success", "needs_input"}
     ]
     has_partial_success = any(
@@ -70,8 +70,8 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
                     **diagnostics,
                 }
             )
-    for sub_agent_result in sub_agent_results:
-        data = dict(sub_agent_result.get("data") or {})
+    for task_result in task_results:
+        data = dict(task_result.get("data") or {})
         content = data.get("content")
         if data.get("kind") == "document" and isinstance(content, dict):
             knowledge_context.extend(
@@ -82,26 +82,26 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         elif data.get("kind") == "action_result" and isinstance(content, dict):
             business_data.append(
                 {
-                    "sub_agent_id": sub_agent_result.get("sub_agent_id"),
+                    "handler_id": task_result.get("handler_id"),
                     "content": dict(content),
                 }
             )
-        evidence = dict(sub_agent_result.get("evidence") or {})
+        evidence = dict(task_result.get("evidence") or {})
         citation_refs.extend(
             str(item.get("ref_id") or "").strip()
             for item in list(evidence.get("citations") or [])
             if isinstance(item, dict) and str(item.get("ref_id") or "").strip()
         )
-        actions = dict(sub_agent_result.get("actions") or {})
+        actions = dict(task_result.get("actions") or {})
         clarifications.extend(list(actions.get("required_user_input") or []))
         result_errors.extend(
             {
-                "sub_agent_id": sub_agent_result.get("sub_agent_id"),
+                "handler_id": task_result.get("handler_id"),
                 "code": item.get("code"),
                 "message": item.get("message"),
                 "retryable": bool(item.get("retryable")),
             }
-            for item in list(sub_agent_result.get("errors") or [])
+            for item in list(task_result.get("errors") or [])
             if isinstance(item, dict)
         )
 
@@ -151,8 +151,8 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
     )
     aggregated_errors = result_errors or [
         {
-            "sub_agent_id": result.get("sub_agent_id"),
-            "code": "SUB_AGENT_FAILED",
+            "handler_id": result.get("handler_id"),
+            "code": "TASK_HANDLER_FAILED",
             "message": result.get("summary"),
             "retryable": False,
         }

@@ -1,8 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from app.agents.main.intent import build_agent_classification
-from app.agents.runtime.sub_agents import get_sub_agent_definitions
+from app.agents.main.understanding import build_request_understanding
 from app.application.agent import input_builder as graph_input_module
 
 
@@ -18,8 +17,8 @@ class RelativeTimeClassificationLlm:
                 '"goal":"查询2026-06-26至2026-07-25的销售总额",'
                 '"clarity":"clear",'
                 '"clarification_question":null,'
-                '"handling":"capabilities",'
-                '"capability_ids":["business_ops"],'
+                '"handling":"delegated",'
+                '"task_structure":"atomic",'
                 '"reason":"用户请求实时销售统计"'
                 "}"
             )
@@ -51,9 +50,8 @@ def test_classification_resolves_relative_time_into_explicit_goal():
     }
 
     result = asyncio.run(
-        build_agent_classification(
+        build_request_understanding(
             "查询最近30天销售额",
-            sub_agents=get_sub_agent_definitions(),
             runtime_context=runtime_context,
             llm_factory=lambda: llm,
         )
@@ -62,4 +60,4 @@ def test_classification_resolves_relative_time_into_explicit_goal():
     assert "2026-07-25T10:30:00+08:00" in llm.prompt
     assert "Asia/Shanghai" in llm.prompt
     assert result["goal"] == "查询2026-06-26至2026-07-25的销售总额"
-    assert result["capability_ids"] == ["business_ops"]
+    assert result["handling"] == "delegated"

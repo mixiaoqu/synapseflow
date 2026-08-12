@@ -1,11 +1,10 @@
 import asyncio
 from types import SimpleNamespace
 
-from app.agents.main.intent import build_agent_classification
-from app.agents.runtime.sub_agents import get_sub_agent_definitions
+from app.agents.main.understanding import build_request_understanding
 
 
-class BusinessClassificationLlm:
+class DelegatedUnderstandingLlm:
     async def ainvoke(self, prompt: str):
         return SimpleNamespace(
             content=(
@@ -13,23 +12,22 @@ class BusinessClassificationLlm:
                 '"goal":"查询会员数量",'
                 '"clarity":"clear",'
                 '"clarification_question":null,'
-                '"handling":"capabilities",'
-                '"capability_ids":["business_ops"],'
+                '"handling":"delegated",'
+                '"task_structure":"atomic",'
                 '"reason":"需要查询实时会员数据"'
                 "}"
             )
         )
 
 
-def test_classification_keeps_valid_llm_domain_selection():
+def test_understanding_identifies_an_atomic_delegated_request():
     result = asyncio.run(
-        build_agent_classification(
-            "如何查询会员数量",
-            sub_agents=get_sub_agent_definitions(),
-            llm_factory=BusinessClassificationLlm,
+        build_request_understanding(
+            "查询当前会员数量",
+            llm_factory=DelegatedUnderstandingLlm,
         )
     )
 
-    assert result["handling"] == "capabilities"
-    assert result["capability_ids"] == ["business_ops"]
+    assert result["handling"] == "delegated"
+    assert result["task_structure"] == "atomic"
     assert result["goal"] == "查询会员数量"

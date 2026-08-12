@@ -6,9 +6,13 @@ from typing import Any
 
 WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
     "agent": {
+        "understand": {
+            "label": "理解请求",
+            "progress_message": "正在理解需求和任务结构...",
+        },
         "route": {
-            "label": "理解与路由",
-            "progress_message": "正在理解需求并选择处理路径...",
+            "label": "路由任务",
+            "progress_message": "正在为任务选择处理器...",
         },
         "plan": {
             "label": "规划任务",
@@ -82,8 +86,9 @@ CUSTOMER_STAGE_TITLES = {
 
 NODE_CUSTOMER_STAGES = {
     "agent": {
-        "route": "understand",
+        "understand": "understand",
         "plan": "plan",
+        "route": "plan",
         "execute": "execute",
         "aggregate": "compose",
         "respond": "compose",

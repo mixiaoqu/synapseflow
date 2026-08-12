@@ -18,7 +18,7 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     allowed_document_statuses: List[str]
 
     retrieval_result: Dict[str, Any]
-    sub_agent_result: Dict[str, Any]
+    task_result: Dict[str, Any]
 
     retrieval_analysis: Dict[str, Any]
     retrieval_strategy: Optional[str]

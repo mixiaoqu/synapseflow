@@ -1,22 +1,22 @@
-"""Top-level sub-agent metadata and child-graph input adapters."""
+"""Executable handler registry and workflow input adapters."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-SubAgentInputBuilder = Callable[[Mapping[str, Any], Mapping[str, Any]], dict[str, Any]]
+HandlerInputBuilder = Callable[[Mapping[str, Any], Mapping[str, Any]], dict[str, Any]]
 
 
 @dataclass(frozen=True)
-class SubAgentDefinition:
-    """Public sub-agent contract exposed to the main agent."""
+class HandlerDefinition:
+    """Executable handler contract exposed to task routing."""
 
-    sub_agent_id: str
-    graph_id: str
+    handler_id: str
+    workflow_id: str
     description: str
     handoff_action: str | None
-    input_builder: SubAgentInputBuilder
+    input_builder: HandlerInputBuilder
 
 
 def _build_shared_input(
@@ -26,8 +26,7 @@ def _build_shared_input(
     workflow_id: str,
 ) -> dict[str, Any]:
     agent_input = dict(state.get("input") or {})
-    routing = dict(state.get("routing") or {})
-    intent = dict(routing.get("intent") or {})
+    intent = dict(state.get("understanding") or {})
     step_goal = str(step.get("goal") or "").strip()
     goal = step_goal or str(intent.get("goal") or "").strip()
     intent["goal"] = goal
@@ -107,34 +106,42 @@ def build_business_ops_input(
     return child_input
 
 
-SUB_AGENT_DEFINITIONS: tuple[SubAgentDefinition, ...] = (
-    SubAgentDefinition(
-        sub_agent_id="knowledge_qa",
-        graph_id="knowledge_qa",
-        description="查询当前应用绑定知识库中的规则、说明、流程和文档内容",
+HANDLER_DEFINITIONS: tuple[HandlerDefinition, ...] = (
+    HandlerDefinition(
+        handler_id="knowledge_qa",
+        workflow_id="knowledge_qa",
+        description=(
+            "检索当前应用绑定知识库中的版本化企业知识；"
+            "用于回答功能是否支持、页面入口、操作步骤、筛选排序条件、字段含义、配置项和业务规则等静态资料问题；"
+            "不执行系统修改，也不要求外部实时数据"
+        ),
         handoff_action="结合相关资料看一下具体情况",
         input_builder=build_knowledge_qa_input,
     ),
-    SubAgentDefinition(
-        sub_agent_id="business_ops",
-        graph_id="business_ops",
-        description="调用当前应用端已授权的外部业务工具，查询或处理实时业务数据",
+    HandlerDefinition(
+        handler_id="business_ops",
+        workflow_id="business_ops",
+        description=(
+            "调用当前应用端已授权的只读外部业务工具；"
+            "用于返回当前具体记录、名单、数量、统计值或实时状态等动态业务数据；"
+            "不承接单纯的功能说明、操作步骤或配置规则问题"
+        ),
         handoff_action="调用当前应用端的业务工具看一下具体情况",
         input_builder=build_business_ops_input,
     ),
 )
 
 
-def get_sub_agent_definitions() -> tuple[SubAgentDefinition, ...]:
-    """Return sub-agents visible to the top-level orchestration graph."""
+def get_handler_definitions() -> tuple[HandlerDefinition, ...]:
+    """Return handlers visible to top-level task routing."""
 
-    return SUB_AGENT_DEFINITIONS
+    return HANDLER_DEFINITIONS
 
 
-def get_sub_agent_definition(sub_agent_id: str) -> SubAgentDefinition:
-    """Return one registered sub-agent definition."""
+def get_handler_definition(handler_id: str) -> HandlerDefinition:
+    """Return one registered handler definition."""
 
-    for definition in SUB_AGENT_DEFINITIONS:
-        if definition.sub_agent_id == sub_agent_id:
+    for definition in HANDLER_DEFINITIONS:
+        if definition.handler_id == handler_id:
             return definition
-    raise KeyError(f"Unknown sub-agent id: {sub_agent_id}")
+    raise KeyError(f"Unknown handler id: {handler_id}")

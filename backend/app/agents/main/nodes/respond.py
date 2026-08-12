@@ -7,12 +7,6 @@ from typing import Any, Callable
 
 from app.agents.common.node_logging import log_node_info
 from app.agents.common.streaming import get_optional_stream_writer
-from app.agents.main.nodes.constants import (
-    EXECUTION_ROUTE_TYPES,
-    ROUTE_CLARIFY_MAIN,
-    ROUTE_DIRECT_RESPONSE,
-    ROUTE_UNSUPPORTED,
-)
 from app.agents.main.nodes.utils import coerce_text, get_answer_llm, json_block
 from app.agents.main.prompt import build_page_context_block
 from app.agents.main.state import AgentState
@@ -87,7 +81,7 @@ def _direct_prompt(state: AgentState) -> str:
 {str(conversation.get("summary") or "")[:4000] or "(none)"}
 
 用户问题：{agent_input["query"]}
-已解析目标：{state["routing"]["intent"]["goal"]}
+已解析目标：{state["understanding"]["goal"]}
 """.strip()
 
 
@@ -116,7 +110,7 @@ def _execution_prompt(state: AgentState) -> str:
 {json_block(agent_input["runtime_context"])}
 
 用户问题：{agent_input["query"]}
-已解析目标：{state["routing"]["intent"]["goal"]}
+已解析目标：{state["understanding"]["goal"]}
 
 回答材料：
 {json_block(_answer_material(state))}
@@ -124,15 +118,15 @@ def _execution_prompt(state: AgentState) -> str:
 
 
 def _non_execution_response(state: AgentState) -> tuple[str, str]:
-    route_type = state["routing"]["route_type"]
-    goal = state["routing"]["intent"]["goal"]
-    if route_type == ROUTE_CLARIFY_MAIN:
+    understanding = state["understanding"]
+    goal = understanding["goal"]
+    if understanding["clarity"] != "clear":
         return (
-            str(state["routing"].get("clarification_question") or "").strip()
+            str(understanding.get("clarification_question") or "").strip()
             or (f"为了继续处理“{goal}”，请补充必要的信息。" if goal else "请补充你想咨询或处理的具体问题。"),
             "clarification_needed",
         )
-    if route_type == ROUTE_UNSUPPORTED:
+    if understanding["handling"] == "unsupported":
         return UNSUPPORTED_REPLY, "out_of_scope"
     return "抱歉，当前请求无法继续处理。", "failed"
 
@@ -140,19 +134,21 @@ def _non_execution_response(state: AgentState) -> tuple[str, str]:
 def build_respond_node(*, answer_llm_factory: Callable[[], Any] | None):
     async def respond_node(state: AgentState) -> dict[str, Any]:
         started_at = perf_counter()
-        route_type = state["routing"]["route_type"]
+        understanding = state["understanding"]
+        handling = understanding["handling"]
+        has_execution_result = bool(state.get("result"))
         writer = get_optional_stream_writer()
         sources = list((state.get("result") or {}).get("sources") or [])
         material_response = (
             _material_only_response(state)
-            if route_type in EXECUTION_ROUTE_TYPES
+            if has_execution_result
             else None
         )
         if material_response is not None:
             answer, status = material_response
             if writer is not None:
                 writer({"workflow_id": "agent", "node_id": "respond", "text": answer})
-        elif route_type in {ROUTE_DIRECT_RESPONSE, *EXECUTION_ROUTE_TYPES}:
+        elif handling == "direct" or has_execution_result:
             llm = get_answer_llm(
                 {
                     "assistant_llm_model_key": state["input"]["assistant"].get("model_key"),
@@ -161,7 +157,7 @@ def build_respond_node(*, answer_llm_factory: Callable[[], Any] | None):
             )
             prompt = (
                 _direct_prompt(state)
-                if route_type == ROUTE_DIRECT_RESPONSE
+                if handling == "direct"
                 else _execution_prompt(state)
             )
             parts: list[str] = []
@@ -186,7 +182,7 @@ def build_respond_node(*, answer_llm_factory: Callable[[], Any] | None):
             workflow_id="agent",
             node_id="respond",
             node_name="生成回答",
-            details={"路由类型": route_type, "回答状态": status, "引用数": len(sources)},
+            details={"处理方式": handling, "回答状态": status, "引用数": len(sources)},
             elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
         return {"response": response}

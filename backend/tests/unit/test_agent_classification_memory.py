@@ -1,8 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from app.agents.main.intent import build_agent_classification
-from app.agents.runtime.sub_agents import get_sub_agent_definitions
+from app.agents.main.understanding import build_request_understanding
 
 TARGET_ORDER_NUMBER = "1649210480789511"
 
@@ -21,8 +20,8 @@ class ContextAwareClassificationLlm:
                 f'"goal":"{goal}",'
                 f'"clarity":"{"clear" if resolved else "unclear"}",'
                 '"clarification_question":null,'
-                '"handling":"capabilities",'
-                '"capability_ids":["business_ops"],'
+                '"handling":"delegated",'
+                '"task_structure":"atomic",'
                 '"reason":"根据上一轮列表解析序号引用"'
                 "}"
             )
@@ -36,9 +35,8 @@ def test_classification_can_resolve_late_ordinal_reference_from_recent_history()
     ]
 
     result = asyncio.run(
-        build_agent_classification(
+        build_request_understanding(
             "查一下第13笔",
-            sub_agents=get_sub_agent_definitions(),
             chat_history=[
                 {"role": "user", "content": "查询2024年全年退款中的订单"},
                 {"role": "assistant", "content": "\n".join(order_lines)},
@@ -49,4 +47,4 @@ def test_classification_can_resolve_late_ordinal_reference_from_recent_history()
 
     assert result["clarity"] == "clear"
     assert result["goal"] == f"查询订单号{TARGET_ORDER_NUMBER}的订单详情"
-    assert result["capability_ids"] == ["business_ops"]
+    assert result["handling"] == "delegated"

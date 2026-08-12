@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agents.common.sub_agent_result import (
-    SubAgentResult,
-    build_sub_agent_result,
+from app.agents.common.task_result import (
+    TaskResult,
+    build_task_result,
 )
 
 
-def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
+def build_knowledge_task_result(state: dict[str, Any]) -> TaskResult:
     retrieval_result = dict(state.get("retrieval_result") or {})
     retrieval_status = str(retrieval_result.get("status") or "failed")
     evidence_items = [
@@ -20,9 +20,9 @@ def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
     ]
     if retrieval_status == "needs_clarification":
         question = str(retrieval_result.get("clarification_question") or "").strip()
-        result = build_sub_agent_result(
+        result = build_task_result(
             state,
-            sub_agent_id="knowledge_qa",
+            handler_id="knowledge_qa",
             status="needs_input",
             answer_status="clarification_needed",
             title="知识问答子智能体结果",
@@ -57,9 +57,9 @@ def build_knowledge_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
             if status == "success"
             else "当前知识库没有找到可用于回答的相关内容。"
         )
-    result = build_sub_agent_result(
+    result = build_task_result(
         state,
-        sub_agent_id="knowledge_qa",
+        handler_id="knowledge_qa",
         status=status,
         answer_status=answer_status,
         title="知识问答子智能体结果",

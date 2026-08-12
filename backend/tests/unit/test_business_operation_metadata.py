@@ -209,7 +209,7 @@ async def test_business_ops_graph_executes_two_read_only_calls_in_order(monkeypa
         "A1001",
         "A1002",
     ]
-    assert result["sub_agent_result"]["status"] == "success"
+    assert result["task_result"]["status"] == "success"
 
 
 def test_tool_run_result_is_partial_when_a_later_step_fails():
@@ -305,7 +305,7 @@ async def test_business_ops_redecides_after_each_success_without_follow_up_flag(
     )
 
     assert result["business_call_count"] == 1
-    assert result["sub_agent_result"]["status"] == "success"
+    assert result["task_result"]["status"] == "success"
     assert responses == []
 
 
@@ -365,7 +365,7 @@ async def test_business_ops_stops_before_a_fourth_tool_call(monkeypatch):
 
     assert service.executions == 3
     assert result["business_call_count"] == 3
-    assert result["sub_agent_result"]["status"] == "limit_reached"
+    assert result["task_result"]["status"] == "limit_reached"
 
 
 @pytest.mark.asyncio
@@ -426,5 +426,5 @@ async def test_business_ops_reports_partial_success_after_a_later_failure(monkey
     )
 
     assert [step["status"] for step in result["business_call_history"]] == ["success", "failed"]
-    assert result["sub_agent_result"]["status"] == "partial_success"
-    assert result["sub_agent_result"]["answer_status"] == "partial"
+    assert result["task_result"]["status"] == "partial_success"
+    assert result["task_result"]["answer_status"] == "partial"

@@ -14,7 +14,7 @@ from app.agents.business_ops.decision import (
     serialize_tool_candidates,
     summarize_unavailable_reasons,
 )
-from app.agents.business_ops.result import build_business_sub_agent_result
+from app.agents.business_ops.result import build_business_task_result
 from app.agents.business_ops.state import BusinessOpsState
 from app.agents.business_ops.tools.execution import build_tool_step
 from app.agents.common.node_logging import log_node_info
@@ -83,6 +83,7 @@ def build_business_ops_nodes(
                     candidates=candidates,
                     dependency_results=dict(state.get("dependency_results") or {}),
                     call_history=call_history,
+                    runtime_context=dict(state.get("runtime_context") or {}),
                     llm_factory=planner_factory,
                 )
             except Exception:
@@ -358,6 +359,7 @@ def build_business_ops_nodes(
                 operation=operation,
                 previous_params=dict(request_info.get("params") or {}),
                 error=error,
+                runtime_context=dict(state.get("runtime_context") or {}),
                 llm_factory=planner_factory,
             )
             action = str(replanned.get("action") or "fail")
@@ -452,14 +454,14 @@ def build_business_ops_nodes(
             display_title="💡 总结最终结果",
             activity_text="整理可用于回答的业务数据",
         )
-        sub_agent_result = build_business_sub_agent_result(state)
+        task_result = build_business_task_result(state)
         log_node_info(
             workflow_id="business_ops",
             node_id="compose_result",
             node_name="整理结果",
             details={
-                "结果状态": sub_agent_result.get("status"),
-                "回答状态": sub_agent_result.get("answer_status"),
+                "结果状态": task_result.get("status"),
+                "回答状态": task_result.get("answer_status"),
             },
             elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
@@ -475,8 +477,8 @@ def build_business_ops_nodes(
             activity_status="completed",
         )
         return {
-            "sub_agent_result": sub_agent_result,
-            "answer_status": sub_agent_result.get("answer_status"),
+            "task_result": task_result,
+            "answer_status": task_result.get("answer_status"),
             "retrieved_docs": [],
             "backend_citations": [],
         }

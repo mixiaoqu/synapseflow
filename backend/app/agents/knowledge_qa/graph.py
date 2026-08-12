@@ -14,7 +14,7 @@ from app.agents.knowledge_qa.nodes import (
     knowledge_qa_retrieve_node,
 )
 from app.agents.knowledge_qa.query_plan import build_knowledge_query_plan
-from app.agents.knowledge_qa.result import build_knowledge_sub_agent_result
+from app.agents.knowledge_qa.result import build_knowledge_task_result
 from app.agents.knowledge_qa.state import KnowledgeQaState
 
 
@@ -223,7 +223,7 @@ def create_knowledge_qa_graph(
             display_title="💡 总结最终结果",
             activity_text="整理可用于回答的知识库资料",
         )
-        sub_agent_result = build_knowledge_sub_agent_result(state)
+        task_result = build_knowledge_task_result(state)
         retrieval_result = dict(state.get("retrieval_result") or {})
         metrics = dict(retrieval_result.get("metrics") or {})
         log_node_info(
@@ -231,7 +231,7 @@ def create_knowledge_qa_graph(
             node_id="compose_result",
             node_name="整理结果",
             details={
-                "结果状态": sub_agent_result.get("status"),
+                "结果状态": task_result.get("status"),
                 "主证据数": metrics.get("primary_count"),
                 "上下文长度": (retrieval_result.get("budget") or {}).get("used_chars"),
             },
@@ -249,8 +249,8 @@ def create_knowledge_qa_graph(
             activity_status="completed",
         )
         return {
-            "sub_agent_result": sub_agent_result,
-            "answer_status": sub_agent_result.get("answer_status"),
+            "task_result": task_result,
+            "answer_status": task_result.get("answer_status"),
         }
 
     workflow.add_node("plan_query", _plan_query_node)

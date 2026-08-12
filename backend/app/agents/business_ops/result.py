@@ -6,13 +6,13 @@ from typing import Any
 
 from app.agents.business_ops.tools.results import build_tool_run_result
 from app.agents.business_ops.tools.schemas import ToolDecision, ToolStep
-from app.agents.common.sub_agent_result import (
-    SubAgentResult,
-    build_sub_agent_result,
+from app.agents.common.task_result import (
+    TaskResult,
+    build_task_result,
 )
 
 
-def build_business_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
+def build_business_task_result(state: dict[str, Any]) -> TaskResult:
     operation_result = dict(state.get("business_operation_result") or {})
     business_request = dict(state.get("business_request") or {})
     success = bool(operation_result.get("success"))
@@ -64,9 +64,9 @@ def build_business_sub_agent_result(state: dict[str, Any]) -> SubAgentResult:
         or str(business_request.get("reason") or "").strip()
         or "业务操作子智能体执行完成。"
     )
-    result = build_sub_agent_result(
+    result = build_task_result(
         state,
-        sub_agent_id="business_ops",
+        handler_id="business_ops",
         status=status,
         answer_status=answer_status,
         title="业务操作子智能体结果",
