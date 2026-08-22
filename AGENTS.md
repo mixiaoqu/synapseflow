@@ -1,29 +1,10 @@
 # AGENTS.md
 
-This file provides guidance to Codex when working with this repository. It is generated from the current code layout and should be kept aligned with real files, routes, and workflows.
+This file provides guidance to AI coding agents (Trae / TraeCode) when working with this repository. It is generated from the current code layout and should be kept aligned with real files, routes, and workflows.
 
 ## Project rules
 
-- 当前项目阶段优先追求简洁、正确、统一的实现，不默认为了兼容性保留旧逻辑。
-- 对自然语言中大量可变、可由模型结合上下文推理的语义，优先向模型提供可信上下文、明确规则、少量示例和结构化输出要求，代码侧只保留通用校验；不要用持续扩张的关键词、正则或条件分支模拟语义理解。安全、权限、金额口径、协议约束及其他必须确定执行的规则仍由代码负责。
-- 修改代码时，应基于当前代码事实直接收敛到最终方案，避免无依据的 fallback、双路径、弱回退、模糊兜底或“过渡性兼容”写法。
-- 只有在以下情况才考虑兼容处理：
-  - 用户明确要求兼容旧行为；
-  - 能从当前代码、数据或调用链中证明兼容约束真实存在；
-  - 外部调用方已经明确依赖旧逻辑。
-- 如果某种状态按当前实现本不应出现，应优先显式暴露问题，而不是静默兼容。
-- 小范围文案、提示词、规则收口等不涉及行为变化的修改，不需要每次都额外编写测试脚本；只有重大改造、行为变化、数据流改动或回归风险较高时才补测试。
-
-- 中文日志、中文注释、中文文档使用 UTF-8 编写；PowerShell 读取和写入中文文件时也要显式使用 UTF-8。
-
-- 不需要跑构建，除非用户明确要求。
-- 遇见需求不清楚、实现路径有歧义、代码现状与需求冲突，或发现文档和代码不一致时，先向用户确认，不要直接按假设执行。
-- 中文日志、中文注释、中文文档使用 UTF-8 编写；如果发现现有中文乱码，先说明编码问题，不要盲目批量重写。
-- 当前仓库以代码为准，文档只作为线索；不要把代码中不存在的功能写成已实现功能。
-- 后端使用 `uv` 管理依赖和运行命令。
-- 前端使用 `pnpm`，不要改用 `npm` 或生成 `package-lock.json`。
-- 只在用户明确要求时运行数据库迁移、Docker 部署、构建、批量重建索引、批量删除或发布相关命令。
-- 修改后端 API、SSE 事件、LangGraph 工作流时，同时检查前端调用方和 `frontend/src/shared/lib/stream/sse.ts` 的兼容性。
+项目规则与编码规范统一维护在 `.trae/rules/project-rules.md`（Trae 原生项目规则，始终生效）。本文件只记录项目事实，不再重复维护行为规则。
 
 ## Common commands
 
@@ -214,6 +195,7 @@ Frontend entry points:
 Admin pages currently present:
 
 - `/dashboard`: admin dashboard placeholder.
+- `/model-usage`: AI cost center with token usage and estimated costs.
 - `/projects`: product/project management entry.
 - `/projects/:projectId/apps`: project app list.
 - `/projects/:projectId/apps/new`: create project app.
@@ -224,7 +206,15 @@ Admin pages currently present:
 - `/assistants`: assistant management.
 - `/assistants/new`: create assistant.
 - `/assistants/:assistantId`: assistant detail.
+- `/agent-integrations`: Agent integration and tool governance.
 - `/qa-logs`: question-answer log review.
+- `/evaluations`: evaluation dataset overview.
+- `/evaluations/knowledge-bases`: evaluation base knowledge-base list.
+- `/evaluations/knowledge-bases/:knowledgeBaseId`: evaluation base knowledge-base detail.
+- `/evaluations/knowledge-bases/:knowledgeBaseId/documents/:documentId`: evaluation base document detail.
+- `/evaluations/datasets/:datasetId`: evaluation dataset detail.
+- `/evaluations/runs/:runId`: single evaluation run report.
+- `/evaluations/reports`: evaluation tasks / reports.
 - `/organizations`: team management.
 - `/users`: user management.
 - `/content-risk/libraries`: global content-risk rule library.
@@ -299,43 +289,4 @@ When updating this file:
 - Verify workflow claims against `backend/app/agents/runtime/factory.py` and `backend/langgraph.json`.
 - Verify frontend route claims against `frontend/src/router/index.ts`.
 - Keep commands consistent with `backend/pyproject.toml`, `frontend/package.json`, `docker-compose.yml`, and the lockfiles.
-
-
-### 命名
-
-- Python 文件、函数、变量统一使用 `snake_case`；类、Schema、Service、Repository 使用 `PascalCase`；常量使用全大写下划线。
-- TypeScript/React 组件、类型、接口、枚举使用 `PascalCase`；函数、变量、hook 使用 `camelCase`；hook 必须以 `use` 开头。
-- 布尔命名必须体现判断语义，优先使用 `is_`、`has_`、`can_`、`should_` 或 `is`、`has`、`can`、`should` 前缀。
-- 命名优先表达业务含义，避免新增含糊命名和随意缩写；已有核心缩写如 `kb` 可以沿用，但不要继续扩散新的自定义缩写。
-
-### 分层
-
-- 后端遵循 `api -> application -> services -> repositories` 分层：`api` 只处理请求响应，`application` 负责编排用例流程，`services` 提供可复用领域能力，`repositories` 只负责数据访问。
-- 前端遵循 `src/app / src/modules / src/shared / src/stores` 分层：页面负责装配，组件负责展示，组合式函数负责状态与交互编排，接口请求统一收敛到 `src/shared/api`。
-- 新代码优先放入现有层级，不要为单次需求随意新增目录类别。
-- 如果一个文件同时承担接口编排、领域能力和数据访问三种职责，应优先拆分，而不是继续叠加。
-
-
-### 注释
-
-- 注释只解释原因、约束、兼容性和边界，不解释表面动作。
-- 默认少注释；中文注释必须使用 UTF-8，并与代码保持同步。
-- 禁止新增“设置变量”“发送请求”之类的废话注释，也不要保留“先这样，后面再改”这类无结论注释。
-
-### 前端写法
-
-- 页面文件和业务组件不要直接散落裸 `fetch`；接口调用统一通过 `frontend/src/shared/api` 封装。
-- 展示组件优先保持“输入 props，输出 UI”，复杂交互和流程状态优先下沉到 composable 或 store。
-- 不要新增“万能组件”或没有拆分计划的巨型 composable；当组件同时承担请求、复杂状态、数据转换和渲染职责时，应主动拆分。
-
-### 后端写法
-
-- 路由层保持薄，避免在 endpoint 中直接写主业务流程、复杂查询拼装或跨服务编排。
-- `application service` 面向一个用例组织流程，`domain service` 面向一种能力提供复用，不要混用职责。
-- `repository` 不承载业务决策；如果代码在“编排一次流程”和“提供一种能力”之间摇摆，前者放 `application`，后者放 `services`。
-- 不需要写测试。
-
-### 自检
-
-- 新增或修改代码前，先判断这段代码属于哪一层、是否沿用了该层现有模式、命名是否体现业务含义。
-- 如果发现当前的方案不合理，或者有更好更合理的方案，可以提出来由用户确认。
+- Keep `.trae/rules/project-rules.md` as the single source of truth for project coding rules.
