@@ -155,3 +155,4 @@ e2e/
 
 # MCP internal installer outputs
 mcp_server/.artifacts/
+HANDOVER.md
