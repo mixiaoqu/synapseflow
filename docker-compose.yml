@@ -60,37 +60,6 @@ services:
       timeout: 10s
       retries: 10
 
-  reranker:
-    image: synapseflow-reranker:latest
-    build:
-      context: ./docker/reranker
-      args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
-        PYTORCH_CPU_FIND_LINKS: ${PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
-        TORCH_VERSION: ${TORCH_VERSION:-2.11.0+cpu}
-    container_name: synapseflow-reranker
-    environment:
-      - RERANK_MODEL=${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
-      - RERANK_USE_FP16=${RERANK_USE_FP16:-false}
-      - RERANK_MODEL_LOAD_RETRIES=${RERANK_MODEL_LOAD_RETRIES:-10}
-      - RERANK_MODEL_LOAD_RETRY_DELAY=${RERANK_MODEL_LOAD_RETRY_DELAY:-15}
-      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
-      - HF_HOME=/models/huggingface
-      - HF_HUB_DOWNLOAD_TIMEOUT=${HF_HUB_DOWNLOAD_TIMEOUT:-600}
-      - HF_HUB_ETAG_TIMEOUT=${HF_HUB_ETAG_TIMEOUT:-60}
-    ports:
-      - "8012:8012"
-    volumes:
-      - reranker_models:/models/huggingface
-    networks:
-      - synapseflow-network
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8012/health', timeout=5)"]
-      interval: 30s
-      timeout: 10s
-      retries: 20
-      start_period: 20m
-
   backend:
     <<: *backend-image
     container_name: synapseflow-backend
@@ -100,10 +69,15 @@ services:
       - DRAMATIQ_INDEXING_QUEUE=${DRAMATIQ_INDEXING_QUEUE:-indexing}
       - DRAMATIQ_EVALUATION_QUEUE=${DRAMATIQ_EVALUATION_QUEUE:-evaluation}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-local}
+      - EMBEDDING_API_URL=${EMBEDDING_API_URL:-https://api.siliconflow.cn/v1/embeddings}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
       - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
       - HF_HOME=/app/.cache/huggingface
       - RERANK_ENABLED=${RERANK_ENABLED:-true}
-      - RERANK_API_URL=${RERANK_API_URL:-http://reranker:8012/v1/rerank}
+      - RERANK_PROVIDER=${RERANK_PROVIDER:-siliconflow}
+      - RERANK_API_URL=${RERANK_API_URL:-https://api.siliconflow.cn/v1/rerank}
+      - RERANK_API_KEY=${RERANK_API_KEY:-}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
       - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:5173}
@@ -138,8 +112,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      reranker:
         condition: service_healthy
     networks:
       - synapseflow-network
@@ -225,7 +197,6 @@ volumes:
   backend_previews:
   backend_uploaded_documents:
   redis_data:
-  reranker_models:
 
 networks:
   synapseflow-network:

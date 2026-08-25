@@ -43,10 +43,10 @@ class Settings(BaseSettings):
     EMBEDDING_API_URL: str = "https://api.siliconflow.cn/v1/embeddings"
     EMBEDDING_DIMENSIONS: Optional[int] = None
     RERANK_ENABLED: bool = True
-    RERANK_PROVIDER: str = "local"
+    RERANK_PROVIDER: str = "siliconflow"
     RERANK_TOP_K: Optional[int] = None
     RERANK_MODEL: Optional[str] = None
-    RERANK_API_URL: str = "http://localhost:8012"
+    RERANK_API_URL: str = "https://api.siliconflow.cn/v1/rerank"
     RERANK_API_KEY: str = ""
 
     GRAPH_ENABLED: bool = False
