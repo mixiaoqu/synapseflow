@@ -50,6 +50,7 @@ const navIcons: Record<
   users: UserFilled,
   "roles-permissions": UserFilled,
   "qa-logs": ChatDotRound,
+  "qa-test": ChatDotRound,
   "content-risk-libraries": SetUp,
   "content-risk-logs": DocumentChecked,
 };

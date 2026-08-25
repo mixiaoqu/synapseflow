@@ -19,6 +19,7 @@ import KnowledgeBaseDetailPage from "@/modules/knowledge-bases/pages/KnowledgeBa
 import KnowledgeBaseListPage from "@/modules/knowledge-bases/pages/KnowledgeBaseListPage.vue";
 import DashboardPage from "@/modules/platform/pages/DashboardPage.vue";
 import QaLogListPage from "@/modules/qa-logs/pages/QaLogListPage.vue";
+import QaTestPage from "@/modules/qa-test/pages/QaTestPage.vue";
 import TeamListPage from "@/modules/organizations/pages/TeamListPage.vue";
 import UserListPage from "@/modules/users/pages/UserListPage.vue";
 import ProjectAppListPage from "@/modules/projects/pages/ProjectAppListPage.vue";
@@ -212,6 +213,15 @@ const router = createRouter({
           meta: {
             title: "问答日志",
             description: "查看问答记录、检索命中、用户反馈和人工质检结果。",
+          },
+        },
+        {
+          path: "qa-test",
+          name: "qa-test",
+          component: QaTestPage,
+          meta: {
+            title: "问答测试台",
+            description: "快速验证助手与知识库的问答效果。",
           },
         },
         {

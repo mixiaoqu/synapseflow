@@ -492,10 +492,21 @@ class AgentRunService:
         request: AgentRunRequest,
         *,
         user_id: int | None,
+        persist: bool = True,
     ) -> AsyncGenerator[str, None]:
         """Stream graph updates and answer tokens as standardized SSE messages."""
 
-        state = await self._prepare_state(request, user_id=user_id)
+        state = (
+            await self._prepare_state(request, user_id=user_id)
+            if persist
+            else self.build_initial_state(
+                request,
+                user_id=user_id,
+                session_id=self._new_run_id(),
+                chat_history=[],
+                memory_summary=None,
+            )
+        )
         run_id = state.get("run_id")
         workflow_id = str(state.get("workflow_id") or self._workflow_id)
         started_nodes: set[tuple[str, str]] = set()
@@ -511,24 +522,26 @@ class AgentRunService:
                 blocked_state = self._build_blocked_result(state, query_risk_check)
                 blocked_state.update(summarize_token_usage(usage))
                 answer_status = self._resolve_answer_status(blocked_state)
-                log_id = await self._record_log(
-                    state=state,
-                    result=blocked_state,
-                    latency_ms=0,
-                )
-                await self._recorder.record_content_risk_log(
-                    state=state,
-                    check_result=query_risk_check,
-                    checked_text=request.query,
-                    chat_log_id=log_id,
-                )
-                await self._recorder.save_turn(
-                    state=blocked_state,
-                    answer=blocked_state["answer"],
-                    answer_status=answer_status,
-                    log_id=log_id,
-                    retrieved_docs=[],
-                )
+                log_id = None
+                if persist:
+                    log_id = await self._record_log(
+                        state=state,
+                        result=blocked_state,
+                        latency_ms=0,
+                    )
+                    await self._recorder.record_content_risk_log(
+                        state=state,
+                        check_result=query_risk_check,
+                        checked_text=request.query,
+                        chat_log_id=log_id,
+                    )
+                    await self._recorder.save_turn(
+                        state=blocked_state,
+                        answer=blocked_state["answer"],
+                        answer_status=answer_status,
+                        log_id=log_id,
+                        retrieved_docs=[],
+                    )
                 yield emit_complete(
                     run_id,
                     {
@@ -704,29 +717,31 @@ class AgentRunService:
                 answer = final_state.get("answer", "")
             answer_status = self._resolve_answer_status(final_state)
             total_latency_ms = int((perf_counter() - started_at) * 1000)
-            self._trace_builder.log_retrieval_review(
-                state=state,
-                result=final_state,
-                total_latency_ms=total_latency_ms,
-            )
-            log_id = await self._record_log(
-                state=state,
-                result=final_state,
-                latency_ms=total_latency_ms,
-            )
-            await self._recorder.record_content_risk_log(
-                state=state,
-                check_result=answer_risk_check,
-                checked_text=blocked_answer_text,
-                chat_log_id=log_id,
-            )
-            await self._recorder.save_turn(
-                state=final_state,
-                answer=answer,
-                answer_status=answer_status,
-                log_id=log_id,
-                retrieved_docs=list(final_state.get("retrieved_docs", []) or []),
-            )
+            log_id = None
+            if persist:
+                self._trace_builder.log_retrieval_review(
+                    state=state,
+                    result=final_state,
+                    total_latency_ms=total_latency_ms,
+                )
+                log_id = await self._record_log(
+                    state=state,
+                    result=final_state,
+                    latency_ms=total_latency_ms,
+                )
+                await self._recorder.record_content_risk_log(
+                    state=state,
+                    check_result=answer_risk_check,
+                    checked_text=blocked_answer_text,
+                    chat_log_id=log_id,
+                )
+                await self._recorder.save_turn(
+                    state=final_state,
+                    answer=answer,
+                    answer_status=answer_status,
+                    log_id=log_id,
+                    retrieved_docs=list(final_state.get("retrieved_docs", []) or []),
+                )
             yield emit_complete(
                 run_id,
                 AgentStreamAdapter.complete_payload(

@@ -10,6 +10,7 @@ export interface AdminNavItem {
     | "organizations"
     | "roles-permissions"
     | "qa-logs"
+    | "qa-test"
     | "content-risk-libraries"
     | "content-risk-logs";
   label: string;
@@ -69,6 +70,11 @@ export const adminNavGroups: AdminNavGroup[] = [
     key: "testing-and-evaluation",
     label: "测试与评测",
     items: [
+      {
+        key: "qa-test",
+        label: "问答测试台",
+        to: "/qa-test",
+      },
       {
         key: "evaluations",
         label: "评测中心",

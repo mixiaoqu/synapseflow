@@ -5,11 +5,13 @@ from __future__ import annotations
 from datetime import date, datetime, time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import require_review_roles
 from app.application.agent.input_builder import AgentRunRequest
 from app.application.agent.run_service import get_agent_run_service
+from app.application.assistant_service import AssistantService
 from app.application.model_usage_service import model_usage_service
 from app.application.permission_service import PermissionService
 from app.core.authz import PERMISSION_REVIEW_QA_LOG, PERMISSION_VIEW_QA_LOG
@@ -153,11 +155,10 @@ async def _require_log_team_permission(
         raise HTTPException(status_code=403, detail="QA log permission denied")
 
 
-@router.post("/preview", response_model=KbChatResponse)
-async def admin_ask_preview(
+async def _build_admin_preview_request(
     request: KbChatPreviewRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_review_roles),
+    db: AsyncSession,
+    current_user: User,
 ):
     await _require_team_scope(request=request, db=db, current_user=current_user)
     allowed_statuses = (
@@ -165,16 +166,63 @@ async def admin_ask_preview(
         if request.include_unpublished
         else list(VISIBLE_ASK_DOCUMENT_STATUSES)
     )
+    assistant = None
+    if request.assistant_id is not None:
+        assistant = await AssistantService(
+            db,
+            user_id=current_user.id,
+            user=current_user,
+        ).get_profile(request.assistant_id, active_only=True)
+        if assistant.team_id != request.team_id:
+            raise HTTPException(status_code=400, detail="Assistant does not belong to team scope")
     runtime_request = AgentRunRequest(
         query=request.query,
         team_id=request.team_id,
         knowledge_base_id=request.knowledge_base_id,
         category_id=request.category_id,
+        assistant_id=assistant.id if assistant else None,
+        assistant_name=assistant.name if assistant else None,
+        assistant_llm_model_key=assistant.llm_model_key if assistant else None,
+        assistant_persona_prompt=assistant.persona_prompt if assistant else None,
+        assistant_rule_template=assistant.rule_template if assistant else None,
         session_id=request.session_id,
         allowed_document_statuses=allowed_statuses,
         source_surface="admin_qa_preview",
     )
+    return runtime_request
+
+
+@router.post("/preview", response_model=KbChatResponse)
+async def admin_ask_preview(
+    request: KbChatPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    runtime_request = await _build_admin_preview_request(request, db, current_user)
     return await get_agent_run_service().preview(runtime_request, user_id=current_user.id)
+
+
+@router.post("/preview/stream")
+async def admin_ask_preview_stream(
+    request: KbChatPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    runtime_request = await _build_admin_preview_request(request, db, current_user)
+    stream = get_agent_run_service().stream(
+        runtime_request,
+        user_id=current_user.id,
+        persist=False,
+    )
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/logs", response_model=KbChatLogListResponse)
