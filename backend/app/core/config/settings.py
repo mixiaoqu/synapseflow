@@ -35,7 +35,6 @@ class Settings(BaseSettings):
     EVALUATION_CASE_TIMEOUT_SECONDS: int = 120
     EMBEDDING_MODEL: Optional[str] = None
 
-    MOYU_API_KEY: str = ""
     DEEPSEEK_API_KEY: str = ""
     SILICONFLOW_API_KEY: str = ""
 

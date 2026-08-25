@@ -1,9 +1,4 @@
 providers:
-  moyu:
-    api_base: https://www.moyu.info/v1
-    api_key_env: MOYU_API_KEY
-    description: Moyu OpenAI compatible proxy
-
   deepseek:
     api_base: https://api.deepseek.com
     api_key_env: DEEPSEEK_API_KEY
@@ -18,42 +13,6 @@ providers:
 model_assets:
   # Optional estimated prices in CNY per one million tokens.
   # Keep them at 0/omit them when the provider price is not confirmed.
-  glm-5-1:
-    type: chat
-    provider: moyu
-    model: glm-5.1
-    name:  GLM-5.1
-    request_timeout: 180
-    streaming: true
-    max_tokens: 4096
-
-  kimi-k2-6:
-    type: chat
-    provider: moyu
-    model: kimi-k2.6
-    name:  Kimi K2.6
-    request_timeout: 180
-    streaming: true
-    max_tokens: 4096
-
-  gpt-5-4-mini:
-    type: chat
-    provider: moyu
-    model: gpt-5.4-mini
-    name:  GPT-5.4 Mini
-    request_timeout: 180
-    streaming: true
-    max_tokens: 4096
-
-  minimax-m2-7:
-    type: chat
-    provider: moyu
-    model: MiniMax/MiniMax-M2.7
-    name:  MiniMax M2.7
-    request_timeout: 180
-    streaming: true
-    max_tokens: 4096
-
   deepseek-v4-flash:
     type: chat
     provider: deepseek
@@ -83,15 +42,6 @@ model_assets:
     # 官方美元价格按 1 USD = 6.8 CNY 换算；输入采用缓存未命中价格。
     input_price: 3
     output_price: 6
-    request_timeout: 180
-    streaming: true
-    max_tokens: 4096
-
-  qwen3-6-flash:
-    type: chat
-    provider: moyu
-    model: qwen3.6-flash
-    name:  Qwen3.6 Flash
     request_timeout: 180
     streaming: true
     max_tokens: 4096
