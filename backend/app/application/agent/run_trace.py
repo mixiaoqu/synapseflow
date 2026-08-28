@@ -17,6 +17,11 @@ class AgentRunTraceBuilder:
         result: dict[str, Any],
         retrieved_docs: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        web_sources = [
+            doc for doc in retrieved_docs
+            if (doc.get("metadata") or {}).get("source_type") == "web"
+        ]
+        retrieved_docs = [doc for doc in retrieved_docs if doc not in web_sources]
         retrieval_trace = (
             dict(result.get("retrieval_trace") or {})
             if isinstance(result.get("retrieval_trace"), dict)
@@ -208,6 +213,7 @@ class AgentRunTraceBuilder:
             )
 
         return {
+            "web_sources": web_sources,
             "knowledge_plan": {
                 "attempt_count": int(result.get("query_plan_attempt") or 1),
                 "normalized_query": str(

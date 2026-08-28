@@ -7,6 +7,8 @@ from typing import Any
 
 def _source_identity(item: dict[str, Any]) -> str:
     source = dict(item.get("source") or {})
+    if source.get("source_type") == "web" and source.get("url"):
+        return f"web:{source['url']}"
     ref_id = str(item.get("ref_id") or "").strip()
     if ref_id:
         return f"ref:{ref_id}"
@@ -63,6 +65,7 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         for result in successes
     )
     knowledge_context: list[dict[str, Any]] = []
+    web_context: list[dict[str, Any]] = []
     citation_refs: list[str] = []
     business_data: list[dict[str, Any]] = []
     clarifications: list[dict[str, Any]] = []
@@ -85,6 +88,11 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
             knowledge_context.extend(
                 dict(item)
                 for item in list(content.get("knowledge_context") or [])
+                if isinstance(item, dict)
+            )
+        elif data.get("kind") == "web" and isinstance(content, dict):
+            web_context.extend(
+                dict(item) for item in list(content.get("web_context") or [])
                 if isinstance(item, dict)
             )
         elif data.get("kind") == "action_result" and isinstance(content, dict):
@@ -114,9 +122,16 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         )
 
     context_by_ref: dict[str, dict[str, Any]] = {}
-    for item in knowledge_context:
+    for item in [*knowledge_context, *web_context]:
         ref_id = str(item.get("ref_id") or "").strip()
-        if ref_id and ref_id not in context_by_ref:
+        if ref_id and (
+            ref_id not in context_by_ref
+            or (
+                item.get("kind") == "web_page"
+                and item.get("role") == "primary"
+                and context_by_ref[ref_id].get("role") != "primary"
+            )
+        ):
             context_by_ref[ref_id] = item
     deduped_citation_refs = list(dict.fromkeys(citation_refs))
 
@@ -176,7 +191,14 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         "failed_count": len(failures),
         "needs_input_count": len(needs_input),
         "partial": bool(successes and (failures or needs_input or has_partial_success)),
-        "knowledge_context": list(context_by_ref.values()),
+        "knowledge_context": [
+            item for item in context_by_ref.values()
+            if item.get("kind") not in {"web_page", "web_snippet"}
+        ],
+        "web_context": [
+            item for item in context_by_ref.values()
+            if item.get("kind") in {"web_page", "web_snippet"}
+        ],
         "business_data": business_data,
         "citation_refs": deduped_citation_refs,
         "sources": retrieved_docs,

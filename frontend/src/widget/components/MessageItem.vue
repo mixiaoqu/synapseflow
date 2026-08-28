@@ -12,6 +12,7 @@ import {
 import type { AgentChatMessage } from "../chat";
 import type { ChatWorkflowRun } from "../../shared/lib/stream/workflowRun";
 import WorkflowProgress from "./WorkflowProgress.vue";
+import { getWebSource } from "../../shared/lib/webSource";
 
 const props = defineProps<{
   message: AgentChatMessage;
@@ -25,6 +26,8 @@ const markdown = new MarkdownIt({ breaks: true, linkify: true });
 const html = computed(() => DOMPurify.sanitize(markdown.render(props.message.content || "")));
 
 function docTitle(doc: Record<string, unknown>) {
+  const webSource = getWebSource(doc);
+  if (webSource) return webSource.title;
   const metadata = doc.metadata;
   if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
     const title = (metadata as Record<string, unknown>).document_title;
@@ -115,7 +118,15 @@ async function copy() {
             :title="docTitle(doc)"
           >
             <el-icon><Document /></el-icon>
-            <b v-if="index === 0">来源：</b>{{ docTitle(doc) }}
+            <b v-if="index === 0">来源：</b>
+            <a
+              v-if="getWebSource(doc)"
+              :href="getWebSource(doc)?.url"
+              :title="`抓取时间：${getWebSource(doc)?.fetchedAt || '未知'}`"
+              target="_blank"
+              rel="noopener noreferrer"
+            >网页 · {{ docTitle(doc) }}</a>
+            <template v-else>{{ docTitle(doc) }}</template>
           </span>
           <span v-if="message.retrievedDocs.length > 4">+{{ message.retrievedDocs.length - 4 }}</span>
         </div>
@@ -208,6 +219,7 @@ async function copy() {
 .widget-message__meta { display: flex; width: 100%; flex-direction: column; gap: 6px; }
 .widget-message__sources { display: flex; flex-wrap: wrap; gap: 6px 10px; }
 .widget-message__sources span { display: inline-flex; max-width: 100%; align-items: center; gap: 3px; overflow: hidden; color: #78909c; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.widget-message__sources a { color: #0891b2; text-decoration: underline; }
 .widget-message__sources b { font-weight: 500; }
 .widget-message__actions { display: flex; align-items: center; gap: 8px; }
 .widget-message__actions button { display: grid; width: 20px; height: 20px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #64748b; cursor: pointer; }

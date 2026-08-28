@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     DEEPSEEK_API_KEY: str = ""
     SILICONFLOW_API_KEY: str = ""
+    WEB_SEARCH_ENABLED: bool = False
+    TAVILY_API_KEY: str = ""
 
     EMBEDDING_PROVIDER: str = "local"
     EMBEDDING_API_URL: str = "https://api.siliconflow.cn/v1/embeddings"

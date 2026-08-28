@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
+    "web_search": {
+        "search": {"label": "搜索网页", "progress_message": "正在搜索公开网页..."},
+        "extract": {"label": "提取正文", "progress_message": "正在提取网页正文..."},
+        "compose_result": {"label": "整理网页证据", "progress_message": "正在整理网页来源..."},
+    },
     "agent": {
         "decide": {
             "label": "规划下一步",
@@ -67,12 +72,18 @@ CUSTOMER_STAGE_TITLES = {
     "understand": "理解需求",
     "plan": "规划步骤",
     "knowledge_search": "查阅资料",
+    "web_search": "查阅网页",
     "business_query": "查询业务数据",
     "execute": "处理任务",
     "compose": "整理答案",
 }
 
 NODE_CUSTOMER_STAGES = {
+    "web_search": {
+        "search": "web_search",
+        "extract": "web_search",
+        "compose_result": "compose",
+    },
     "agent": {
         "decide": "plan",
         "execute": "execute",

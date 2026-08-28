@@ -150,6 +150,7 @@ export interface QaLogTraceBranchSummary {
 }
 
 export interface QaLogTracePayload {
+  web_sources?: Array<Record<string, unknown>>;
   answer_model?: {
     key?: string;
     model?: string;

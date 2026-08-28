@@ -80,6 +80,7 @@ class AgentResult(TypedDict):
     status: str
     answer_status: str
     knowledge_context: list[dict[str, Any]]
+    web_context: NotRequired[list[dict[str, Any]]]
     business_data: list[dict[str, Any]]
     sources: list[dict[str, Any]]
     errors: list[dict[str, Any]]

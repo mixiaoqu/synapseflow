@@ -141,7 +141,10 @@ class AgentRunRecorder:
             if isinstance(retrieval_trace.get("rerank"), dict)
             else {}
         )
-        retrieved_docs = list(result.get("retrieved_docs") or [])
+        retrieved_docs = [
+            doc for doc in list(result.get("retrieved_docs") or [])
+            if (doc.get("metadata") or {}).get("source_type") != "web"
+        ]
         empty_reason = str(retrieval_trace.get("empty_reason") or "").strip()
         if empty_reason in {"empty_knowledge_base", "empty_collection"}:
             retrieval_status = empty_reason

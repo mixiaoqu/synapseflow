@@ -130,6 +130,8 @@ The current graph registry is `backend/app/agents/runtime/factory.py`.
 
 Registered workflows:
 
+- `web_search`: deterministic `search -> extract -> compose_result` subgraph behind the built-in `search_web` capability. Global `WEB_SEARCH_ENABLED` plus `TAVILY_API_KEY` controls availability for every app, including direct graph callers; it does not use per-app tool grants. The provider adapter lives in `backend/app/services/web_search/`. Only the public goal is sent as a search query; private history/context is not automatically forwarded. Search snippets remain supporting clues when extraction fails. Web evidence keeps URL/title/timestamps separately from knowledge-base document metadata.
+
 - `agent`: top-level workflow defined by `backend/app/agents/main/graph.py`; requests enter `decide`, which uses native tool calling against the current capability catalog. Independent calls run through `execute` in parallel and return evidence to `decide`; dependent calls reference completed call IDs in later rounds. A structured final decision enters `respond`. The generic decision prompt contains no tool-specific routing rules. Optional short plans, duplicate-call reuse, bounded concurrency, timeouts, and a shared execution-operation budget control the loop.
 - `knowledge_qa`: reusable single-goal knowledge-base QA subgraph defined by `backend/app/agents/knowledge_qa/graph.py`; the top-level `agent` selects the `search_knowledge` capability tool and supplies one concrete goal with relevant prior results. Each subgraph follows `plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result`, generates multiple retrieval expressions for only its assigned goal, and allows at most one feedback-driven query rewrite when retrieval returns no usable document chunks. If that retry produces no executable new query, `plan_query` exits directly to `compose_result`.
 - `business_ops`: controlled read-only business data operation subgraph defined by `backend/app/agents/business_ops/graph.py`; it performs up to three sequential tool calls, loops from `execute_operation` back to `analyze_request` only when another call is required, and retains one optional parameter-correction retry per call.
@@ -141,6 +143,7 @@ Registered workflows:
 - `agent` nodes: `decide`, `execute`, `respond`
 - `knowledge_qa` nodes: `plan_query`, `plan_retrieval`, `retrieve_knowledge`, `compose_result`
 - `business_ops` nodes: `analyze_request`, `match_operation`, `execute_operation`, `replan_operation_params`, `compose_result`
+- `web_search` nodes: `search`, `extract`, `compose_result`
 <!-- workflow-node-ids:end -->
 
 Important workflow files:

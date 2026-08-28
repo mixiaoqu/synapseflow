@@ -5,6 +5,27 @@
 - `backend/`：FastAPI + LangGraph 后端服务，同时提供面向编辑器/客户端的远程 Streamable HTTP MCP 入口。
 - `frontend/`：Vue 3 + Vite 管理后台前端。
 
+学习与开发入口：[项目分层与依赖速查](ARCHITECTURE.md)。
+
+## 联网搜索（Tavily）
+
+内置 `search_web` 与知识库、业务查询能力并列，由主 Agent 按目标选择。搜索和正文提取是内部步骤，无需在「Agent 集成」创建工具提供方，也无需逐应用授权。
+
+本地在 `backend/.env` 中设置以下配置并重启后端；开发 Compose 挂载该文件。生产 Compose 则在部署所用的环境文件中设置同名变量，重新创建 backend 和 backend-worker：
+
+```dotenv
+WEB_SEARCH_ENABLED=true
+TAVILY_API_KEY=你的Tavily密钥
+```
+
+- 开关默认关闭，或 Key 为空时工具不可见；开启后所有应用（含预览、评测与远程 MCP 主 Agent）均可调用。Key 仅保留在后端。
+- 采用 [Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search) 和 [Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract) REST 接口，复用现有 `httpx`，无新增依赖或数据库迁移。
+- 每次最多搜索 5 条、按返回顺序选择最多 3 个去重后的公开 URL；每页最多返回 8000 字符正文节选。固定 basic 深度；不采用 Tavily 生成的答案，不自动重试付费请求。
+- 每个 HTTP 请求总时限 30 秒、响应上限 1 MiB；搜索及批量提取各计 1 次内部操作，另加顶层能力调用 1 次，计入现有 Agent 总预算。不是跨用户费用总额限制，账户额度须在 Tavily 控制台设置。
+- 仅自动发送搜索目标与所选 URL，不附带身份、完整对话、页面或业务工具结果。模型生成的搜索词仍可能包含敏感信息，开启前应评估数据出境与使用范围；这不是自动脱敏保障。
+- 网页保留真实 URL、标题、抓取时间和可获得的发布日期；抓取时间不代表发布日期。抓取失败的摘要仅作检索线索，不能当作已核验正文，页面也不会写入知识库。
+- 联网能力不等于医疗知识库。药品用法用量必须核对具体名称、厂家、剂型、规格和权威说明书；当前实现没有药品专用来源库或临床准确性保证。
+
 ## 技术栈
 
 ### Backend

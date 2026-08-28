@@ -25,8 +25,14 @@ def _build_registry() -> dict[str, GraphDefinition]:
     from app.agents.business_ops.graph import create_business_ops_graph
     from app.agents.knowledge_qa.graph import create_knowledge_qa_graph
     from app.agents.main.graph import create_agent_graph
+    from app.agents.web_search.graph import create_web_search_graph
 
     return {
+        "web_search": GraphDefinition(
+            graph_id="web_search",
+            factory=create_web_search_graph,
+            node_ids=("search", "extract", "compose_result"),
+        ),
         "agent": GraphDefinition(
             graph_id="agent",
             factory=create_agent_graph,

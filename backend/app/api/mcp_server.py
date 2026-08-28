@@ -133,6 +133,16 @@ async def agent_chat(message: str) -> dict[str, Any]:
         metadata = dict(document.get("metadata") or {})
         sources.append(
             {
+                **(
+                    {
+                        key: metadata.get(key)
+                        for key in (
+                            "source_type", "url", "title", "fetched_at",
+                            "published_at", "extraction_status", "content_scope",
+                        )
+                    }
+                    if metadata.get("source_type") == "web" else {}
+                ),
                 "source_path": metadata.get("source_path"),
                 "language": metadata.get("language"),
                 "start_line": metadata.get("start_line"),

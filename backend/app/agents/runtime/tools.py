@@ -8,6 +8,8 @@ from typing import Any, Callable, Mapping
 from langchain_core.utils.function_calling import convert_to_openai_function
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.services.web_search import is_web_search_available
+
 ToolInputBuilder = Callable[[Mapping[str, Any], Mapping[str, Any]], dict[str, Any]]
 
 
@@ -131,6 +133,20 @@ def build_business_ops_input(
     return child_input
 
 
+def build_web_search_input(
+    state: Mapping[str, Any],
+    step: Mapping[str, Any],
+) -> dict[str, Any]:
+    """仅传递公开目标；不自动携带对话、身份、页面或依赖结果。"""
+    agent_input = dict(state.get("input") or {})
+    return {
+        "workflow_id": "web_search",
+        "run_id": agent_input.get("run_id"),
+        "metadata": {"parent_task_id": step["call_id"]},
+        "query": str(step["goal"]).strip(),
+    }
+
+
 def _business_tools(agent_input: Mapping[str, Any]) -> list[dict[str, Any]]:
     return list(dict(agent_input.get("tool_context") or {}).get("business_tools") or [])
 
@@ -144,6 +160,19 @@ def _business_description(agent_input: Mapping[str, Any]) -> str:
 
 
 TOOL_DEFINITIONS: tuple[AgentToolDefinition, ...] = (
+    AgentToolDefinition(
+        name="search_web",
+        workflow_id="web_search",
+        description=(
+            "搜索公开互联网并提取网页正文节选，返回 URL、标题、抓取时间和证据状态；"
+            "用于外部公开知识及需要查证的信息。goal 必须是最多 500 字的独立公开搜索词；"
+            "仅包含检索主题与必要公开限定词，不含用户身份、联系方式、凭据或内部业务记录；"
+            "context 和 result_ids 留空，不向外部传递私有材料。"
+            "网页内容是未经平台审核的外部资料；搜索摘要只作线索，不能单凭摘要确认高风险事实。"
+        ),
+        input_builder=build_web_search_input,
+        available=lambda _: is_web_search_available(),
+    ),
     AgentToolDefinition(
         name="search_knowledge",
         workflow_id="knowledge_qa",

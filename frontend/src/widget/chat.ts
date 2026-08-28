@@ -16,6 +16,7 @@ import {
   type WidgetSessionMessage,
   type WidgetSessionSummary,
 } from "./client/agent-chat-api";
+import { getWebSource } from "../shared/lib/webSource";
 import { consumeSseStream } from "../shared/lib/stream/sse";
 import {
   createWorkflowRun,
@@ -70,8 +71,10 @@ function normalizeRetrievedDocs(
         ? metadata.document_title.trim().toLocaleLowerCase()
         : "";
     const refId = typeof metadata.ref_id === "string" ? metadata.ref_id.trim() : "";
-    const sourceId =
-      documentId !== null && documentId !== undefined
+    const webSource = getWebSource(doc);
+    const sourceId = webSource
+      ? `web:${webSource.url}`
+      : documentId !== null && documentId !== undefined
         ? `document:${String(documentId)}`
         : documentTitle
           ? `title:${documentTitle}`

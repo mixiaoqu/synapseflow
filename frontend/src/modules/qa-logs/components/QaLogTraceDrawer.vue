@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { getWebSource } from "@/shared/lib/webSource";
 import {
   ArrowDown,
   ArrowUp,
@@ -113,6 +114,8 @@ function sourceTagType(doc: QaLogDiagnosticDoc) {
 }
 
 const tracePayload = computed<QaLogTracePayload | null>(() => props.detail?.tracePayload ?? null);
+const webSources = computed(() => (tracePayload.value?.web_sources ?? [])
+  .map(getWebSource).filter((source) => source !== null));
 const answerModel = computed(() => tracePayload.value?.answer_model ?? null);
 const knowledgePlan = computed(() => tracePayload.value?.knowledge_plan ?? null);
 const knowledgeGoals = computed(() => knowledgePlan.value?.knowledge_goals || []);
@@ -332,6 +335,25 @@ watch(
               {{ formatLatency(overview.latencyMs) }}
             </strong>
           </article>
+        </section>
+
+        <section
+          v-if="webSources.length"
+          class="qa-log-trace-drawer__section"
+        >
+          <h3>网页来源</h3>
+          <p>外部网页证据独立展示，不计入知识库召回与重排数量。</p>
+          <p
+            v-for="source in webSources"
+            :key="source.url"
+          >
+            <a
+              :href="source.url"
+              target="_blank"
+              rel="noopener noreferrer"
+            >{{ source.title }}</a>
+            <span> · 抓取时间：{{ source.fetchedAt || "未知" }}</span>
+          </p>
         </section>
 
         <section

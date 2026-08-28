@@ -612,3 +612,42 @@ def test_correction_stream_events_keep_actual_model_rounds(scripted_agent_llm):
         assert all(e["round"] == 2 for e in events if e.get("node_id") == "respond")
 
     asyncio.run(run())
+
+
+def test_main_agent_runs_web_workflow_and_preserves_sources(scripted_agent_llm, monkeypatch):
+    from app.agents.web_search.graph import create_web_search_graph
+    from app.services.web_search import settings
+
+    monkeypatch.setattr(settings, "WEB_SEARCH_ENABLED", True)
+    monkeypatch.setattr(settings, "TAVILY_API_KEY", "test-key")
+
+    class PublicGateway:
+        async def search(self, query):
+            assert query == "公开产品指南"
+            return [{
+                "url": "https://example.com/guide", "title": "产品指南",
+                "snippet": "搜索摘要", "published_at": None,
+                "fetched_at": "2026-08-28T00:00:00+00:00",
+            }]
+
+        async def extract(self, urls):
+            assert urls == ["https://example.com/guide"]
+            return {urls[0]: "已经提取的公开正文"}
+
+    llm = scripted_agent_llm([
+        AIMessage(content="", tool_calls=[call("search_web", "web1", "公开产品指南")]),
+        finish(),
+    ])
+    workflows = {tool.name: ChildWorkflow() for tool in get_tool_definitions()}
+    workflows["search_web"] = create_web_search_graph(gateway_factory=PublicGateway)
+    graph = create_agent_graph(
+        planner_llm_factory=lambda: llm, answer_llm_factory=lambda: llm,
+        tool_workflows=workflows,
+    )
+    result = asyncio.run(graph.ainvoke(input_state()))
+    assert result["operation_count"] == 3
+    assert result["response"]["sources"][0]["metadata"]["url"] == "https://example.com/guide"
+    assert result["result"]["knowledge_context"] == []
+    assert "已经提取的公开正文" in llm.answer_prompts[0]
+    assert "https://example.com/guide" in llm.answer_prompts[0]
+    assert "search_snippet" in llm.answer_prompts[0]
