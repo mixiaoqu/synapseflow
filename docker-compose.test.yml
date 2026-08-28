@@ -110,6 +110,7 @@ services:
       DRAMATIQ_INDEXING_QUEUE: ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing}
       DRAMATIQ_GRAPH_INDEXING_QUEUE: ${SF_DRAMATIQ_GRAPH_INDEXING_QUEUE:-graph_indexing}
       DRAMATIQ_EVALUATION_QUEUE: ${SF_DRAMATIQ_EVALUATION_QUEUE:-evaluation}
+      EVALUATION_CASE_TIMEOUT_SECONDS: ${SF_EVALUATION_CASE_TIMEOUT_SECONDS:-180}
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:?set SILICONFLOW_API_KEY}
       MOYU_API_KEY: ${MOYU_API_KEY:?set MOYU_API_KEY}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}
@@ -217,6 +218,28 @@ services:
       - sh
       - -c
       - uv run dramatiq --queues ${SF_DRAMATIQ_GRAPH_INDEXING_QUEUE:-graph_indexing} --processes ${SF_DRAMATIQ_GRAPH_PROCESSES:-1} --threads ${SF_DRAMATIQ_GRAPH_THREADS:-1} app.workers.indexing_tasks
+
+  backend-worker-evaluation-test:
+    <<: *backend-test-image
+    container_name: synapseflow-backend-worker-evaluation-test
+    restart: unless-stopped
+    environment: *backend-test-env
+    volumes:
+      - backend_test_hf_cache:/app/.cache/huggingface
+      - backend_test_previews:/app/previews
+      - backend_test_uploads:/app/uploads
+      - backend_test_uploaded_documents:/app/uploaded_documents
+    depends_on:
+      backend-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - uv run dramatiq --queues ${SF_DRAMATIQ_EVALUATION_QUEUE:-evaluation} --processes ${SF_DRAMATIQ_EVALUATION_PROCESSES:-4} --threads ${SF_DRAMATIQ_EVALUATION_THREADS:-8} app.workers.evaluation_tasks
+    cpus: ${SF_EVALUATION_CPU_LIMIT:-4.0}
+    mem_limit: ${SF_EVALUATION_MEMORY_LIMIT:-8g}
 
   frontend-test:
     image: synapseflow-frontend:test
