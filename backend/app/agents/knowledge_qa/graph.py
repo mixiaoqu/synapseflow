@@ -50,6 +50,12 @@ def create_knowledge_qa_graph(
             attempt=attempt,
             previous_plan=dict(state.get("current_query_plan") or {}),
             retrieval_feedback=dict(state.get("retrieval_feedback") or {}),
+            task_context={
+                "context": state.get("task_context") or "",
+                "dependency_results": dict(state.get("dependency_results") or {}),
+                "page_context": dict(state.get("page_context") or {}),
+                "runtime_context": dict(state.get("runtime_context") or {}),
+            },
             llm_factory=planner_factory,
         )
         result = {
@@ -63,12 +69,8 @@ def create_knowledge_qa_graph(
                 for item in list(retrieval_result.get("evidence_items") or [])
                 if isinstance(item, dict)
             ]
-            has_primary_evidence = any(
-                item.get("role") == "primary" for item in evidence_items
-            )
-            retrieval_result["status"] = (
-                "found" if has_primary_evidence else "no_hits"
-            )
+            has_primary_evidence = any(item.get("role") == "primary" for item in evidence_items)
+            retrieval_result["status"] = "found" if has_primary_evidence else "no_hits"
             retrieval_result["reason_code"] = (
                 None
                 if has_primary_evidence

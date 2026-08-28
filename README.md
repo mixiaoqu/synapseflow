@@ -72,7 +72,7 @@ synapseflow/
 ### MCP 工具边界
 
 远程 MCP 使用 Streamable HTTP，仅注册一个 `agent_chat(message)` 工具。请求使用
-`ProjectAppAccessCredential` 生成的 Bearer 凭据，服务端根据凭证解析当前 `ProjectApp`，第一版仅通过其绑定的知识库调用 `knowledge_qa`。
+`ProjectAppAccessCredential` 生成的 Bearer 凭据，服务端根据凭证解析当前 `ProjectApp`，通过顶层 `agent` 使用该应用绑定的知识库及已授权的只读业务能力。内置能力工具不作为独立 MCP 入口暴露。
 
 TRAE 配置示例：
 
@@ -101,11 +101,16 @@ TRAE 配置示例：
 `backend/langgraph.json` 当前暴露顶层 `agent` 与 `knowledge_qa`。注册位置是 `backend/app/agents/runtime/factory.py`。
 
 ```text
-agent: route -> respond
-       route -> plan -> execute -> aggregate -> respond
+agent: decide -> respond
+       decide -> execute -> decide（根据结果继续或结束）
 
 knowledge_qa: plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result
 ```
+
+主 Agent 通过内置工具 `search_knowledge` 和 `query_business_data` 调用现有知识与业务子图。
+工具定义集中维护能力契约，主提示词使用通用决策规则；独立调用并行执行，后续调用可引用已完成结果。
+生产入口准备当前应用的授权能力摘要，原有服务继续负责权限校验和审计。
+规划模型须支持原生工具调用及 JSON 对象输出模式。默认限制为 6 次模型决策、8 次顶层调用、24 个执行操作、3 路并发、单次能力调用 90 秒及执行阶段 240 秒；内部检索批次和业务接口调用计入执行操作预算，最终回复另有 60 秒超时。 最终交付 JSON 校验失败时，每次决策最多纠正两次；每次模型调用均计入上述轮次和时间预算。纠正耗尽后保留已有结果，明确返回部分完成或失败。
 
 ## 快速开始
 

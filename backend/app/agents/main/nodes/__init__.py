@@ -1,17 +1,7 @@
-"""Top-level Agent workflow nodes."""
+"""主 Agent 决策、执行与回复节点。"""
 
-from app.agents.main.nodes.aggregate import aggregate_node
-from app.agents.main.nodes.execute import build_execute_node
-from app.agents.main.nodes.plan import build_plan_node
-from app.agents.main.nodes.respond import build_respond_node
-from app.agents.main.nodes.route import build_route_node
-from app.agents.main.nodes.understand import build_understand_node
+from .decide import build_decide_node
+from .execute import build_execute_node
+from .respond import build_respond_node
 
-__all__ = [
-    "aggregate_node",
-    "build_execute_node",
-    "build_plan_node",
-    "build_respond_node",
-    "build_route_node",
-    "build_understand_node",
-]
+__all__ = ["build_decide_node", "build_execute_node", "build_respond_node"]

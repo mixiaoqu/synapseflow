@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from app.agents.common.execution_budget import consume_operation
 from app.agents.common.streaming import emit_activity, get_optional_stream_writer
 from app.agents.knowledge_qa.state import KnowledgeQaState
 from app.services.kb_text_retrieval import run_kb_channel_text_retrieval
@@ -174,6 +175,7 @@ async def knowledge_qa_retrieve_node(
     context_budget = int(context_plan.get("budget_chars") or 9000)
 
     provider_error: Exception | None = None
+    consume_operation()
     try:
         text_result = await run_kb_channel_text_retrieval(
             query=str(state.get("normalized_query") or goal).strip(),

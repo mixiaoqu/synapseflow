@@ -17,6 +17,7 @@ from app.agents.business_ops.decision import (
 from app.agents.business_ops.result import build_business_task_result
 from app.agents.business_ops.state import BusinessOpsState
 from app.agents.business_ops.tools.execution import build_tool_step
+from app.agents.common.execution_budget import ExecutionBudgetExceededError, consume_operation
 from app.agents.common.node_logging import log_node_info
 from app.agents.common.streaming import emit_activity, get_optional_stream_writer
 from app.application.business_operations import BusinessOperationService
@@ -84,6 +85,7 @@ def build_business_ops_nodes(
                     dependency_results=dict(state.get("dependency_results") or {}),
                     call_history=call_history,
                     runtime_context=dict(state.get("runtime_context") or {}),
+                    task_context=str(state.get("task_context") or ""),
                     llm_factory=planner_factory,
                 )
             except Exception:
@@ -260,6 +262,26 @@ def build_business_ops_nodes(
             "project_id": state.get("project_id"),
             "store_id": state.get("store_id"),
         }
+        try:
+            consume_operation()
+        except ExecutionBudgetExceededError:
+            message = "本次执行预算已用尽，已取得的业务结果予以保留。"
+            return {
+                "business_request": {**request_info, "status": "limit_reached", "reason": message},
+                "business_operation_result": {
+                    "success": False,
+                    "operation_id": operation["id"],
+                    "message": message,
+                    "error": {
+                        "code": "EXECUTION_BUDGET_EXHAUSTED",
+                        "message": message,
+                        "retryable": False,
+                    },
+                },
+                "business_result": build_combined_business_result(
+                    list(state.get("business_call_history") or [])
+                ),
+            }
         result = await service.execute(
             BusinessOperationRequest(
                 operation_id=str(operation["id"]),

@@ -509,7 +509,7 @@ class AgentRunService:
         )
         run_id = state.get("run_id")
         workflow_id = str(state.get("workflow_id") or self._workflow_id)
-        started_nodes: set[tuple[str, str]] = set()
+        started_nodes: set[tuple[str, str, str, int]] = set()
         final_state = dict(state)
         started_at = perf_counter()
         usage_context = token_usage_context(scene="chat", run_id=str(run_id or ""))
@@ -565,7 +565,14 @@ class AgentRunService:
                 if chunk_type == "updates":
                     for node_id, node_state in chunk_data.items():
                         node_workflow_id = workflow_id
-                        node_key = (node_workflow_id, node_id)
+                        identity = AgentStreamAdapter.execution_identity(
+                            {
+                                "round": node_state.get(
+                                    "decision_count", final_state.get("decision_count")
+                                ),
+                            }
+                        )
+                        node_key = (node_workflow_id, node_id, "", identity.get("round", 0))
                         node_name = get_node_label(node_workflow_id, node_id)
                         if node_key not in started_nodes:
                             yield emit_node_start(
@@ -574,6 +581,7 @@ class AgentRunService:
                                 run_id,
                                 workflow_id=node_workflow_id,
                                 message=get_node_progress_message(node_workflow_id, node_id),
+                                data=identity,
                             )
                             started_nodes.add(node_key)
 
@@ -582,9 +590,10 @@ class AgentRunService:
                             yield emit_event(
                                 AgentEventType.RETRIEVED,
                                 {
+                                    **identity,
                                     "retrieved_docs": self._retrieved_docs_from_node_state(
                                         node_state
-                                    )
+                                    ),
                                 },
                                 workflow_id=node_workflow_id,
                                 node_id=node_id,
@@ -596,7 +605,10 @@ class AgentRunService:
                             node_id,
                             node_name,
                             run_id,
-                            build_node_summary(node_workflow_id, node_id, node_state),
+                            {
+                                **build_node_summary(node_workflow_id, node_id, node_state),
+                                **identity,
+                            },
                             workflow_id=node_workflow_id,
                         )
                 elif chunk_type == "custom":
@@ -608,7 +620,13 @@ class AgentRunService:
                         raise ValueError(
                             f"Custom stream event is missing workflow_id: node_id={node_id}"
                         )
-                    node_key = (node_workflow_id, node_id)
+                    identity = AgentStreamAdapter.execution_identity(chunk_data)
+                    node_key = (
+                        node_workflow_id,
+                        node_id,
+                        identity.get("tool_call_id", ""),
+                        identity.get("round", 0),
+                    )
                     node_name = get_node_label(node_workflow_id, node_id)
                     if chunk_data.get("type") == "node_complete":
                         node_state = (
@@ -623,6 +641,7 @@ class AgentRunService:
                                 run_id,
                                 workflow_id=node_workflow_id,
                                 message=get_node_progress_message(node_workflow_id, node_id),
+                                data=identity,
                             )
                             started_nodes.add(node_key)
 
@@ -630,9 +649,10 @@ class AgentRunService:
                             yield emit_event(
                                 AgentEventType.RETRIEVED,
                                 {
+                                    **identity,
                                     "retrieved_docs": self._retrieved_docs_from_node_state(
                                         node_state
-                                    )
+                                    ),
                                 },
                                 workflow_id=node_workflow_id,
                                 node_id=node_id,
@@ -644,7 +664,10 @@ class AgentRunService:
                             node_id,
                             node_name,
                             run_id,
-                            build_node_summary(node_workflow_id, node_id, node_state),
+                            {
+                                **build_node_summary(node_workflow_id, node_id, node_state),
+                                **identity,
+                            },
                             workflow_id=node_workflow_id,
                         )
                         continue
@@ -661,6 +684,7 @@ class AgentRunService:
                                 run_id,
                                 workflow_id=node_workflow_id,
                                 message=message,
+                                data=identity,
                             )
                             started_nodes.add(node_key)
                         yield emit_progress(
@@ -689,6 +713,7 @@ class AgentRunService:
                             run_id,
                             workflow_id=node_workflow_id,
                             message=get_node_progress_message(node_workflow_id, node_id),
+                            data=identity,
                         )
                         started_nodes.add(node_key)
 
@@ -696,7 +721,7 @@ class AgentRunService:
                     if text:
                         yield emit_event(
                             AgentEventType.TOKEN,
-                            {"text": text},
+                            {"text": text, **identity},
                             workflow_id=node_workflow_id,
                             node_id=node_id,
                             node_name=node_name,

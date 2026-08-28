@@ -130,15 +130,15 @@ The current graph registry is `backend/app/agents/runtime/factory.py`.
 
 Registered workflows:
 
-- `agent`: top-level workflow defined by `backend/app/agents/main/graph.py`; every request first enters `understand`. Direct, unclear, or unsupported requests go to `respond`; delegated atomic requests follow `understand -> route -> execute -> aggregate -> respond`; delegated composite requests insert `plan` before `route`. `understand` owns request meaning and task structure, `plan` only decomposes composite goals, and `route` only assigns formed tasks to registered handlers.
-- `knowledge_qa`: reusable single-goal knowledge-base QA subgraph defined by `backend/app/agents/knowledge_qa/graph.py`; the top-level `agent` plan owns multi-goal decomposition and the route node assigns each task independently. Each subgraph follows `plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result`, generates multiple retrieval expressions for only its assigned goal, and allows at most one feedback-driven query rewrite when retrieval returns no usable document chunks. If that retry produces no executable new query, `plan_query` exits directly to `compose_result`.
+- `agent`: top-level workflow defined by `backend/app/agents/main/graph.py`; requests enter `decide`, which uses native tool calling against the current capability catalog. Independent calls run through `execute` in parallel and return evidence to `decide`; dependent calls reference completed call IDs in later rounds. A structured final decision enters `respond`. The generic decision prompt contains no tool-specific routing rules. Optional short plans, duplicate-call reuse, bounded concurrency, timeouts, and a shared execution-operation budget control the loop.
+- `knowledge_qa`: reusable single-goal knowledge-base QA subgraph defined by `backend/app/agents/knowledge_qa/graph.py`; the top-level `agent` selects the `search_knowledge` capability tool and supplies one concrete goal with relevant prior results. Each subgraph follows `plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result`, generates multiple retrieval expressions for only its assigned goal, and allows at most one feedback-driven query rewrite when retrieval returns no usable document chunks. If that retry produces no executable new query, `plan_query` exits directly to `compose_result`.
 - `business_ops`: controlled read-only business data operation subgraph defined by `backend/app/agents/business_ops/graph.py`; it performs up to three sequential tool calls, loops from `execute_operation` back to `analyze_request` only when another call is required, and retains one optional parameter-correction retry per call.
 - `backend/langgraph.json` currently exposes `agent` and `knowledge_qa` for LangGraph tooling. `business_ops` is registered in the runtime factory and executed as a subgraph through `agent`.
 
 `backend/tests/unit/test_workflow_registry_consistency.py` guards workflow documentation metadata: every compiled graph node must match its `GraphDefinition.node_ids` entry and `application/agent/workflow_meta.py` metadata, while every `backend/langgraph.json` graph entry must point to the registered factory. Update these declarations together whenever a graph node changes.
 
 <!-- workflow-node-ids:start -->
-- `agent` nodes: `understand`, `plan`, `route`, `execute`, `aggregate`, `respond`
+- `agent` nodes: `decide`, `execute`, `respond`
 - `knowledge_qa` nodes: `plan_query`, `plan_retrieval`, `retrieve_knowledge`, `compose_result`
 - `business_ops` nodes: `analyze_request`, `match_operation`, `execute_operation`, `replan_operation_params`, `compose_result`
 <!-- workflow-node-ids:end -->
@@ -146,13 +146,16 @@ Registered workflows:
 Important workflow files:
 
 - `backend/app/agents/main/state.py`: top-level Agent input and state contracts.
-- `backend/app/agents/main/nodes/*`: top-level understanding, planning, routing, execution, aggregation, and response nodes.
+- `backend/app/agents/main/nodes/*`: top-level decision, tool execution, and final response nodes.
 - `backend/app/agents/knowledge_qa/state.py`: knowledge QA subgraph state contract.
 - `backend/app/agents/business_ops/state.py`: business data operation subgraph state contract.
 - `backend/app/agents/business_ops/decision.py`: tool-candidate serialization, LLM decisions, normalization, and parameter correction.
 - `backend/app/agents/business_ops/nodes.py`: business operation node implementations and routing decisions.
-- `backend/app/agents/main/understanding.py`: top-level request understanding without task decomposition or handler selection.
-- `backend/app/agents/runtime/handlers.py`: executable handler registry and child-workflow input adapters.
+- `backend/app/agents/main/nodes/decide.py`: context-aware native tool selection and structured final decisions. Invalid final-decision JSON receives schema feedback for at most two corrections per decision; each model attempt consumes the existing round and time budgets. Exhaustion preserves available results and ends with an explicit partial or failed outcome.
+- `backend/app/agents/runtime/tools.py`: built-in tool registry, argument schemas, availability rules, and child-workflow input adapters. `search_knowledge` wraps `knowledge_qa`; `query_business_data` wraps `business_ops`.
+- `backend/app/application/agent/tool_context.py`: prepares current app business capability summaries from the existing authorized tool catalog; execution authorization remains in the existing business service.
+- `backend/app/agents/main/result.py`: combines tool evidence and business results for the final response.
+- `backend/app/agents/common/execution_budget.py`: shared budget for top-level calls and internal retrieval/business query operations. A retrieval batch counts as one operation; this is not a count of all LLM requests or underlying database queries.
 - `backend/app/agents/knowledge_qa/query_plan.py`: single-goal structured query planning that preserves the assigned goal and generates up to three semantic queries plus three exact lexical phrases.
 - `backend/app/agents/knowledge_qa/nodes/plan_retrieval.py`: knowledge retrieval planning.
 - `backend/app/agents/knowledge_qa/nodes/retrieve.py`: single-goal text retrieval, one optional no-hit query rewrite, and compact retrieval result assembly. Reranked document chunks are passed directly into answer material without a second LLM completeness gate. Child-chunk RRF/reranking and parent-window expansion are owned by `backend/app/services/kb_text_retrieval.py`.
@@ -161,6 +164,8 @@ Important workflow files:
 - `backend/app/agents/common/*`: shared retrieval, JSON LLM, document analysis, and streaming helpers.
 
 The chat application service always uses the top-level `agent` workflow. Do not reintroduce a configurable workflow selector unless there is a verified runtime need and a tested caller contract.
+
+`AgentRunner` prepares the trusted tool context for production and evaluation. Direct LangGraph callers must provide `input.tool_context.business_tools` to expose business capabilities; without a prepared catalog only resource-backed tools such as an available knowledge base are visible. Built-in tools are internal Agent interfaces, not new external MCP endpoints. The configured planner must support native tool calls; malformed model output fails explicitly rather than switching to a second routing protocol.
 
 Workflow display metadata is backend-authoritative. Backend SSE events should provide `display_stages`, `display_stage`, `display_title`, `activity_text`, `workflow_id`, `node_id`, and `node_name` through `backend/app/application/agent/workflow_meta.py` and node activity events; frontend code should consume those fields instead of maintaining local workflow or node label maps.
 

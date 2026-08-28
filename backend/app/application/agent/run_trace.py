@@ -223,6 +223,21 @@ class AgentRunTraceBuilder:
                 "retrieval_attempts": list(result.get("retrieval_attempts") or []),
                 "retrieval_feedback": dict(result.get("retrieval_feedback") or {}),
             },
+            "agent_execution": {
+                "decision_count": int(result.get("decision_count") or 0),
+                "operation_count": int(result.get("operation_count") or 0),
+                "decision": dict(result.get("decision") or {}),
+                "calls": [
+                    {
+                        "call_id": call_id,
+                        "tool_name": execution.get("tool_name"),
+                        "status": execution.get("status"),
+                        "result_ids": list(execution.get("result_ids") or []),
+                        "reused_from": execution.get("reused_from"),
+                    }
+                    for call_id, execution in dict(result.get("executions") or {}).items()
+                ],
+            },
             "query_clues": {
                 "semantic_queries": semantic_queries,
                 "lexical_terms": lexical_terms,
@@ -326,7 +341,6 @@ class AgentRunTraceBuilder:
         answer_trace = dict(result.get("answer_trace") or {})
         semantic_queries = list(result.get("semantic_queries") or [])
         lexical_terms = list(result.get("lexical_terms") or [])
-        candidate_entities = list(result.get("candidate_entities") or [])
 
         def _format_list(values: list[Any], *, empty_text: str = "(none)") -> str:
             items = [str(value).strip() for value in values if str(value).strip()]

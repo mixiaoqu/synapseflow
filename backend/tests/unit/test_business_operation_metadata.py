@@ -1,4 +1,6 @@
 import json
+from contextlib import nullcontext
+from time import monotonic
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +11,7 @@ from app.agents.business_ops.decision import serialize_tool_candidates
 from app.agents.business_ops.tools.execution import build_tool_step
 from app.agents.business_ops.tools.results import build_tool_run_result
 from app.agents.business_ops.tools.schemas import ToolDecision, ToolStep
+from app.agents.common.execution_budget import ExecutionBudget, execution_budget
 from app.application.business_operations.registry import BusinessOperationRegistry
 from app.application.business_operations.schemas import BusinessOperationResult
 from app.db.models import AgentTool, ToolProvider
@@ -310,7 +313,8 @@ async def test_business_ops_redecides_after_each_success_without_follow_up_flag(
 
 
 @pytest.mark.asyncio
-async def test_business_ops_stops_before_a_fourth_tool_call(monkeypatch):
+@pytest.mark.parametrize("shared_limit", [None, 1])
+async def test_business_ops_preserves_results_when_budget_is_exhausted(monkeypatch, shared_limit):
     record = _record()
 
     class FakeService:
@@ -359,13 +363,17 @@ async def test_business_ops_stops_before_a_fourth_tool_call(monkeypatch):
     planner = FakePlanner()
     monkeypatch.setattr(business_ops_graph, "BusinessOperationService", lambda: service)
     graph = business_ops_graph.create_business_ops_graph(planner_llm_factory=lambda: planner)
-    result = await graph.ainvoke(
-        {"query": "连续查询订单", "project_app_id": 1, "dependency_results": {}}
-    )
+    budget = ExecutionBudget(shared_limit, monotonic() + 30) if shared_limit else None
+    with execution_budget(budget) if budget else nullcontext():
+        result = await graph.ainvoke(
+            {"query": "连续查询订单", "project_app_id": 1, "dependency_results": {}}
+        )
 
-    assert service.executions == 3
-    assert result["business_call_count"] == 3
-    assert result["task_result"]["status"] == "limit_reached"
+    expected_calls = shared_limit or 3
+    assert service.executions == expected_calls
+    assert result["business_call_count"] == expected_calls
+    assert result["task_result"]["status"] == "partial_success"
+    assert len(result["business_result"]["tool_calls"]) == expected_calls
 
 
 @pytest.mark.asyncio

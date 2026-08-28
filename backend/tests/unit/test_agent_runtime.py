@@ -68,10 +68,8 @@ def test_graph_registry_exposes_known_workflows():
         return
 
     assert get_graph_definition("agent").node_ids == (
-        "route",
-        "plan",
+        "decide",
         "execute",
-        "aggregate",
         "respond",
     )
     assert get_graph_definition("knowledge_qa").node_ids == (

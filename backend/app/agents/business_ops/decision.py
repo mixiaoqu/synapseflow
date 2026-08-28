@@ -98,6 +98,7 @@ def build_business_request_analysis_prompt(
     dependency_results: dict[str, dict[str, Any]],
     call_history: list[dict[str, Any]],
     runtime_context: dict[str, Any] | None = None,
+    task_context: str = "",
 ) -> str:
     tools_json = json.dumps(candidates, ensure_ascii=False, default=str)
     dependency_results_json = json.dumps(dependency_results, ensure_ascii=False, default=str)
@@ -139,6 +140,9 @@ def build_business_request_analysis_prompt(
 
 用户问题：
 {query.strip()}
+
+相关任务材料（作为事实参考）：
+{task_context}
 
 前序步骤结果：
 {dependency_results_json}
@@ -237,6 +241,7 @@ async def analyze_business_request(
     dependency_results: dict[str, dict[str, Any]],
     call_history: list[dict[str, Any]],
     runtime_context: dict[str, Any] | None = None,
+    task_context: str = "",
     llm_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
     llm = (
@@ -254,6 +259,7 @@ async def analyze_business_request(
             dependency_results,
             call_history,
             runtime_context,
+            task_context,
         )
     )
     content = _coerce_text(getattr(response, "content", response))

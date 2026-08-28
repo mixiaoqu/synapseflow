@@ -110,10 +110,11 @@ def emit_node_start(
     *,
     workflow_id: str = "",
     message: str,
+    data: dict[str, Any] | None = None,
 ) -> str:
     return emit_event(
         AgentEventType.NODE_START,
-        {"message": message},
+        {**dict(data or {}), "message": message},
         workflow_id=workflow_id,
         node_id=node_id,
         node_name=node_name,

@@ -9,6 +9,17 @@ class AgentStreamAdapter:
     """Validate LangGraph stream chunks before the SSE layer renders them."""
 
     @staticmethod
+    def execution_identity(data: dict[str, Any]) -> dict[str, Any]:
+        identity: dict[str, Any] = {}
+        call_id = data.get("tool_call_id")
+        if isinstance(call_id, str) and call_id:
+            identity["tool_call_id"] = call_id
+        round_number = data.get("round")
+        if isinstance(round_number, int) and round_number > 0:
+            identity["round"] = round_number
+        return identity
+
+    @staticmethod
     def parse_chunk(chunk: Any) -> tuple[str | None, dict[str, Any]]:
         if isinstance(chunk, tuple) and len(chunk) == 2:
             mode, data = chunk

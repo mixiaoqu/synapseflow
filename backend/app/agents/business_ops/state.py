@@ -14,6 +14,7 @@ class BusinessOpsState(BaseAgentContext, total=False):
     query: str
     intent: Dict[str, Any]
     dependency_results: Dict[str, Dict[str, Any]]
+    task_context: str
     product_id: Optional[int]
     project_id: Optional[int]
     project_app_id: Optional[int]

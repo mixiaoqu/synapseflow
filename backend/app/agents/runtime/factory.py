@@ -31,11 +31,8 @@ def _build_registry() -> dict[str, GraphDefinition]:
             graph_id="agent",
             factory=create_agent_graph,
             node_ids=(
-                "understand",
-                "plan",
-                "route",
+                "decide",
                 "execute",
-                "aggregate",
                 "respond",
             ),
             expose_in_langgraph=True,

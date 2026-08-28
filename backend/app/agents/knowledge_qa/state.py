@@ -14,6 +14,7 @@ class KnowledgeQaState(BaseAgentContext, total=False):
     query: str
     intent: Dict[str, Any]
     dependency_results: Dict[str, Dict[str, Any]]
+    task_context: str
     page_context: Dict[str, Any]
     allowed_document_statuses: List[str]
 

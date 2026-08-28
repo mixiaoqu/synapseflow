@@ -1,15 +1,24 @@
-"""DAG execution node for top-level agent orchestration."""
+"""校验和并行执行本轮能力调用，结果反馈给主 Agent。"""
 
 from __future__ import annotations
 
 import asyncio
-from time import perf_counter
+import json
+from copy import deepcopy
+from time import monotonic
 from typing import Any
 
+from langchain_core.messages import ToolMessage
 from loguru import logger
+from pydantic import ValidationError
 
-from app.agents.common.node_logging import log_node_info
-from app.agents.common.streaming import get_optional_stream_writer
+from app.agents.common.execution_budget import (
+    AgentLimits,
+    ExecutionBudget,
+    ExecutionBudgetExceededError,
+    execution_budget,
+)
+from app.agents.common.streaming import emit_activity, get_optional_stream_writer
 from app.agents.common.task_result import build_failed_task_result
 from app.agents.main.nodes.utils import (
     emit_subgraph_node_complete,
@@ -17,243 +26,211 @@ from app.agents.main.nodes.utils import (
     knowledge_diagnostics,
     parse_stream_chunk,
 )
+from app.agents.main.result import aggregate_execution_results, build_model_result
 from app.agents.main.state import AgentState
-from app.agents.runtime.handlers import get_handler_definition
+from app.agents.runtime.tools import AgentToolDefinition, ToolArguments
 
 
-def build_execute_node(*, handler_workflows: dict[str, Any]):
+def call_signature(name: str, arguments: dict[str, Any]) -> str:
+    return json.dumps([name, arguments], ensure_ascii=False, sort_keys=True)
+
+
+def build_execute_node(
+    *,
+    tools: tuple[AgentToolDefinition, ...],
+    tool_workflows: dict[str, Any],
+    limits: AgentLimits,
+):
+    definitions = {tool.name: tool for tool in tools}
+
     async def execute_node(state: AgentState) -> dict[str, Any]:
-        started_at = perf_counter()
+        calls = list(state["pending_calls"])
+        previous = dict(state.get("executions") or {})
         writer = get_optional_stream_writer()
-        task_plan = dict(state.get("execution_plan") or {})
-        steps = [dict(step) for step in list(task_plan.get("steps") or [])]
+        semaphore = asyncio.Semaphore(limits.max_parallel)
+        budget = ExecutionBudget(
+            limits.max_operations, state["deadline"], int(state.get("operation_count") or 0)
+        )
+        signatures = {
+            call_signature(run["tool_name"], run["arguments"]): call_id
+            for call_id, run in previous.items()
+            if not run.get("reused_from")
+        }
+        jobs: dict[str, asyncio.Task] = {}
 
-        def dependency_inputs(
-            step: dict[str, Any], execution_runs_by_id: dict[str, dict[str, Any]]
-        ) -> dict[str, dict[str, Any]]:
-            return {
-                dependency_id: {
-                    "task_id": dependency_id,
-                    "handler_id": dependency_run.get("handler_id"),
-                    "status": dependency_run.get("status"),
-                    "task_result": dict(dependency_run.get("task_result") or {}),
-                }
-                for dependency_id in list(step.get("depends_on") or [])
-                if (dependency_run := execution_runs_by_id.get(dependency_id)) is not None
-            }
-
-        def build_blocked_run(
-            step: dict[str, Any],
-            *,
-            dependency_results: dict[str, dict[str, Any]],
-            message: str,
-            code: str,
-        ) -> dict[str, Any]:
-            handler_id = str(step.get("handler_id") or "").strip()
-            task_result = build_failed_task_result(
-                handler_id=handler_id or "unassigned",
+        def failed(call, code, message):
+            definition = definitions.get(call["name"])
+            result = build_failed_task_result(
+                handler_id=definition.workflow_id if definition else "unavailable",
                 run_id=state["input"]["run_id"],
-                step_id=step.get("task_id"),
+                step_id=call["id"],
                 message=message,
             )
-            task_result["errors"] = [
-                {
-                    "code": code,
-                    "message": message,
-                    "retryable": False,
-                    "details": {"dependencies": dependency_results},
-                }
-            ]
+            result["errors"] = [{"code": code, "message": message, "retryable": False}]
             return {
-                "task_id": step.get("task_id"),
-                "goal": step.get("goal"),
-                "handler_id": handler_id or None,
-                "status": "blocked",
-                "task_result": task_result,
-                "dependency_results": dependency_results,
+                "call_id": call["id"],
+                "tool_name": call["name"],
+                "arguments": call["args"],
+                "goal": call["args"].get("goal", ""),
+                "status": "failed",
+                "task_result": result,
                 "diagnostics": {},
-                "error": message,
             }
 
-        async def execute_step(
-            step: dict[str, Any], dependency_results: dict[str, dict[str, Any]]
-        ) -> dict[str, Any]:
-            step = dict(step)
-            handler_id = str(step.get("handler_id") or "").strip()
+        async def invoke(call, definition, arguments):
+            async with semaphore:
+                try:
+                    budget.consume()
+                    dependency_results = {
+                        ref: deepcopy(previous[ref]["task_result"])
+                        for ref in arguments["result_ids"]
+                    }
+                    child_input = definition.input_builder(
+                        state,
+                        {
+                            **arguments,
+                            "call_id": call["id"],
+                            "dependency_results": dependency_results,
+                        },
+                    )
+                    child_state: dict[str, Any] = {}
+
+                    def scoped_writer(event):
+                        if writer:
+                            writer(
+                                {
+                                    **event,
+                                    "tool_call_id": call["id"],
+                                    "round": state["decision_count"],
+                                }
+                            )
+
+                    async def run_child():
+                        async for chunk in tool_workflows[definition.name].astream(
+                            child_input, stream_mode=["updates", "custom"], version="v2"
+                        ):
+                            kind, data = parse_stream_chunk(chunk)
+                            if kind == "custom":
+                                forward_subgraph_custom_event(
+                                    scoped_writer, definition.workflow_id, data
+                                )
+                            elif kind == "updates":
+                                for node_id, update in data.items():
+                                    if isinstance(update, dict):
+                                        child_state.update(update)
+                                        emit_subgraph_node_complete(
+                                            scoped_writer, definition.workflow_id, node_id, update
+                                        )
+
+                    emit_activity(
+                        writer,
+                        workflow_id="agent",
+                        node_id="execute",
+                        stage="execute",
+                        message="正在执行能力调用",
+                        display_stage="execute",
+                        display_title="执行任务",
+                        activity_text=arguments["goal"],
+                        tool_call_id=call["id"],
+                        round=state["decision_count"],
+                    )
+                    with execution_budget(budget):
+                        await asyncio.wait_for(
+                            run_child(),
+                            timeout=min(
+                                limits.call_timeout, max(0.01, budget.deadline - monotonic())
+                            ),
+                        )
+                    result = child_state.get("task_result")
+                    if not isinstance(result, dict) or not result.get("status"):
+                        raise ValueError("能力工具结束时缺少有效结果")
+                    return {
+                        "call_id": call["id"],
+                        "tool_name": definition.name,
+                        "arguments": arguments,
+                        "goal": arguments["goal"],
+                        "handler_id": definition.workflow_id,
+                        "status": result["status"],
+                        "result_ids": arguments["result_ids"],
+                        "task_result": result,
+                        "diagnostics": knowledge_diagnostics(child_state),
+                    }
+                except ExecutionBudgetExceededError:
+                    return failed(call, "EXECUTION_BUDGET_EXHAUSTED", "本次任务已达到执行预算。")
+                except TimeoutError:
+                    return failed(call, "TOOL_TIMEOUT", "本次能力调用超时。")
+                except Exception:
+                    logger.exception("能力工具执行失败：{}", definition.name)
+                    return failed(call, "TOOL_EXECUTION_FAILED", "本次能力调用发生异常。")
+
+        async def resolve_call(call, index):
+            definition = definitions.get(call["name"])
+            if definition is None or not definition.available(state["input"]):
+                return failed(call, "TOOL_UNAVAILABLE", "当前请求无法使用该能力。")
             try:
-                if not handler_id:
-                    return build_blocked_run(
-                        step,
-                        dependency_results=dependency_results,
-                        message="当前没有任务处理器能够承接该任务。",
-                        code="HANDLER_UNASSIGNED",
-                    )
-                handler = get_handler_definition(handler_id)
-                subgraph = handler_workflows.get(handler_id)
-                if subgraph is None:
-                    raise RuntimeError(f"Handler workflow is not initialized: {handler_id}")
-                step["dependency_results"] = dependency_results
-                child_input = handler.input_builder(state, step)
-                task_result: dict[str, Any] | None = None
-                final_child_state: dict[str, Any] = {}
-                async for chunk in subgraph.astream(
-                    child_input,
-                    stream_mode=["updates", "custom"],
-                    version="v2",
-                ):
-                    chunk_type, chunk_data = parse_stream_chunk(chunk)
-                    if chunk_type == "custom":
-                        forward_subgraph_custom_event(
-                            writer,
-                            handler.workflow_id,
-                            chunk_data,
-                        )
-                        continue
-                    if chunk_type != "updates":
-                        continue
-                    for node_id, node_state in chunk_data.items():
-                        if not isinstance(node_id, str) or not isinstance(node_state, dict):
-                            continue
-                        final_child_state.update(node_state)
-                        candidate = node_state.get("task_result")
-                        if isinstance(candidate, dict):
-                            task_result = candidate
-                        emit_subgraph_node_complete(
-                            writer,
-                            handler.workflow_id,
-                            node_id,
-                            node_state,
-                        )
-                if task_result is None:
-                    raise RuntimeError(
-                        f"Handler {handler_id} completed without task_result"
-                    )
-                return {
-                    "task_id": step.get("task_id"),
-                    "goal": step.get("goal"),
-                    "handler_id": handler_id,
-                    "status": task_result.get("status") or "failed",
-                    "task_result": task_result,
-                    "dependency_results": dependency_results,
-                    "diagnostics": knowledge_diagnostics(final_child_state),
-                }
-            except Exception as exc:
-                logger.exception(
-                    "[agent.execute] handler execution failed | "
-                    "handler_id={} task_id={} error={}",
-                    handler_id,
-                    step.get("task_id"),
-                    exc,
-                )
-                task_result = build_failed_task_result(
-                    handler_id=handler_id or "unassigned",
-                    run_id=state["input"]["run_id"],
-                    step_id=step.get("task_id"),
-                    message="任务处理器执行失败。",
-                )
-                return {
-                    "task_id": step.get("task_id"),
-                    "goal": step.get("goal"),
-                    "handler_id": handler_id or None,
-                    "status": "failed",
-                    "task_result": task_result,
-                    "dependency_results": dependency_results,
-                    "diagnostics": {},
-                    "error": "任务处理器执行失败。",
-                }
+                arguments = ToolArguments.model_validate(call["args"]).model_dump()
+            except ValidationError:
+                return failed(call, "INVALID_TOOL_ARGUMENTS", "工具输入需符合已提供的参数定义。")
+            if any(ref not in previous for ref in arguments["result_ids"]):
+                return failed(call, "UNKNOWN_RESULT", "结果引用必须来自已完成的调用。")
+            # 重用引用统一到原始调用，避免仅更换引用 ID 导致重复执行。
+            arguments["result_ids"] = sorted(
+                {previous[ref].get("reused_from", ref) for ref in arguments["result_ids"]}
+            )
+            signature = call_signature(definition.name, arguments)
+            if signature in signatures:
+                original = previous[signatures[signature]]
+                return {**original, "call_id": call["id"], "reused_from": original["call_id"]}
+            if signature in jobs:
+                original = await jobs[signature]
+                return {**original, "call_id": call["id"], "reused_from": original["call_id"]}
+            if len(previous) + index >= limits.max_calls:
+                return failed(call, "TOOL_CALL_LIMIT", "本次任务已达到能力调用次数上限。")
+            jobs[signature] = asyncio.create_task(invoke(call, definition, arguments))
+            return await jobs[signature]
 
-        execution_runs: dict[str, dict[str, Any]] = {}
-        execution_runs_by_id = execution_runs
-        remaining_steps = {str(step.get("task_id") or ""): step for step in steps}
-        execution_mode = str(task_plan.get("execution_mode") or "dag")
+        async def resolve(call, index):
+            output = await resolve_call(call, index)
+            emit_activity(
+                writer,
+                workflow_id="agent",
+                node_id="execute",
+                stage="execute",
+                message="能力调用已结束",
+                display_stage="execute",
+                display_title="执行任务",
+                activity_text=output["task_result"]["summary"]["message"],
+                activity_status="error" if output["status"] == "failed" else "completed",
+                tool_call_id=call["id"],
+                round=state["decision_count"],
+            )
+            return output
 
-        while remaining_steps:
-            invalid_steps = [
-                step
-                for step in remaining_steps.values()
-                if any(
-                    dependency_id not in remaining_steps
-                    and dependency_id not in execution_runs_by_id
-                    for dependency_id in list(step.get("depends_on") or [])
+        outputs = await asyncio.gather(*(resolve(call, i) for i, call in enumerate(calls)))
+        executions = {**previous, **{run["call_id"]: run for run in outputs}}
+        messages = [
+            *list(state.get("messages") or []),
+            *[
+                ToolMessage(
+                    tool_call_id=run["call_id"],
+                    name=run["tool_name"],
+                    content=json.dumps(
+                        build_model_result(run),
+                        ensure_ascii=False,
+                        default=str,
+                    ),
                 )
-            ]
-            blocked_steps = [
-                step
-                for step in remaining_steps.values()
-                if step not in invalid_steps
-                and any(
-                    execution_runs_by_id.get(dependency_id, {}).get("status") != "success"
-                    for dependency_id in list(step.get("depends_on") or [])
-                    if dependency_id in execution_runs_by_id
-                )
-            ]
-            for step in [*invalid_steps, *blocked_steps]:
-                step_id = str(step.get("task_id") or "")
-                dependency_results = dependency_inputs(step, execution_runs_by_id)
-                code = "UNKNOWN_DEPENDENCY" if step in invalid_steps else "DEPENDENCY_FAILED"
-                message = (
-                    "任务计划引用了不存在的依赖步骤。"
-                    if code == "UNKNOWN_DEPENDENCY"
-                    else "前序步骤未成功完成，当前步骤不会执行。"
-                )
-                execution_run = build_blocked_run(
-                    step,
-                    dependency_results=dependency_results,
-                    message=message,
-                    code=code,
-                )
-                execution_runs[step_id] = execution_run
-                remaining_steps.pop(step_id)
-
-            if invalid_steps or blocked_steps:
-                continue
-
-            ready_steps = [
-                step
-                for step in remaining_steps.values()
-                if all(
-                    dependency_id in execution_runs_by_id
-                    for dependency_id in step.get("depends_on") or []
-                )
-            ]
-            if ready_steps:
-                step_outputs = await asyncio.gather(
-                    *(
-                        execute_step(step, dependency_inputs(step, execution_runs_by_id))
-                        for step in ready_steps
-                    )
-                )
-                for step, execution_run in zip(ready_steps, step_outputs):
-                    step_id = str(step.get("task_id") or "")
-                    execution_runs[step_id] = execution_run
-                    remaining_steps.pop(step_id)
-                continue
-
-            for step_id, step in list(remaining_steps.items()):
-                execution_run = build_blocked_run(
-                    step,
-                    dependency_results=dependency_inputs(step, execution_runs_by_id),
-                    message="任务计划存在循环依赖，当前步骤无法调度。",
-                    code="CYCLIC_DEPENDENCY",
-                )
-                execution_runs[step_id] = execution_run
-                remaining_steps.pop(step_id)
-        log_node_info(
-            workflow_id="agent",
-            node_id="execute",
-            node_name="执行任务",
-            details={
-                "执行模式": execution_mode,
-                "执行步骤数": len(execution_runs),
-                "成功数": len(
-                    [run for run in execution_runs.values() if run.get("status") == "success"]
-                ),
-                "失败数": len(
-                    [run for run in execution_runs.values() if run.get("status") != "success"]
-                ),
-            },
-            elapsed_ms=int((perf_counter() - started_at) * 1000),
-        )
-        return {"executions": execution_runs}
+                for run in outputs
+            ],
+        ]
+        return {
+            "pending_calls": [],
+            "executions": executions,
+            "messages": messages,
+            "operation_count": budget.used,
+            "result": aggregate_execution_results(
+                {key: value for key, value in executions.items() if not value.get("reused_from")}
+            ),
+        }
 
     return execute_node

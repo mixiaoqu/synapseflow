@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from time import perf_counter
 from typing import Any
-
-from app.agents.common.node_logging import log_node_info
-from app.agents.main.state import AgentState
 
 
 def _source_identity(item: dict[str, Any]) -> str:
@@ -31,6 +27,21 @@ def _source_identity(item: dict[str, Any]) -> str:
     return f"content:{str(item.get('content') or '').strip().casefold()}"
 
 
+def build_model_result(run: dict[str, Any]) -> dict[str, Any]:
+    """为决策和最终回答提供同一份结果契约，保持业务载荷原样传递。"""
+    return {
+        "result_id": run["call_id"],
+        "goal": run["goal"],
+        "reused_from": run.get("reused_from"),
+        "result": {
+            key: value
+            for key, value in run["task_result"].items()
+            if key
+            in {"status", "answer_status", "summary", "data", "evidence", "actions", "errors"}
+        },
+    }
+
+
 def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> dict[str, Any]:
     runs = list(execution_runs.values())
     task_results = [
@@ -39,9 +50,7 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         if isinstance(run.get("task_result"), dict)
     ]
     successes = [
-        result
-        for result in task_results
-        if result.get("status") in {"success", "partial_success"}
+        result for result in task_results if result.get("status") in {"success", "partial_success"}
     ]
     needs_input = [result for result in task_results if result.get("status") == "needs_input"]
     failures = [
@@ -50,8 +59,7 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         if result.get("status") not in {"success", "partial_success", "needs_input"}
     ]
     has_partial_success = any(
-        result.get("status") == "partial_success"
-        or result.get("answer_status") == "partial"
+        result.get("status") == "partial_success" or result.get("answer_status") == "partial"
         for result in successes
     )
     knowledge_context: list[dict[str, Any]] = []
@@ -65,7 +73,7 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         if diagnostics:
             knowledge_goal_diagnostics.append(
                 {
-                    "task_id": run.get("task_id"),
+                    "call_id": run.get("call_id"),
                     "goal": run.get("goal"),
                     **diagnostics,
                 }
@@ -144,7 +152,7 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         {
             key: value
             for key, value in knowledge_goal_diagnostics[0].items()
-            if key not in {"task_id", "goal"}
+            if key not in {"call_id", "goal"}
         }
         if knowledge_goal_diagnostics
         else {}
@@ -158,22 +166,7 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         }
         for result in failures
     ]
-    public_error = next(
-        (
-            str(item.get("message") or "").strip()
-            for item in aggregated_errors
-            if str(item.get("message") or "").strip()
-        ),
-        None,
-    )
-    answer_material = {
-        "knowledge_evidence": [
-            item for item in context_by_ref.values() if item.get("role") == "primary"
-        ],
-        "business_results": business_data,
-        "clarification": clarifications[0] if clarifications else None,
-        "public_error": public_error,
-    }
+    answer_material = {"tool_results": [build_model_result(run) for run in runs]}
     return {
         **primary_knowledge_diagnostics,
         "knowledge_goal_diagnostics": knowledge_goal_diagnostics,
@@ -191,21 +184,3 @@ def aggregate_execution_results(execution_runs: dict[str, dict[str, Any]]) -> di
         "clarifications": clarifications,
         "answer_material": answer_material,
     }
-
-
-async def aggregate_node(state: AgentState) -> dict[str, Any]:
-    started_at = perf_counter()
-    result = aggregate_execution_results(dict(state.get("executions") or {}))
-    log_node_info(
-        workflow_id="agent",
-        node_id="aggregate",
-        node_name="聚合结果",
-        details={
-            "状态": result.get("status"),
-            "成功数": result.get("success_count"),
-            "失败数": result.get("failed_count"),
-            "引用数": len(result.get("citation_refs") or []),
-        },
-        elapsed_ms=int((perf_counter() - started_at) * 1000),
-    )
-    return {"result": result}

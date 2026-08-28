@@ -23,7 +23,7 @@ def build_tool_run_result(*, decision: ToolDecision, steps: list[ToolStep]) -> T
     elif decision.action == "clarify":
         status = "needs_input"
     elif decision.action == "limit_reached":
-        status = "limit_reached"
+        status = "partial_success" if successful else "limit_reached"
     else:
         status = "unsupported"
 

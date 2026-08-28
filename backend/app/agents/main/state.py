@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Literal, NotRequired, TypedDict
 
+from langchain_core.messages import BaseMessage
+
 
 class AgentAssistantContext(TypedDict, total=False):
     id: int
@@ -51,50 +53,25 @@ class AgentInput(TypedDict):
     page_config: dict[str, Any]
     runtime_context: dict[str, Any]
     metadata: dict[str, Any]
+    tool_context: NotRequired[dict[str, Any]]
 
 
-class AgentUnderstanding(TypedDict):
+class AgentDecision(TypedDict):
     goal: str
-    clarity: Literal["clear", "unclear"]
-    handling: Literal["direct", "delegated", "unsupported"]
-    task_structure: Literal["atomic", "composite"]
-    clarification_question: NotRequired[str | None]
-    reason: str
-
-
-class AgentTask(TypedDict):
-    task_id: str
-    goal: str
-    depends_on: list[str]
-
-
-class TaskAssignment(TypedDict):
-    task_id: str
-    handler_id: str | None
-    status: Literal["assigned", "unassigned"]
-    reason: str
-
-
-class AgentExecutionStep(TypedDict):
-    task_id: str
-    handler_id: str | None
-    goal: str
-    depends_on: list[str]
-
-
-class AgentExecutionPlan(TypedDict):
-    execution_mode: Literal["none", "single", "parallel", "dag"]
-    steps: list[AgentExecutionStep]
-    reason: str
+    status: Literal["answered", "partial", "clarification_needed", "out_of_scope", "failed"]
+    message: str
 
 
 class AgentExecution(TypedDict, total=False):
-    task_id: str
+    call_id: str
+    tool_name: str
+    arguments: dict[str, Any]
     goal: str
     handler_id: str | None
     status: str
     task_result: dict[str, Any]
-    dependency_results: dict[str, dict[str, Any]]
+    result_ids: list[str]
+    reused_from: str
     diagnostics: dict[str, Any]
     error: str
 
@@ -134,13 +111,16 @@ class AgentResponse(TypedDict):
 
 
 class AgentState(TypedDict):
-    """Minimal graph state. Each phase owns exactly one top-level field."""
+    """本轮对话的决策消息、能力调用及可追溯结果。"""
 
     input: AgentInput
-    understanding: NotRequired[AgentUnderstanding]
-    tasks: NotRequired[list[AgentTask]]
-    assignments: NotRequired[list[TaskAssignment]]
-    execution_plan: NotRequired[AgentExecutionPlan]
+    messages: NotRequired[list[BaseMessage]]
+    decision: NotRequired[AgentDecision]
+    plan: NotRequired[str]
+    pending_calls: NotRequired[list[dict[str, Any]]]
+    decision_count: NotRequired[int]
+    operation_count: NotRequired[int]
+    deadline: NotRequired[float]
     executions: NotRequired[dict[str, AgentExecution]]
     result: NotRequired[AgentResult]
     response: NotRequired[AgentResponse]

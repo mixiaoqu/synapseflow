@@ -1,10 +1,15 @@
 import asyncio
 import json
 from datetime import datetime
+from unittest.mock import AsyncMock
+
+import pytest
 
 from app.api.v1.endpoints.qa_review import _build_log_detail_response
+from app.application.agent import runner as runner_module
 from app.application.agent.conversation_service import AgentConversationService
 from app.application.agent.input_builder import AgentRunRequest
+from app.application.agent.run_recorder import AgentRunRecorder
 from app.application.agent.run_service import AgentRunService
 from app.repositories.kb_chat_log_repository import (
     KbChatDiagnosticMessageRecord,
@@ -23,6 +28,16 @@ from app.services.document_lifecycle import (
     PREVIEW_ASK_DOCUMENT_STATUSES,
     VISIBLE_ASK_DOCUMENT_STATUSES,
 )
+
+
+@pytest.fixture(autouse=True)
+def mock_external_services(monkeypatch):
+    async def load(_):
+        return {"business_tools": []}
+
+    monkeypatch.setattr(runner_module, "prepare_tool_context", load)
+    monkeypatch.setattr(AgentRunRecorder, "record_chat_log", AsyncMock(return_value=None))
+    monkeypatch.setattr(AgentRunRecorder, "record_content_risk_log", AsyncMock(return_value=None))
 
 
 def _decode_sse_payloads(events: list[str]) -> list[dict]:
@@ -383,20 +398,24 @@ class FakeContentRiskDetectionService:
 
     async def check_text(self, *, scene: str, text: str):
         self.calls.append({"scene": scene, "text": text})
-        hits = [
-            ContentRiskRuleHit(
-                rule_id=index + 1,
-                library_id=1,
-                rule_name=rule_name,
-                risk_category="测试分类",
-                risk_level="high",
-                action="block",
-                match_mode="contains",
-                pattern=rule_name,
-                matched_text=rule_name,
-            )
-            for index, rule_name in enumerate(self.matched_rules)
-        ] if self.blocked else []
+        hits = (
+            [
+                ContentRiskRuleHit(
+                    rule_id=index + 1,
+                    library_id=1,
+                    rule_name=rule_name,
+                    risk_category="测试分类",
+                    risk_level="high",
+                    action="block",
+                    match_mode="contains",
+                    pattern=rule_name,
+                    matched_text=rule_name,
+                )
+                for index, rule_name in enumerate(self.matched_rules)
+            ]
+            if self.blocked
+            else []
+        )
         return ContentRiskDetectionResult(
             scene=scene,
             action="block" if self.blocked else "pass",
@@ -768,6 +787,11 @@ def test_build_log_detail_response_serializes_nested_records():
         answer_status="answered",
         retrieval_status="ok",
         latency_ms=123,
+        input_tokens=None,
+        output_tokens=None,
+        total_tokens=None,
+        estimated_cost=None,
+        token_usage=None,
         text_hit_count=1,
         graph_hit_count=0,
         merged_candidate_count=1,
@@ -819,3 +843,55 @@ def test_build_log_detail_response_serializes_nested_records():
     assert detail.suggested_review_label == "答案有依据但表达差"
     assert detail.review_label == "答案正确但不完整"
     assert detail.conversation_context[0].role == "user"
+
+
+def test_invalid_final_decision_stream_completes_with_explicit_failure(scripted_agent_llm):
+    from langchain_core.messages import AIMessage
+
+    from app.agents.main.graph import create_agent_graph
+
+    invalid = AIMessage(
+        content=json.dumps(
+            {
+                "goal": "检索小王",
+                "status": "in_progress",
+                "message": "需要继续检索",
+            },
+            ensure_ascii=False,
+        )
+    )
+    llm = scripted_agent_llm([invalid] * 3)
+    graph = create_agent_graph(
+        planner_llm_factory=lambda: llm,
+        answer_llm_factory=lambda: llm,
+        tools=(),
+        tool_workflows={},
+    )
+    service = AgentRunService(
+        graph=graph,
+        memory_store=FakeChatMemoryStore(),
+        content_risk_detection_service=FakeContentRiskDetectionService(blocked=False),
+    )
+
+    async def collect():
+        return [
+            event
+            async for event in service.stream(
+                AgentRunRequest(query="它的全名就叫小王"),
+                user_id=42,
+                persist=False,
+            )
+        ]
+
+    payloads = _decode_sse_payloads(asyncio.run(collect()))
+    assert not any(payload["type"] == "error" for payload in payloads)
+    assert payloads[-1]["type"] == "complete"
+    assert payloads[-1]["data"]["answer_status"] == "failed"
+    assert "两次纠正仍未通过校验" in payloads[-1]["data"]["answer"]
+    assert len(llm.prompts) == 3
+    starts = [
+        p["data"]["round"]
+        for p in payloads
+        if p["type"] == "node_start" and p["node_id"] == "decide"
+    ]
+    assert starts == [1, 2, 3]

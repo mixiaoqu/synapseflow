@@ -80,3 +80,27 @@ def test_query_plan_stops_retry_when_no_new_expression_is_available():
     assert result["semantic_queries"] == []
     assert result["lexical_terms"] == []
     assert result["replan_exhausted"] is True
+
+
+def test_query_plan_receives_original_dependency_evidence():
+    class Planner:
+        async def ainvoke(self, prompt):
+            assert "DEMO-001" in prompt and "gold" in prompt
+            assert "仅分析当前客户" in prompt
+            return type(
+                "Response",
+                (),
+                {"content": '{"semantic_queries":["金卡权益"],"lexical_terms":["金卡"]}'},
+            )()
+
+    result = asyncio.run(
+        build_knowledge_query_plan(
+            "该客户享有哪些权益",
+            task_context={
+                "context": "仅分析当前客户",
+                "dependency_results": {"c1": {"customer_id": "DEMO-001", "tier": "gold"}},
+            },
+            llm_factory=Planner,
+        )
+    )
+    assert "金卡权益" in result["semantic_queries"]

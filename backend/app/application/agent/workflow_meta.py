@@ -6,25 +6,13 @@ from typing import Any
 
 WORKFLOW_NODE_META: dict[str, dict[str, dict[str, Any]]] = {
     "agent": {
-        "understand": {
-            "label": "理解请求",
-            "progress_message": "正在理解需求和任务结构...",
-        },
-        "route": {
-            "label": "路由任务",
-            "progress_message": "正在为任务选择处理器...",
-        },
-        "plan": {
-            "label": "规划任务",
-            "progress_message": "正在规划任务步骤...",
+        "decide": {
+            "label": "规划下一步",
+            "progress_message": "正在结合目标与已有结果确定下一步...",
         },
         "execute": {
             "label": "执行任务",
             "progress_message": "正在执行任务...",
-        },
-        "aggregate": {
-            "label": "聚合结果",
-            "progress_message": "正在聚合执行结果...",
         },
         "respond": {
             "label": "输出结果",
@@ -86,11 +74,8 @@ CUSTOMER_STAGE_TITLES = {
 
 NODE_CUSTOMER_STAGES = {
     "agent": {
-        "understand": "understand",
-        "plan": "plan",
-        "route": "plan",
+        "decide": "plan",
         "execute": "execute",
-        "aggregate": "compose",
         "respond": "compose",
     },
     "knowledge_qa": {
@@ -106,15 +91,6 @@ NODE_CUSTOMER_STAGES = {
         "replan_operation_params": "business_query",
         "compose_result": "compose",
     },
-}
-
-LEGACY_CUSTOMER_STAGE_ALIASES = {
-    "route": "understand",
-    "plan": "plan",
-    "execute": "execute",
-    "aggregate": "compose",
-    "understand": "understand",
-    "compose": "compose",
 }
 
 
@@ -159,7 +135,7 @@ def _customer_stage_from_payload(
             return "business_query"
 
     if legacy_display_stage:
-        return LEGACY_CUSTOMER_STAGE_ALIASES.get(legacy_display_stage, legacy_display_stage)
+        return legacy_display_stage
 
     return NODE_CUSTOMER_STAGES.get(workflow_id, {}).get(node_id, node_id)
 
@@ -193,4 +169,10 @@ def normalize_activity_payload(
         customer_stage,
         node_name or get_node_label(workflow_id, node_id),
     )
+    round_number = normalized_payload.get("round")
+    if isinstance(round_number, int) and round_number > 0:
+        normalized_payload["display_stage"] = f"round_{round_number}:{customer_stage}"
+    call_id = normalized_payload.get("tool_call_id")
+    if isinstance(call_id, str) and call_id:
+        normalized_payload["display_stage"] += f":{call_id}"
     return normalized_payload

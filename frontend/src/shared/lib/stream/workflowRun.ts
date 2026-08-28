@@ -207,20 +207,12 @@ function moveDisplayStage(run: ChatWorkflowRun, stageId: string, status: Workflo
     return;
   }
 
-  run.displayStages.forEach((stage, index) => {
-    if (index < currentIndex && stage.status !== "error") {
-      stage.status = "success";
-    }
-  });
-
   const stage = run.displayStages[currentIndex];
   if (status === "error") {
     stage.status = "error";
     return;
   }
-  if (status === "running" || stage.status === "pending") {
-    stage.status = "running";
-  }
+  stage.status = status === "completed" ? "success" : "running";
 }
 
 function applyDisplayActivity(run: ChatWorkflowRun, data: Record<string, unknown>, at: number) {
@@ -375,19 +367,29 @@ export function reduceWorkflowRunEvent(
   const workflowId = resolveNodeWorkflowId(event);
   const workflow = ensureWorkflow(run, workflowId, at);
   const nodeName = resolveNodeName(nodeId, event.node_name);
-  const node = ensureNode(workflow, nodeId, nodeName, at);
+  const callId = normalizeText(data.tool_call_id);
+  const round = typeof data.round === "number" ? data.round : null;
+  const executionId = callId || (round !== null ? `round_${round}` : "");
+  const nodeKey = executionId ? `${nodeId}:${executionId}` : nodeId;
+  const node = ensureNode(workflow, nodeKey, nodeName, at);
   const message = normalizeText(data.message);
 
   if (event.type === "node_start" || event.type === "progress" || event.type === "token") {
-    completeRunningNodes(workflow, at, nodeId);
     workflow.status = "running";
-    node.status = "running";
+    const activityStatus = normalizeActivityStatus(data.activity_status);
+    node.status = event.type === "progress" && activityStatus !== "running"
+      ? activityStatus === "error" ? "error" : "success"
+      : "running";
+    if (node.status === "running") {
+      node.endedAt = undefined;
+      node.durationMs = undefined;
+    }
     node.stage = normalizeText(data.stage) || node.stage;
     node.message = message || (event.type === "token" ? "正在生成回答..." : node.message);
     node.detail = { ...data };
     run.status = "running";
     run.currentWorkflowId = workflowId;
-    run.currentNodeId = nodeId;
+    run.currentNodeId = nodeKey;
     run.message = node.message || node.name;
     return run;
   }
@@ -398,7 +400,7 @@ export function reduceWorkflowRunEvent(
     node.message = retrievedMessage || node.message;
     node.detail = { ...data };
     run.currentWorkflowId = workflowId;
-    run.currentNodeId = nodeId;
+    run.currentNodeId = nodeKey;
     run.message = node.message || node.name;
     return run;
   }
@@ -409,9 +411,8 @@ export function reduceWorkflowRunEvent(
     node.durationMs = node.startedAt ? Math.max(0, at - node.startedAt) : undefined;
     node.message = buildRetrievedMessage(data) || message || node.message;
     node.detail = { ...data };
-    completeRunningNodes(workflow, at, nodeId);
     run.currentWorkflowId = workflowId;
-    run.currentNodeId = nodeId;
+    run.currentNodeId = nodeKey;
     run.message = node.message || `${node.name}完成`;
     return run;
   }
