@@ -10,23 +10,46 @@ class AppConfig:
 
 
 @dataclass(frozen=True)
+class GraphConfig:
+    enabled: bool
+    indexing_enabled: bool
+    provider: str
+    uri: str
+    username: str
+    password: str
+    database: str
+    extraction_max_chars: int
+    extraction_batch_max_chunks: int
+    extraction_batch_max_chars: int
+    extraction_concurrency: int
+
+
+@dataclass(frozen=True)
 class ModelConfig:
+    key: str
     model: str
     name: str
+    provider: str
     api_key: str
     api_base: str
-    temperature: float
+    temperature: float | None
     request_timeout: int
     streaming: bool
     max_tokens: int | None = None
+    input_price: float = 0.0
+    output_price: float = 0.0
 
 
 @dataclass(frozen=True)
 class EmbeddingConfig:
+    provider: str
     model: str
     dim: int
     device: str
     batch_size: int
+    api_url: str
+    api_key: str
+    dimensions: int | None
 
 
 @dataclass(frozen=True)
@@ -40,16 +63,32 @@ class IndexingBatchConfig:
 class RagChunkConfig:
     size: int
     overlap: int
+    parent_target_min: int = 1200
+    parent_target_max: int = 2500
+    child_target_min: int = 400
+    child_target_max: int = 900
+    split_overlap_units: int = 1
+    parent_window_max_chars: int = 1800
+    parent_window_neighbor_span: int = 1
+
+
+@dataclass(frozen=True)
+class RagRetrievalProfileConfig:
+    recall_k: int
+    lexical_k: int
+    graph_limit: int
+    final_top_k: int
+    llm_reference_top_k: int | None
+    context_budget: int
+    rerank_enabled: bool
 
 
 @dataclass(frozen=True)
 class RagRetrievalConfig:
     k_first: int
-    k_iteration: int
-    distance_threshold: float
-    distance_threshold_iteration: float
+    distance_threshold: float | None
+    rrf_score_threshold: float | None
     rerank_threshold: float | None
-    fallback_top_n: int
     final_top_k: int
     llm_reference_top_k: int | None
     hybrid_enabled: bool
@@ -57,27 +96,13 @@ class RagRetrievalConfig:
     rrf_k: int
     hybrid_pool_limit: int
     kb_context_max_chars: int
-
-
-@dataclass(frozen=True)
-class RagEvaluateWeights:
-    relevance: float
-    groundedness: float
-    completeness: float
-
-
-@dataclass(frozen=True)
-class RagEvaluateConfig:
-    context_max_chars: int
-    pass_threshold: float
-    weights: RagEvaluateWeights
+    profiles: dict[str, RagRetrievalProfileConfig]
 
 
 @dataclass(frozen=True)
 class RagConfig:
     chunk: RagChunkConfig
     retrieval: RagRetrievalConfig
-    evaluate: RagEvaluateConfig
 
 
 @dataclass(frozen=True)

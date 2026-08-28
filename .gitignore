@@ -44,24 +44,14 @@ coverage/
 venv/
 ENV/
 env/
-env.bak/
-venv.bak/
 .uv/
-.pdm-python
-.pdm-build/
-.pixi
-__pypackages__/
-.mypy_cache/
-.dmypy.json
-dmypy.json
-.ruff_cache/
-.pyre/
-.pytype/
-cython_debug/
+AISYN.md
+.trae
 
-# Environment variables
+# 环境变量
 .env
 .env.prod
+.env.test
 .env.local
 .envrc
 backend/.env
@@ -93,31 +83,38 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
-.turbo
-.pnpm-store
-frontend/node_modules/
-frontend/.next/
-frontend/out/
-frontend/build/
-frontend/.turbo/
-frontend/tsconfig.tsbuildinfo
-frontend/.pnpm-store/
+*.zip
 
-# Backend (Python)
+# ---------- Backend (Python) ----------
 backend/.venv/
 backend/venv/
 backend/.langgraph_api/
 backend/__pycache__/
 backend/.pytest_cache/
 backend/uploads/
+backend/uploaded_documents/
 backend/previews/
 backend/htmlcov/
 backend/coverage/
 backend/logs/
 
-# Root generated files
+# ---------- Frontend (Vue / Vite) ----------
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/dist/
+frontend/dist-widget/
+frontend/public/agent-static/
+frontend/.vite/
+frontend/.turbo/
+frontend/tsconfig.tsbuildinfo
+frontend/.pnpm-store/
+
+# 文件上传和预览（根目录）
 previews/
 uploads/
+docs/
 
 # Databases and logs
 *.db
@@ -160,4 +157,25 @@ __marimo__/
 *.pem
 *.key
 !*.pub
-!backend/langgraph.env.example
+backend/langgraph.env.example
+
+# claude
+.claude/
+
+
+
+
+# 其他
+闭环验收清单.md
+code-style.md
+/artifacts/design-qa/
+/design-qa.md
+
+
+# e2e
+e2e/
+.env.e2e
+
+# MCP internal installer outputs
+mcp_server/.artifacts/
+HANDOVER.md

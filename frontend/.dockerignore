@@ -1,7 +1,7 @@
-.git
 node_modules
-.next
+dist
+.git
 .env
 .env.*
-!.env.local.example
-*.md
+npm-debug.log*
+pnpm-debug.log*

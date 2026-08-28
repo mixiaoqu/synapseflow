@@ -78,3 +78,32 @@ def load_repositories_raw() -> Dict[str, Any]:
     """Load `repositories.yaml` and expand `${VAR}` placeholders."""
     data = load_yaml(CONFIG_DIR / "repositories.yaml", {"repositories": [], "defaults": {}})
     return substitute_env_deep(data)
+
+
+def _merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively merge two dictionaries, with override taking precedence."""
+    merged = dict(base)
+    for key, override_value in override.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, dict) and isinstance(override_value, dict):
+            merged[key] = _merge_dicts(base_value, override_value)
+        else:
+            merged[key] = override_value
+    return merged
+
+
+def load_embed_app_pages_raw(product_code: str, project_code: str, app_code: str) -> Dict[str, Any]:
+    """Load product defaults, then overlay project-specific page config when present."""
+    product_default_path = (
+        CONFIG_DIR / "embed_pages" / product_code / "default" / f"{app_code}.yaml"
+    )
+    project_app_path = (
+        CONFIG_DIR / "embed_pages" / product_code / project_code / f"{app_code}.yaml"
+    )
+    default_data = load_yaml(product_default_path, {})
+    app_data = load_yaml(project_app_path, {})
+    merged = _merge_dicts(
+        default_data if isinstance(default_data, dict) else {},
+        app_data if isinstance(app_data, dict) else {},
+    )
+    return substitute_env_deep(merged)

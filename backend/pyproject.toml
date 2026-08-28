@@ -1,7 +1,7 @@
 [project]
 name = "synapseflow-backend"
 version = "0.1.0"
-description = "SynapseFlow - LangGraph Multi-Agent System Backend"
+description = "LangChain RAG 知识库 - LangGraph Multi-Agent System Backend"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -24,18 +24,24 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "httpx>=0.27.0",
     "jinja2>=3.1.0",
+    "jsonschema>=4.26.0",
     "pyyaml>=6.0.0",
     "sse-starlette>=2.0.0",
     "pypdf>=5.0.0",
     "python-docx>=1.0.0",
+    "docling>=2.40.0",
     "sentence-transformers>=2.3.0",
-    "torch>=2.2.0",
+    "torch==2.11.0+cpu",
+    "torchvision==0.26.0+cpu",
     "transformers>=4.36.0",
     "loguru>=0.7.0",
     "langsmith>=0.1.0",
     "langgraph-cli[inmem]>=0.1.0",
     "langsmith-fetch>=0.3.1",
+    "mcp>=1.17.0,<2.0.0",
     "dramatiq[redis]>=1.17.1",
+    "neo4j>=5.28.0",
+    "tos>=2.9.2",
 ]
 
 [project.optional-dependencies]
@@ -48,16 +54,19 @@ dev = [
     "mypy>=1.8.0",
 ]
 
-# CPU 版 PyTorch，避免解析出 nvidia-cu12 等大体积 CUDA 依赖（Docker/无 GPU 服务器）
+[[tool.uv.index]]
+name = "pypi-cn"
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true
+
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv.sources]
-torch = [
-    { index = "pytorch-cpu" },
-]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
 
 [build-system]
 requires = ["hatchling"]

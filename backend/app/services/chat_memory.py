@@ -9,7 +9,13 @@ from typing import Any, Protocol
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ChatMessage, ChatSession, DocumentCategory, KnowledgeBase
+from app.db.models import (
+    AssistantProfile,
+    ChatMessage,
+    ChatSession,
+    DocumentCategory,
+    KnowledgeBase,
+)
 from app.db.session import AsyncSessionLocal
 from app.utils.time import utc_now
 
@@ -35,9 +41,16 @@ class ChatSessionSummaryRecord:
     session_id: str
     title: str
     preview: str | None
+    product_id: int | None
+    project_id: int | None
+    project_app_id: int | None
+    external_user_id: str | None
+    external_user_name: str | None
     team_id: int | None
     knowledge_base_id: int | None
     knowledge_base_name: str | None
+    assistant_id: int | None
+    assistant_name: str | None
     category_id: int | None
     category_name: str | None
     message_count: int
@@ -58,42 +71,56 @@ class ChatMemoryStore(Protocol):
     async def load_context(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatMemoryContext: ...
 
     async def save_turn(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        product_id: int | None = None,
+        project_id: int | None = None,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+        external_user_name: str | None = None,
         team_id: int | None,
         knowledge_base_id: int | None,
+        assistant_id: int | None,
         category_id: int | None,
         user_message: str,
-        assistant_message: str,
-        assistant_metadata: dict[str, Any] | None = None,
+        answer_message: str,
+        answer_metadata: dict[str, Any] | None = None,
     ) -> None: ...
 
     async def list_sessions(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         limit: int = 30,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> list[ChatSessionSummaryRecord]: ...
 
     async def get_session_detail(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatSessionDetailRecord | None: ...
 
     async def delete_session(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> bool: ...
 
 
@@ -101,12 +128,35 @@ def format_chat_history(
     messages: list[dict[str, str]] | None,
     *,
     max_messages: int | None = None,
+    max_chars: int | None = None,
+    max_message_chars: int | None = None,
 ) -> str:
     """Format recent messages into a compact prompt-friendly transcript."""
 
     items = list(messages or [])
     if max_messages is not None and max_messages > 0:
         items = items[-max_messages:]
+
+    if max_chars is not None and max_chars > 0:
+        remaining_chars = max_chars
+        bounded_reversed: list[dict[str, str]] = []
+        for message in reversed(items):
+            if remaining_chars <= 0:
+                break
+            content = str(message.get("content") or "").strip()
+            if not content:
+                continue
+            if max_message_chars is not None and max_message_chars > 0:
+                content = content[:max_message_chars]
+            content = content[:remaining_chars]
+            bounded_reversed.append(
+                {
+                    "role": str(message.get("role") or "assistant"),
+                    "content": content,
+                }
+            )
+            remaining_chars -= len(content)
+        items = list(reversed(bounded_reversed))
 
     lines: list[str] = []
     for message in items:
@@ -127,11 +177,19 @@ class DatabaseChatMemoryStore:
     async def load_context(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatMemoryContext:
         async with AsyncSessionLocal() as db:
-            session = await self._get_session(db, user_id=user_id, session_id=session_id)
+            session = await self._get_session(
+                db,
+                user_id=user_id,
+                session_id=session_id,
+                project_app_id=project_app_id,
+                external_user_id=external_user_id,
+            )
             if not session:
                 return ChatMemoryContext(messages=[], summary=None)
 
@@ -151,18 +209,24 @@ class DatabaseChatMemoryStore:
     async def save_turn(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        product_id: int | None = None,
+        project_id: int | None = None,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+        external_user_name: str | None = None,
         team_id: int | None,
         knowledge_base_id: int | None,
+        assistant_id: int | None,
         category_id: int | None,
         user_message: str,
-        assistant_message: str,
-        assistant_metadata: dict[str, Any] | None = None,
+        answer_message: str,
+        answer_metadata: dict[str, Any] | None = None,
     ) -> None:
         normalized_user = (user_message or "").strip()
-        normalized_assistant = (assistant_message or "").strip()
-        if not normalized_user and not normalized_assistant:
+        normalized_answer = (answer_message or "").strip()
+        if not normalized_user and not normalized_answer:
             return
 
         async with AsyncSessionLocal() as db:
@@ -170,12 +234,21 @@ class DatabaseChatMemoryStore:
                 db,
                 user_id=user_id,
                 session_id=session_id,
+                project_app_id=project_app_id,
+                external_user_id=external_user_id,
             )
+            session.product_id = product_id
+            session.project_id = project_id
+            session.project_app_id = project_app_id
+            session.external_user_id = external_user_id
+            session.external_user_name = external_user_name
             session.team_id = team_id
             session.knowledge_base_id = knowledge_base_id
+            session.assistant_id = assistant_id
             session.category_id = category_id
             session.updated_at = utc_now()
 
+            messages_to_add = 0
             if normalized_user:
                 db.add(
                     ChatMessage(
@@ -184,78 +257,172 @@ class DatabaseChatMemoryStore:
                         content=normalized_user,
                     )
                 )
-            if normalized_assistant:
+                messages_to_add += 1
+            if normalized_answer:
                 db.add(
                     ChatMessage(
                         chat_session_id=session.id,
                         role="assistant",
-                        content=normalized_assistant,
-                        metadata_=assistant_metadata or None,
+                        content=normalized_answer,
+                        metadata_=answer_metadata or None,
                     )
                 )
+                messages_to_add += 1
 
+            session.message_count = int(session.message_count or 0) + messages_to_add
+            title_source = normalized_user or normalized_answer
+            if title_source and not str(session.title or "").strip():
+                session.title = self._truncate(title_source, 60)
+            latest_preview = normalized_answer or normalized_user
+            if latest_preview:
+                session.preview = self._truncate(latest_preview, 120)
+
+            await db.commit()
+
+    async def load_summary_context(
+        self,
+        *,
+        user_id: int | None,
+        session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+    ) -> ChatMemoryContext:
+        """Load messages outside the recent window for summary generation."""
+
+        async with AsyncSessionLocal() as db:
+            session = await self._get_session(
+                db,
+                user_id=user_id,
+                session_id=session_id,
+                project_app_id=project_app_id,
+                external_user_id=external_user_id,
+            )
+            if not session:
+                return ChatMemoryContext(messages=[], summary=None)
+
+            result = await db.execute(
+                select(ChatMessage.role, ChatMessage.content)
+                .where(ChatMessage.chat_session_id == session.id)
+                .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                .offset(self.history_limit)
+            )
+            messages = [
+                {"role": role, "content": content}
+                for role, content in reversed(result.all())
+                if str(content or "").strip()
+            ]
+            return ChatMemoryContext(messages=messages, summary=session.summary)
+
+    async def update_summary(
+        self,
+        *,
+        user_id: int | None,
+        session_id: str,
+        summary: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+    ) -> None:
+        """Persist the generated summary for one scoped chat session."""
+
+        async with AsyncSessionLocal() as db:
+            session = await self._get_session(
+                db,
+                user_id=user_id,
+                session_id=session_id,
+                project_app_id=project_app_id,
+                external_user_id=external_user_id,
+            )
+            if session is None:
+                raise ValueError(f"Chat session not found: {session_id}")
+            session.summary = summary.strip() or None
             await db.commit()
 
     async def list_sessions(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         limit: int = 30,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> list[ChatSessionSummaryRecord]:
         normalized_limit = max(1, min(limit, 100))
         async with AsyncSessionLocal() as db:
-            rows = await db.execute(
-                select(ChatSession, KnowledgeBase.name, DocumentCategory.name)
+            stmt = (
+                select(
+                    ChatSession,
+                    KnowledgeBase.name,
+                    AssistantProfile.name,
+                    DocumentCategory.name,
+                )
                 .outerjoin(KnowledgeBase, KnowledgeBase.id == ChatSession.knowledge_base_id)
+                .outerjoin(AssistantProfile, AssistantProfile.id == ChatSession.assistant_id)
                 .outerjoin(DocumentCategory, DocumentCategory.id == ChatSession.category_id)
-                .where(ChatSession.user_id == user_id)
                 .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
                 .limit(normalized_limit)
             )
+            if user_id is not None:
+                stmt = stmt.where(ChatSession.user_id == user_id)
+            else:
+                stmt = stmt.where(
+                    ChatSession.project_app_id == project_app_id,
+                    ChatSession.external_user_id == external_user_id,
+                )
+            rows = await db.execute(stmt)
             sessions = rows.all()
             if not sessions:
                 return []
 
-            messages_by_session = await self._load_messages_for_sessions(
-                db,
-                [session.id for session, _, _ in sessions],
-            )
             return [
                 self._build_session_summary(
                     session,
                     kb_name=knowledge_base_name,
+                    assistant_name=assistant_name,
                     category_name=category_name,
-                    messages=messages_by_session.get(session.id, []),
+                    messages=None,
                 )
-                for session, knowledge_base_name, category_name in sessions
+                for session, knowledge_base_name, assistant_name, category_name in sessions
             ]
 
     async def get_session_detail(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatSessionDetailRecord | None:
         async with AsyncSessionLocal() as db:
-            row = await db.execute(
-                select(ChatSession, KnowledgeBase.name, DocumentCategory.name)
-                .outerjoin(KnowledgeBase, KnowledgeBase.id == ChatSession.knowledge_base_id)
-                .outerjoin(DocumentCategory, DocumentCategory.id == ChatSession.category_id)
-                .where(
-                    ChatSession.user_id == user_id,
-                    ChatSession.session_id == session_id,
+            stmt = (
+                select(
+                    ChatSession,
+                    KnowledgeBase.name,
+                    AssistantProfile.name,
+                    DocumentCategory.name,
                 )
+                .outerjoin(KnowledgeBase, KnowledgeBase.id == ChatSession.knowledge_base_id)
+                .outerjoin(AssistantProfile, AssistantProfile.id == ChatSession.assistant_id)
+                .outerjoin(DocumentCategory, DocumentCategory.id == ChatSession.category_id)
+                .where(ChatSession.session_id == session_id)
             )
+            if user_id is not None:
+                stmt = stmt.where(ChatSession.user_id == user_id)
+            else:
+                stmt = stmt.where(
+                    ChatSession.project_app_id == project_app_id,
+                    ChatSession.external_user_id == external_user_id,
+                )
+            row = await db.execute(stmt)
             result = row.one_or_none()
             if result is None:
                 return None
 
-            session, knowledge_base_name, category_name = result
+            session, knowledge_base_name, assistant_name, category_name = result
             messages_by_session = await self._load_messages_for_sessions(db, [session.id])
             messages = messages_by_session.get(session.id, [])
             summary = self._build_session_summary(
                 session,
                 kb_name=knowledge_base_name,
+                assistant_name=assistant_name,
                 category_name=category_name,
                 messages=messages,
             )
@@ -263,9 +430,16 @@ class DatabaseChatMemoryStore:
                 session_id=summary.session_id,
                 title=summary.title,
                 preview=summary.preview,
+                product_id=summary.product_id,
+                project_id=summary.project_id,
+                project_app_id=summary.project_app_id,
+                external_user_id=summary.external_user_id,
+                external_user_name=summary.external_user_name,
                 team_id=summary.team_id,
                 knowledge_base_id=summary.knowledge_base_id,
                 knowledge_base_name=summary.knowledge_base_name,
+                assistant_id=summary.assistant_id,
+                assistant_name=summary.assistant_name,
                 category_id=summary.category_id,
                 category_name=summary.category_name,
                 message_count=summary.message_count,
@@ -277,18 +451,21 @@ class DatabaseChatMemoryStore:
     async def delete_session(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> bool:
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                delete(ChatSession)
-                .where(
-                    ChatSession.user_id == user_id,
-                    ChatSession.session_id == session_id,
+            stmt = delete(ChatSession).where(ChatSession.session_id == session_id)
+            if user_id is not None:
+                stmt = stmt.where(ChatSession.user_id == user_id)
+            else:
+                stmt = stmt.where(
+                    ChatSession.project_app_id == project_app_id,
+                    ChatSession.external_user_id == external_user_id,
                 )
-                .returning(ChatSession.id)
-            )
+            result = await db.execute(stmt.returning(ChatSession.id))
             deleted_row = result.first()
             if deleted_row is None:
                 await db.rollback()
@@ -301,25 +478,38 @@ class DatabaseChatMemoryStore:
     async def _get_session(
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatSession | None:
-        result = await db.execute(
-            select(ChatSession).where(
-                ChatSession.user_id == user_id,
-                ChatSession.session_id == session_id,
+        stmt = select(ChatSession).where(ChatSession.session_id == session_id)
+        if user_id is not None:
+            stmt = stmt.where(ChatSession.user_id == user_id)
+        else:
+            stmt = stmt.where(
+                ChatSession.project_app_id == project_app_id,
+                ChatSession.external_user_id == external_user_id,
             )
-        )
+        result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def _get_or_create_session(
         self,
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatSession:
-        session = await self._get_session(db, user_id=user_id, session_id=session_id)
+        session = await self._get_session(
+            db,
+            user_id=user_id,
+            session_id=session_id,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
+        )
         if session:
             return session
 
@@ -372,13 +562,14 @@ class DatabaseChatMemoryStore:
         session: ChatSession,
         *,
         kb_name: str | None,
+        assistant_name: str | None,
         category_name: str | None,
-        messages: list[dict[str, Any]],
+        messages: list[dict[str, Any]] | None,
     ) -> ChatSessionSummaryRecord:
-        title = "New conversation"
-        preview: str | None = None
+        title = str(session.title or "").strip() or "New conversation"
+        preview = str(session.preview or "").strip() or None
 
-        for message in messages:
+        for message in messages or []:
             content = str(message.get("content") or "").strip()
             if not content:
                 continue
@@ -399,12 +590,19 @@ class DatabaseChatMemoryStore:
             session_id=session.session_id,
             title=title,
             preview=preview,
+            product_id=session.product_id,
+            project_id=session.project_id,
+            project_app_id=session.project_app_id,
+            external_user_id=session.external_user_id,
+            external_user_name=session.external_user_name,
             team_id=session.team_id,
             knowledge_base_id=session.knowledge_base_id,
             knowledge_base_name=kb_name,
+            assistant_id=session.assistant_id,
+            assistant_name=assistant_name,
             category_id=session.category_id,
             category_name=category_name,
-            message_count=len(messages),
+            message_count=session.message_count or len(messages or []),
             created_at=session.created_at,
             updated_at=session.updated_at,
         )

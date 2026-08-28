@@ -1,7 +1,18 @@
 """Database ORM models."""
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import TSVECTOR
 
 from app.core.config import config_registry
@@ -21,8 +32,9 @@ class User(Base):
     email = Column(String(255), nullable=False, unique=True, index=True)
     full_name = Column(String(100), nullable=True)
     hashed_password = Column(String(255), nullable=False)
-    role = Column(String(30), nullable=False, default="end_user", index=True)
+    role = Column(String(30), nullable=False, default="user", index=True)
     is_active = Column(Boolean, nullable=False, default=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -31,6 +43,9 @@ class Team(Base):
     """Enterprise team."""
 
     __tablename__ = "teams"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_teams_code"),
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String(100), nullable=False)
@@ -48,21 +63,22 @@ class TeamMember(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    role = Column(String(30), nullable=False, default="member")
+    role = Column(String(30), nullable=False, default="viewer")
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
-class SensitiveWordSetting(Base):
-    """Scoped sensitive-word runtime settings."""
+class ContentRiskLibrary(Base):
+    """Reusable content-risk rule library."""
 
-    __tablename__ = "sensitive_word_settings"
+    __tablename__ = "content_risk_libraries"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=True, index=True)
-    enabled = Column(Boolean, nullable=False, default=True)
-    block_query = Column(Boolean, nullable=False, default=True)
-    block_document_publish = Column(Boolean, nullable=False, default=False)
+    name = Column(String(100), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    rule_count = Column(Integer, nullable=False, default=0)
+    reference_count = Column(Integer, nullable=False, default=0)
     created_by_user_id = Column(
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -79,22 +95,32 @@ class SensitiveWordSetting(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
-class SensitiveWord(Base):
-    """One sensitive word row under the global or team scope."""
+class ContentRiskRule(Base):
+    """One concrete risk detection rule under a content-risk library."""
 
-    __tablename__ = "sensitive_words"
+    __tablename__ = "content_risk_rules"
     __table_args__ = (
-        UniqueConstraint("team_id", "normalized_word", name="uq_sensitive_words_team_normalized"),
+        UniqueConstraint("library_id", "name", name="uq_content_risk_rules_library_name"),
     )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=True, index=True)
-    word = Column(String(255), nullable=False)
-    normalized_word = Column(String(255), nullable=False, index=True)
-    category = Column(String(50), nullable=True, index=True)
-    match_mode = Column(String(20), nullable=False, default="contains")
-    enabled = Column(Boolean, nullable=False, default=True)
-    remark = Column(Text, nullable=True)
+    library_id = Column(
+        Integer,
+        ForeignKey("content_risk_libraries.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name = Column(String(100), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    rule_type = Column(String(30), nullable=False, index=True)
+    match_mode = Column(String(30), nullable=False, index=True)
+    pattern = Column(Text, nullable=False)
+    risk_category = Column(String(50), nullable=False, index=True)
+    risk_level = Column(String(20), nullable=False, index=True)
+    default_action = Column(String(20), nullable=False, index=True)
+    applies_to_query = Column(Boolean, nullable=False, default=True, index=True)
+    applies_to_answer = Column(Boolean, nullable=False, default=True, index=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
     created_by_user_id = Column(
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -121,6 +147,8 @@ class KnowledgeBase(Base):
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, default=1, index=True)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
+    purpose = Column(String(30), nullable=False, default="business", index=True)
+    is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -143,6 +171,267 @@ class KnowledgeBaseMember(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class AssistantProfile(Base):
+    """Configurable assistant profile bound to one team/knowledge base scope."""
+
+    __tablename__ = "assistant_profiles"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    category_id = Column(
+        Integer,
+        ForeignKey("document_categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    name = Column(String(100), nullable=False)
+    slug = Column(String(120), nullable=False, unique=True, index=True)
+    created_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    description = Column(Text, nullable=True)
+    welcome_message = Column(Text, nullable=True)
+    placeholder_text = Column(String(255), nullable=True)
+    llm_model_key = Column(String(80), nullable=True, index=True)
+    persona_prompt = Column(Text, nullable=True)
+    rule_template = Column(Text, nullable=True)
+    suggested_prompts = Column(JSON, nullable=False, default=list)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    sort_order = Column(Integer, nullable=False, default=0, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class Product(Base):
+    """Business product definition under one team."""
+
+    __tablename__ = "products"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(120), nullable=False, unique=True, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class Project(Base):
+    """Business project that can expose embedded assistant applications."""
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        UniqueConstraint("product_id", "code", name="uq_projects_product_code"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(120), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class ProjectApp(Base):
+    """One embeddable application under a project."""
+
+    __tablename__ = "project_apps"
+    __table_args__ = (
+        UniqueConstraint("project_id", "code", name="uq_project_apps_project_code"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(120), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    category_id = Column(
+        Integer,
+        ForeignKey("document_categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    default_assistant_id = Column(
+        Integer,
+        ForeignKey("assistant_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    widget_version = Column(String(30), nullable=False, default="1.0.0")
+    terminal_type = Column(String(40), nullable=False, default="api")
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class ProjectAppAccessCredential(Base):
+    """Server-to-server access credential for one project application."""
+
+    __tablename__ = "project_app_access_credentials"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_app_id = Column(
+        Integer,
+        ForeignKey("project_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    client_id = Column(String(80), nullable=False, unique=True)
+    client_secret_digest = Column(String(64), nullable=False)
+    client_secret_last_four = Column(String(4), nullable=False)
+    allowed_origins = Column(JSON, nullable=False, default=list)
+    token_version = Column(Integer, nullable=False, default=1)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+
+class ToolProvider(Base):
+    """Team-scoped connection to an external tool provider."""
+
+    __tablename__ = "tool_providers"
+    __table_args__ = (
+        UniqueConstraint("team_id", "code", name="uq_tool_providers_team_code"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(80), nullable=False)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    base_url = Column(Text, nullable=False)
+    transport_type = Column(String(30), nullable=False, default="business_http", index=True)
+    auth_type = Column(String(20), nullable=False, default="bearer")
+    auth_header_name = Column(String(100), nullable=True)
+    auth_token_encrypted = Column(Text, nullable=True)
+    auth_token_last_four = Column(String(4), nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    health_status = Column(String(20), nullable=False, default="untested", index=True)
+    last_checked_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class AgentTool(Base):
+    """External tool definition plus SynapseFlow governance state."""
+
+    __tablename__ = "agent_tools"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "external_name", name="uq_agent_tools_provider_external_name"),
+        UniqueConstraint("team_id", "tool_key", name="uq_agent_tools_team_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    provider_id = Column(
+        Integer,
+        ForeignKey("tool_providers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    external_name = Column(String(180), nullable=False, index=True)
+    external_display_name = Column(String(100), nullable=False)
+    external_description = Column(Text, nullable=True)
+    domain = Column(String(50), nullable=False, default="general", index=True)
+    action = Column(String(20), nullable=False, default="execute", index=True)
+    read_only = Column(Boolean, nullable=False, default=False, index=True)
+    required_permissions = Column(JSON, nullable=False, default=list)
+    input_schema = Column(JSON, nullable=False, default=dict)
+    output_schema = Column(JSON, nullable=False, default=dict)
+    required_context = Column(JSON, nullable=False, default=list)
+    raw_manifest = Column(JSON, nullable=False, default=dict)
+    schema_hash = Column(String(64), nullable=False, index=True)
+    sync_status = Column(String(20), nullable=False, default="active", index=True)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    tool_key = Column(String(120), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    agent_description = Column(Text, nullable=True)
+    risk_level = Column(String(20), nullable=False, default="low", index=True)
+    requires_confirmation = Column(Boolean, nullable=False, default=False)
+    publish_status = Column(String(20), nullable=False, default="draft", index=True)
+    approved_schema_hash = Column(String(64), nullable=True, index=True)
+    last_tested_at = Column(DateTime(timezone=True), nullable=True)
+    last_test_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class AgentAppToolGrant(Base):
+    """Authorization for one project application to use one Agent tool."""
+
+    __tablename__ = "agent_app_tool_grants"
+    __table_args__ = (
+        UniqueConstraint("project_app_id", "agent_tool_id", name="uq_agent_app_tool_grants_app_tool"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    project_app_id = Column(
+        Integer,
+        ForeignKey("project_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_tool_id = Column(
+        Integer,
+        ForeignKey("agent_tools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+
+
+class AgentToolInvocation(Base):
+    """Redacted execution audit record for one Agent tool call."""
+
+    __tablename__ = "agent_tool_invocations"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider_id = Column(Integer, ForeignKey("tool_providers.id", ondelete="SET NULL"), nullable=True, index=True)
+    agent_tool_id = Column(Integer, ForeignKey("agent_tools.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_app_id = Column(Integer, ForeignKey("project_apps.id", ondelete="SET NULL"), nullable=True, index=True)
+    provider_code = Column(String(80), nullable=False)
+    external_name = Column(String(180), nullable=False)
+    tool_key = Column(String(120), nullable=False, index=True)
+    schema_hash = Column(String(64), nullable=False)
+    session_id = Column(String(100), nullable=True, index=True)
+    trace_id = Column(String(100), nullable=True, index=True)
+    request_id = Column(String(100), nullable=True, index=True)
+    actor_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    external_user_id = Column(String(255), nullable=True)
+    call_source = Column(String(20), nullable=False, default="runtime")
+    status = Column(String(30), nullable=False, index=True)
+    error_code = Column(String(80), nullable=True)
+    error_message = Column(Text, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    request_summary = Column(JSON, nullable=False, default=dict)
+    response_summary = Column(JSON, nullable=False, default=dict)
+    confirmed = Column(Boolean, nullable=False, default=False)
+    confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, index=True)
+
+
 class DocumentCategory(Base):
     """Knowledge-base scoped document category."""
 
@@ -155,7 +444,52 @@ class DocumentCategory(Base):
         nullable=False,
         index=True,
     )
+    parent_id = Column(
+        Integer,
+        ForeignKey("document_categories.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     name = Column(String(100), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class DocumentUploadSession(Base):
+    """Temporary upload session used by direct-to-OSS document uploads."""
+
+    __tablename__ = "document_upload_sessions"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    category_id = Column(
+        Integer,
+        ForeignKey("document_categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    document_id = Column(
+        Integer,
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    original_filename = Column(String(255), nullable=False)
+    source_path = Column(String(1024), nullable=True)
+    bucket_name = Column(String(255), nullable=False)
+    object_key = Column(String(1024), nullable=False)
+    file_size = Column(Integer, nullable=False, default=0)
+    content_type = Column(String(255), nullable=True)
+    status = Column(String(20), nullable=False, default="initialized", index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -176,6 +510,7 @@ class Document(Base):
     root_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
     is_latest = Column(Boolean, nullable=False, default=True)
     is_current = Column(Boolean, nullable=False, default=True)
+    is_live = Column(Boolean, nullable=False, default=False, index=True)
     knowledge_base_id = Column(
         Integer,
         ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
@@ -194,10 +529,69 @@ class Document(Base):
     published_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     reviewed_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    parse_status = Column(String(20), nullable=False, default="parsed", index=True)
+    parse_error = Column(Text, nullable=True)
+    parse_started_at = Column(DateTime(timezone=True), nullable=True)
+    parsed_at = Column(DateTime(timezone=True), nullable=True)
+    staged_file_path = Column(String(1024), nullable=True)
+    staged_file_name = Column(String(255), nullable=True)
+    staged_file_size = Column(Integer, nullable=True)
+    staged_file_hash = Column(String(64), nullable=True)
+    source_storage_provider = Column(String(50), nullable=True)
+    source_bucket_name = Column(String(255), nullable=True)
+    source_object_key = Column(String(1024), nullable=True)
+    source_file_name = Column(String(255), nullable=True)
+    source_file_size = Column(Integer, nullable=True)
+    source_content_type = Column(String(255), nullable=True)
+    source_etag = Column(String(255), nullable=True)
     index_status = Column(String(20), nullable=False, default="queued", index=True)
     index_error = Column(Text, nullable=True)
+    graph_index_status = Column(String(20), nullable=False, default="skipped", index=True)
+    graph_index_error = Column(Text, nullable=True)
+    graph_indexed_at = Column(DateTime(timezone=True), nullable=True)
     content_hash = Column(String(32), nullable=False, default="")
     indexed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class DocumentChunk(Base):
+    """Persisted parent/child chunk relationships for one document."""
+
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_kind", "chunk_index", name="uq_document_chunks_doc_kind_index"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    chunk_kind = Column(String(20), nullable=False, index=True)
+    parent_chunk_id = Column(
+        Integer,
+        ForeignKey("document_chunks.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    chunk_index = Column(Integer, nullable=False)
+    prev_chunk_id = Column(
+        Integer,
+        ForeignKey("document_chunks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    next_chunk_id = Column(
+        Integer,
+        ForeignKey("document_chunks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    section_path = Column(String(1024), nullable=True)
+    block_types = Column(JSON, nullable=True)
+    start_offset = Column(Integer, nullable=False, default=0)
+    end_offset = Column(Integer, nullable=False, default=0)
+    content = Column(Text, nullable=False)
+    search_text = Column(Text, nullable=False)
+    metadata_ = Column("metadata", JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -255,6 +649,12 @@ class Embedding(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_chunk_id = Column(
+        Integer,
+        ForeignKey("document_chunks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     chunk_text = Column(Text, nullable=False)
     search_text = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)
@@ -269,15 +669,37 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
     __table_args__ = (
         UniqueConstraint("user_id", "session_id", name="uq_chat_sessions_user_session_id"),
+        UniqueConstraint(
+            "project_app_id",
+            "external_user_id",
+            "session_id",
+            name="uq_chat_sessions_project_app_external_session",
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     session_id = Column(String(64), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_app_id = Column(
+        Integer,
+        ForeignKey("project_apps.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    external_user_id = Column(String(255), nullable=True, index=True)
+    external_user_name = Column(String(255), nullable=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True)
     knowledge_base_id = Column(
         Integer,
         ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    assistant_id = Column(
+        Integer,
+        ForeignKey("assistant_profiles.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -288,6 +710,9 @@ class ChatSession(Base):
         index=True,
     )
     summary = Column(Text, nullable=True)
+    title = Column(String(255), nullable=True)
+    preview = Column(Text, nullable=True)
+    message_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -316,11 +741,27 @@ class KbChatLog(Base):
     __tablename__ = "kb_chat_logs"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     session_id = Column(String(64), nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_app_id = Column(
+        Integer,
+        ForeignKey("project_apps.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    external_user_id = Column(String(255), nullable=True, index=True)
+    external_user_name = Column(String(255), nullable=True)
     knowledge_base_id = Column(
         Integer,
         ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    assistant_id = Column(
+        Integer,
+        ForeignKey("assistant_profiles.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -334,8 +775,19 @@ class KbChatLog(Base):
     answer_text = Column(Text, nullable=False)
     answer_status = Column(String(20), nullable=False, default="answered", index=True)
     retrieval_status = Column(String(30), nullable=True, index=True)
-    retrieved_count = Column(Integer, nullable=False, default=0)
     latency_ms = Column(Integer, nullable=True)
+    text_hit_count = Column(Integer, nullable=False, default=0)
+    graph_hit_count = Column(Integer, nullable=False, default=0)
+    merged_candidate_count = Column(Integer, nullable=False, default=0)
+    final_context_count = Column(Integer, nullable=False, default=0)
+    empty_reason = Column(String(40), nullable=True, index=True)
+    rerank_enabled = Column(Boolean, nullable=False, default=False)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    estimated_cost = Column(Numeric(18, 8), nullable=True)
+    token_usage = Column(JSON, nullable=True)
+    trace_payload = Column(JSON, nullable=True)
     feedback_value = Column(String(20), nullable=True, index=True)
     feedback_note = Column(Text, nullable=True)
     review_label = Column(String(40), nullable=True, index=True)
@@ -349,3 +801,161 @@ class KbChatLog(Base):
     )
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class ContentRiskLog(Base):
+    """One persisted content-risk detection decision."""
+
+    __tablename__ = "content_risk_logs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    chat_log_id = Column(Integer, ForeignKey("kb_chat_logs.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    session_id = Column(String(64), nullable=True, index=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_app_id = Column(
+        Integer,
+        ForeignKey("project_apps.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    external_user_id = Column(String(255), nullable=True, index=True)
+    external_user_name = Column(String(255), nullable=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    assistant_id = Column(
+        Integer,
+        ForeignKey("assistant_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    scene = Column(String(20), nullable=False, index=True)
+    action = Column(String(20), nullable=False, index=True)
+    blocked = Column(Boolean, nullable=False, default=False, index=True)
+    risk_level = Column(String(20), nullable=True, index=True)
+    matched_text = Column(Text, nullable=True)
+    checked_text = Column(Text, nullable=False)
+    hits = Column(JSON, nullable=False, default=list)
+    elapsed_ms = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=utc_now, index=True)
+
+
+class EvalDataset(Base):
+    """Evaluation dataset bound to one evaluation knowledge base."""
+
+    __tablename__ = "eval_datasets"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String(100), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version = Column(String(50), nullable=False, default="v1")
+    status = Column(String(20), nullable=False, default="draft", index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class EvalCase(Base):
+    """One question and expected answer in an evaluation dataset."""
+
+    __tablename__ = "eval_cases"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    dataset_id = Column(
+        Integer,
+        ForeignKey("eval_datasets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    question = Column(Text, nullable=False)
+    expected_answer = Column(Text, nullable=False)
+    expected_doc_ids = Column(JSON, nullable=False, default=list)
+    expected_snippets = Column(JSON, nullable=False, default=list)
+    expected_chunk_ids = Column(JSON, nullable=False, default=list)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class EvalRun(Base):
+    """One execution of an evaluation dataset."""
+
+    __tablename__ = "eval_runs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    dataset_id = Column(
+        Integer,
+        ForeignKey("eval_datasets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_name = Column(String(100), nullable=True)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    model_config = Column(JSON, nullable=False, default=dict)
+    kb_snapshot = Column(JSON, nullable=False, default=dict)
+    assistant_snapshot = Column(JSON, nullable=False, default=dict)
+    case_snapshot = Column(JSON, nullable=False, default=dict)
+    policy_snapshot = Column(JSON, nullable=False, default=dict)
+    total_cases = Column(Integer, nullable=False, default=0)
+    passed_cases = Column(Integer, nullable=False, default=0)
+    failed_cases = Column(Integer, nullable=False, default=0)
+    average_score = Column(Integer, nullable=False, default=0)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    error_message = Column(Text, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    estimated_cost = Column(Numeric(18, 8), nullable=True)
+    token_usage = Column(JSON, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+
+
+class EvalCaseResult(Base):
+    """Result for one evaluation case in one run."""
+
+    __tablename__ = "eval_case_results"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    run_id = Column(
+        Integer,
+        ForeignKey("eval_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    case_key = Column(String(100), nullable=True)
+    case_id = Column(
+        Integer,
+        ForeignKey("eval_cases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    case_snapshot = Column(JSON, nullable=False, default=dict)
+    status = Column(String(20), nullable=False, default="failed", index=True)
+    score = Column(Integer, nullable=False, default=0)
+    actual_answer = Column(Text, nullable=False, default="")
+    retrieved_doc_ids = Column(JSON, nullable=False, default=list)
+    retrieved_chunk_ids = Column(JSON, nullable=False, default=list)
+    judge_result = Column(JSON, nullable=False, default=dict)
+    latency_ms = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    estimated_cost = Column(Numeric(18, 8), nullable=True)
+    token_usage = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)

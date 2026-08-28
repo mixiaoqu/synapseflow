@@ -1,19 +1,29 @@
 """Document management API."""
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import require_content_roles, require_review_roles
 from app.application.document_service import document_service
+from app.application.document_upload_service import document_upload_service
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.document import (
+    BatchDocumentActionRequest,
+    BatchDocumentActionResponse,
+    BatchDocumentFilterRequest,
+    DocumentChunksResponse,
     DocumentContentUpdate,
     DocumentCreate,
-    IndexingPanelSummaryResponse,
     DocumentListResponse,
     DocumentResponse,
+    DocumentUploadAbortRequest,
+    DocumentUploadActionResponse,
+    DocumentUploadCompleteRequest,
+    DocumentUploadInitRequest,
+    DocumentUploadInitResponse,
     DocumentVersionsResponse,
+    IndexingPanelSummaryResponse,
 )
 
 router = APIRouter()
@@ -21,42 +31,62 @@ router = APIRouter()
 
 @router.post("", response_model=DocumentResponse)
 async def upload_document(
-    file: UploadFile = File(..., description="Document file"),
-    knowledge_base_id: int | None = Form(None, description="Owning knowledge base id"),
-    category_id: int | None = Form(None, description="Owning category id"),
-    source_path: str | None = Form(None, description="Original relative source path"),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_content_roles),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001
+    current_user: User = Depends(require_content_roles),  # noqa: ARG001
 ):
-    return await document_service.upload_document(
-        db=db,
-        user_id=current_user.id,
-        file=file,
-        knowledge_base_id=knowledge_base_id,
-        category_id=category_id,
-        source_path=source_path,
+    raise HTTPException(
+        status_code=410,
+        detail="Local multipart upload has been removed. Use /documents/uploads/init and /documents/uploads/complete.",
     )
 
 
 @router.post("/batch", response_model=list[DocumentResponse])
 async def upload_documents_batch(
-    files: list[UploadFile] = File(..., description="Document files"),
-    knowledge_base_id: int | None = Form(None, description="Owning knowledge base id"),
-    category_id: int | None = Form(None, description="Owning category id"),
-    source_paths: list[str] | None = Form(
-        None,
-        description="Relative source paths aligned with files order",
-    ),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001
+    current_user: User = Depends(require_content_roles),  # noqa: ARG001
+):
+    raise HTTPException(
+        status_code=410,
+        detail="Local multipart upload has been removed. Use /documents/uploads/init and /documents/uploads/complete.",
+    )
+
+
+@router.post("/uploads/init", response_model=DocumentUploadInitResponse)
+async def init_document_upload(
+    body: DocumentUploadInitRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    return await document_service.upload_documents_batch(
+    return await document_upload_service.init_upload(
         db=db,
         user_id=current_user.id,
-        files=files,
-        knowledge_base_id=knowledge_base_id,
-        category_id=category_id,
-        source_paths=source_paths,
+        body=body,
+    )
+
+
+@router.post("/uploads/complete", response_model=DocumentResponse)
+async def complete_document_upload(
+    body: DocumentUploadCompleteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await document_upload_service.complete_upload(
+        db=db,
+        user_id=current_user.id,
+        body=body,
+    )
+
+
+@router.post("/uploads/abort", response_model=DocumentUploadActionResponse)
+async def abort_document_upload(
+    body: DocumentUploadAbortRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await document_upload_service.abort_upload(
+        db=db,
+        user_id=current_user.id,
+        body=body,
     )
 
 
@@ -87,7 +117,7 @@ async def get_indexing_panel_summary(
 @router.get("", response_model=DocumentListResponse)
 async def list_documents(
     page: int = 1,
-    page_size: int = 20,
+    page_size: int = 10,
     keyword: str | None = None,
     team_id: int | None = Query(None, description="Filter by team id"),
     knowledge_base_id: int | None = Query(None, description="Filter by knowledge base"),
@@ -129,6 +159,19 @@ async def get_document(
     current_user: User = Depends(require_content_roles),
 ):
     return await document_service.get_document(
+        db=db,
+        user_id=current_user.id,
+        doc_id=doc_id,
+    )
+
+
+@router.get("/{doc_id}/chunks", response_model=DocumentChunksResponse)
+async def get_document_chunks(
+    doc_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await document_service.get_document_chunks(
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,
@@ -222,6 +265,32 @@ async def delete_documents_batch(
     )
 
 
+@router.post("/batch/submit-for-review-by-filter", response_model=BatchDocumentActionResponse)
+async def submit_documents_for_review_by_filter(
+    body: BatchDocumentFilterRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await document_service.submit_documents_for_review_by_filter(
+        db=db,
+        user_id=current_user.id,
+        filter_body=body,
+    )
+
+
+@router.post("/batch/publish-by-filter", response_model=BatchDocumentActionResponse)
+async def publish_documents_by_filter(
+    body: BatchDocumentFilterRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    return await document_service.publish_documents_by_filter(
+        db=db,
+        user_id=current_user.id,
+        filter_body=body,
+    )
+
+
 @router.delete("/{doc_id}")
 async def delete_document(
     doc_id: int,
@@ -232,6 +301,19 @@ async def delete_document(
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,
+    )
+
+
+@router.post("/batch/submit-for-review", response_model=BatchDocumentActionResponse)
+async def submit_documents_for_review_batch(
+    body: BatchDocumentActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await document_service.submit_documents_for_review_batch(
+        db=db,
+        user_id=current_user.id,
+        ids=body.ids,
     )
 
 
@@ -248,16 +330,16 @@ async def submit_document_for_review(
     )
 
 
-@router.post("/{doc_id}/approve", response_model=DocumentResponse)
-async def approve_document(
-    doc_id: int,
+@router.post("/batch/reject", response_model=BatchDocumentActionResponse)
+async def reject_documents_batch(
+    body: BatchDocumentActionRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_review_roles),
 ):
-    return await document_service.approve_document(
+    return await document_service.reject_documents_batch(
         db=db,
         user_id=current_user.id,
-        doc_id=doc_id,
+        ids=body.ids,
     )
 
 
@@ -274,6 +356,19 @@ async def reject_document(
     )
 
 
+@router.post("/batch/publish", response_model=BatchDocumentActionResponse)
+async def publish_documents_batch(
+    body: BatchDocumentActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    return await document_service.publish_documents_batch(
+        db=db,
+        user_id=current_user.id,
+        ids=body.ids,
+    )
+
+
 @router.post("/{doc_id}/publish", response_model=DocumentResponse)
 async def publish_document(
     doc_id: int,
@@ -284,6 +379,19 @@ async def publish_document(
         db=db,
         user_id=current_user.id,
         doc_id=doc_id,
+    )
+
+
+@router.post("/batch/unpublish", response_model=BatchDocumentActionResponse)
+async def unpublish_documents_batch(
+    body: BatchDocumentActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_review_roles),
+):
+    return await document_service.unpublish_documents_batch(
+        db=db,
+        user_id=current_user.id,
+        ids=body.ids,
     )
 
 

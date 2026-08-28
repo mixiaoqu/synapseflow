@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
 FROM node:20-alpine
+ARG NPM_REGISTRY
+ENV npm_config_registry=${NPM_REGISTRY}
 
 WORKDIR /app
 
@@ -12,6 +16,6 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 COPY . .
 
-EXPOSE 3000
+EXPOSE 5173
 
-CMD ["pnpm", "run", "dev"]
+CMD ["pnpm", "exec", "vite", "--host", "0.0.0.0", "--port", "5173"]

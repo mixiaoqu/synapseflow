@@ -1,0 +1,297 @@
+# AGENTS.md
+
+This file provides guidance to AI coding agents (Trae / TraeCode) when working with this repository. It is generated from the current code layout and should be kept aligned with real files, routes, and workflows.
+
+## Project rules
+
+项目规则与编码规范统一维护在 `.trae/rules/project-rules.md`（Trae 原生项目规则，始终生效）。本文件只记录项目事实，不再重复维护行为规则。
+
+## Common commands
+
+### Backend
+
+- Install backend dependencies: `cd backend && uv sync --all-extras`
+- Run the API locally: `cd backend && uv run uvicorn app.main:app --reload`
+- Apply migrations: `cd backend && uv run alembic upgrade head`
+- Run all backend tests: `cd backend && uv run pytest`
+- Run one test file: `cd backend && uv run pytest tests/unit/test_agent_runtime.py -q`
+- Run one test case: `cd backend && uv run pytest tests/unit/test_agent_runtime.py::test_name -q`
+- Lint backend code: `cd backend && uv run ruff check app tests`
+- Format backend code: `cd backend && uv run black app tests`
+- Type-check backend code: `cd backend && uv run mypy app`
+
+### Frontend
+
+- Install frontend dependencies: `cd frontend && pnpm install`
+- Run the frontend locally: `cd frontend && pnpm dev`
+- Lint the frontend: `cd frontend && pnpm lint`
+- Build command exists as `cd frontend && pnpm build`, but do not run it unless the user explicitly asks.
+
+The root `Makefile` mirrors some commands and uses `pnpm` for frontend commands.
+
+### Docker / infrastructure
+
+- Start the stack: `docker-compose up -d`
+- Stop the stack: `docker-compose down`
+- Compose services currently include PostgreSQL with pgvector, Redis, reranker, backend API, backend worker, and frontend.
+- Production compose also includes nginx.
+
+## Repository layout
+
+This is a two-app monorepo:
+
+- `backend/`: FastAPI backend with LangGraph, SQLAlchemy, PostgreSQL/pgvector, Redis/Dramatiq background indexing, document parsing, retrieval, and assistant chat services.
+- `frontend/`: Vue 3 + Vite admin frontend with embedded assistant surface.
+- `docker/`: Dockerfiles for backend, frontend, and reranker.
+- `deploy/`: deployment/nginx support files.
+- `scripts/`: setup scripts.
+
+## Backend architecture
+
+Backend entry points:
+
+- `backend/app/main.py`: creates the FastAPI app, configures CORS, mounts `/preview`, registers API v1 routes, and exposes root health endpoints.
+- `backend/app/api/v1/router.py`: aggregates versioned routers.
+- `backend/app/db/models.py`: SQLAlchemy models.
+- `backend/app/db/migrations/versions/`: Alembic migrations.
+- `backend/app/core/config/`: YAML/settings loading and config schemas.
+- `backend/config/*.yaml`: app, model, embedding, rerank, logging, and embed page configuration.
+
+Current API router prefixes:
+
+- `/api/v1/auth`: registration, login, current user.
+- `/api/v1/admin/qa`: admin QA preview, logs, and review operations.
+- `/api/v1/integration/bootstrap`: business-backend credential exchange for Agent Loader bootstrap.
+- `/api/v1/widget`: token-protected Web Component bootstrap, chat, history, and feedback APIs.
+- `/api/v1/assistants`: assistant profile CRUD, reorder, bulk action, preview, and model options.
+- `/api/v1/documents`: upload/import, list/detail, content update, versions, indexing, review, publish/unpublish, and delete operations.
+- `/api/v1/document-categories`: document category CRUD.
+- `/api/v1/teams`: team and team member CRUD.
+- `/api/v1/products`: product CRUD.
+- `/api/v1/projects`: project and project-app CRUD.
+- `/api/v1/users`: admin user management.
+- `/api/v1/content-risk`: content-risk rule library CRUD, rule CRUD, and test check.
+- `/api/v1/knowledge-bases`: knowledge-base CRUD.
+- `/api/v1/evaluations`: evaluation dataset, case, run, and report management.
+- `/mcp`: remote Streamable HTTP MCP endpoint exposing the app-scoped `agent_chat` tool.
+- `/api/v1/agent-integrations`: tool provider management, tool synchronization/publishing, per-app grants, invocation audit, and project-app access credentials.
+- health routes are registered without a versioned prefix tag in the router and also exist on the root app.
+
+Application/service layer anchors:
+
+- `backend/app/application/agent/input_builder.py`: defines the transport-neutral run request and prepares trusted graph input.
+- `backend/app/application/agent/runner.py`: isolates LangGraph invoke/stream execution from product use cases.
+- `backend/app/application/agent/run_service.py`: orchestrates one Agent run, including safety and persistence.
+- `backend/app/application/agent/run_recorder.py`: persists completed turns and refreshes conversation summaries.
+- `backend/app/application/agent/run_trace.py`: builds structured run diagnostics and retrieval review logs without persistence.
+- `backend/app/application/agent/conversation_service.py`: queries and deletes persisted Agent conversations.
+- `backend/app/application/agent/embedded_service.py`: orchestrates the production embedded-agent use case.
+- `backend/app/application/assistant_service.py`: assistant profile operations and assistant preview support.
+- `backend/app/application/document_service.py`: document lifecycle, content/version operations, review/publish transitions, and indexing triggers.
+- `backend/app/application/indexing_service.py`: indexing job orchestration.
+- `backend/app/application/project_service.py`: project and project app operations.
+- `backend/app/application/integration_bootstrap_service.py`: validates app credentials and issues Loader bootstrap payloads.
+- `backend/app/application/product_service.py`: product CRUD and team-scoped product listing.
+- `backend/app/application/remote_mcp_service.py`: validates ProjectApp credentials, resolves the bound application context, maps MCP sessions, and invokes the main Agent.
+- `backend/app/application/business_operations/*`: whitelisted business data operation boundary for agent-triggered business data queries or actions. The current implementation exposes product search through a controlled registry/service/mock gateway.
+- `backend/app/application/agent_tool_catalog_service.py`: tool provider management, discovery, synchronization, publishing, grants, and invocation queries.
+- `backend/app/application/agent_tool_execution_service.py`: governed tool validation, provider execution, and redacted invocation audit.
+- `backend/app/application/agent/sse_events.py`: SSE event envelope helpers.
+- `backend/app/application/agent/workflow_meta.py`: backend-authoritative node labels and display stage metadata for streamed UI.
+
+Domain services and repositories:
+
+- `backend/app/services/kb_text_retrieval.py`: text retrieval orchestration, reranking integration, empty/no-hit handling, and context assembly.
+- `backend/app/services/document_indexer.py`: document chunking, embedding, and index writes.
+- `backend/app/services/semantic_chunk.py`: semantic chunking.
+- `backend/app/services/vector_store.py`: pgvector/vector search access.
+- `backend/app/services/reranker.py`: reranker integration.
+- `backend/app/services/chat_memory.py`: chat session/message persistence.
+- `backend/app/services/content_risk_detection_service.py`: content-risk rule matching for query and answer interception.
+- `backend/app/services/tool_providers/*`: protocol-neutral provider gateway plus business HTTP and MCP HTTP adapters.
+- `backend/app/services/kb_graph_retrieval.py` and related graph services: graph-based retrieval, summary, indexing, and cleanup helpers.
+- `backend/app/repositories/*`: database access layer for users, teams, documents, knowledge bases, projects, assistants, chat logs, index jobs, categories, and content-risk rules.
+
+Core data models currently include:
+
+- `User`, `Team`, `TeamMember`
+- `KnowledgeBase`, `KnowledgeBaseMember`
+- `DocumentCategory`, `Document`, `DocumentChunk`, `Embedding`
+- `IndexJob`, `IndexJobDocument`
+- `AssistantProfile`
+- `Product`, `Project`, `ProjectApp`
+- `ToolProvider`, `AgentTool`, `AgentAppToolGrant`, `AgentToolInvocation`
+- `ChatSession`, `ChatMessage`, `KbChatLog`, `ContentRiskLog`
+- `ContentRiskLibrary`, `ContentRiskRule`
+
+## Agent workflow system
+
+The current graph registry is `backend/app/agents/runtime/factory.py`.
+
+Registered workflows:
+
+- `agent`: top-level workflow defined by `backend/app/agents/main/graph.py`; requests enter `decide`, which uses native tool calling against the current capability catalog. Independent calls run through `execute` in parallel and return evidence to `decide`; dependent calls reference completed call IDs in later rounds. A structured final decision enters `respond`. The generic decision prompt contains no tool-specific routing rules. Optional short plans, duplicate-call reuse, bounded concurrency, timeouts, and a shared execution-operation budget control the loop.
+- `knowledge_qa`: reusable single-goal knowledge-base QA subgraph defined by `backend/app/agents/knowledge_qa/graph.py`; the top-level `agent` selects the `search_knowledge` capability tool and supplies one concrete goal with relevant prior results. Each subgraph follows `plan_query -> plan_retrieval -> retrieve_knowledge -> compose_result`, generates multiple retrieval expressions for only its assigned goal, and allows at most one feedback-driven query rewrite when retrieval returns no usable document chunks. If that retry produces no executable new query, `plan_query` exits directly to `compose_result`.
+- `business_ops`: controlled read-only business data operation subgraph defined by `backend/app/agents/business_ops/graph.py`; it performs up to three sequential tool calls, loops from `execute_operation` back to `analyze_request` only when another call is required, and retains one optional parameter-correction retry per call.
+- `backend/langgraph.json` currently exposes `agent` and `knowledge_qa` for LangGraph tooling. `business_ops` is registered in the runtime factory and executed as a subgraph through `agent`.
+
+`backend/tests/unit/test_workflow_registry_consistency.py` guards workflow documentation metadata: every compiled graph node must match its `GraphDefinition.node_ids` entry and `application/agent/workflow_meta.py` metadata, while every `backend/langgraph.json` graph entry must point to the registered factory. Update these declarations together whenever a graph node changes.
+
+<!-- workflow-node-ids:start -->
+- `agent` nodes: `decide`, `execute`, `respond`
+- `knowledge_qa` nodes: `plan_query`, `plan_retrieval`, `retrieve_knowledge`, `compose_result`
+- `business_ops` nodes: `analyze_request`, `match_operation`, `execute_operation`, `replan_operation_params`, `compose_result`
+<!-- workflow-node-ids:end -->
+
+Important workflow files:
+
+- `backend/app/agents/main/state.py`: top-level Agent input and state contracts.
+- `backend/app/agents/main/nodes/*`: top-level decision, tool execution, and final response nodes.
+- `backend/app/agents/knowledge_qa/state.py`: knowledge QA subgraph state contract.
+- `backend/app/agents/business_ops/state.py`: business data operation subgraph state contract.
+- `backend/app/agents/business_ops/decision.py`: tool-candidate serialization, LLM decisions, normalization, and parameter correction.
+- `backend/app/agents/business_ops/nodes.py`: business operation node implementations and routing decisions.
+- `backend/app/agents/main/nodes/decide.py`: context-aware native tool selection and structured final decisions. Invalid final-decision JSON receives schema feedback for at most two corrections per decision; each model attempt consumes the existing round and time budgets. Exhaustion preserves available results and ends with an explicit partial or failed outcome.
+- `backend/app/agents/runtime/tools.py`: built-in tool registry, argument schemas, availability rules, and child-workflow input adapters. `search_knowledge` wraps `knowledge_qa`; `query_business_data` wraps `business_ops`.
+- `backend/app/application/agent/tool_context.py`: prepares current app business capability summaries from the existing authorized tool catalog; execution authorization remains in the existing business service.
+- `backend/app/agents/main/result.py`: combines tool evidence and business results for the final response.
+- `backend/app/agents/common/execution_budget.py`: shared budget for top-level calls and internal retrieval/business query operations. A retrieval batch counts as one operation; this is not a count of all LLM requests or underlying database queries.
+- `backend/app/agents/knowledge_qa/query_plan.py`: single-goal structured query planning that preserves the assigned goal and generates up to three semantic queries plus three exact lexical phrases.
+- `backend/app/agents/knowledge_qa/nodes/plan_retrieval.py`: knowledge retrieval planning.
+- `backend/app/agents/knowledge_qa/nodes/retrieve.py`: single-goal text retrieval, one optional no-hit query rewrite, and compact retrieval result assembly. Reranked document chunks are passed directly into answer material without a second LLM completeness gate. Child-chunk RRF/reranking and parent-window expansion are owned by `backend/app/services/kb_text_retrieval.py`.
+- `backend/app/agents/main/nodes/respond.py`: top-level final answer generation and streamed token output.
+- `backend/app/agents/main/prompt.py`: top-level page-context prompt formatting.
+- `backend/app/agents/common/*`: shared retrieval, JSON LLM, document analysis, and streaming helpers.
+
+The chat application service always uses the top-level `agent` workflow. Do not reintroduce a configurable workflow selector unless there is a verified runtime need and a tested caller contract.
+
+`AgentRunner` prepares the trusted tool context for production and evaluation. Direct LangGraph callers must provide `input.tool_context.business_tools` to expose business capabilities; without a prepared catalog only resource-backed tools such as an available knowledge base are visible. Built-in tools are internal Agent interfaces, not new external MCP endpoints. The configured planner must support native tool calls; malformed model output fails explicitly rather than switching to a second routing protocol.
+
+Workflow display metadata is backend-authoritative. Backend SSE events should provide `display_stages`, `display_stage`, `display_title`, `activity_text`, `workflow_id`, `node_id`, and `node_name` through `backend/app/application/agent/workflow_meta.py` and node activity events; frontend code should consume those fields instead of maintaining local workflow or node label maps.
+
+When changing streamed chat behavior, keep backend events compatible with the frontend SSE parser in `frontend/src/shared/lib/stream/sse.ts` and reducer in `frontend/src/shared/lib/stream/workflowRun.ts`.
+
+## Retrieval and document pipeline
+
+The implemented knowledge pipeline is:
+
+`knowledge base -> document/category/version/status -> document chunks -> embeddings -> retrieval context -> KB chat answer/log`
+
+Relevant pieces:
+
+- Document APIs upload/import/update/version/review/publish/unpublish content.
+- Index jobs are persisted through `IndexJob` / `IndexJobDocument`.
+- Background indexing uses `backend/app/workers/indexing_tasks.py` and `backend/app/workers/broker.py`.
+- Retrieval respects visible ask document statuses and live/current document version behavior from `backend/app/services/document_lifecycle.py`.
+- Content-risk checks are applied to chat queries and generated answers.
+
+## Frontend architecture
+
+Frontend entry points:
+
+- `frontend/src/main.ts`: Vue app bootstrap.
+- `frontend/src/router/index.ts`: route definitions and auth guard registration.
+- `frontend/src/app/layouts/AdminLayout.vue`: authenticated admin shell.
+- `frontend/src/app/layouts/AuthLayout.vue`: login shell.
+- `frontend/src/agent-loader/loader.ts`: fixed CDN Loader and the public `EnterpriseAgent` lifecycle API.
+- `frontend/src/widget/`: CDN-delivered Web Component chat runtime.
+- `frontend/vite.loader.config.ts` and `frontend/vite.widget.config.ts`: immutable Loader and exact-version Widget asset builds.
+
+Admin pages currently present:
+
+- `/dashboard`: admin dashboard placeholder.
+- `/model-usage`: AI cost center with token usage and estimated costs.
+- `/projects`: product/project management entry.
+- `/projects/:projectId/apps`: project app list.
+- `/projects/:projectId/apps/new`: create project app.
+- `/projects/:projectId/apps/:appId`: project app detail.
+- `/knowledge-bases`: knowledge-base management.
+- `/knowledge-bases/:knowledgeBaseId`: knowledge-base detail/document list.
+- `/knowledge-bases/:knowledgeBaseId/documents/:documentId`: document detail.
+- `/assistants`: assistant management.
+- `/assistants/new`: create assistant.
+- `/assistants/:assistantId`: assistant detail.
+- `/agent-integrations`: Agent integration and tool governance.
+- `/qa-logs`: question-answer log review.
+- `/evaluations`: evaluation dataset overview.
+- `/evaluations/knowledge-bases`: evaluation base knowledge-base list.
+- `/evaluations/knowledge-bases/:knowledgeBaseId`: evaluation base knowledge-base detail.
+- `/evaluations/knowledge-bases/:knowledgeBaseId/documents/:documentId`: evaluation base document detail.
+- `/evaluations/datasets/:datasetId`: evaluation dataset detail.
+- `/evaluations/runs/:runId`: single evaluation run report.
+- `/evaluations/reports`: evaluation tasks / reports.
+- `/organizations`: team management.
+- `/users`: user management.
+- `/content-risk/libraries`: global content-risk rule library.
+- `/content-risk/logs`: content-risk decision logs.
+
+Frontend integration anchors:
+
+- `frontend/src/shared/api/http.ts`: Axios wrapper, bearer auth, and normalized API errors.
+- `frontend/src/shared/api/*`: admin API integrations.
+- `frontend/src/shared/lib/stream/sse.ts`: manual SSE parsing over fetch streams; the app does not use `EventSource`.
+- `frontend/src/shared/lib/stream/workflowRun.ts`: workflow progress reducer; display names and stage plans should come from backend SSE metadata.
+
+Auth and role helpers:
+
+- `frontend/src/stores/auth.ts`: restores/checks current auth session.
+- `frontend/src/shared/auth/session.ts`: token/session storage helpers.
+- `frontend/src/shared/auth/roles.ts`: admin access and role utilities.
+
+## Current product surfaces
+
+Only describe these as existing product surfaces unless code changes add more:
+
+- User login and session restoration.
+- CDN Loader and Web Component Widget integration with business-owned identity and final authorization.
+- Assistant-routed business data operations through governed, published, per-app Agent tools supplied by registered tool providers.
+- Admin tool provider management, synchronization, publishing, per-app tool grants, and invocation audit APIs.
+- Admin product, project, and project-app management.
+- Admin knowledge-base, document, category, version, indexing, review, and publish management.
+- Admin assistant profile management and preview/testing.
+- Admin team, member, user, and role management.
+- Admin QA log review and feedback flow.
+- Content-risk rule library management, rule testing, and query/answer interception.
+- Remote Streamable HTTP MCP access through `/mcp`; the only exposed tool is the app-scoped `agent_chat` entrypoint.
+
+## Product / project / app relation
+
+- `Product` is the team-scoped top-level business container.
+- `Project` belongs to one `Product`.
+- `ProjectApp` belongs to one `Project` and binds one knowledge base, an optional document category, and an optional default assistant.
+- Chat sessions, KB chat logs, and content-risk logs persist the `product_id` / `project_id` / `project_app_id` context when that scope exists.
+
+Do not describe `kb_curation`, `suggest_revision`, or `doc_to_prototype` as implemented features unless corresponding code is added back to the repository. They are not registered in the current graph registry or API router.
+
+## Testing notes
+
+- Backend tests are under `backend/tests`.
+- There is no frontend test script in `frontend/package.json`.
+- Because project instructions say no build is needed, prefer targeted inspection, lint, or backend tests only when they are directly relevant and the user has not forbidden them.
+
+## Git change log summaries
+
+When the user asks to write logs, summarize the Git change area, or convert current changes into log mode:
+
+- First inspect `git status --short`, `git diff --stat`, and `git diff --cached --stat`.
+- Distinguish staged, unstaged, and untracked changes when they differ.
+- Read relevant diffs or current files before describing the purpose of a change.
+- Output a numbered list.
+- Each item must use the format `1. 工作项名称：作用描述`.
+- The work item name should summarize the change theme.
+- The description must explain the effect or purpose of the change, not only list filenames.
+- Prefer grouping by feature or workflow instead of listing every changed file.
+- Include verification as a numbered item when tests, lint, or build commands were run.
+- If no verification was run, explicitly include that no verification was run.
+- Do not claim unverified behavior as completed.
+- Do not attribute existing user changes to Codex unless the conversation clearly shows Codex made them.
+
+## Documentation maintenance
+
+When updating this file:
+
+- Verify route claims against `backend/app/api/v1/router.py` and endpoint files.
+- Verify workflow claims against `backend/app/agents/runtime/factory.py` and `backend/langgraph.json`.
+- Verify frontend route claims against `frontend/src/router/index.ts`.
+- Keep commands consistent with `backend/pyproject.toml`, `frontend/package.json`, `docker-compose.yml`, and the lockfiles.
+- Keep `.trae/rules/project-rules.md` as the single source of truth for project coding rules.

@@ -1,8 +1,8 @@
 # 检索结果重排配置。
 rerank:
-  # 重排服务提供方标识，用于区分调用哪一类重排接口。
-  provider: bailian
+  # 重排服务提供方标识；统一使用 siliconflow 线上服务，不再运行本地 reranker。
+  provider: siliconflow
   # 实际使用的重排模型名称。
-  model: qwen3-rerank
+  model: BAAI/bge-reranker-v2-m3
   # 发送给重排服务的任务说明，用于提升相关性判断效果。
-  instruct: Given a web search query, retrieve relevant passages that answer the query.
+  instruct: ""

@@ -1,5 +1,5 @@
-import json
 import importlib.util
+import json
 
 from app.agents.runtime import (
     AgentEventType,
@@ -67,19 +67,25 @@ def test_graph_registry_exposes_known_workflows():
     if importlib.util.find_spec("langgraph") is None:
         return
 
-    assert get_graph_definition("kb_chat").node_ids == ("retrieve", "answer")
-    assert get_graph_definition("kb_curation").node_ids == (
-        "query_optimizer",
-        "retrieve",
-        "answer",
-        "evaluate",
+    assert get_graph_definition("agent").node_ids == (
+        "decide",
+        "execute",
+        "respond",
     )
-    assert get_graph_definition("suggest_revision").node_ids == (
-        "parse_suggestions",
-        "analyze_document",
-        "locate_edits",
-        "revise",
+    assert get_graph_definition("knowledge_qa").node_ids == (
+        "plan_query",
+        "plan_retrieval",
+        "retrieve_knowledge",
+        "compose_result",
+    )
+    assert get_graph_definition("business_ops").node_ids == (
+        "analyze_request",
+        "match_operation",
+        "execute_operation",
+        "replan_operation_params",
+        "compose_result",
     )
 
-    compiled = build_graph("kb_chat")
-    assert compiled is not None
+    assert build_graph("agent") is not None
+    assert build_graph("knowledge_qa") is not None
+    assert build_graph("business_ops") is not None

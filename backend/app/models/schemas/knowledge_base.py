@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 KnowledgeBaseStatus = Literal["available", "indexing", "error", "empty"]
 DocumentIndexStatus = Literal["queued", "processing", "indexed", "failed"]
+KnowledgeBaseBulkAction = Literal["enable", "disable", "delete", "reindex"]
+KnowledgeBasePurpose = Literal["business", "evaluation"]
 
 
 class KnowledgeBaseCreate(BaseModel):
@@ -33,6 +35,8 @@ class KnowledgeBaseResponse(BaseModel):
     name: str
     team_id: int
     description: str | None = None
+    purpose: KnowledgeBasePurpose = "business"
+    is_active: bool = True
     created_at: datetime
     updated_at: datetime
 
@@ -51,8 +55,8 @@ class KnowledgeBaseRecentDocument(BaseModel):
     updated_at: datetime
 
 
-class KnowledgeBaseWithCount(KnowledgeBaseResponse):
-    """Knowledge-base response with document counts and status."""
+class KnowledgeBaseListItem(KnowledgeBaseResponse):
+    """Knowledge-base list item with document counts and status."""
 
     document_count: int = 0
     indexed_document_count: int = 0
@@ -60,7 +64,57 @@ class KnowledgeBaseWithCount(KnowledgeBaseResponse):
     processing_document_count: int = 0
     failed_document_count: int = 0
     unindexed_document_count: int = 0
+    draft_document_count: int = 0
+    submittable_document_count: int = 0
+    pending_review_document_count: int = 0
+    published_document_count: int = 0
+    archived_document_count: int = 0
     last_document_updated_at: datetime | None = None
     last_uploaded_at: datetime | None = None
     status: KnowledgeBaseStatus = "empty"
+
+
+class KnowledgeBaseWithCount(KnowledgeBaseListItem):
+    """Knowledge-base response with document counts and recent documents."""
+
     recent_documents: list[KnowledgeBaseRecentDocument] = Field(default_factory=list)
+
+
+class KnowledgeBaseListResponse(BaseModel):
+    items: list[KnowledgeBaseListItem] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 10
+
+
+class KnowledgeBaseToggleActive(BaseModel):
+    """Toggle knowledge-base active state."""
+
+    is_active: bool
+
+
+class KnowledgeBaseBulkActionRequest(BaseModel):
+    """Batch knowledge-base action request."""
+
+    knowledge_base_ids: list[int] = Field(
+        ...,
+        min_length=1,
+        description="Knowledge base ids",
+    )
+    action: KnowledgeBaseBulkAction = Field(..., description="Batch action")
+
+
+class KnowledgeBaseBulkActionFailure(BaseModel):
+    """Single failed item in a batch knowledge-base action."""
+
+    id: int
+    message: str
+
+
+class KnowledgeBaseBulkActionResponse(BaseModel):
+    """Batch knowledge-base action result."""
+
+    action: KnowledgeBaseBulkAction
+    total: int = 0
+    affected: int = 0
+    failed: list[KnowledgeBaseBulkActionFailure] = Field(default_factory=list)

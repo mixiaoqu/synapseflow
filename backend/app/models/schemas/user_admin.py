@@ -1,6 +1,7 @@
 """Admin-facing user management schemas."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,5 +39,24 @@ class AdminUserResponse(BaseModel):
     full_name: str | None = None
     role: str
     is_active: bool
+    team_names: list[str] = Field(default_factory=list)
+    team_count: int = 0
+    team_memberships: list[dict] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+
+class AdminUserBulkAction(BaseModel):
+    """Batch action request for admin user management."""
+
+    user_ids: list[int] = Field(..., min_length=1)
+    action: Literal["enable", "disable", "delete"]
+
+
+class UserListResponse(BaseModel):
+    """Paginated user list response."""
+
+    items: list[AdminUserResponse]
+    total: int
+    page: int
+    page_size: int

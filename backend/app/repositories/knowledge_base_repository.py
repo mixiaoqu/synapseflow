@@ -1,19 +1,33 @@
 """Knowledge-base repository."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Document, KnowledgeBase
+from app.db.models import (
+    Document,
+    KnowledgeBase,
+    User,
+)
 from app.repositories.access_scope import accessible_knowledge_base_condition
+from app.repositories.index_job_repository import IndexJobRepository
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
     INDEX_STATUS_INDEXED,
     INDEX_STATUS_PROCESSING,
     INDEX_STATUS_QUEUED,
 )
+from app.services.document_lifecycle import (
+    DOC_STATUS_ARCHIVED,
+    DOC_STATUS_DRAFT,
+    DOC_STATUS_PENDING_REVIEW,
+    DOC_STATUS_PUBLISHED,
+)
+from app.services.graph_store import get_graph_store
 
 
 @dataclass(slots=True)
@@ -42,6 +56,11 @@ class KnowledgeBaseSummaryRecord:
     processing_document_count: int
     failed_document_count: int
     unindexed_document_count: int
+    draft_document_count: int
+    submittable_document_count: int
+    pending_review_document_count: int
+    published_document_count: int
+    archived_document_count: int
     last_document_updated_at: datetime | None
     last_uploaded_at: datetime | None
     recent_documents: list[KnowledgeBaseRecentDocumentRecord]
@@ -50,14 +69,21 @@ class KnowledgeBaseSummaryRecord:
 class KnowledgeBaseRepository:
     """Persists knowledge bases."""
 
-    def __init__(self, db: AsyncSession, user_id: int):
+    def __init__(self, db: AsyncSession, user_id: int, user: User | None = None):
         self.db = db
         self.user_id = user_id
+        self.user = user
 
     async def list_with_count(
         self,
         *,
+        knowledge_base_id: int | None = None,
         team_id: int | None = None,
+        purpose: str | None = "business",
+        active_only: bool = False,
+        keyword: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
     ) -> list[KnowledgeBaseSummaryRecord]:
         """List knowledge bases with dashboard summary metrics."""
         indexed_count = func.sum(case((Document.index_status == INDEX_STATUS_INDEXED, 1), else_=0))
@@ -66,6 +92,22 @@ class KnowledgeBaseRepository:
             case((Document.index_status == INDEX_STATUS_PROCESSING, 1), else_=0)
         )
         failed_count = func.sum(case((Document.index_status == INDEX_STATUS_FAILED, 1), else_=0))
+        draft_count = func.sum(case((Document.status == DOC_STATUS_DRAFT, 1), else_=0))
+        submittable_count = func.sum(
+            case(
+                (
+                    (Document.status == DOC_STATUS_DRAFT)
+                    & (Document.index_status == INDEX_STATUS_INDEXED),
+                    1,
+                ),
+                else_=0,
+            )
+        )
+        pending_review_count = func.sum(
+            case((Document.status == DOC_STATUS_PENDING_REVIEW, 1), else_=0)
+        )
+        published_count = func.sum(case((Document.status == DOC_STATUS_PUBLISHED, 1), else_=0))
+        archived_count = func.sum(case((Document.status == DOC_STATUS_ARCHIVED, 1), else_=0))
         unindexed_count = func.sum(
             case(
                 (
@@ -84,6 +126,11 @@ class KnowledgeBaseRepository:
                 processing_count.label("processing_doc_count"),
                 failed_count.label("failed_doc_count"),
                 unindexed_count.label("unindexed_doc_count"),
+                draft_count.label("draft_doc_count"),
+                submittable_count.label("submittable_doc_count"),
+                pending_review_count.label("pending_review_doc_count"),
+                published_count.label("published_doc_count"),
+                archived_count.label("archived_doc_count"),
                 func.max(Document.updated_at).label("last_document_updated_at"),
                 func.max(Document.created_at).label("last_uploaded_at"),
             )
@@ -92,15 +139,28 @@ class KnowledgeBaseRepository:
                 (Document.knowledge_base_id == KnowledgeBase.id)
                 & (Document.is_current.is_(True)),
             )
-            .where(accessible_knowledge_base_condition(self.user_id))
+            .where(accessible_knowledge_base_condition(self.user_id, user=self.user))
         )
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if knowledge_base_id is not None:
+            stmt = stmt.where(KnowledgeBase.id == knowledge_base_id)
+        if purpose is not None:
+            stmt = stmt.where(KnowledgeBase.purpose == purpose)
+        if active_only:
+            stmt = stmt.where(KnowledgeBase.is_active.is_(True))
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    KnowledgeBase.name.ilike(pattern),
+                    KnowledgeBase.description.ilike(pattern),
+                )
+            )
         stmt = stmt.group_by(KnowledgeBase.id).order_by(KnowledgeBase.created_at.desc())
-        result = await self.db.execute(stmt)
-        rows = result.all()
-        knowledge_base_ids = [knowledge_base.id for knowledge_base, *_ in rows]
-        recent_docs_map = await self._list_recent_documents(knowledge_base_ids)
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
+        rows = (await self.db.execute(stmt)).all()
         return [
             KnowledgeBaseSummaryRecord(
                 knowledge_base=knowledge_base,
@@ -110,9 +170,14 @@ class KnowledgeBaseRepository:
                 processing_document_count=processing_doc_count or 0,
                 failed_document_count=failed_doc_count or 0,
                 unindexed_document_count=unindexed_doc_count or 0,
+                draft_document_count=draft_doc_count or 0,
+                submittable_document_count=submittable_doc_count or 0,
+                pending_review_document_count=pending_review_doc_count or 0,
+                published_document_count=published_doc_count or 0,
+                archived_document_count=archived_doc_count or 0,
                 last_document_updated_at=last_document_updated_at,
                 last_uploaded_at=last_uploaded_at,
-                recent_documents=recent_docs_map.get(knowledge_base.id, []),
+                recent_documents=[],
             )
             for (
                 knowledge_base,
@@ -122,10 +187,66 @@ class KnowledgeBaseRepository:
                 processing_doc_count,
                 failed_doc_count,
                 unindexed_doc_count,
+                draft_doc_count,
+                submittable_doc_count,
+                pending_review_doc_count,
+                published_doc_count,
+                archived_doc_count,
                 last_document_updated_at,
                 last_uploaded_at,
             ) in rows
         ]
+
+    async def count_knowledge_bases(
+        self,
+        *,
+        team_id: int | None = None,
+        purpose: str | None = "business",
+        active_only: bool = False,
+        keyword: str | None = None,
+    ) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(KnowledgeBase)
+            .where(accessible_knowledge_base_condition(self.user_id, user=self.user))
+        )
+        if team_id is not None:
+            stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if purpose is not None:
+            stmt = stmt.where(KnowledgeBase.purpose == purpose)
+        if active_only:
+            stmt = stmt.where(KnowledgeBase.is_active.is_(True))
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    KnowledgeBase.name.ilike(pattern),
+                    KnowledgeBase.description.ilike(pattern),
+                )
+            )
+        return int((await self.db.execute(stmt)).scalar() or 0)
+
+    async def list_page(
+        self,
+        *,
+        team_id: int | None = None,
+        purpose: str | None = "business",
+        active_only: bool = False,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> list[KnowledgeBase]:
+        stmt = select(KnowledgeBase).where(
+            accessible_knowledge_base_condition(self.user_id, user=self.user)
+        )
+        if team_id is not None:
+            stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if purpose is not None:
+            stmt = stmt.where(KnowledgeBase.purpose == purpose)
+        if active_only:
+            stmt = stmt.where(KnowledgeBase.is_active.is_(True))
+        stmt = stmt.order_by(KnowledgeBase.created_at.desc()).offset(offset).limit(limit)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
     async def _list_recent_documents(
         self,
@@ -197,6 +318,7 @@ class KnowledgeBaseRepository:
         *,
         team_id: int = 1,
         description: str | None = None,
+        purpose: str = "business",
     ) -> KnowledgeBase:
         """Create a knowledge base."""
         knowledge_base = KnowledgeBase(
@@ -204,6 +326,7 @@ class KnowledgeBaseRepository:
             team_id=team_id,
             name=name.strip(),
             description=(description or "").strip() or None,
+            purpose=purpose,
         )
         self.db.add(knowledge_base)
         await self.db.commit()
@@ -215,10 +338,32 @@ class KnowledgeBaseRepository:
         result = await self.db.execute(
             select(KnowledgeBase).where(
                 KnowledgeBase.id == knowledge_base_id,
-                accessible_knowledge_base_condition(self.user_id),
+                accessible_knowledge_base_condition(self.user_id, user=self.user),
             )
         )
         return result.scalar_one_or_none()
+
+    async def get_by_ids(self, knowledge_base_ids: list[int]) -> list[KnowledgeBase]:
+        """Fetch knowledge bases by IDs within the current access scope."""
+        unique_ids = [int(item) for item in dict.fromkeys(knowledge_base_ids)]
+        if not unique_ids:
+            return []
+        result = await self.db.execute(
+            select(KnowledgeBase).where(
+                KnowledgeBase.id.in_(unique_ids),
+                accessible_knowledge_base_condition(self.user_id, user=self.user),
+            )
+        )
+        rows = list(result.scalars().all())
+        order = {knowledge_base_id: index for index, knowledge_base_id in enumerate(unique_ids)}
+        return sorted(rows, key=lambda item: order.get(int(item.id), len(order)))
+
+    async def set_active_many(self, knowledge_bases: list[KnowledgeBase], is_active: bool) -> int:
+        for knowledge_base in knowledge_bases:
+            knowledge_base.is_active = is_active
+        if knowledge_bases:
+            await self.db.commit()
+        return len(knowledge_bases)
 
     async def update(
         self,
@@ -242,6 +387,15 @@ class KnowledgeBaseRepository:
         knowledge_base = await self.get_by_id(knowledge_base_id)
         if not knowledge_base:
             return False
+        await IndexJobRepository(self.db, user_id=self.user_id).cancel_active_jobs_for_knowledge_base(
+            knowledge_base_id=knowledge_base_id,
+            error_message="Knowledge base was deleted before indexing finished",
+        )
+        store = get_graph_store()
+        await store.delete_knowledge_base_graph(
+            knowledge_base_id=knowledge_base_id,
+            team_id=int(knowledge_base.team_id),
+        )
         await self.db.execute(
             delete(Document).where(
                 Document.knowledge_base_id == knowledge_base_id,
@@ -250,3 +404,27 @@ class KnowledgeBaseRepository:
         await self.db.delete(knowledge_base)
         await self.db.commit()
         return True
+
+    async def delete_many(self, knowledge_bases: list[KnowledgeBase]) -> int:
+        """Delete knowledge bases and their documents in one database transaction."""
+        if not knowledge_bases:
+            return 0
+        knowledge_base_ids = [int(item.id) for item in knowledge_bases]
+        await IndexJobRepository(
+            self.db,
+            user_id=self.user_id,
+        ).cancel_active_jobs_for_knowledge_bases(
+            knowledge_base_ids=knowledge_base_ids,
+            error_message="Knowledge base was deleted before indexing finished",
+        )
+        store = get_graph_store()
+        for knowledge_base in knowledge_bases:
+            await store.delete_knowledge_base_graph(
+                knowledge_base_id=int(knowledge_base.id),
+                team_id=int(knowledge_base.team_id),
+            )
+        await self.db.execute(delete(Document).where(Document.knowledge_base_id.in_(knowledge_base_ids)))
+        for knowledge_base in knowledge_bases:
+            await self.db.delete(knowledge_base)
+        await self.db.commit()
+        return len(knowledge_bases)

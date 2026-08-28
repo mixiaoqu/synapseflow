@@ -1,118 +1,78 @@
-# SynapseFlow Backend
+# LangChain RAG 知识库 Backend
 
-基于FastAPI和LangGraph的后端服务
+当前后端只对两类前端界面提供支撑：
 
-## 开发指南
+- `/ask` 用户问答界面
+- `/admin` 后台管理界面
+
+## 开发命令
 
 ### 安装依赖
 
 ```bash
-# 使用uv安装
-uv sync
-
-# 安装开发依赖
 uv sync --all-extras
 ```
 
 ### 启动服务
 
 ```bash
-# 开发模式
+uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
+```
 
-# 生产模式
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+### 代码检查
+
+```bash
+uv run ruff check app tests
+uv run black app tests
+uv run mypy app
 ```
 
 ### 运行测试
 
 ```bash
-# 运行所有测试
 uv run pytest
-
-# 运行特定测试
-uv run pytest tests/unit/test_agents/
-
-# 生成覆盖率报告
-uv run pytest --cov=app --cov-report=html
 ```
 
-### 代码格式化
+## 当前公开路由
 
-```bash
-# Black格式化
-uv run black app/
+- `health`
+- `auth`
+- `ask`
+- `admin/qa`
+- `assistants`
+- `documents`
+- `document-categories`
+- `knowledge-bases`
+- `teams`
+- `users`
+- `content-risk`
 
-# Ruff检查
-uv run ruff check app/
+## 关键代码位置
 
-# 类型检查
-uv run mypy app/
-```
+- 应用入口：[app/main.py](app/main.py)
+- API 路由汇总：[app/api/v1/router.py](app/api/v1/router.py)
+- 问答接口：[app/api/v1/endpoints/ask.py](app/api/v1/endpoints/ask.py)
+- Agent 对话编排服务：[app/application/agent_chat_service.py](app/application/agent_chat_service.py)
+- 文档管理接口：[app/api/v1/endpoints/documents.py](app/api/v1/endpoints/documents.py)
+- 文档索引服务：[app/services/document_indexer.py](app/services/document_indexer.py)
+- 知识库文本检索服务：[app/services/kb_text_retrieval.py](app/services/kb_text_retrieval.py)
+- 内容风控规则库接口：[app/api/v1/endpoints/content_risk_libraries.py](app/api/v1/endpoints/content_risk_libraries.py)
+- 内容风控检测服务：[app/services/content_risk_detection_service.py](app/services/content_risk_detection_service.py)
 
-### 数据库迁移
+## 请求流转
 
-```bash
-# 创建迁移
-uv run alembic revision --autogenerate -m "描述"
+### 问答链路
+`/api/v1/ask/*` → `agent_chat_service.py` → 顶层 Agent 路由与执行 → SSE 或同步响应
 
-# 应用迁移
-uv run alembic upgrade head
+### 管理链路
+`/api/v1/admin/qa/*` → 问答日志仓储与预览调用 → 后台质检界面
 
-# 回滚迁移
-uv run alembic downgrade -1
-```
+### 文档链路
+`/api/v1/documents/*` → 文档生命周期/索引服务 → PostgreSQL + pgvector
 
-## 项目结构
+## 维护约束
 
-```
-app/
-├── agents/          # LangGraph智能体
-│   ├── nodes/      # 节点函数
-│   ├── workflows/  # 工作流定义
-│   └── utils/      # 工具函数
-├── api/            # API路由
-│   └── v1/         # API版本1
-├── core/           # 核心配置
-│   └── llm/        # LLM管理
-├── models/         # 数据模型
-│   ├── domain/     # 领域模型
-│   └── schemas/    # Pydantic Schema
-├── db/             # 数据库
-│   ├── models/     # ORM模型
-│   └── repositories/
-├── services/       # 业务逻辑
-└── main.py         # 应用入口
-```
-
-## 三大智能体场景
-
-### 1. 迭代问答（Iterative Q&A）
-- 文件：`app/agents/workflows/iterative_qa.py`
-- 端点：`POST /api/v1/kb-curation/invoke`
-- 流程：检索 → 生成答案 → 评估质量 → 循环优化
-
-### 2. 文档修订（Suggest Revision）
-- 文件：`app/agents/graphs/suggest_revision_graph.py`
-- 端点：`POST /api/v1/revision/suggest`
-- 流程：解析建议 → 执行修订 → 判断遗漏
-
-### 3. 文档转原型（Doc-to-Prototype）
-- 文件：`app/agents/workflows/doc_to_prototype.py`
-- 端点：`POST /api/v1/prototype/generate`
-- 流程：提取需求 → 设计组件 → 生成代码 → 验证预览
-
-## 环境变量
-
-参考 `.env.example` 文件配置必需的环境变量：
-
-- `DEEPSEEK_API_KEY` - Deepseek API密钥
-- `KIMI_API_KEY` - Kimi API密钥
-- `DATABASE_URL` - 数据库连接字符串
-- `SECRET_KEY` - JWT密钥
-
-## API文档
-
-启动服务后访问：
-- Swagger UI: http://localhost:8000/api/v1/docs
-- ReDoc: http://localhost:8000/api/v1/redoc
+- 新增后端能力前，先确认是否真的需要新的公开路由组。
+- 如果只是后台内部能力，优先复用现有 `ask`、`admin/qa`、`documents`、`knowledge-bases` 体系。
+- 任何流式接口变更都要保持与 `frontend/src/shared/lib/stream/sse.ts` 兼容。

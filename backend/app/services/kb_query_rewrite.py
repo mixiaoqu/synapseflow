@@ -1,4 +1,4 @@
-"""Lightweight retrieval query rewrite helpers for single-round KB chat."""
+"""Retrieval query rewrite helpers for KB chat."""
 
 from __future__ import annotations
 
@@ -7,29 +7,17 @@ from typing import Any, Callable
 
 from loguru import logger
 
-from app.core.config.registry import config_registry
 from app.core.llm import get_llm_for_analysis
-from app.utils import extract_json_from_llm_response
+from app.utils.json_utils import extract_json_from_llm_response
 
-_MAX_RETRIEVAL_QUERIES = 4
+_FALLBACK_RETRIEVAL_QUERY_LIMIT = 4
 _MAX_QUERY_LENGTH = 160
 
-_LEADING_FILLER_PATTERNS = [
-    r"^(?:please|pls|kindly)\s+",
-    r"^(?:can you|could you|would you)\s+",
-    r"^(?:i want to know|tell me|help me understand)\s+",
-    r"^(?:\u8bf7\u95ee|\u9ebb\u70e6|\u5e2e\u6211|\u60f3\u95ee\u4e0b|\u6211\u60f3\u77e5\u9053|\u54a8\u8be2\u4e00\u4e0b)\s*",
-]
-_QUESTION_TAIL_PATTERN = re.compile(
-    r"(?:\?|\uFF1F|\u5417|\u4e48|\u561b|\u5462|\u5440|\u554a|\u662f\u5426|\u53ef\u5426|\u884c\u4e0d\u884c|\u53ef\u4ee5\u5417|\u80fd\u5426)\s*$",
-    flags=re.IGNORECASE,
-)
-_QUESTION_BODY_PATTERN = re.compile(
-    r"\b(?:how to|how do i|how can i|what is|where is|why is|can i|does it)\b|(?:\u600e\u4e48|\u5982\u4f55|\u4ec0\u4e48\u662f|\u54ea\u91cc|\u5728\u54ea|\u4e3a\u4ec0\u4e48|\u80fd\u4e0d\u80fd|\u662f\u5426\u652f\u6301)",
-    flags=re.IGNORECASE,
-)
 _CODE_TOKEN_PATTERN = re.compile(
-    r"`([^`]+)`|\"([^\"]+)\"|'([^']+)'|\u300a([^\u300b]+)\u300b|([A-Za-z0-9_./:-]{3,})"
+    r"`([^`]+)`|\"([^\"]+)\"|'([^']+)'|《([^》]+)》|([A-Za-z0-9_./:-]{3,})"
+)
+_RUNTIME_REFERENCE_PATTERN = re.compile(
+    r"(当前页面|这个页面|该页面|本页面|当前页|这个页|本页|这里)"
 )
 
 
@@ -67,23 +55,34 @@ def _dedupe_keep_order(items: list[str], *, limit: int) -> list[str]:
     return out
 
 
-def _strip_filler_phrases(text: str) -> str:
-    stripped = text.strip()
-    for pattern in _LEADING_FILLER_PATTERNS:
-        stripped = re.sub(pattern, "", stripped, flags=re.IGNORECASE)
-    stripped = _QUESTION_BODY_PATTERN.sub(" ", stripped)
-    stripped = _QUESTION_TAIL_PATTERN.sub("", stripped)
-    stripped = re.sub(r"[\uFF0C\u3002\uFF1B\uFF1A,;:]+", " ", stripped)
-    return _normalize_query(stripped)
+def _dedupe_all_keep_order(items: list[str]) -> list[str]:
+    return _dedupe_keep_order(items, limit=max(len(items), 1))
 
 
-def _extract_code_tokens(text: str) -> list[str]:
+def _split_lexical_terms(items: list[str]) -> list[str]:
+    terms: list[str] = []
+    for item in items:
+        terms.extend(str(item or "").split())
+    return _dedupe_all_keep_order(terms)
+
+
+def _is_unquoted_protected_token(token: str) -> bool:
+    if re.search(r"[0-9_./:-]", token):
+        return True
+    if token.isupper() and len(token) > 1:
+        return True
+    return any(char.isupper() for char in token[1:])
+
+
+def _extract_protected_tokens(text: str) -> list[str]:
     tokens: list[str] = []
     seen: set[str] = set()
     for match in _CODE_TOKEN_PATTERN.finditer(text or ""):
         token = next((group for group in match.groups() if group), "")
         cleaned = _normalize_query(token.strip("`\"'"))
-        if len(cleaned) < 3:
+        if len(cleaned) < 2:
+            continue
+        if match.group(5) and not _is_unquoted_protected_token(cleaned):
             continue
         key = cleaned.casefold()
         if key in seen:
@@ -93,24 +92,33 @@ def _extract_code_tokens(text: str) -> list[str]:
     return tokens
 
 
-def _build_fallback_queries(query: str, *, limit: int) -> list[str]:
-    original = _normalize_query(query)
-    if not original:
-        return []
+def _format_runtime_context(runtime_context: dict[str, Any] | None) -> str:
+    if not isinstance(runtime_context, dict):
+        return "(none)"
 
-    compact = _strip_filler_phrases(original)
-    code_tokens = _extract_code_tokens(original)
-    candidates: list[str] = [original]
+    page_name = _normalize_query(str(runtime_context.get("page_name") or ""))
+    page_type = _normalize_query(str(runtime_context.get("page_type") or ""))
+    page_description = _normalize_query(str(runtime_context.get("page_description") or ""))
+    lines = []
+    if page_name:
+        lines.append(f"Page name: {page_name}")
+    if page_type:
+        lines.append(f"Page type: {page_type}")
+    if page_description:
+        lines.append(f"Page description: {page_description}")
+    return "\n".join(lines) or "(none)"
 
-    if compact and compact.casefold() != original.casefold():
-        candidates.append(compact)
 
-    if code_tokens:
-        candidates.append(" ".join(code_tokens[:3]))
-        if compact:
-            candidates.append(_normalize_query(f"{compact} {' '.join(code_tokens[:2])}"))
+def _runtime_contextual_query(query: str, runtime_context: dict[str, Any] | None) -> str:
+    if not _RUNTIME_REFERENCE_PATTERN.search(query):
+        return ""
 
-    return _dedupe_keep_order(candidates, limit=limit)
+    page_name = ""
+    if isinstance(runtime_context, dict):
+        page_name = _normalize_query(str(runtime_context.get("page_name") or ""))
+    if not page_name or page_name in query:
+        return ""
+    return _normalize_query(f"{page_name} {query}")
 
 
 def _recent_user_context(chat_history: list[dict[str, str]] | None, *, limit: int = 2) -> str:
@@ -123,32 +131,41 @@ def _recent_user_context(chat_history: list[dict[str, str]] | None, *, limit: in
     return " | ".join(recent[-limit:])
 
 
-def _augment_fallback_queries(
-    fallback: list[str],
+def _build_fallback_queries(
+    query: str,
     *,
-    original: str,
     chat_history: list[dict[str, str]] | None,
     memory_summary: str | None,
+    runtime_context: dict[str, Any] | None,
     limit: int,
 ) -> list[str]:
+    original = _normalize_query(query)
+    if not original:
+        return []
+
+    candidates = [original]
+    runtime_query = _runtime_contextual_query(original, runtime_context)
+    if runtime_query:
+        candidates.insert(0, runtime_query)
+
     recent_user_context = _recent_user_context(chat_history)
     summary = _normalize_query(memory_summary or "")
-    candidates = [original, *fallback]
-
     if recent_user_context:
         candidates.append(_normalize_query(f"{recent_user_context} {original}"))
     if summary:
         candidates.append(_normalize_query(f"{summary} {original}"))
-
     return _dedupe_keep_order(candidates, limit=limit)
 
 
 def _build_rewrite_prompt(
     query: str,
     *,
-    max_queries: int,
+    question_type: str,
+    retrieval_label: str,
     chat_history: list[dict[str, str]] | None = None,
     memory_summary: str | None = None,
+    runtime_context: dict[str, Any] | None = None,
+    protected_tokens: list[str] | None = None,
 ) -> str:
     history_lines = []
     for item in list(chat_history or [])[-4:]:
@@ -158,32 +175,81 @@ def _build_rewrite_prompt(
             continue
         history_lines.append(f"{role.title()}: {content}")
 
+    protected = ", ".join(protected_tokens or []) or "(none)"
     summary_text = _normalize_query(memory_summary or "") or "(none)"
     context_text = "\n".join(history_lines) or "(none)"
-
+    runtime_context_text = _format_runtime_context(runtime_context)
     return f"""
-You are rewriting a single user question into short retrieval-focused queries for a knowledge base.
+你是知识库检索查询翻译器，需要把用户问题翻译成适合检索系统使用的查询。
 
-Return JSON only:
-{{"queries": ["query 1", "query 2"]}}
+目标：
+把口语化、模糊、依赖上下文的用户问题，翻译成完整、无歧义、关键词密集的检索查询。
 
-Rules:
-- Return up to {max_queries - 1} additional queries.
-- Do not answer the question.
-- Do not invent facts.
-- Keep product names, file names, API paths, config keys, and quoted text unchanged when present.
-- Favor short search-style queries over full explanations.
-- When useful, cover terminology, scenario phrasing, and entity completion.
+只返回 JSON：
+{{
+  "semantic_queries": ["完整语义查询，给向量检索"],
+  "lexical_terms": ["关键词或短语，给关键词检索"],
+  "candidate_entities": ["实体 1", "实体 2"]
+}}
 
-Conversation summary:
+规则：
+- 不要回答问题。
+- 不要编造事实。
+- semantic_queries 用于向量检索，必须完整、无歧义、保留问题语义。
+- lexical_terms 用于关键词检索，只放单个关键词或不可拆短语，不要放一整句。
+- candidate_entities 用于图谱检索，只放可作为实体匹配的对象名。
+- 第一条 semantic_queries 必须是最适合作为独立向量检索输入的主查询。
+- 每条 lexical_terms 都应短、准、面向命中，不要保留聊天式表达。
+- 能从最近对话、会话摘要、用户环境中确定指代时，要补全代词、省略主语和模糊引用。
+- 尽量包含明确的实体、模块、产品、功能名、流程名、属性、错误名、标识符和约束条件。
+- 去掉“怎么”“这个”“那个”“帮我看看”“是什么意思”等口语填充词，除非它们属于真实术语。
+- 根据问题需要返回有效查询，不要为了凑数量生成重复或空泛查询。
+- 相关时必须原样保留这些受保护 token：{protected}
+- question_type 用于决定改写策略。
+- retrieval_label 用于决定检索宽度：fast 表示最小扩展，standard 表示均衡，broad 表示更宽召回。
+- followup_lookup 必须尽量根据最近对话补全短指代。
+- procedural_lookup 应偏向流程、步骤、配置、处理方式等词。
+- relationship_lookup 应偏向关系、依赖、归属、连接等词。
+- compare_lookup 应偏向对比类查询。
+- summary_lookup 可以包含多方面概览查询。
+- candidate_entities 应包含问题或改写查询中的主要实体、模块、产品、流程名或对象。
+- 如果没有明确内容，返回空数组。
+
+问题类型：{question_type}
+检索宽度：{retrieval_label}
+
+会话摘要：
 {summary_text}
 
-Recent chat turns:
+最近对话：
 {context_text}
 
-User question:
+用户环境：
+{runtime_context_text}
+
+用户问题：
 {query}
 """.strip()
+
+
+def _validate_queries(
+    *,
+    original: str,
+    queries: list[str],
+    protected_tokens: list[str],
+) -> list[str]:
+    normalized = _dedupe_keep_order(queries, limit=max(len(queries), 1))
+    if not normalized:
+        normalized = _dedupe_keep_order([original], limit=1)
+    if not normalized:
+        return []
+
+    if protected_tokens:
+        joined = " || ".join(normalized)
+        for token in protected_tokens[:8]:
+            if token not in joined and token.casefold() in original.casefold():
+                raise ValueError(f"protected token missing from rewrite result: {token}")
+    return normalized
 
 
 async def build_kb_chat_retrieval_queries(
@@ -191,28 +257,33 @@ async def build_kb_chat_retrieval_queries(
     *,
     chat_history: list[dict[str, str]] | None = None,
     memory_summary: str | None = None,
+    runtime_context: dict[str, Any] | None = None,
     llm_factory: Callable[[], Any] | None = None,
-    allow_llm: bool | None = None,
-    max_queries: int | None = None,
-) -> list[str]:
-    """Build 1-4 retrieval-focused queries for single-round KB chat."""
+    question_type: str = "entity_lookup",
+    retrieval_label: str = "standard",
+) -> dict[str, Any]:
+    """Build retrieval-focused queries for single-round KB chat."""
 
     original = _normalize_query(query)
     if not original:
-        return []
+        return {
+            "semantic_queries": [],
+            "lexical_terms": [],
+            "candidate_entities": [],
+            "relation_pairs": [],
+            "relation_queries": [],
+            "target_attributes": [],
+            "entity_constraints": {},
+        }
 
-    limit = max(1, min(max_queries or _MAX_RETRIEVAL_QUERIES, _MAX_RETRIEVAL_QUERIES))
-    fallback = _augment_fallback_queries(
-        _build_fallback_queries(original, limit=limit),
-        original=original,
+    protected_tokens = _extract_protected_tokens(original)
+    fallback = _build_fallback_queries(
+        original,
         chat_history=chat_history,
         memory_summary=memory_summary,
-        limit=limit,
+        runtime_context=runtime_context,
+        limit=_FALLBACK_RETRIEVAL_QUERY_LIMIT,
     )
-
-    should_use_llm = allow_llm if allow_llm is not None else config_registry.llm_configured
-    if not should_use_llm and llm_factory is None:
-        return fallback
 
     try:
         resolved_factory = llm_factory or get_llm_for_analysis
@@ -220,15 +291,56 @@ async def build_kb_chat_retrieval_queries(
         response = await llm.ainvoke(
             _build_rewrite_prompt(
                 original,
-                max_queries=limit,
+                question_type=question_type,
+                retrieval_label=retrieval_label,
                 chat_history=chat_history,
                 memory_summary=memory_summary,
+                runtime_context=runtime_context,
+                protected_tokens=protected_tokens,
             )
         )
         parsed = extract_json_from_llm_response(_coerce_text(getattr(response, "content", response)))
-        raw_queries = parsed.get("queries") or []
-        llm_queries = [item for item in raw_queries if isinstance(item, str)]
-        return _dedupe_keep_order([original, *llm_queries, *fallback], limit=limit)
+        raw_semantic_queries = parsed.get("semantic_queries") or []
+        llm_semantic_queries = [item for item in raw_semantic_queries if isinstance(item, str)]
+        raw_lexical_terms = parsed.get("lexical_terms") or []
+        llm_lexical_terms = [item for item in raw_lexical_terms if isinstance(item, str)]
+        raw_entities = parsed.get("candidate_entities") or []
+        llm_entities = [
+            _normalize_query(item)
+            for item in raw_entities
+            if isinstance(item, str) and _normalize_query(item)
+        ]
+        semantic_queries = _validate_queries(
+            original=original,
+            queries=llm_semantic_queries,
+            protected_tokens=protected_tokens,
+        )
+        lexical_terms = _split_lexical_terms(llm_lexical_terms)
+        return {
+            "semantic_queries": semantic_queries or fallback or [original],
+            "lexical_terms": lexical_terms,
+            "candidate_entities": _dedupe_keep_order(llm_entities, limit=8),
+            "relation_pairs": list(parsed.get("relation_pairs") or []),
+            "relation_queries": list(parsed.get("relation_queries") or []),
+            "target_attributes": [
+                _normalize_query(item)
+                for item in list(parsed.get("target_attributes") or [])
+                if isinstance(item, str) and _normalize_query(item)
+            ],
+            "entity_constraints": (
+                dict(parsed.get("entity_constraints") or {})
+                if isinstance(parsed.get("entity_constraints"), dict)
+                else {}
+            ),
+        }
     except Exception as exc:
-        logger.warning("KB chat query rewrite failed, fallback to heuristic queries: {}", exc)
-        return fallback
+        logger.warning("KB chat query rewrite failed, fallback to backup queries: {}", exc)
+        return {
+            "semantic_queries": fallback or [original],
+            "lexical_terms": [],
+            "candidate_entities": [],
+            "relation_pairs": [],
+            "relation_queries": [],
+            "target_attributes": [],
+            "entity_constraints": {},
+        }

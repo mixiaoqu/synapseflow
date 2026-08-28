@@ -26,23 +26,39 @@ class _FakeSession:
 async def test_delete_knowledge_base_removes_documents_before_deleting_kb(monkeypatch):
     db = _FakeSession()
     repo = KnowledgeBaseRepository(db, user_id=7)
-    knowledge_base = SimpleNamespace(id=12)
+    knowledge_base = SimpleNamespace(id=12, team_id=34)
+    graph_events = []
 
     async def fake_get_by_id(knowledge_base_id: int):
         assert knowledge_base_id == 12
         return knowledge_base
 
+    async def fake_execute(statement):
+        db.executed.append(statement)
+        return None
+
+    class FakeStore:
+        async def delete_knowledge_base_graph(self, *, knowledge_base_id, team_id):
+            graph_events.append(("delete_kb", knowledge_base_id, team_id))
+
     monkeypatch.setattr(repo, "get_by_id", fake_get_by_id)
+    monkeypatch.setattr(db, "execute", fake_execute)
+    monkeypatch.setattr(
+        "app.repositories.knowledge_base_repository.IndexJobRepository.cancel_active_jobs_for_knowledge_base",
+        lambda *args, **kwargs: __import__("asyncio").sleep(0, result=0),
+    )
+    monkeypatch.setattr(
+        "app.repositories.knowledge_base_repository.get_graph_store",
+        lambda: FakeStore(),
+    )
 
     ok = await repo.delete(12)
 
     assert ok is True
+    assert graph_events == [("delete_kb", 12, 34)]
     assert len(db.executed) == 1
-    statement = db.executed[0]
-    assert statement.__class__.__name__ == "Delete"
-    assert "DELETE FROM documents" in str(statement)
-    assert "documents.knowledge_base_id = :knowledge_base_id_1" in str(statement)
-    assert "documents.user_id = :user_id_1" in str(statement)
+    assert "DELETE FROM documents" in str(db.executed[0])
+    assert "documents.knowledge_base_id = :knowledge_base_id_1" in str(db.executed[0])
     assert db.deleted == [knowledge_base]
     assert db.commits == 1
 

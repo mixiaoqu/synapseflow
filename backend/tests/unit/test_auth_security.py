@@ -1,7 +1,14 @@
 """Tests for authentication helpers and settings coercion."""
 
 from app.core.config.settings import Settings
-from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
+from app.core.security import (
+    create_access_token,
+    create_mcp_token,
+    decode_access_token,
+    decode_mcp_token,
+    hash_password,
+    verify_password,
+)
 
 
 def test_password_hash_roundtrip():
@@ -20,6 +27,26 @@ def test_access_token_roundtrip():
     assert payload["sub"] == "123"
     assert payload["type"] == "access"
     assert "exp" in payload
+
+
+def test_mcp_token_roundtrip():
+    token = create_mcp_token(
+        product_id=1,
+        project_id=2,
+        project_app_id=3,
+        product_code="test",
+        project_code="test",
+        app_code="test",
+        client_user_id="zhangsan",
+        client_user_name="张三",
+        client_editor="trae",
+        client_host="DESKTOP-001",
+    )
+    payload = decode_mcp_token(token)
+
+    assert payload["type"] == "mcp_access"
+    assert payload["project_app_id"] == 3
+    assert payload["client_user_id"] == "zhangsan"
 
 
 def test_settings_debug_aliases():

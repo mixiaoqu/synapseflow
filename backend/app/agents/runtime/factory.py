@@ -11,46 +11,53 @@ class GraphDefinition:
     """Metadata for a compiled graph factory."""
 
     graph_id: str
-    factory: Callable[[], Any]
+    factory: Callable[..., Any]
     node_ids: tuple[str, ...]
+    expose_in_langgraph: bool = False
 
-    def build(self) -> Any:
+    def build(self, **factory_kwargs: Any) -> Any:
         """Compile and return the configured graph."""
 
-        return self.factory()
+        return self.factory(**factory_kwargs)
 
 
 def _build_registry() -> dict[str, GraphDefinition]:
-    from app.agents.graphs import (
-        create_doc_to_prototype_graph,
-        create_kb_chat_graph,
-        create_kb_curation_graph,
-        create_suggest_revision_graph,
-        get_doc_to_prototype_pipeline_node_ids,
-    )
-
-    prototype_node_ids = get_doc_to_prototype_pipeline_node_ids()
+    from app.agents.business_ops.graph import create_business_ops_graph
+    from app.agents.knowledge_qa.graph import create_knowledge_qa_graph
+    from app.agents.main.graph import create_agent_graph
 
     return {
-        "kb_chat": GraphDefinition(
-            graph_id="kb_chat",
-            factory=create_kb_chat_graph,
-            node_ids=("retrieve", "answer"),
+        "agent": GraphDefinition(
+            graph_id="agent",
+            factory=create_agent_graph,
+            node_ids=(
+                "decide",
+                "execute",
+                "respond",
+            ),
+            expose_in_langgraph=True,
         ),
-        "kb_curation": GraphDefinition(
-            graph_id="kb_curation",
-            factory=create_kb_curation_graph,
-            node_ids=("query_optimizer", "retrieve", "answer", "evaluate"),
+        "knowledge_qa": GraphDefinition(
+            graph_id="knowledge_qa",
+            factory=create_knowledge_qa_graph,
+            node_ids=(
+                "plan_query",
+                "plan_retrieval",
+                "retrieve_knowledge",
+                "compose_result",
+            ),
+            expose_in_langgraph=True,
         ),
-        "suggest_revision": GraphDefinition(
-            graph_id="suggest_revision",
-            factory=create_suggest_revision_graph,
-            node_ids=("parse_suggestions", "analyze_document", "locate_edits", "revise"),
-        ),
-        "doc_to_prototype": GraphDefinition(
-            graph_id="doc_to_prototype",
-            factory=create_doc_to_prototype_graph,
-            node_ids=prototype_node_ids,
+        "business_ops": GraphDefinition(
+            graph_id="business_ops",
+            factory=create_business_ops_graph,
+            node_ids=(
+                "analyze_request",
+                "match_operation",
+                "execute_operation",
+                "replan_operation_params",
+                "compose_result",
+            ),
         ),
     }
 

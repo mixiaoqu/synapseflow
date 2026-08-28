@@ -1,39 +1,137 @@
-# SynapseFlow Frontend
+# Frontend
 
-基于 Next.js 15 和 shadcn/ui 的前端应用。
+`frontend` 是当前仓库中的 Vue 3 管理后台前端，已接入登录、鉴权守卫、后台壳层、模块化路由和内容风控中心入口。
 
-## 开发
+## 技术栈
+
+- Vue 3
+- Vue Router 4
+- Pinia
+- Vue Query
+- Element Plus
+- Tailwind CSS
+- Axios
+- Vite
+
+## 本地启动
+
+安装依赖：
 
 ```bash
+cd frontend
 pnpm install
+```
+
+启动开发环境：
+
+```bash
+cd frontend
 pnpm dev
 ```
 
-访问 `http://localhost:3000`
+其他常用命令：
 
-## 页面结构
-
-```text
-app/
-  (dashboard)/
-    kb-chat/        # 普通用户知识库问答
-    kb-curation/    # 管理员知识库治理
-    revision/       # 文档修订
-    prototype/      # 文档转原型
-    documents/      # 文档管理
+```bash
+cd frontend
+pnpm lint
+pnpm typecheck
+pnpm build
 ```
 
-## 主要页面
+说明：
 
-1. `app/(dashboard)/kb-chat/page.tsx`
-2. `app/(dashboard)/kb-curation/page.tsx`
-3. `app/(dashboard)/revision/page.tsx`
-4. `app/(dashboard)/prototype/page.tsx`
+- `pnpm build` 在项目里是有效命令，但只有在明确需要验证生产构建时才建议执行。
 
 ## 环境变量
 
-创建 `.env.local`：
+当前代码实际读取的前端环境变量如下：
 
-```bash
-NEXT_PUBLIC_API_URL=http://localhost:8000
-```
+- `VITE_API_BASE_URL`
+  - 后端 API 根地址，默认回退到 `http://localhost:8000/api/v1`
+- `VITE_API_TIMEOUT_MS`
+  - HTTP 请求超时时间，单位毫秒，默认回退到 `15000`
+
+## 当前页面结构
+
+### 登录页
+
+- 路径：`/login`
+- 页面：[`src/modules/auth/pages/LoginPage.vue`](./src/modules/auth/pages/LoginPage.vue)
+- 壳层：[`src/app/layouts/AuthLayout.vue`](./src/app/layouts/AuthLayout.vue)
+
+### 后台壳层
+
+- 主布局：[`src/app/layouts/AdminLayout.vue`](./src/app/layouts/AdminLayout.vue)
+- 一级导航配置：[`src/app/navigation/admin-nav.ts`](./src/app/navigation/admin-nav.ts)
+- 路由定义：[`src/router/index.ts`](./src/router/index.ts)
+
+当前后台根路径 `/` 会重定向到 `/dashboard`。
+
+当前已注册的后台路由包括：
+
+- `/dashboard`
+- `/knowledge-bases`
+- `/knowledge-bases/:knowledgeBaseId`
+- `/knowledge-bases/:knowledgeBaseId/documents/:documentId`
+- `/projects`
+- `/projects/:projectId/apps`
+- `/projects/:projectId/apps/new`
+- `/projects/:projectId/apps/:appId`
+- `/assistants`
+- `/assistants/new`
+- `/assistants/:assistantId`
+- `/organizations`
+- `/users`
+- `/content-risk/libraries`
+
+## 认证与请求流
+
+### 鉴权状态
+
+- Pinia Store：[`src/stores/auth.ts`](./src/stores/auth.ts)
+- 路由守卫：[`src/app/guards/auth.ts`](./src/app/guards/auth.ts)
+- Session 工具：[`src/shared/auth/session.ts`](./src/shared/auth/session.ts)
+
+当前逻辑：
+
+- 首次访问受保护页面时，路由守卫会先执行 `bootstrap()`
+- 如果本地存在 token，前端会调用当前用户接口校验会话
+- 未登录用户会被重定向到 `/login`
+- 登录后会优先返回用户最初访问的后台地址
+- 如果接口返回 `401`，本地会话会被立即清空
+
+### HTTP 请求
+
+- Axios 实例：[`src/shared/api/http.ts`](./src/shared/api/http.ts)
+- API 配置：[`src/shared/api/config.ts`](./src/shared/api/config.ts)
+
+当前逻辑：
+
+- 请求发送前自动注入 `Authorization: Bearer <token>`
+- 响应错误会先归一化，再返回给调用方处理
+- `401` 会自动清空本地登录态
+
+## 共享页面骨架
+
+当前后台页面已经有一套共享骨架组件：
+
+- 列表页骨架：[`src/shared/components/page/ResourceListPage.vue`](./src/shared/components/page/ResourceListPage.vue)
+- 详情页骨架：[`src/shared/components/page/ResourceDetailPage.vue`](./src/shared/components/page/ResourceDetailPage.vue)
+- 页面操作栏：[`src/shared/components/page/FilterToolbar.vue`](./src/shared/components/page/FilterToolbar.vue)
+
+反馈组件包括：
+
+- [`src/shared/components/feedback/AppLoading.vue`](./src/shared/components/feedback/AppLoading.vue)
+- [`src/shared/components/feedback/AppEmpty.vue`](./src/shared/components/feedback/AppEmpty.vue)
+- [`src/shared/components/feedback/AppError.vue`](./src/shared/components/feedback/AppError.vue)
+- [`src/shared/components/feedback/AppForbidden.vue`](./src/shared/components/feedback/AppForbidden.vue)
+
+## 当前样式约定
+
+当前代码已经收敛为以下方式：
+
+- Element Plus 负责表单、按钮、消息、标签等基础控件
+- Tailwind 负责后台布局和页面骨架
+- 全局样式入口在 [`src/styles/index.css`](./src/styles/index.css)
+
+如果继续新增后台页面，建议优先沿用这套分工。

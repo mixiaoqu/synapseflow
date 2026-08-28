@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --admin-bg: #f6f8fb;
+  --admin-surface: #ffffff;
+  --admin-surface-muted: #f8fafc;
+  --admin-border: #d8dee8;
+  --admin-border-soft: #e5e9f0;
+  --admin-text: #111827;
+  --admin-text-muted: #64748b;
+  --admin-text-secondary: #475569;
+  --admin-text-subtle: #94a3b8;
+  --admin-primary: #2563eb;
+  --admin-primary-light: #3b82f6;
+  --admin-primary-soft: #eff6ff;
+  --admin-primary-border: #bfdbfe;
+  --admin-primary-hover: #1d4ed8;
+  --admin-primary-strong: #1e40af;
+  --el-color-primary: var(--admin-primary);
+  --el-color-primary-light-1: var(--admin-primary);
+  --el-color-primary-light-2: var(--admin-primary-light);
+  --el-color-primary-light-3: var(--admin-primary-light);
+  --el-color-primary-light-4: var(--admin-primary-light);
+  --el-color-primary-light-5: var(--admin-primary-light);
+  --el-color-primary-light-6: var(--admin-primary-border);
+  --el-color-primary-light-7: var(--admin-primary-border);
+  --el-color-primary-light-8: var(--admin-primary-soft);
+  --el-color-primary-light-9: var(--admin-primary-soft);
+  --el-color-primary-dark-2: var(--admin-primary-hover);
+  --admin-danger: #dc2626;
+  --admin-danger-hover: #b91c1c;
+  --admin-warning: #b45309;
+  --admin-radius-sm: 6px;
+  --admin-radius-md: 8px;
+  --admin-radius-lg: 10px;
+  --admin-shadow-panel: 0 6px 18px rgba(15, 23, 42, 0.035);
+  --panel-bg: rgba(255, 255, 255, 0.92);
+  --panel-border: rgba(148, 163, 184, 0.24);
+  --panel-shadow: 0 22px 48px rgba(15, 23, 42, 0.08);
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  background: var(--admin-bg);
+  color: var(--admin-text);
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}

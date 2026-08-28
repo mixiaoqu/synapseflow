@@ -3,31 +3,39 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
-    ask,
+    assistants,
     auth,
+    content_risk_libraries,
     document_categories,
     documents,
+    evaluations,
     health,
-    kb_chat,
-    kb_curation,
+    integration_bootstrap,
     knowledge_bases,
-    prototype_stream,
-    revision,
-    sensitive_words,
+    products,
+    project_app_access,
+    projects,
+    qa_review,
     teams,
+    tool_providers,
     users,
+    widget,
 )
 
 api_router = APIRouter()
 
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
-api_router.include_router(ask.router, prefix="/ask", tags=["ask"])
-api_router.include_router(ask.admin_router, prefix="/admin/qa", tags=["admin-qa"])
-api_router.include_router(kb_curation.router, prefix="/kb-curation", tags=["kb-curation"])
-api_router.include_router(kb_chat.router, prefix="/kb-chat", tags=["kb-chat"])
-api_router.include_router(revision.router, prefix="/revision", tags=["revision"])
-api_router.include_router(prototype_stream.router, prefix="/prototype", tags=["prototype"])
+api_router.include_router(qa_review.router, prefix="/admin/qa", tags=["admin-qa"])
+api_router.include_router(widget.router, prefix="/widget", tags=["widget"])
+api_router.include_router(
+    integration_bootstrap.router,
+    prefix="/integration",
+    tags=["integration"],
+)
+api_router.include_router(assistants.router, prefix="/assistants", tags=["assistants"])
+api_router.include_router(project_app_access.router, prefix="/agent-integrations", tags=["agent-integrations"])
+api_router.include_router(tool_providers.router, prefix="/agent-integrations", tags=["agent-integrations"])
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
 api_router.include_router(
     document_categories.router,
@@ -35,14 +43,21 @@ api_router.include_router(
     tags=["document-categories"],
 )
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
+api_router.include_router(products.router, prefix="/products", tags=["products"])
+api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(
-    sensitive_words.router,
-    prefix="/sensitive-words",
-    tags=["sensitive-words"],
+    content_risk_libraries.router,
+    prefix="/content-risk",
+    tags=["content-risk"],
 )
 api_router.include_router(
     knowledge_bases.router,
     prefix="/knowledge-bases",
     tags=["knowledge-bases"],
+)
+api_router.include_router(
+    evaluations.router,
+    prefix="/evaluations",
+    tags=["evaluations"],
 )

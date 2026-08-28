@@ -1,3 +1,12 @@
+x-backend-image: &backend-image
+  image: synapseflow-backend:latest
+  build:
+    context: ./backend
+    dockerfile: ../docker/backend/Dockerfile
+    args:
+      UV_INDEX_URL: ${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+      PYTORCH_CPU_FIND_LINKS: ${PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -33,25 +42,72 @@ services:
       timeout: 5s
       retries: 5
 
+  neo4j:
+    image: neo4j:5-community
+    container_name: synapseflow-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-synapseflow123}
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - synapseflow-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
   backend:
-    image: synapseflow-backend:latest
-    build:
-      context: ./backend
-      dockerfile: ../docker/backend/Dockerfile
-      args:
-        UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.org/simple}
+    <<: *backend-image
     container_name: synapseflow-backend
     environment:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - DRAMATIQ_INDEXING_QUEUE=${DRAMATIQ_INDEXING_QUEUE:-indexing}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://47.107.55.65:3000,http://47.107.55.65}
+      - DRAMATIQ_EVALUATION_QUEUE=${DRAMATIQ_EVALUATION_QUEUE:-evaluation}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-local}
+      - EMBEDDING_API_URL=${EMBEDDING_API_URL:-https://api.siliconflow.cn/v1/embeddings}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      - HF_HOME=/app/.cache/huggingface
+      - RERANK_ENABLED=${RERANK_ENABLED:-true}
+      - RERANK_PROVIDER=${RERANK_PROVIDER:-siliconflow}
+      - RERANK_API_URL=${RERANK_API_URL:-https://api.siliconflow.cn/v1/rerank}
+      - RERANK_API_KEY=${RERANK_API_KEY:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
+      - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:5173}
+      - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-60}
+      - WIDGET_TOKEN_EXPIRE_MINUTES=${WIDGET_TOKEN_EXPIRE_MINUTES:-60}
+      - GRAPH_ENABLED=${GRAPH_ENABLED:-false}
+      - GRAPH_INDEXING_ENABLED=${GRAPH_INDEXING_ENABLED:-false}
+      - GRAPH_URI=${GRAPH_URI:-bolt://neo4j:7687}
+      - GRAPH_USERNAME=${GRAPH_USERNAME:-neo4j}
+      - GRAPH_PASSWORD=${GRAPH_PASSWORD:-synapseflow123}
+      - GRAPH_DATABASE=${GRAPH_DATABASE:-neo4j}
+      - DOCUMENT_STAGING_DIR=${DOCUMENT_STAGING_DIR:-/app/uploaded_documents/staging}
+      - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-10485760}
+      - OSS_ENABLED=${OSS_ENABLED:-false}
+      - OSS_PROVIDER=${OSS_PROVIDER:-volcengine_tos}
+      - OSS_BUCKET=${OSS_BUCKET:-}
+      - OSS_ENDPOINT=${OSS_ENDPOINT:-}
+      - OSS_REGION=${OSS_REGION:-}
+      - OSS_PUBLIC_ENDPOINT=${OSS_PUBLIC_ENDPOINT:-}
+      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID:-}
+      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET:-}
+      - OSS_UPLOAD_EXPIRE_SECONDS=${OSS_UPLOAD_EXPIRE_SECONDS:-900}
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - backend_venv:/app/.venv
+      - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
+      - backend_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,19 +118,46 @@ services:
     command:
       - sh
       - -c
-      - uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      - uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
   backend-worker:
-    image: synapseflow-backend:latest
+    <<: *backend-image
     container_name: synapseflow-backend-worker
     environment:
       - DATABASE_URL=postgresql+asyncpg://synapseflow:${POSTGRES_PASSWORD:-synapseflow123}@postgres:5432/synapseflow
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - DRAMATIQ_INDEXING_QUEUE=${DRAMATIQ_INDEXING_QUEUE:-indexing}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - DRAMATIQ_EVALUATION_QUEUE=${DRAMATIQ_EVALUATION_QUEUE:-evaluation}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      - HF_HOME=/app/.cache/huggingface
+      - ENTERPRISE_SERVICE_TOKEN=${ENTERPRISE_SERVICE_TOKEN:-}
+      - EMBED_FRONTEND_BASE_URL=${EMBED_FRONTEND_BASE_URL:-http://localhost:5173}
+      - EMBED_TOKEN_EXPIRE_MINUTES=${EMBED_TOKEN_EXPIRE_MINUTES:-60}
+      - WIDGET_TOKEN_EXPIRE_MINUTES=${WIDGET_TOKEN_EXPIRE_MINUTES:-60}
+      - GRAPH_ENABLED=${GRAPH_ENABLED:-false}
+      - GRAPH_INDEXING_ENABLED=${GRAPH_INDEXING_ENABLED:-false}
+      - GRAPH_URI=${GRAPH_URI:-bolt://neo4j:7687}
+      - GRAPH_USERNAME=${GRAPH_USERNAME:-neo4j}
+      - GRAPH_PASSWORD=${GRAPH_PASSWORD:-synapseflow123}
+      - GRAPH_DATABASE=${GRAPH_DATABASE:-neo4j}
+      - DOCUMENT_STAGING_DIR=${DOCUMENT_STAGING_DIR:-/app/uploaded_documents/staging}
+      - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-10485760}
+      - OSS_ENABLED=${OSS_ENABLED:-false}
+      - OSS_PROVIDER=${OSS_PROVIDER:-volcengine_tos}
+      - OSS_BUCKET=${OSS_BUCKET:-}
+      - OSS_ENDPOINT=${OSS_ENDPOINT:-}
+      - OSS_REGION=${OSS_REGION:-}
+      - OSS_PUBLIC_ENDPOINT=${OSS_PUBLIC_ENDPOINT:-}
+      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID:-}
+      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET:-}
+      - OSS_UPLOAD_EXPIRE_SECONDS=${OSS_UPLOAD_EXPIRE_SECONDS:-900}
     volumes:
       - ./backend:/app
+      - backend_venv:/app/.venv
+      - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
+      - backend_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,29 +168,34 @@ services:
     command:
       - sh
       - -c
-      - uv run dramatiq app.workers.indexing_tasks --processes 1 --threads 1
+      - uv run dramatiq app.workers.indexing_tasks app.workers.evaluation_tasks --processes 2 --threads 2
 
   frontend:
     build:
       context: ./frontend
       dockerfile: ../docker/frontend/Dockerfile
+      args:
+        NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmmirror.com}
     container_name: synapseflow-frontend
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://47.107.55.65:8000}
-      - NEXT_ALLOWED_DEV_ORIGINS=${NEXT_ALLOWED_DEV_ORIGINS:-47.107.55.65}
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
+      - VITE_API_TIMEOUT_MS=${VITE_API_TIMEOUT_MS:-15000}
     ports:
-      - "3000:3000"
+      - "${SF_FRONTEND_PORT:-5173}:5173"
     volumes:
       - ./frontend:/app
       - /app/node_modules
-      - /app/.next
     networks:
       - synapseflow-network
-    command: pnpm run dev
+    command: pnpm exec vite --host 0.0.0.0 --port 5173
 
 volumes:
   postgres_data:
+  neo4j_data:
+  backend_venv:
+  backend_hf_cache:
   backend_previews:
+  backend_uploaded_documents:
   redis_data:
 
 networks:

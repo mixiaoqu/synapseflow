@@ -1,22 +1,44 @@
 """FastAPI应用主入口"""
+import asyncio
 import os
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from loguru import logger
 
+from app.api.mcp_server import McpPathMiddleware, mcp_http_app, mcp_server
+from app.api.v1.router import api_router
 from app.core.config import config_registry, settings
 from app.core.logging_config import setup_logging
-from app.api.v1.router import api_router
 
 app_config = config_registry.get_app_config()
+
+
+def _load_docling_converter() -> None:
+    from importlib import import_module
+
+    converter_module = import_module("docling.document_converter")
+    converter_module.DocumentConverter()
+
+
+async def _warmup_docling_models() -> None:
+    """后台初始化 Docling，避免首次解析文档时才触发模型加载。"""
+    from loguru import logger
+
+    try:
+        await asyncio.to_thread(_load_docling_converter)
+        logger.info("Docling 模型预热完成")
+    except Exception as exc:
+        logger.warning("Docling 模型预热失败: {}", exc)
+
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     setup_logging()
-    from loguru import logger
     logger.info("{} v{} 启动中", app_config.project_name, app_config.version)
 
     if settings.LANGSMITH_TRACING and settings.LANGSMITH_API_KEY:
@@ -28,12 +50,16 @@ async def lifespan(app: FastAPI):
             os.environ["LANGSMITH_WORKSPACE_ID"] = settings.LANGSMITH_WORKSPACE_ID
         logger.info("LangSmith 追踪已启用")
 
-    os.makedirs(settings.PREVIEW_DIR, exist_ok=True)
-    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    # 后台预热 docling 模型下载，不阻塞服务启动
+    asyncio.create_task(_warmup_docling_models())
 
     logger.info("应用就绪，预览目录: {}", settings.PREVIEW_DIR)
-    yield
+    async with mcp_server.session_manager.run():
+        yield
 
+    from app.services.tool_providers.http_client import close_provider_http_client
+
+    await close_provider_http_client()
     logger.info("应用关闭")
 
 
@@ -47,20 +73,22 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS配置（支持SSE）
+# 浏览器跨域只负责传输许可，业务权限由各接口的显式凭证校验负责。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],  # 允许前端访问所有响应头
 )
+app.add_middleware(McpPathMiddleware)
 
 # 挂载静态文件目录（用于预览）
 # 确保目录存在后再挂载
 os.makedirs(settings.PREVIEW_DIR, exist_ok=True)
 app.mount("/preview", StaticFiles(directory=settings.PREVIEW_DIR), name="preview")
+app.mount("/mcp", mcp_http_app, name="mcp")
 
 # 注册API路由
 app.include_router(api_router, prefix=app_config.api_v1_str)

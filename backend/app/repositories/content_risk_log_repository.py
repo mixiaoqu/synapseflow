@@ -1,0 +1,134 @@
+"""Persistence helpers for content-risk detection logs."""
+
+from __future__ import annotations
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.models import (
+    AssistantProfile,
+    ContentRiskLog,
+    KnowledgeBase,
+    Product,
+    Project,
+    ProjectApp,
+    Team,
+)
+
+
+class ContentRiskLogRepository:
+    """Persist and query content-risk detection decisions."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def create_log(self, log: ContentRiskLog) -> ContentRiskLog:
+        self.db.add(log)
+        await self.db.commit()
+        await self.db.refresh(log)
+        return log
+
+    async def list_logs(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 10,
+        scene: str | None = None,
+        action: str | None = None,
+        blocked: bool | None = None,
+        risk_level: str | None = None,
+        chat_log_id: int | None = None,
+        team_id: int | None = None,
+        team_ids: list[int] | None = None,
+    ) -> tuple[
+        list[tuple[ContentRiskLog, str | None, str | None, str | None, str | None, str | None, str | None]],
+        int,
+    ]:
+        normalized_page = max(1, page)
+        normalized_page_size = max(1, min(page_size, 100))
+        offset = (normalized_page - 1) * normalized_page_size
+        stmt = (
+            select(
+                ContentRiskLog,
+                Product.name.label("product_name"),
+                Project.name.label("project_name"),
+                ProjectApp.name.label("project_app_name"),
+                Team.name.label("team_name"),
+                KnowledgeBase.name.label("knowledge_base_name"),
+                AssistantProfile.name.label("assistant_name"),
+            )
+            .outerjoin(Product, ContentRiskLog.product_id == Product.id)
+            .outerjoin(Project, ContentRiskLog.project_id == Project.id)
+            .outerjoin(ProjectApp, ContentRiskLog.project_app_id == ProjectApp.id)
+            .outerjoin(KnowledgeBase, ContentRiskLog.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(AssistantProfile, ContentRiskLog.assistant_id == AssistantProfile.id)
+            .outerjoin(Team, ContentRiskLog.team_id == Team.id)
+        )
+        total_stmt = (
+            select(func.count())
+            .select_from(ContentRiskLog)
+            .outerjoin(Product, ContentRiskLog.product_id == Product.id)
+            .outerjoin(Project, ContentRiskLog.project_id == Project.id)
+            .outerjoin(ProjectApp, ContentRiskLog.project_app_id == ProjectApp.id)
+            .outerjoin(KnowledgeBase, ContentRiskLog.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(AssistantProfile, ContentRiskLog.assistant_id == AssistantProfile.id)
+        )
+        stmt = self._apply_filters(
+            stmt,
+            scene=scene,
+            action=action,
+            blocked=blocked,
+            risk_level=risk_level,
+            chat_log_id=chat_log_id,
+            team_id=team_id,
+            team_ids=team_ids,
+        )
+        total_stmt = self._apply_filters(
+            total_stmt,
+            scene=scene,
+            action=action,
+            blocked=blocked,
+            risk_level=risk_level,
+            chat_log_id=chat_log_id,
+            team_id=team_id,
+            team_ids=team_ids,
+        )
+        stmt = (
+            stmt.order_by(ContentRiskLog.created_at.desc(), ContentRiskLog.id.desc())
+            .offset(offset)
+            .limit(normalized_page_size)
+        )
+        rows = (await self.db.execute(stmt)).all()
+        total = (await self.db.execute(total_stmt)).scalar() or 0
+        return list(rows), int(total)
+
+    @staticmethod
+    def _apply_filters(
+        stmt,
+        *,
+        scene: str | None,
+        action: str | None,
+        blocked: bool | None,
+        risk_level: str | None,
+        chat_log_id: int | None,
+        team_id: int | None,
+        team_ids: list[int] | None,
+    ):
+        if scene:
+            stmt = stmt.where(ContentRiskLog.scene == scene)
+        if action:
+            stmt = stmt.where(ContentRiskLog.action == action)
+        if blocked is not None:
+            stmt = stmt.where(ContentRiskLog.blocked.is_(blocked))
+        if risk_level:
+            stmt = stmt.where(ContentRiskLog.risk_level == risk_level)
+        if chat_log_id is not None:
+            stmt = stmt.where(ContentRiskLog.chat_log_id == chat_log_id)
+        if team_id is not None:
+            stmt = stmt.where(ContentRiskLog.team_id == team_id)
+        if team_ids is not None:
+            if not team_ids:
+                stmt = stmt.where(False)
+            else:
+                stmt = stmt.where(ContentRiskLog.team_id.in_(team_ids))
+        return stmt

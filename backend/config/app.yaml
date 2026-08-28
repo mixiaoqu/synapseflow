@@ -1,10 +1,22 @@
 # 应用基础配置。
 app:
   # 项目名称，用于接口文档、日志和页面展示。
-  project_name: SynapseFlow
+  project_name: LangChain RAG 知识库
   # 当前后端服务版本号。
   version: 0.1.0
   # 项目描述，用于 OpenAPI 文档等场景。
   description: 基于 LangGraph 的智能协作平台后端服务
   # API v1 的统一路由前缀。
   api_v1_str: /api/v1
+
+graph:
+  # 使用 Neo4j 作为图数据库。
+  provider: neo4j
+  # 单个文档块参与图谱抽取的最大字符数。
+  extraction_max_chars: 3200
+  # 单次批量抽取允许的最大 chunk 数。
+  extraction_batch_max_chunks: 12
+  # 单次批量抽取允许的最大总字符数。
+  extraction_batch_max_chars: 18000
+  # 图谱抽取并发数。
+  extraction_concurrency: 4

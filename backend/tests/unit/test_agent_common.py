@@ -52,16 +52,16 @@ def test_parse_markdown_headings_and_build_section_tree():
 def test_run_state_kb_retrieval_forwards_category_id():
     import asyncio
 
-    import app.services.kb_retrieval as kb_retrieval_module
+    import app.services.kb_text_retrieval as kb_text_retrieval_module
 
     captured: dict[str, object] = {}
 
-    async def fake_run_kb_retrieval(**kwargs):
+    async def fake_run_kb_text_retrieval(**kwargs):
         captured.update(kwargs)
         return {"retrieved_docs": [], "context": "", "kb_retrieval_status": "ok"}
 
-    original = kb_retrieval_module.run_kb_retrieval
-    kb_retrieval_module.run_kb_retrieval = fake_run_kb_retrieval
+    original = kb_text_retrieval_module.run_kb_text_retrieval
+    kb_text_retrieval_module.run_kb_text_retrieval = fake_run_kb_text_retrieval
     try:
         state = {
             "query": "支付规则是什么",
@@ -71,7 +71,7 @@ def test_run_state_kb_retrieval_forwards_category_id():
         }
         result = asyncio.run(run_state_kb_retrieval(state, query=state["query"]))
     finally:
-        kb_retrieval_module.run_kb_retrieval = original
+        kb_text_retrieval_module.run_kb_text_retrieval = original
 
     assert result["kb_retrieval_status"] == "ok"
     assert captured["knowledge_base_id"] == 9

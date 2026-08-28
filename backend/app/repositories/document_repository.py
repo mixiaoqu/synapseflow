@@ -9,8 +9,11 @@ from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, DocumentCategory, KnowledgeBase
-from app.repositories.access_scope import accessible_document_condition, accessible_knowledge_base_condition
-from app.services.document_lifecycle import DOC_STATUS_DRAFT
+from app.repositories.access_scope import (
+    accessible_document_condition,
+    accessible_knowledge_base_condition,
+)
+from app.services.category_scope import resolve_category_subtree_ids
 from app.services.document_index_state import (
     INDEX_STATUS_FAILED,
     INDEX_STATUS_INDEXED,
@@ -18,6 +21,9 @@ from app.services.document_index_state import (
     INDEX_STATUS_QUEUED,
     compute_content_hash,
 )
+from app.services.document_lifecycle import DOC_STATUS_DRAFT, DOC_STATUS_PENDING_REVIEW
+from app.services.document_parse_state import PARSE_STATUS_PARSED, PARSE_STATUS_QUEUED
+from app.services.object_storage_service import object_storage_service
 from app.utils.time import utc_now
 
 
@@ -80,6 +86,14 @@ class DocumentRepository:
             document_type=document_type,
             size=size,
             content_hash=compute_content_hash(content),
+            parse_status=PARSE_STATUS_PARSED,
+            parse_error=None,
+            parse_started_at=None,
+            parsed_at=utc_now(),
+            staged_file_path=None,
+            staged_file_name=None,
+            staged_file_size=None,
+            staged_file_hash=None,
             index_status=INDEX_STATUS_QUEUED,
             index_error=None,
             indexed_at=None,
@@ -87,10 +101,78 @@ class DocumentRepository:
             parent_id=None,
             is_latest=True,
             is_current=True,
+            is_live=False,
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             source_path=source_path,
             status=status,
+        )
+        self.db.add(doc)
+        await self.db.flush()
+        doc.root_id = doc.id
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(doc)
+        return doc
+
+    async def create_uploaded_source_document(
+        self,
+        *,
+        title: str,
+        document_type: str | None,
+        knowledge_base_id: int,
+        category_id: int | None,
+        source_path: str | None,
+        source_storage_provider: str,
+        source_bucket_name: str,
+        source_object_key: str,
+        source_file_name: str,
+        source_file_size: int,
+        source_content_type: str | None,
+        source_etag: str | None,
+        commit: bool = True,
+    ) -> Document:
+        """Create one uploaded-source document waiting for the parse pipeline migration."""
+        source_parse_token = object_storage_service.build_object_change_token(
+            bucket_name=source_bucket_name,
+            object_key=source_object_key,
+            file_size=source_file_size,
+            etag=source_etag,
+        )
+        doc = Document(
+            user_id=self.user_id,
+            title=title,
+            content="",
+            document_type=document_type,
+            size=0,
+            content_hash=compute_content_hash(""),
+            parse_status=PARSE_STATUS_QUEUED,
+            parse_error=None,
+            parse_started_at=None,
+            parsed_at=None,
+            staged_file_path=None,
+            staged_file_name=None,
+            staged_file_size=None,
+            staged_file_hash=source_parse_token,
+            source_storage_provider=source_storage_provider,
+            source_bucket_name=source_bucket_name,
+            source_object_key=source_object_key,
+            source_file_name=source_file_name,
+            source_file_size=source_file_size,
+            source_content_type=source_content_type,
+            source_etag=source_etag,
+            index_status=INDEX_STATUS_QUEUED,
+            index_error=None,
+            indexed_at=None,
+            version=1,
+            parent_id=None,
+            is_latest=True,
+            is_current=True,
+            is_live=False,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            source_path=source_path,
+            status=DOC_STATUS_DRAFT,
         )
         self.db.add(doc)
         await self.db.flush()
@@ -123,7 +205,7 @@ class DocumentRepository:
         self,
         *,
         page: int = 1,
-        page_size: int = 20,
+        page_size: int = 10,
         keyword: str | None = None,
         team_id: int | None = None,
         knowledge_base_id: int | None = None,
@@ -144,7 +226,8 @@ class DocumentRepository:
             if category_id == 0:
                 base_filter = base_filter & Document.category_id.is_(None)
             else:
-                base_filter = base_filter & (Document.category_id == category_id)
+                subtree_ids = await self._get_category_subtree_ids(category_id)
+                base_filter = base_filter & Document.category_id.in_(subtree_ids)
         if status:
             base_filter = base_filter & (Document.status == status)
 
@@ -187,6 +270,103 @@ class DocumentRepository:
             )
         result = await self.db.execute(stmt)
         return list(result.all()), total
+
+    def _build_document_filter(
+        self,
+        *,
+        keyword: str | None = None,
+        team_id: int | None = None,
+        knowledge_base_id: int | None = None,
+        category_id: int | None = None,
+        status: str | None = None,
+    ):
+        base_filter = accessible_document_condition(self.user_id) & Document.is_current.is_(True)
+        if keyword and keyword.strip():
+            base_filter = base_filter & Document.title.ilike(f"%{keyword.strip()}%")
+        if knowledge_base_id is not None:
+            if knowledge_base_id == 0:
+                base_filter = base_filter & Document.knowledge_base_id.is_(None)
+            else:
+                base_filter = base_filter & (Document.knowledge_base_id == knowledge_base_id)
+        if category_id is not None:
+            if category_id == 0:
+                base_filter = base_filter & Document.category_id.is_(None)
+            else:
+                category_tree = (
+                    select(DocumentCategory.id)
+                    .where(DocumentCategory.id == category_id)
+                    .cte(name="category_tree", recursive=True)
+                )
+                category_alias = DocumentCategory.__table__.alias("category_child")
+                category_tree = category_tree.union_all(
+                    select(category_alias.c.id).where(category_alias.c.parent_id == category_tree.c.id)
+                )
+                base_filter = base_filter & Document.category_id.in_(select(category_tree.c.id))
+        if status:
+            base_filter = base_filter & (Document.status == status)
+        if team_id is not None:
+            base_filter = base_filter & (
+                Document.knowledge_base_id.is_not(None) & (KnowledgeBase.team_id == team_id)
+            )
+        return base_filter
+
+    async def get_status_counts(
+        self,
+        *,
+        keyword: str | None = None,
+        team_id: int | None = None,
+        knowledge_base_id: int | None = None,
+        category_id: int | None = None,
+    ) -> dict[str, int]:
+        """Return document counts grouped by lifecycle status for the given filters."""
+        base_filter = self._build_document_filter(
+            keyword=keyword,
+            team_id=team_id,
+            knowledge_base_id=knowledge_base_id,
+            category_id=category_id,
+            status=None,
+        )
+        stmt = (
+            select(Document.status, func.count())
+            .select_from(Document)
+            .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
+            .where(base_filter)
+            .group_by(Document.status)
+        )
+        result = await self.db.execute(stmt)
+        return {status: count for status, count in result.all()}
+
+    async def list_ids(
+        self,
+        *,
+        keyword: str | None = None,
+        team_id: int | None = None,
+        knowledge_base_id: int | None = None,
+        category_id: int | None = None,
+        status: str | None = None,
+    ) -> list[int]:
+        stmt = (
+            select(Document.id)
+            .outerjoin(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
+            .where(
+                self._build_document_filter(
+                    keyword=keyword,
+                    team_id=team_id,
+                    knowledge_base_id=knowledge_base_id,
+                    category_id=category_id,
+                    status=status,
+                )
+            )
+            .order_by(Document.created_at.desc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def _get_category_subtree_ids(self, category_id: int) -> list[int]:
+        """Return the category ID plus all descendant IDs."""
+        return await resolve_category_subtree_ids(self.db, category_id)
 
     async def get_category_name(self, category_id: int | None) -> str | None:
         """Fetch a category name scoped to the current user."""
@@ -231,7 +411,13 @@ class DocumentRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def update_content(self, doc_id: int, content: str) -> Document | None:
+    async def update_content(
+        self,
+        doc_id: int,
+        content: str,
+        *,
+        commit: bool = True,
+    ) -> Document | None:
         """Replace the content of an existing latest document."""
         doc = await self.get_by_id_for_user(doc_id)
         if not doc:
@@ -239,15 +425,34 @@ class DocumentRepository:
         doc.content = content
         doc.size = len(content.encode("utf-8"))
         doc.content_hash = compute_content_hash(content)
+        doc.parse_status = PARSE_STATUS_PARSED
+        doc.parse_error = None
+        doc.parse_started_at = None
+        doc.parsed_at = utc_now()
+        doc.staged_file_path = None
+        doc.staged_file_name = None
+        doc.staged_file_size = None
+        doc.staged_file_hash = None
+        doc.source_storage_provider = None
+        doc.source_bucket_name = None
+        doc.source_object_key = None
+        doc.source_file_name = None
+        doc.source_file_size = None
+        doc.source_content_type = None
+        doc.source_etag = None
         doc.index_status = INDEX_STATUS_QUEUED
         doc.index_error = None
         doc.indexed_at = None
         doc.version = (doc.version or 1) + 1
-        doc.status = DOC_STATUS_DRAFT
+        doc.status = DOC_STATUS_PENDING_REVIEW
+        doc.is_live = False
         doc.published_at = None
         doc.published_by = None
-        await self.db.commit()
-        await self.db.refresh(doc)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(doc)
+        else:
+            await self.db.flush()
         return doc
 
     async def get_current_by_root_id(self, root_id: int) -> Document | None:
@@ -281,6 +486,36 @@ class DocumentRepository:
             .values(is_current=False)
         )
 
+    async def clear_live_flags_for_root_id(
+        self,
+        root_id: int,
+        *,
+        exclude_doc_id: int | None = None,
+    ) -> None:
+        """Clear live flags for every other version in a chain."""
+        conditions = [
+            Document.root_id == root_id,
+            accessible_document_condition(self.user_id),
+            Document.is_live.is_(True),
+        ]
+        if exclude_doc_id is not None:
+            conditions.append(Document.id != exclude_doc_id)
+        await self.db.execute(update(Document).where(*conditions).values(is_live=False))
+
+    async def get_live_by_root_id(self, root_id: int) -> Document | None:
+        """Fetch the live version for a version chain."""
+        result = await self.db.execute(
+            select(Document)
+            .where(
+                Document.root_id == root_id,
+                accessible_document_condition(self.user_id),
+                Document.is_live.is_(True),
+            )
+            .order_by(Document.version.desc(), Document.updated_at.desc(), Document.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get_latest_by_root_id(self, root_id: int) -> Document | None:
         """Fetch the latest version for a version chain."""
         result = await self.db.execute(
@@ -305,7 +540,6 @@ class DocumentRepository:
             return None
         root_id = orig.root_id or orig.id
         latest_doc = await self.get_latest_by_root_id(root_id)
-        current_doc = await self.get_current_by_root_id(root_id)
         max_version = getattr(latest_doc, "version", None)
         new_doc = Document(
             user_id=self.user_id,
@@ -314,6 +548,21 @@ class DocumentRepository:
             document_type=(latest_doc.document_type if latest_doc else orig.document_type),
             size=len(content.encode("utf-8")),
             content_hash=compute_content_hash(content),
+            parse_status=PARSE_STATUS_PARSED,
+            parse_error=None,
+            parse_started_at=None,
+            parsed_at=utc_now(),
+            staged_file_path=None,
+            staged_file_name=None,
+            staged_file_size=None,
+            staged_file_hash=None,
+            source_storage_provider=None,
+            source_bucket_name=None,
+            source_object_key=None,
+            source_file_name=None,
+            source_file_size=None,
+            source_content_type=None,
+            source_etag=None,
             index_status=INDEX_STATUS_QUEUED,
             index_error=None,
             indexed_at=None,
@@ -322,10 +571,11 @@ class DocumentRepository:
             root_id=root_id,
             is_latest=True,
             is_current=True,
+            is_live=False,
             knowledge_base_id=getattr(latest_doc or orig, "knowledge_base_id", None),
             category_id=getattr(latest_doc or orig, "category_id", None),
             source_path=getattr(latest_doc or orig, "source_path", None),
-            status=DOC_STATUS_DRAFT,
+            status=DOC_STATUS_PENDING_REVIEW,
             published_at=None,
             published_by=None,
             reviewed_at=None,
@@ -392,11 +642,68 @@ class DocumentRepository:
             return []
         result = await self.db.execute(
             select(Document).where(
-                Document.root_id.in_(root_ids),
+                or_(Document.root_id.in_(root_ids), Document.id.in_(root_ids)),
                 accessible_document_condition(self.user_id),
             )
         )
         return list(result.scalars().all())
+
+    async def get_live_by_root_ids(self, root_ids: set[int]) -> list[Document]:
+        """Fetch live documents for multiple version chains."""
+        if not root_ids:
+            return []
+        result = await self.db.execute(
+            select(Document).where(
+                or_(Document.root_id.in_(root_ids), Document.id.in_(root_ids)),
+                accessible_document_condition(self.user_id),
+                Document.is_live.is_(True),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def clear_live_flags_for_root_ids(
+        self,
+        root_ids: set[int],
+        *,
+        exclude_doc_ids: set[int] | None = None,
+    ) -> None:
+        """Clear live flags for multiple version chains."""
+        if not root_ids:
+            return
+        conditions = [
+            or_(Document.root_id.in_(root_ids), Document.id.in_(root_ids)),
+            accessible_document_condition(self.user_id),
+            Document.is_live.is_(True),
+        ]
+        if exclude_doc_ids:
+            conditions.append(Document.id.notin_(exclude_doc_ids))
+        await self.db.execute(update(Document).where(*conditions).values(is_live=False))
+
+    async def update_documents_status(
+        self,
+        docs: list[Document],
+        *,
+        status: str,
+        reviewer_id: int | None = None,
+        publisher_id: int | None = None,
+        is_live: bool | None = None,
+    ) -> None:
+        """Update status fields for already-loaded document rows."""
+        now = utc_now()
+        for doc in docs:
+            doc.status = status
+            if is_live is not None:
+                doc.is_live = is_live
+            if reviewer_id is not None:
+                doc.reviewed_by = reviewer_id
+                doc.reviewed_at = now
+            if publisher_id is not None:
+                doc.published_by = publisher_id
+                doc.published_at = now
+            elif status != "published":
+                doc.published_by = None
+                doc.published_at = None
+        await self.db.flush()
 
     async def delete_chain(self, docs: list[Document]) -> int:
         """Delete a full version chain."""
@@ -412,12 +719,15 @@ class DocumentRepository:
         status: str,
         reviewer_id: int | None = None,
         publisher_id: int | None = None,
+        is_live: bool | None = None,
         commit: bool = True,
     ) -> Document | None:
         doc = await self.get_by_id_for_user(doc_id)
         if not doc:
             return None
         doc.status = status
+        if is_live is not None:
+            doc.is_live = is_live
         if reviewer_id is not None:
             doc.reviewed_by = reviewer_id
             doc.reviewed_at = utc_now()

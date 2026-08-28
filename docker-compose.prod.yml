@@ -1,4 +1,44 @@
+x-backend-image: &backend-image
+  image: synapseflow-backend:prod
+  build:
+    context: ./backend
+    dockerfile: ../docker/backend/Dockerfile
+    args:
+      UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+      PYTORCH_CPU_FIND_LINKS: ${SF_PYTORCH_CPU_FIND_LINKS:-https://mirrors.aliyun.com/pytorch-wheels/cpu/}
+
 services:
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    environment:
+      SF_NGINX_SERVER_NAME: ${SF_NGINX_SERVER_NAME:-_}
+      SF_CLIENT_MAX_BODY_SIZE: ${SF_CLIENT_MAX_BODY_SIZE:-50m}
+    ports:
+      - ${SF_NGINX_BIND_HOST:-127.0.0.1}:${SF_NGINX_PORT:-18081}:80
+    volumes:
+      - ./deploy/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - synapseflow-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1/ || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
@@ -17,11 +57,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    logging: &default-logging
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
@@ -44,58 +80,108 @@ services:
       retries: 5
     logging: *default-logging
 
+  neo4j:
+    image: neo4j:5-community
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
+    ports:
+      - ${SF_BIND_HOST:-127.0.0.1}:${SF_NEO4J_HTTP_PORT:-7474}:7474
+      - ${SF_BIND_HOST:-127.0.0.1}:${SF_NEO4J_BOLT_PORT:-7687}:7687
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - synapseflow-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q --spider http://127.0.0.1:7474 || exit 1
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    logging: *default-logging
+
   backend:
-    image: synapseflow-backend:prod
-    build:
-      context: ./backend
-      dockerfile: ../docker/backend/Dockerfile
-      args:
-        UV_INDEX_URL: ${SF_UV_INDEX_URL:-https://pypi.org/simple}
+    <<: *backend-image
     restart: unless-stopped
     environment: &backend-env
       ENV: ${SF_ENV:-production}
       DEBUG: ${SF_DEBUG:-false}
       SECRET_KEY: ${SF_SECRET_KEY:?set SF_SECRET_KEY}
-      CORS_ORIGINS: ${SF_CORS_ORIGINS:?set SF_CORS_ORIGINS}
+      ENABLE_PUBLIC_REGISTRATION: ${ENABLE_PUBLIC_REGISTRATION:-false}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-synapseflow}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-synapseflow}
       REDIS_URL: redis://redis:6379/0
       DRAMATIQ_INDEXING_QUEUE: ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing}
-      EMBEDDING_MODEL: ${SF_EMBEDDING_MODEL:-}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      KIMI_API_KEY: ${KIMI_API_KEY:-}
-      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
-      MODELSCOPE_API_KEY: ${MODELSCOPE_API_KEY:-}
-      AIHUBMIX_API_KEY: ${AIHUBMIX_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
-      MOYU_API_KEY: ${MOYU_API_KEY:-}
+      DRAMATIQ_EVALUATION_QUEUE: ${SF_DRAMATIQ_EVALUATION_QUEUE:-evaluation}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:?set SILICONFLOW_API_KEY}
+      EMBEDDING_PROVIDER: ${SF_EMBEDDING_PROVIDER:-siliconflow}
+      EMBEDDING_API_URL: ${SF_EMBEDDING_API_URL:-https://api.siliconflow.cn/v1/embeddings}
+      EMBEDDING_MODEL: ${SF_EMBEDDING_MODEL:-BAAI/bge-m3}
+      EMBEDDING_DIMENSIONS: ${SF_EMBEDDING_DIMENSIONS:-}
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}
       RERANK_ENABLED: ${SF_RERANK_ENABLED:-true}
-      RERANK_API_URL: ${SF_RERANK_API_URL:-http://localhost:8012}
-      RERANK_API_KEY: ${SF_RERANK_API_KEY:-}
+      RERANK_PROVIDER: ${SF_RERANK_PROVIDER:-siliconflow}
+      RERANK_MODEL: ${SF_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+      RERANK_TOP_K: ${SF_RERANK_TOP_K:-}
+      RERANK_API_URL: ${SF_RERANK_API_URL:-https://api.siliconflow.cn/v1/rerank}
+      GRAPH_ENABLED: ${GRAPH_ENABLED:-false}
+      GRAPH_INDEXING_ENABLED: ${GRAPH_INDEXING_ENABLED:-false}
+      GRAPH_URI: ${GRAPH_URI:-bolt://neo4j:7687}
+      GRAPH_USERNAME: ${GRAPH_USERNAME:-neo4j}
+      GRAPH_PASSWORD: ${GRAPH_PASSWORD:?set GRAPH_PASSWORD}
+      GRAPH_DATABASE: ${GRAPH_DATABASE:-neo4j}
       PREVIEW_DIR: /app/previews
       UPLOAD_DIR: /app/uploads
+      DOCUMENT_STAGING_DIR: /app/uploaded_documents/staging
+      MAX_UPLOAD_SIZE: ${SF_MAX_UPLOAD_SIZE:-10485760}
+      OSS_ENABLED: ${SF_OSS_ENABLED:-false}
+      OSS_PROVIDER: ${SF_OSS_PROVIDER:-volcengine_tos}
+      OSS_BUCKET: ${SF_OSS_BUCKET:-}
+      OSS_ENDPOINT: ${SF_OSS_ENDPOINT:-}
+      OSS_REGION: ${SF_OSS_REGION:-}
+      OSS_PUBLIC_ENDPOINT: ${SF_OSS_PUBLIC_ENDPOINT:-}
+      OSS_ACCESS_KEY_ID: ${SF_OSS_ACCESS_KEY_ID:-}
+      OSS_ACCESS_KEY_SECRET: ${SF_OSS_ACCESS_KEY_SECRET:-}
+      OSS_UPLOAD_EXPIRE_SECONDS: ${SF_OSS_UPLOAD_EXPIRE_SECONDS:-900}
       LANGSMITH_TRACING: ${SF_LANGSMITH_TRACING:-false}
       LANGSMITH_API_KEY: ${SF_LANGSMITH_API_KEY:-}
       LANGSMITH_PROJECT: ${SF_LANGSMITH_PROJECT:-}
       LANGSMITH_WORKSPACE_ID: ${SF_LANGSMITH_WORKSPACE_ID:-}
       LOG_LEVEL: ${SF_LOG_LEVEL:-INFO}
       LOG_JSON: ${SF_LOG_JSON:-false}
+      ENTERPRISE_SERVICE_TOKEN: ${SF_ENTERPRISE_SERVICE_TOKEN:?set SF_ENTERPRISE_SERVICE_TOKEN}
+      INTEGRATION_CREDENTIAL_PEPPER: ${SF_INTEGRATION_CREDENTIAL_PEPPER:?set SF_INTEGRATION_CREDENTIAL_PEPPER}
+      EMBED_FRONTEND_BASE_URL: ${SF_EMBED_FRONTEND_BASE_URL:?set SF_EMBED_FRONTEND_BASE_URL}
+      EMBED_TOKEN_EXPIRE_MINUTES: ${SF_EMBED_TOKEN_EXPIRE_MINUTES:-60}
+      WIDGET_TOKEN_EXPIRE_MINUTES: ${SF_WIDGET_TOKEN_EXPIRE_MINUTES:-15}
+      AGENT_PUBLIC_API_BASE_URL: ${SF_AGENT_PUBLIC_API_BASE_URL:?set SF_AGENT_PUBLIC_API_BASE_URL}
+      BOOTSTRAP_ENABLED: ${BOOTSTRAP_ENABLED:-false}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_FULL_NAME: ${BOOTSTRAP_ADMIN_FULL_NAME:-System Administrator}
     ports:
-      - 127.0.0.1:${SF_BACKEND_PORT:-8000}:8000
+      - ${SF_BIND_HOST:-127.0.0.1}:${SF_BACKEND_PORT:-8000}:8000
     volumes:
+      - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
       - backend_uploads:/app/uploads
+      - backend_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      neo4j:
         condition: service_healthy
     networks:
       - synapseflow-network
     command:
       - sh
       - -c
-      - uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${SF_BACKEND_WORKERS:-4}
+      - uv run python scripts/init_db.py && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${SF_BACKEND_WORKERS:-4}
     healthcheck:
       test:
         - CMD
@@ -108,13 +194,15 @@ services:
       start_period: 25s
     logging: *default-logging
 
-  backend-worker:
-    image: synapseflow-backend:prod
+  backend-worker-indexing:
+    <<: *backend-image
     restart: unless-stopped
     environment: *backend-env
     volumes:
+      - backend_hf_cache:/app/.cache/huggingface
       - backend_previews:/app/previews
       - backend_uploads:/app/uploads
+      - backend_uploaded_documents:/app/uploaded_documents
     depends_on:
       postgres:
         condition: service_healthy
@@ -125,7 +213,53 @@ services:
     command:
       - sh
       - -c
-      - uv run dramatiq app.workers.indexing_tasks --processes ${SF_DRAMATIQ_PROCESSES:-2} --threads ${SF_DRAMATIQ_THREADS:-2}
+      - uv run dramatiq --queues ${SF_DRAMATIQ_INDEXING_QUEUE:-indexing} --processes ${SF_DRAMATIQ_INDEXING_PROCESSES:-1} --threads ${SF_DRAMATIQ_INDEXING_THREADS:-2} app.workers.indexing_tasks
+    logging: *default-logging
+
+  backend-worker-graph-indexing:
+    <<: *backend-image
+    restart: unless-stopped
+    environment: *backend-env
+    volumes:
+      - backend_hf_cache:/app/.cache/huggingface
+      - backend_previews:/app/previews
+      - backend_uploads:/app/uploads
+      - backend_uploaded_documents:/app/uploaded_documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    networks:
+      - synapseflow-network
+    command:
+      - sh
+      - -c
+      - uv run dramatiq --queues ${SF_DRAMATIQ_GRAPH_INDEXING_QUEUE:-graph_indexing} --processes ${SF_DRAMATIQ_GRAPH_PROCESSES:-4} --threads ${SF_DRAMATIQ_GRAPH_THREADS:-4} app.workers.indexing_tasks
+    logging: *default-logging
+
+  backend-worker-evaluation:
+    <<: *backend-image
+    restart: unless-stopped
+    environment: *backend-env
+    volumes:
+      - backend_hf_cache:/app/.cache/huggingface
+      - backend_previews:/app/previews
+      - backend_uploads:/app/uploads
+      - backend_uploaded_documents:/app/uploaded_documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synapseflow-network
+    command:
+      - sh
+      - -c
+      - uv run dramatiq --queues ${SF_DRAMATIQ_EVALUATION_QUEUE:-evaluation} --processes ${SF_DRAMATIQ_EVALUATION_PROCESSES:-2} --threads ${SF_DRAMATIQ_EVALUATION_THREADS:-4} app.workers.evaluation_tasks
     logging: *default-logging
 
   frontend:
@@ -134,13 +268,16 @@ services:
       context: ./frontend
       dockerfile: ../docker/frontend/Dockerfile.prod
       args:
-        NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:?set SF_NEXT_PUBLIC_API_URL}
+        VITE_API_BASE_URL: ${SF_FRONTEND_API_BASE_URL:-/api/v1}
+        VITE_API_TIMEOUT_MS: ${SF_FRONTEND_API_TIMEOUT_MS:-15000}
+        NPM_REGISTRY: ${SF_NPM_REGISTRY:-https://registry.npmmirror.com}
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_API_URL: ${SF_NEXT_PUBLIC_API_URL:?set SF_NEXT_PUBLIC_API_URL}
+      VITE_API_BASE_URL: ${SF_FRONTEND_API_BASE_URL:-/api/v1}
+      VITE_API_TIMEOUT_MS: ${SF_FRONTEND_API_TIMEOUT_MS:-15000}
     ports:
-      - 127.0.0.1:${SF_FRONTEND_PORT:-3000}:3000
+      - ${SF_BIND_HOST:-127.0.0.1}:${SF_FRONTEND_PORT:-5173}:5173
     depends_on:
       backend:
         condition: service_healthy
@@ -151,7 +288,7 @@ services:
         - CMD
         - node
         - -e
-        - 'fetch("http://127.0.0.1:3000").then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))'
+        - 'fetch("http://127.0.0.1:5173").then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))'
       interval: 20s
       timeout: 5s
       retries: 5
@@ -161,8 +298,11 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  neo4j_data:
+  backend_hf_cache:
   backend_previews:
   backend_uploads:
+  backend_uploaded_documents:
 
 networks:
   synapseflow-network:

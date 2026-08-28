@@ -1,6 +1,5 @@
 """
-Rerank 服务：通过远程 API 对 (query, chunks) 重排
-支持 bailian（阿里云百炼）和 vllm（自建 vLLM）
+Rerank 服务：通过本地 reranker HTTP 服务对 (query, chunks) 重排。
 """
 from typing import List
 
@@ -10,24 +9,20 @@ from loguru import logger
 from app.core.config import settings
 from app.core.config.registry import config_registry
 
-BAILIAN_RERANK_URL = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
-
 
 def _get_url_and_headers():
-    """根据 provider 返回请求 URL 和 headers"""
+    """返回 reranker 请求 URL 和 headers。"""
     rerank_cfg = config_registry.get_rerank_config()
-    if rerank_cfg.provider == "bailian":
-        api_key = settings.DASHSCOPE_API_KEY
-        if not api_key:
-            raise ValueError("RERANK_PROVIDER=bailian 时需配置 DASHSCOPE_API_KEY")
-        return BAILIAN_RERANK_URL, {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-    # vllm
+    provider = (rerank_cfg.provider or "local").strip().lower()
+    if provider not in {"local", "vllm", "siliconflow"}:
+        logger.warning("未知 RERANK_PROVIDER={}，按本地 reranker 服务处理", rerank_cfg.provider)
     url = rerank_cfg.api_url.rstrip("/")
     if "/rerank" not in url:
         url = f"{url}/v1/rerank"
     headers = {"Content-Type": "application/json"}
-    if settings.RERANK_API_KEY:
-        headers["Authorization"] = f"Bearer {settings.RERANK_API_KEY}"
+    api_key = settings.RERANK_API_KEY or settings.SILICONFLOW_API_KEY
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     return url, headers
 
 
@@ -49,29 +44,17 @@ def _coerce_rerank_index(idx_raw, n_chunks: int) -> int | None:
 def _build_payload(query: str, documents: list[str], top_n: int):
     """构建请求体"""
     rerank_cfg = config_registry.get_rerank_config()
-    payload = {
+    return {
         "model": rerank_cfg.model,
         "query": query,
         "documents": documents,
         "top_n": min(top_n, len(documents)),
     }
-    if rerank_cfg.provider == "bailian" and rerank_cfg.instruct:
-        payload["instruct"] = rerank_cfg.instruct
-    return payload
 
 
 def _parse_response(data: dict, chunks: list[dict], top_k: int) -> list[dict]:
-    """解析 API 响应，bailian 为 output.results，vllm 为 results 或 data"""
-    if config_registry.get_rerank_config().provider == "bailian":
-        output = data.get("output") or {}
-        raw = output.get("results") or []
-        # 兼容 compatible-api 可能返回的 data.results 或顶层 results
-        if not raw:
-            raw = data.get("results") or data.get("data") or []
-        if raw:
-            logger.debug("精排 响应首条字段 {}", list(raw[0].keys()) if raw else [])
-    else:
-        raw = data.get("results") or data.get("data") or []
+    """解析本地 reranker 响应，兼容 results 或 data 字段。"""
+    raw = data.get("results") or data.get("data") or []
 
     if not raw:
         logger.warning("精排 无 results，顶层 keys={}", list(data.keys()))
@@ -145,6 +128,9 @@ async def rerank(query: str, chunks: List[dict], top_k: int | None = None) -> Li
         if len(body) > 120:
             body = body[:120] + "…"
         logger.error("精排 HTTP {} {}", e.response.status_code, body)
+        return chunks[:top_k]
+    except httpx.RequestError as e:
+        logger.warning("精排 服务不可用，回退原始排序: {}", e)
         return chunks[:top_k]
     except Exception as e:
         logger.exception("精排 请求异常: {}", e)

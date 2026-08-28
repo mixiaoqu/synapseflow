@@ -15,6 +15,7 @@ def _row(
         "search_text": f"search-{document_id}-{chunk_index}",
         "document_id": document_id,
         "chunk_index": chunk_index,
+        "document_chunk_id": document_id * 100 + chunk_index,
         "metadata": {},
         "distance": distance,
         "document_title": title,

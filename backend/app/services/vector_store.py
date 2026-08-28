@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import List, Sequence, Tuple
 
@@ -11,8 +10,10 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.registry import config_registry
-from app.db.models import Document, DocumentCategory, Embedding, KnowledgeBase
+from app.db.models import Document, DocumentCategory, DocumentChunk, Embedding, KnowledgeBase
 from app.repositories.access_scope import accessible_document_condition
+from app.services.category_scope import resolve_category_subtree_ids
+from app.services.document_index_state import INDEX_STATUS_INDEXED
 from app.services.semantic_chunk import VectorIndexChunk
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
@@ -25,19 +26,27 @@ async def add_document_chunks(
     chunks: List[VectorIndexChunk],
     vectors: List[List[float]],
     *,
+    document_chunk_ids: Sequence[int],
     commit: bool = True,
 ) -> int:
     """Insert chunk embeddings for a document."""
     if not chunks or len(chunks) != len(vectors):
         return 0
+    if len(document_chunk_ids) != len(chunks):
+        raise ValueError("document_chunk_ids must match chunk count")
     rows = [
         Embedding(
             document_id=document_id,
+            document_chunk_id=int(document_chunk_ids[i]),
             chunk_text=chunk.display_text,
             search_text=chunk.search_text,
-            chunk_index=i,
+            chunk_index=int(chunk.metadata.get("chunk_index", i)),
             embedding=vec,
-            metadata_={"chunk_index": i, **chunk.metadata},
+            metadata_={
+                "chunk_index": int(chunk.metadata.get("chunk_index", i)),
+                "document_chunk_id": int(document_chunk_ids[i]),
+                **chunk.metadata,
+            },
         )
         for i, (chunk, vec) in enumerate(zip(chunks, vectors))
     ]
@@ -81,6 +90,7 @@ def _build_ranked_row(
     search_text: str | None,
     document_id: int,
     chunk_index: int,
+    document_chunk_id: int,
     raw_metadata: object,
     document_title: str | None,
     row_category_id: int | None,
@@ -91,6 +101,7 @@ def _build_ranked_row(
     lexical_source: str | None = None,
 ) -> dict:
     metadata = dict(raw_metadata or {})
+    metadata["document_chunk_id"] = int(document_chunk_id)
     metadata["category_id"] = int(row_category_id) if row_category_id is not None else None
     metadata["category_name"] = category_name
     metadata["source_path"] = source_path
@@ -100,6 +111,7 @@ def _build_ranked_row(
         "search_text": search_text or chunk_text,
         "document_id": int(document_id),
         "chunk_index": int(chunk_index),
+        "document_chunk_id": int(document_chunk_id),
         "metadata": metadata,
         "distance": float(distance) if distance is not None else None,
         "document_title": document_title or "Unknown document",
@@ -135,6 +147,7 @@ async def search(
             Embedding.search_text,
             Embedding.document_id,
             Embedding.chunk_index,
+            Embedding.document_chunk_id,
             Embedding.metadata_,
             dist_col,
             Document.title.label("document_title"),
@@ -143,9 +156,11 @@ async def search(
             DocumentCategory.name.label("category_name"),
         )
         .join(Document, Document.id == Embedding.document_id)
+        .join(DocumentChunk, DocumentChunk.id == Embedding.document_chunk_id)
         .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
         .outerjoin(DocumentCategory, Document.category_id == DocumentCategory.id)
-        .where(Document.is_current.is_(True))
+        .where(Document.index_status == INDEX_STATUS_INDEXED)
+        .where(DocumentChunk.chunk_kind == "child")
     )
     if user_id is not None:
         stmt = stmt.where(accessible_document_condition(user_id))
@@ -154,7 +169,8 @@ async def search(
     if knowledge_base_id is not None:
         stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)
     if category_id is not None:
-        stmt = stmt.where(Document.category_id == category_id)
+        category_ids = await resolve_category_subtree_ids(db, category_id)
+        stmt = stmt.where(Document.category_id.in_(category_ids))
     if document_statuses:
         stmt = stmt.where(Document.status.in_(list(document_statuses)))
     stmt = stmt.order_by(dist_col).limit(k)
@@ -166,6 +182,7 @@ async def search(
         search_text,
         document_id,
         chunk_index,
+        document_chunk_id,
         raw_metadata,
         dist_val,
         document_title,
@@ -179,6 +196,7 @@ async def search(
                 search_text=search_text,
                 document_id=document_id,
                 chunk_index=chunk_index,
+                document_chunk_id=document_chunk_id,
                 raw_metadata=raw_metadata,
                 document_title=document_title,
                 row_category_id=row_category_id,
@@ -190,8 +208,8 @@ async def search(
     return out
 
 
-def _ranked_row_key(row: dict) -> Tuple[int, int]:
-    return (int(row["document_id"]), int(row["chunk_index"]))
+def _ranked_row_key(row: dict) -> Tuple[str, int]:
+    return ("chunk", int(row["document_chunk_id"]))
 
 
 def _copy_ranked_row(row: dict) -> dict:
@@ -200,6 +218,7 @@ def _copy_ranked_row(row: dict) -> dict:
         "search_text": row.get("search_text", row["chunk_text"]),
         "document_id": int(row["document_id"]),
         "chunk_index": int(row["chunk_index"]),
+        "document_chunk_id": int(row["document_chunk_id"]),
         "metadata": dict(row.get("metadata") or {}),
         "distance": (
             float(row["distance"])
@@ -262,8 +281,8 @@ def reciprocal_rank_fusion_many(
     if len(non_empty) == 1 and (not weights or len(weights) <= 1):
         return [dict(row) for row in list(non_empty[0])[:limit]]
 
-    by_key: dict[Tuple[int, int], dict] = {}
-    scores: dict[Tuple[int, int], float] = {}
+    by_key: dict[Tuple[int | str, int], dict] = {}
+    scores: dict[Tuple[int | str, int], float] = {}
 
     for list_index, rows in enumerate(rankings):
         if not rows:
@@ -322,14 +341,15 @@ async def _search_lexical_fts(
         return []
 
     sql_lines = [
-        "SELECT e.chunk_text, e.search_text, e.document_id, e.chunk_index, e.metadata, d.title AS document_title,",
+        "SELECT e.chunk_text, e.search_text, e.document_id, e.chunk_index, e.document_chunk_id, e.metadata, d.title AS document_title,",
         "       d.category_id, d.source_path, d.status, dc.name AS category_name,",
         "       ts_rank_cd(e.chunk_tsv, websearch_to_tsquery('simple', :q)) AS lr",
         "FROM embeddings e",
         "JOIN documents d ON d.id = e.document_id",
+        "JOIN document_chunks c ON c.id = e.document_chunk_id AND c.chunk_kind = 'child'",
         "LEFT JOIN document_categories dc ON dc.id = d.category_id",
         "WHERE e.chunk_tsv @@ websearch_to_tsquery('simple', :q)",
-        "  AND d.is_current IS TRUE",
+        "  AND d.index_status = 'indexed'",
     ]
     params: dict[str, object] = {"q": query, "lim": k}
 
@@ -366,8 +386,8 @@ async def _search_lexical_fts(
         )
         params["team_id"] = team_id
     if category_id is not None:
-        sql_lines.append("  AND d.category_id = :category_id")
-        params["category_id"] = category_id
+        sql_lines.append("  AND d.category_id = ANY(:category_ids)")
+        params["category_ids"] = await resolve_category_subtree_ids(db, category_id)
     sql_lines.extend(
         [
             "ORDER BY lr DESC NULLS LAST",
@@ -387,6 +407,7 @@ async def _search_lexical_fts(
         search_text,
         document_id,
         chunk_index,
+        document_chunk_id,
         raw_metadata,
         document_title,
         row_category_id,
@@ -403,6 +424,7 @@ async def _search_lexical_fts(
                 search_text=search_text,
                 document_id=document_id,
                 chunk_index=chunk_index,
+                document_chunk_id=document_chunk_id,
                 raw_metadata=raw_metadata,
                 document_title=document_title,
                 row_category_id=row_category_id,
@@ -441,7 +463,7 @@ async def _search_lexical_trgm(
         f"regexp_replace(lower(e.search_text), '{_SQL_SPACE_CLASS}', '', 'g')"
     )
     sql_lines = [
-        "SELECT e.chunk_text, e.search_text, e.document_id, e.chunk_index, e.metadata, d.title AS document_title,",
+        "SELECT e.chunk_text, e.search_text, e.document_id, e.chunk_index, e.document_chunk_id, e.metadata, d.title AS document_title,",
         "       d.category_id, d.source_path, d.status, dc.name AS category_name,",
         "       (",
         "         CASE WHEN lower(e.search_text) LIKE :phrase_like THEN 1.5 ELSE 0.0 END +",
@@ -454,8 +476,10 @@ async def _search_lexical_trgm(
         "       ) AS lr",
         "FROM embeddings e",
         "JOIN documents d ON d.id = e.document_id",
+        "JOIN document_chunks c ON c.id = e.document_chunk_id AND c.chunk_kind = 'child'",
         "LEFT JOIN document_categories dc ON dc.id = d.category_id",
-        "WHERE d.is_current IS TRUE",
+        "WHERE 1=1",
+        "  AND d.index_status = 'indexed'",
         "  AND (",
         "    lower(e.search_text) LIKE :phrase_like",
         f"    OR {compact_expr} LIKE :compact_like",
@@ -507,8 +531,8 @@ async def _search_lexical_trgm(
         )
         params["team_id"] = team_id
     if category_id is not None:
-        sql_lines.append("  AND d.category_id = :category_id")
-        params["category_id"] = category_id
+        sql_lines.append("  AND d.category_id = ANY(:category_ids)")
+        params["category_ids"] = await resolve_category_subtree_ids(db, category_id)
     sql_lines.extend(
         [
             "ORDER BY lr DESC NULLS LAST",
@@ -528,6 +552,7 @@ async def _search_lexical_trgm(
         search_text,
         document_id,
         chunk_index,
+        document_chunk_id,
         raw_metadata,
         document_title,
         row_category_id,
@@ -544,6 +569,7 @@ async def _search_lexical_trgm(
                 search_text=search_text,
                 document_id=document_id,
                 chunk_index=chunk_index,
+                document_chunk_id=document_chunk_id,
                 raw_metadata=raw_metadata,
                 document_title=document_title,
                 row_category_id=row_category_id,
@@ -613,13 +639,13 @@ async def search_hybrid_rrf(
     query_embedding: List[float],
     k_dense: int,
     k_lexical: int,
-    user_id: int | None,
-    team_id: int | None,
-    knowledge_base_id: int | None,
-    category_id: int | None,
-    document_statuses: Sequence[str] | None,
-    rrf_k: int,
-    pool_limit: int,
+    user_id: int | None = None,
+    team_id: int | None = None,
+    knowledge_base_id: int | None = None,
+    category_id: int | None = None,
+    document_statuses: Sequence[str] | None = None,
+    rrf_k: int = 60,
+    pool_limit: int = 20,
 ) -> List[dict]:
     """Dense vector retrieval plus lexical retrieval fused with RRF."""
 

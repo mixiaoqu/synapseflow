@@ -4,18 +4,38 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import require_content_roles
+from app.application.knowledge_base_service import knowledge_base_service
+from app.application.permission_service import PermissionService
+from app.core.authz import PERMISSION_MANAGE_KB_DRAFT
 from app.db.models import User
 from app.db.session import get_db
 from app.models.schemas.knowledge_base import (
+    KnowledgeBaseBulkActionRequest,
+    KnowledgeBaseBulkActionResponse,
     KnowledgeBaseCreate,
+    KnowledgeBaseListItem,
+    KnowledgeBaseListResponse,
     KnowledgeBaseRecentDocument,
     KnowledgeBaseResponse,
+    KnowledgeBaseToggleActive,
     KnowledgeBaseUpdate,
     KnowledgeBaseWithCount,
 )
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
 router = APIRouter()
+
+
+async def _require_manage_knowledge_base(
+    *,
+    db: AsyncSession,
+    current_user: User,
+    team_id: int,
+) -> None:
+    if not await PermissionService(db).has_team_permission(
+        current_user, team_id, PERMISSION_MANAGE_KB_DRAFT
+    ):
+        raise HTTPException(status_code=403, detail="Knowledge-base permission denied")
 
 
 def _resolve_knowledge_base_status(
@@ -27,7 +47,6 @@ def _resolve_knowledge_base_status(
     failed_document_count: int,
     unindexed_document_count: int,
 ) -> str:
-    """Infer a card-friendly status from explicit indexing data."""
     if document_count <= 0:
         return "empty"
     if queued_document_count > 0 or processing_document_count > 0:
@@ -39,55 +58,92 @@ def _resolve_knowledge_base_status(
     return "error"
 
 
-@router.get("", response_model=list[KnowledgeBaseWithCount])
-async def list_knowledge_bases(
-    team_id: int | None = Query(None, description="Filter by team id"),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_content_roles),
-):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
-    rows = await repo.list_with_count(team_id=team_id)
-    return [
-        KnowledgeBaseWithCount(
-            id=row.knowledge_base.id,
-            name=row.knowledge_base.name,
-            team_id=row.knowledge_base.team_id,
-            description=getattr(row.knowledge_base, "description", None),
-            created_at=row.knowledge_base.created_at,
-            updated_at=row.knowledge_base.updated_at,
+def _build_knowledge_base_with_count(row) -> KnowledgeBaseWithCount:
+    item = _build_knowledge_base_list_item(row)
+    return KnowledgeBaseWithCount(
+        **item.model_dump(),
+        recent_documents=[
+            KnowledgeBaseRecentDocument(
+                id=doc.id,
+                title=doc.title,
+                document_type=doc.document_type,
+                size=doc.size,
+                indexed=doc.indexed,
+                index_status=doc.index_status,
+                index_error=doc.index_error,
+                created_at=doc.created_at,
+                updated_at=doc.updated_at,
+            )
+            for doc in row.recent_documents
+        ],
+    )
+
+
+def _build_knowledge_base_list_item(row) -> KnowledgeBaseListItem:
+    return KnowledgeBaseListItem(
+        id=row.knowledge_base.id,
+        name=row.knowledge_base.name,
+        team_id=row.knowledge_base.team_id,
+        description=getattr(row.knowledge_base, "description", None),
+        purpose=getattr(row.knowledge_base, "purpose", "business"),
+        is_active=getattr(row.knowledge_base, "is_active", True),
+        created_at=row.knowledge_base.created_at,
+        updated_at=row.knowledge_base.updated_at,
+        document_count=row.document_count,
+        indexed_document_count=row.indexed_document_count,
+        queued_document_count=row.queued_document_count,
+        processing_document_count=row.processing_document_count,
+        failed_document_count=row.failed_document_count,
+        unindexed_document_count=row.unindexed_document_count,
+        draft_document_count=row.draft_document_count,
+        submittable_document_count=row.submittable_document_count,
+        pending_review_document_count=row.pending_review_document_count,
+        published_document_count=row.published_document_count,
+        archived_document_count=row.archived_document_count,
+        last_document_updated_at=row.last_document_updated_at,
+        last_uploaded_at=row.last_uploaded_at,
+        status=_resolve_knowledge_base_status(
             document_count=row.document_count,
             indexed_document_count=row.indexed_document_count,
             queued_document_count=row.queued_document_count,
             processing_document_count=row.processing_document_count,
             failed_document_count=row.failed_document_count,
             unindexed_document_count=row.unindexed_document_count,
-            last_document_updated_at=row.last_document_updated_at,
-            last_uploaded_at=row.last_uploaded_at,
-            status=_resolve_knowledge_base_status(
-                document_count=row.document_count,
-                indexed_document_count=row.indexed_document_count,
-                queued_document_count=row.queued_document_count,
-                processing_document_count=row.processing_document_count,
-                failed_document_count=row.failed_document_count,
-                unindexed_document_count=row.unindexed_document_count,
-            ),
-            recent_documents=[
-                KnowledgeBaseRecentDocument(
-                    id=doc.id,
-                    title=doc.title,
-                    document_type=doc.document_type,
-                    size=doc.size,
-                    indexed=doc.indexed,
-                    index_status=doc.index_status,
-                    index_error=doc.index_error,
-                    created_at=doc.created_at,
-                    updated_at=doc.updated_at,
-                )
-                for doc in row.recent_documents
-            ],
-        )
-        for row in rows
-    ]
+        ),
+    )
+
+
+@router.get("", response_model=KnowledgeBaseListResponse)
+async def list_knowledge_bases(
+    team_id: int | None = Query(None, description="Filter by team id"),
+    active_only: bool = Query(False, description="Only return active knowledge bases"),
+    keyword: str | None = Query(None, description="Search by knowledge-base name or description"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
+    normalized_page = max(1, int(page))
+    normalized_page_size = min(100, max(1, int(page_size)))
+    total = await repo.count_knowledge_bases(
+        team_id=team_id,
+        active_only=active_only,
+        keyword=keyword,
+    )
+    rows = await repo.list_with_count(
+        team_id=team_id,
+        active_only=active_only,
+        keyword=keyword,
+        offset=(normalized_page - 1) * normalized_page_size,
+        limit=normalized_page_size,
+    )
+    return KnowledgeBaseListResponse(
+        items=[_build_knowledge_base_list_item(row) for row in rows],
+        total=total,
+        page=normalized_page,
+        page_size=normalized_page_size,
+    )
 
 
 @router.post("", response_model=KnowledgeBaseResponse)
@@ -96,12 +152,48 @@ async def create_knowledge_base(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    await _require_manage_knowledge_base(
+        db=db,
+        current_user=current_user,
+        team_id=body.team_id,
+    )
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
     return await repo.create(
         body.name,
         team_id=body.team_id,
         description=body.description,
     )
+
+
+@router.post("/bulk-actions", response_model=KnowledgeBaseBulkActionResponse)
+async def bulk_action_knowledge_bases(
+    body: KnowledgeBaseBulkActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    return await knowledge_base_service.bulk_action(
+        db=db,
+        current_user=current_user,
+        body=body,
+    )
+
+
+@router.get("/{knowledge_base_id}", response_model=KnowledgeBaseWithCount)
+async def get_knowledge_base(
+    knowledge_base_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
+    rows = await repo.list_with_count(
+        knowledge_base_id=knowledge_base_id,
+        purpose=None,
+        offset=0,
+        limit=1,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
+    return _build_knowledge_base_with_count(rows[0])
 
 
 @router.put("/{knowledge_base_id}", response_model=KnowledgeBaseResponse)
@@ -111,14 +203,44 @@ async def update_knowledge_base(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
+    existing = await repo.get_by_id(knowledge_base_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
+    await _require_manage_knowledge_base(
+        db=db,
+        current_user=current_user,
+        team_id=existing.team_id,
+    )
     knowledge_base = await repo.update(
         knowledge_base_id,
         name=body.name,
         description=body.description,
     )
     if not knowledge_base:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
+    return knowledge_base
+
+
+@router.patch("/{knowledge_base_id}/toggle-active", response_model=KnowledgeBaseResponse)
+async def toggle_knowledge_base_active(
+    knowledge_base_id: int,
+    body: KnowledgeBaseToggleActive,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_content_roles),
+):
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
+    knowledge_base = await repo.get_by_id(knowledge_base_id)
+    if not knowledge_base:
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
+    await _require_manage_knowledge_base(
+        db=db,
+        current_user=current_user,
+        team_id=knowledge_base.team_id,
+    )
+    knowledge_base.is_active = body.is_active
+    await db.commit()
+    await db.refresh(knowledge_base)
     return knowledge_base
 
 
@@ -128,8 +250,16 @@ async def delete_knowledge_base(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_content_roles),
 ):
-    repo = KnowledgeBaseRepository(db, user_id=current_user.id)
+    repo = KnowledgeBaseRepository(db, user_id=current_user.id, user=current_user)
+    knowledge_base = await repo.get_by_id(knowledge_base_id)
+    if not knowledge_base:
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
+    await _require_manage_knowledge_base(
+        db=db,
+        current_user=current_user,
+        team_id=knowledge_base.team_id,
+    )
     ok = await repo.delete(knowledge_base_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
-    return {"message": "Deleted successfully"}
+        raise HTTPException(status_code=404, detail="知识库不存在或无权访问")
+    return {"message": "删除成功"}

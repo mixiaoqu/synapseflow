@@ -10,11 +10,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
+    AssistantProfile,
     ChatMessage,
     ChatSession,
     DocumentCategory,
     KbChatLog,
     KnowledgeBase,
+    Product,
+    Project,
+    ProjectApp,
     Team,
 )
 from app.utils.time import utc_now
@@ -23,20 +27,40 @@ from app.utils.time import utc_now
 @dataclass(slots=True)
 class KbChatLogRecord:
     id: int
-    user_id: int
+    user_id: int | None
     session_id: str | None
+    product_id: int | None
+    product_name: str | None
+    project_id: int | None
+    project_name: str | None
+    project_app_id: int | None
+    project_app_name: str | None
+    external_user_id: str | None
+    external_user_name: str | None
     team_id: int | None
     team_name: str | None
     knowledge_base_id: int | None
     knowledge_base_name: str | None
+    assistant_id: int | None
+    assistant_name: str | None
     category_id: int | None
     category_name: str | None
     query: str
     answer_text: str
     answer_status: str
     retrieval_status: str | None
-    retrieved_count: int
     latency_ms: int | None
+    text_hit_count: int
+    graph_hit_count: int
+    merged_candidate_count: int
+    final_context_count: int
+    empty_reason: str | None
+    rerank_enabled: bool
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    estimated_cost: object | None
+    token_usage: dict[str, Any] | None
     feedback_value: str | None
     feedback_note: str | None
     suggested_review_label: str | None
@@ -45,13 +69,6 @@ class KbChatLogRecord:
     reviewed_at: datetime | None
     reviewed_by_user_id: int | None
     created_at: object
-
-
-@dataclass(slots=True)
-class KbChatDiagnosticDocRecord:
-    rank: int
-    content: str
-    metadata: dict[str, Any]
 
 
 @dataclass(slots=True)
@@ -68,10 +85,7 @@ class KbChatLogDetailRecord(KbChatLogRecord):
     team_name: str | None
     category_name: str | None
     retrieval_status_reason: str | None
-    retrieval_queries: list[str]
-    retrieval_funnel: dict[str, Any] | None
-    answer_context: str | None
-    retrieved_docs: list[KbChatDiagnosticDocRecord]
+    trace_payload: dict[str, Any] | None
     conversation_context: list[KbChatDiagnosticMessageRecord]
 
 
@@ -87,28 +101,62 @@ class KbChatLogRepository:
     async def create_log(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str | None,
+        product_id: int | None = None,
+        project_id: int | None = None,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
+        external_user_name: str | None = None,
         knowledge_base_id: int | None,
+        assistant_id: int | None,
         category_id: int | None,
         query: str,
         answer_text: str,
         answer_status: str,
         retrieval_status: str | None,
-        retrieved_count: int,
         latency_ms: int | None,
+        text_hit_count: int = 0,
+        graph_hit_count: int = 0,
+        merged_candidate_count: int = 0,
+        final_context_count: int = 0,
+        empty_reason: str | None = None,
+        rerank_enabled: bool = False,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        total_tokens: int | None = None,
+        estimated_cost: Any | None = None,
+        token_usage: dict[str, Any] | None = None,
+        trace_payload: dict[str, Any] | None = None,
     ) -> KbChatLog:
         row = KbChatLog(
             user_id=user_id,
             session_id=session_id,
+            product_id=product_id,
+            project_id=project_id,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
+            external_user_name=external_user_name,
             knowledge_base_id=knowledge_base_id,
+            assistant_id=assistant_id,
             category_id=category_id,
             query=query,
             answer_text=answer_text,
             answer_status=answer_status,
             retrieval_status=retrieval_status,
-            retrieved_count=retrieved_count,
             latency_ms=latency_ms,
+            text_hit_count=text_hit_count,
+            graph_hit_count=graph_hit_count,
+            merged_candidate_count=merged_candidate_count,
+            final_context_count=final_context_count,
+            empty_reason=empty_reason,
+            rerank_enabled=rerank_enabled,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            estimated_cost=estimated_cost,
+            token_usage=token_usage,
+            trace_payload=trace_payload,
         )
         self.db.add(row)
         await self.db.commit()
@@ -118,8 +166,13 @@ class KbChatLogRepository:
     async def list_logs(
         self,
         *,
-        limit: int = 50,
+        page: int = 1,
+        page_size: int = 10,
         team_id: int | None = None,
+        team_ids: list[int] | None = None,
+        project_id: int | None = None,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
         knowledge_base_id: int | None = None,
         category_id: int | None = None,
         answer_status: str | None = None,
@@ -132,21 +185,35 @@ class KbChatLogRepository:
         high_latency_only: bool = False,
         high_latency_threshold_ms: int = 5000,
     ) -> tuple[list[KbChatLogRecord], int]:
-        normalized_limit = max(1, min(limit, 200))
+        normalized_page = max(1, page)
+        normalized_page_size = max(1, min(page_size, 200))
+        offset = (normalized_page - 1) * normalized_page_size
         stmt = (
             select(
                 KbChatLog,
                 KnowledgeBase,
+                AssistantProfile.name.label("assistant_name"),
+                Product.name.label("product_name"),
+                Project.name.label("project_name"),
+                ProjectApp.name.label("project_app_name"),
                 Team.name.label("team_name"),
                 DocumentCategory.name.label("category_name"),
             )
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
+            .outerjoin(Product, KbChatLog.product_id == Product.id)
+            .outerjoin(Project, KbChatLog.project_id == Project.id)
+            .outerjoin(ProjectApp, KbChatLog.project_app_id == ProjectApp.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
             .outerjoin(DocumentCategory, KbChatLog.category_id == DocumentCategory.id)
         )
         stmt = self._apply_list_log_filters(
             stmt,
             team_id=team_id,
+            team_ids=team_ids,
+            project_id=project_id,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             answer_status=answer_status,
@@ -162,18 +229,27 @@ class KbChatLogRepository:
         stmt = (
             stmt
             .order_by(KbChatLog.created_at.desc(), KbChatLog.id.desc())
-            .limit(normalized_limit)
+            .offset(offset)
+            .limit(normalized_page_size)
         )
         total_stmt = (
             select(func.count())
             .select_from(KbChatLog)
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
+            .outerjoin(Product, KbChatLog.product_id == Product.id)
+            .outerjoin(Project, KbChatLog.project_id == Project.id)
+            .outerjoin(ProjectApp, KbChatLog.project_app_id == ProjectApp.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
             .outerjoin(DocumentCategory, KbChatLog.category_id == DocumentCategory.id)
         )
         total_stmt = self._apply_list_log_filters(
             total_stmt,
             team_id=team_id,
+            team_ids=team_ids,
+            project_id=project_id,
+            project_app_id=project_app_id,
+            external_user_id=external_user_id,
             knowledge_base_id=knowledge_base_id,
             category_id=category_id,
             answer_status=answer_status,
@@ -194,18 +270,38 @@ class KbChatLogRepository:
                     id=item.id,
                     user_id=item.user_id,
                     session_id=item.session_id,
+                    product_id=item.product_id,
+                    product_name=product_name,
+                    project_id=item.project_id,
+                    project_name=project_name,
+                    project_app_id=item.project_app_id,
+                    project_app_name=project_app_name,
+                    external_user_id=item.external_user_id,
+                    external_user_name=item.external_user_name,
                     team_id=knowledge_base.team_id if knowledge_base else None,
                     team_name=team_name,
                     knowledge_base_id=item.knowledge_base_id,
                     knowledge_base_name=knowledge_base.name if knowledge_base else None,
+                    assistant_id=item.assistant_id,
+                    assistant_name=assistant_name,
                     category_id=item.category_id,
                     category_name=category_name,
                     query=item.query,
                     answer_text=item.answer_text,
                     answer_status=item.answer_status,
                     retrieval_status=item.retrieval_status,
-                    retrieved_count=item.retrieved_count,
                     latency_ms=item.latency_ms,
+                    text_hit_count=int(item.text_hit_count or 0),
+                    graph_hit_count=int(item.graph_hit_count or 0),
+                    merged_candidate_count=int(item.merged_candidate_count or 0),
+                    final_context_count=int(item.final_context_count or 0),
+                    empty_reason=item.empty_reason,
+                    rerank_enabled=bool(item.rerank_enabled),
+                    input_tokens=item.input_tokens,
+                    output_tokens=item.output_tokens,
+                    total_tokens=item.total_tokens,
+                    estimated_cost=item.estimated_cost,
+                    token_usage=item.token_usage if isinstance(item.token_usage, dict) else None,
                     feedback_value=item.feedback_value,
                     feedback_note=item.feedback_note,
                     suggested_review_label=self._suggest_review_label(item),
@@ -215,7 +311,16 @@ class KbChatLogRepository:
                     reviewed_by_user_id=item.reviewed_by_user_id,
                     created_at=item.created_at,
                 )
-                for item, knowledge_base, team_name, category_name in rows
+                for (
+                    item,
+                    knowledge_base,
+                    assistant_name,
+                    product_name,
+                    project_name,
+                    project_app_name,
+                    team_name,
+                    category_name,
+                ) in rows
             ],
             int(total),
         )
@@ -225,6 +330,10 @@ class KbChatLogRepository:
         stmt,
         *,
         team_id: int | None,
+        team_ids: list[int] | None,
+        project_id: int | None,
+        project_app_id: int | None,
+        external_user_id: str | None,
         knowledge_base_id: int | None,
         category_id: int | None,
         answer_status: str | None,
@@ -239,6 +348,17 @@ class KbChatLogRepository:
     ):
         if team_id is not None:
             stmt = stmt.where(KnowledgeBase.team_id == team_id)
+        if team_ids is not None:
+            if not team_ids:
+                stmt = stmt.where(False)
+            else:
+                stmt = stmt.where(KnowledgeBase.team_id.in_(team_ids))
+        if project_id is not None:
+            stmt = stmt.where(KbChatLog.project_id == project_id)
+        if project_app_id is not None:
+            stmt = stmt.where(KbChatLog.project_app_id == project_app_id)
+        if external_user_id:
+            stmt = stmt.where(KbChatLog.external_user_id == external_user_id.strip())
         if knowledge_base_id is not None:
             stmt = stmt.where(KbChatLog.knowledge_base_id == knowledge_base_id)
         if category_id is not None:
@@ -258,7 +378,7 @@ class KbChatLogRepository:
         if created_to is not None:
             stmt = stmt.where(KbChatLog.created_at <= created_to)
         if zero_hits_only:
-            stmt = stmt.where(KbChatLog.retrieved_count == 0)
+            stmt = stmt.where(KbChatLog.final_context_count == 0)
         if high_latency_only:
             stmt = stmt.where(
                 KbChatLog.latency_ms.is_not(None),
@@ -272,10 +392,18 @@ class KbChatLogRepository:
                 KbChatLog,
                 KnowledgeBase.name.label("knowledge_base_name"),
                 KnowledgeBase.team_id.label("knowledge_base_team_id"),
+                AssistantProfile.name.label("assistant_name"),
+                Product.name.label("product_name"),
+                Project.name.label("project_name"),
+                ProjectApp.name.label("project_app_name"),
                 Team.name.label("team_name"),
                 DocumentCategory.name.label("category_name"),
             )
             .outerjoin(KnowledgeBase, KbChatLog.knowledge_base_id == KnowledgeBase.id)
+            .outerjoin(AssistantProfile, KbChatLog.assistant_id == AssistantProfile.id)
+            .outerjoin(Product, KbChatLog.product_id == Product.id)
+            .outerjoin(Project, KbChatLog.project_id == Project.id)
+            .outerjoin(ProjectApp, KbChatLog.project_app_id == ProjectApp.id)
             .outerjoin(Team, KnowledgeBase.team_id == Team.id)
             .outerjoin(DocumentCategory, KbChatLog.category_id == DocumentCategory.id)
             .where(KbChatLog.id == log_id)
@@ -284,12 +412,24 @@ class KbChatLogRepository:
         if row is None:
             return None
 
-        item, knowledge_base_name, knowledge_base_team_id, team_name, category_name = row
+        (
+            item,
+            knowledge_base_name,
+            knowledge_base_team_id,
+            assistant_name,
+            product_name,
+            project_name,
+            project_app_name,
+            team_name,
+            category_name,
+        ) = row
         session = None
         if item.session_id:
             session = await self._get_chat_session(
                 user_id=item.user_id,
                 session_id=item.session_id,
+                project_app_id=item.project_app_id,
+                external_user_id=item.external_user_id,
             )
 
         session_messages: list[tuple[str, str, dict[str, Any] | None, datetime]] = []
@@ -299,6 +439,10 @@ class KbChatLogRepository:
         detail = self._build_detail_record(
             item=item,
             knowledge_base_name=knowledge_base_name,
+            assistant_name=assistant_name,
+            product_name=product_name,
+            project_name=project_name,
+            project_app_name=project_app_name,
             category_name=category_name,
             team_id=(session.team_id if session is not None else knowledge_base_team_id),
             team_name=team_name,
@@ -351,13 +495,19 @@ class KbChatLogRepository:
     async def _get_chat_session(
         self,
         *,
-        user_id: int,
+        user_id: int | None,
         session_id: str,
+        project_app_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> ChatSession | None:
-        stmt = select(ChatSession).where(
-            ChatSession.user_id == user_id,
-            ChatSession.session_id == session_id,
-        )
+        stmt = select(ChatSession).where(ChatSession.session_id == session_id)
+        if user_id is not None:
+            stmt = stmt.where(ChatSession.user_id == user_id)
+        else:
+            stmt = stmt.where(
+                ChatSession.project_app_id == project_app_id,
+                ChatSession.external_user_id == external_user_id,
+            )
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
     async def _load_session_messages(
@@ -380,13 +530,13 @@ class KbChatLogRepository:
     def _build_retrieval_status_reason(
         retrieval_status: str | None,
         *,
-        retrieved_count: int,
+        final_context_count: int,
     ) -> str | None:
         if retrieval_status in {"empty_collection", "empty_knowledge_base"}:
             return "当前范围内还没有完成索引的知识内容，因此本次没有可用于回答的文档片段。"
         if retrieval_status == "no_hits":
             return "当前范围内存在知识内容，但这次问题没有检索到足够相关的片段。"
-        if retrieval_status == "ok" and retrieved_count <= 0:
+        if retrieval_status == "ok" and final_context_count <= 0:
             return "检索流程执行成功，但没有保留可展示的命中文档片段。"
         return None
 
@@ -407,58 +557,29 @@ class KbChatLogRepository:
         *,
         item: KbChatLog,
         knowledge_base_name: str | None,
+        assistant_name: str | None,
+        product_name: str | None,
+        project_name: str | None,
+        project_app_name: str | None,
         category_name: str | None,
         team_id: int | None,
         team_name: str | None,
         session_messages: list[tuple[str, str, dict[str, Any] | None, datetime]],
     ) -> KbChatLogDetailRecord:
         target_index = None
-        target_metadata: dict[str, Any] = {}
-
         for index, (role, content, metadata, _) in enumerate(session_messages):
             metadata_obj = metadata if isinstance(metadata, dict) else {}
             if role == "assistant" and metadata_obj.get("log_id") == item.id:
                 target_index = index
-                target_metadata = metadata_obj
                 break
 
         if target_index is None:
-            for index, (role, content, metadata, _) in enumerate(session_messages):
+            for index, (role, content, _metadata, _) in enumerate(session_messages):
                 if role == "assistant" and content == item.answer_text:
                     target_index = index
-                    target_metadata = metadata if isinstance(metadata, dict) else {}
                     break
 
-        raw_retrieved_docs = target_metadata.get("retrieved_docs") or []
-        answer_context = (
-            target_metadata.get("answer_context")
-            if isinstance(target_metadata.get("answer_context"), str)
-            else None
-        )
-        retrieval_queries = [
-            str(value)
-            for value in (target_metadata.get("retrieval_queries") or [])
-            if str(value or "").strip()
-        ]
-        retrieval_funnel = (
-            target_metadata.get("retrieval_funnel")
-            if isinstance(target_metadata.get("retrieval_funnel"), dict)
-            else None
-        )
-
-        retrieved_docs: list[KbChatDiagnosticDocRecord] = []
-
-        for index, doc in enumerate(raw_retrieved_docs, start=1):
-            if not isinstance(doc, dict):
-                continue
-            content = str(doc.get("content") or "")
-            metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
-            record = KbChatDiagnosticDocRecord(
-                rank=index,
-                content=content,
-                metadata=metadata,
-            )
-            retrieved_docs.append(record)
+        trace_payload = item.trace_payload if isinstance(item.trace_payload, dict) else {}
 
         context_window: list[KbChatDiagnosticMessageRecord] = []
         if target_index is not None:
@@ -491,16 +612,36 @@ class KbChatLogRepository:
             id=item.id,
             user_id=item.user_id,
             session_id=item.session_id,
+            product_id=item.product_id,
+            product_name=product_name,
+            project_id=item.project_id,
+            project_name=project_name,
+            project_app_id=item.project_app_id,
+            project_app_name=project_app_name,
+            external_user_id=item.external_user_id,
+            external_user_name=item.external_user_name,
             knowledge_base_id=item.knowledge_base_id,
             knowledge_base_name=knowledge_base_name,
+            assistant_id=item.assistant_id,
+            assistant_name=assistant_name,
             category_id=item.category_id,
             category_name=category_name,
             query=item.query,
             answer_text=item.answer_text,
             answer_status=item.answer_status,
             retrieval_status=item.retrieval_status,
-            retrieved_count=item.retrieved_count,
             latency_ms=item.latency_ms,
+            text_hit_count=int(item.text_hit_count or 0),
+            graph_hit_count=int(item.graph_hit_count or 0),
+            merged_candidate_count=int(item.merged_candidate_count or 0),
+            final_context_count=int(item.final_context_count or 0),
+            empty_reason=item.empty_reason,
+            rerank_enabled=bool(item.rerank_enabled),
+            input_tokens=item.input_tokens,
+            output_tokens=item.output_tokens,
+            total_tokens=item.total_tokens,
+            estimated_cost=item.estimated_cost,
+            token_usage=item.token_usage if isinstance(item.token_usage, dict) else None,
             feedback_value=item.feedback_value,
             feedback_note=item.feedback_note,
             suggested_review_label=KbChatLogRepository._suggest_review_label(item),
@@ -513,11 +654,8 @@ class KbChatLogRepository:
             team_name=team_name,
             retrieval_status_reason=KbChatLogRepository._build_retrieval_status_reason(
                 item.retrieval_status,
-                retrieved_count=item.retrieved_count,
+                final_context_count=int(item.final_context_count or 0),
             ),
-            retrieval_queries=retrieval_queries,
-            retrieval_funnel=retrieval_funnel,
-            answer_context=answer_context,
-            retrieved_docs=retrieved_docs,
+            trace_payload=trace_payload or None,
             conversation_context=context_window,
         )

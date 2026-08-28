@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+
 from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -137,6 +138,31 @@ class IndexJobRepository:
             await self.db.flush()
         return True
 
+    async def get_document_statuses(
+        self,
+        *,
+        job_id: int,
+        documents: list[tuple[int, str]],
+    ) -> dict[tuple[int, str], str]:
+        if not documents:
+            return {}
+
+        document_ids = [document_id for document_id, _ in documents]
+        result = await self.db.execute(
+            select(
+                IndexJobDocument.document_id,
+                IndexJobDocument.expected_content_hash,
+                IndexJobDocument.status,
+            ).where(
+                IndexJobDocument.job_id == job_id,
+                IndexJobDocument.document_id.in_(document_ids),
+            )
+        )
+        return {
+            (int(row.document_id), str(row.expected_content_hash)): str(row.status)
+            for row in result
+        }
+
     async def refresh_job_state(self, *, job_id: int) -> None:
         queued_count = func.sum(
             case((IndexJobDocument.status == INDEX_JOB_DOCUMENT_STATUS_QUEUED, 1), else_=0)
@@ -223,6 +249,58 @@ class IndexJobRepository:
             )
         )
         await self.refresh_job_state(job_id=job_id)
+
+    async def get_job_status(self, *, job_id: int) -> str | None:
+        result = await self.db.execute(select(IndexJob.status).where(IndexJob.id == job_id))
+        return result.scalar_one_or_none()
+
+    async def is_job_active(self, *, job_id: int) -> bool:
+        status = await self.get_job_status(job_id=job_id)
+        return status in ACTIVE_INDEX_JOB_STATUSES
+
+    async def refresh_active_jobs_for_user(self) -> None:
+        if self.user_id is None:
+            return
+        result = await self.db.execute(
+            select(IndexJob.id).where(
+                IndexJob.user_id == self.user_id,
+                IndexJob.status.in_(ACTIVE_INDEX_JOB_STATUSES),
+            )
+        )
+        for job_id in result.scalars().all():
+            await self.refresh_job_state(job_id=int(job_id))
+
+    async def cancel_active_jobs_for_knowledge_base(
+        self,
+        *,
+        knowledge_base_id: int,
+        error_message: str,
+    ) -> int:
+        return await self.cancel_active_jobs_for_knowledge_bases(
+            knowledge_base_ids=[knowledge_base_id],
+            error_message=error_message,
+        )
+
+    async def cancel_active_jobs_for_knowledge_bases(
+        self,
+        *,
+        knowledge_base_ids: list[int],
+        error_message: str,
+    ) -> int:
+        unique_ids = [int(item) for item in dict.fromkeys(knowledge_base_ids)]
+        if not unique_ids:
+            return 0
+        stmt = select(IndexJob.id).where(
+            IndexJob.knowledge_base_id.in_(unique_ids),
+            IndexJob.status.in_(ACTIVE_INDEX_JOB_STATUSES),
+        )
+        if self.user_id is not None:
+            stmt = stmt.where(IndexJob.user_id == self.user_id)
+        result = await self.db.execute(stmt)
+        job_ids = [int(job_id) for job_id in result.scalars().all()]
+        for job_id in job_ids:
+            await self.mark_job_dispatch_failed(job_id=job_id, error_message=error_message)
+        return len(job_ids)
 
     async def list_active_jobs(self, *, limit: int = 5) -> list[ActiveIndexingJobRecord]:
         if self.user_id is None:
